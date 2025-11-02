@@ -1,0 +1,22 @@
+# Python dependencies for Exness Trading Bot
+# Install with: pip install -r requirements.txt
+
+# MetaTrader5 API
+MetaTrader5>=5.0.45
+
+# Data processing
+pandas>=1.5.0
+numpy>=1.23.0
+
+# Machine Learning (optional)
+scikit-learn>=1.2.0
+
+# Telegram Bot (for trade copy)
+python-telegram-bot>=20.0
+
+# Utilities
+python-dotenv>=1.0.0  # For environment variables
+
+# Logging and monitoring
+colorlog>=6.7.0  # Colored logs (optional)
+
