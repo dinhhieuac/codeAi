@@ -575,6 +575,12 @@ class GoldAutoTrader:
         self.use_risk_reward_ratio = USE_RISK_REWARD_RATIO if 'USE_RISK_REWARD_RATIO' in dir() else False
         self.risk_reward_ratio = RISK_REWARD_RATIO if 'RISK_REWARD_RATIO' in dir() else 1.5
         
+        # Advanced SL/TP Methods (từ configgold.py)
+        self.use_sr_based_sl_tp = globals().get('USE_SR_BASED_SL_TP', False)
+        self.use_bb_based_sl_tp = globals().get('USE_BB_BASED_SL_TP', False)
+        self.use_fib_based_sl_tp = globals().get('USE_FIB_BASED_SL_TP', False)
+        self.use_recent_hl_sl_tp = globals().get('USE_RECENT_HL_SL_TP', False)
+        
         # Technical Analysis Settings - Cài đặt các chỉ báo kỹ thuật (load từ config)
         # RSI (Relative Strength Index)
         self.rsi_period = RSI_PERIOD                   # Chu kỳ RSI (14)
