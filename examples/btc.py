@@ -11,6 +11,7 @@ import time
 import logging
 import csv
 import sys
+import json
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 import requests
@@ -648,8 +649,12 @@ class GoldAutoTrader:
         self.deviation = DEVIATION                    # Độ lệch giá cho phép khi đặt lệnh (100 points)
         
         # Theo dõi giao dịch trong ngày
+        self.daily_stats_file = logs_dir / f"daily_stats_{self.symbol.lower()}.json"  # File lưu số lệnh trong ngày
         self.daily_trades_count = 0                   # Đếm số lệnh đã mở hôm nay
         self.last_trade_date = None                   # Ngày giao dịch cuối cùng (để reset counter)
+        
+        # Load daily stats từ file (nếu có)
+        self._load_daily_stats()
         
         # CSV logging
         self.csv_log_file = logs_dir / Path(CSV_LOG_FILE).name
@@ -1576,6 +1581,7 @@ class GoldAutoTrader:
         
         # Tăng counter và log CSV
         self.daily_trades_count += 1
+        self._save_daily_stats()  # Lưu số lệnh vào file ngay sau khi tăng counter
         logger.info(f"✅ Đã mở lệnh SELL {self.symbol} {lot:.2f} lots tại {price:.2f}, SL: {sl:.2f}, TP: {tp:.2f}")
         logger.info(f"📈 Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}")
         
