@@ -146,12 +146,13 @@ STOCH_D_PERIOD = 3             # Chu kỳ tính đường %D (làm mượt của
 STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận tín hiệu BUY
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
-# Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 2        # Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (TĂNG từ 3 lên 4)
-                                # Ví dụ: 4 = cần ít nhất 4 chỉ báo cùng BUY mới mở lệnh BUY
-                                # Giá trị cao hơn (4-5) = ít lệnh nhưng chính xác hơn ✅
-                                # Giá trị thấp hơn (1-3) = nhiều lệnh nhưng nhiều false signal ❌
-                                # ⚠️ ĐÃ TĂNG LÊN 4 để giảm false signals và tăng win rate
+# Logic quyết định tín hiệu - CÂN BẰNG GIỮA CHẤT LƯỢNG VÀ SỐ LƯỢNG
+MIN_SIGNAL_STRENGTH = 3        # ⚠️ ĐIỀU CHỈNH: Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (GIẢM xuống 3)
+                                # Ví dụ: 3 = cần ít nhất 3 chỉ báo cùng BUY mới mở lệnh BUY
+                                # Giá trị 3 = cân bằng giữa chất lượng và số lượng tín hiệu ✅
+                                # Giá trị cao hơn (4-5) = rất ít lệnh (có thể không có tín hiệu trong 2-3 giờ)
+                                # Giá trị thấp hơn (1-2) = nhiều lệnh nhưng nhiều false signal ❌
+                                # ⚠️ ĐẶT = 3 để có đủ tín hiệu nhưng vẫn giữ chất lượng (kết hợp với ADX và Volume filter)
 
 REQUIRE_TREND_CONFIRMATION = True  # True: Yêu cầu xu hướng từ MA phải đồng thuận
                                     # Ví dụ: BUY signal chỉ được chấp nhận nếu Price > MA20 > MA50
@@ -161,10 +162,10 @@ REQUIRE_MOMENTUM_CONFIRMATION = True  # True: Yêu cầu MACD momentum phải đ
                                        # MACD histogram phải tăng (bullish) cho BUY
                                        # Giúp xác nhận momentum trước khi vào lệnh
 
-REQUIRE_BOTH_TREND_AND_MOMENTUM = True  # ⚠️ MỚI: True = CẦN CẢ trend VÀ momentum (AND logic)
-                                         # False = Chỉ cần 1 trong 2 (OR logic)
-                                         # True = Tăng độ chính xác, giảm false signals
-                                         # False = Nhiều cơ hội hơn nhưng có thể thua nhiều hơn
+REQUIRE_BOTH_TREND_AND_MOMENTUM = False  # ⚠️ ĐIỀU CHỈNH: False = Chỉ cần 1 trong 2 (OR logic) để có nhiều tín hiệu hơn
+                                          # True = CẦN CẢ trend VÀ momentum (AND logic) - quá strict
+                                          # False = Nhiều cơ hội hơn, vẫn giữ chất lượng nhờ MIN_SIGNAL_STRENGTH=3
+                                          # Kết hợp với ADX filter (28) và Volume filter để giữ chất lượng
 
 USE_STOCH_CONFIRM = True       # Có sử dụng Stochastic để xác nhận tín hiệu không
                                 # Stochastic giúp xác nhận RSI oversold/overbought
@@ -199,8 +200,10 @@ USE_VOLUME_ANALYSIS = True     # Có phân tích khối lượng giao dịch kh�
 VOLUME_MA_PERIOD = 20          # Chu kỳ MA để so sánh volume (20 nến)
                                 # Volume hiện tại > MA(volume) = volume cao (khối lượng tăng)
 
-VOLUME_HIGH_THRESHOLD = 1.5    # Hệ số để xác định volume cao (1.5 = cao hơn MA 50%)
-                                # Volume / MA(volume) > 1.5 = volume cao
+VOLUME_HIGH_THRESHOLD = 1.3    # ⚠️ ĐIỀU CHỈNH: Hệ số để xác định volume cao (GIẢM xuống 1.3)
+                                # Volume / MA(volume) > 1.3 = volume cao (yêu cầu volume trên mức trung bình 30%)
+                                # Điều chỉnh để có nhiều tín hiệu hơn nhưng vẫn xác nhận được signal
+                                # Kết hợp với MIN_SIGNAL_STRENGTH=3 để giữ chất lượng
 
 VOLUME_LOW_THRESHOLD = 0.5     # Hệ số để xác định volume thấp (0.5 = thấp hơn MA 50%)
                                 # Volume / MA(volume) < 0.5 = volume thấp
@@ -237,16 +240,17 @@ USE_SR_WHEN_NO_FIB = True      # Chỉ dùng S/R khi không có tín hiệu Fibo
 # ============================================
 USE_ADX_FILTER = True          # ⚠️ MỚI: Sử dụng ADX để lọc sideways market
                                 # ADX (Average Directional Index) đo lường strength của trend
-                                # ADX < 30 = Sideways (không có trend rõ ràng) → KHÔNG TRADE
-                                # ADX >= 30 = Có trend mạnh → CHO PHÉP TRADE
-                                # ⚠️ QUAN TRỌNG: Giảm tỷ lệ thua bằng cách chỉ trade khi có trend rõ ràng
+                                # ADX < 28 = Sideways/trend yếu (không có trend rõ ràng) → KHÔNG TRADE
+                                # ADX >= 28 = Có trend mạnh → CHO PHÉP TRADE
+                                # ⚠️ QUAN TRỌNG: Lọc sideways market nhưng không quá strict (ngưỡng 28)
 
 ADX_PERIOD = 14                # Chu kỳ tính ADX (14 là chuẩn)
 
-ADX_MIN_THRESHOLD = 30         # Ngưỡng ADX tối thiểu để cho phép trade (TĂNG từ 25 lên 30)
-                                # ADX >= 30 = Trend mạnh, cho phép trade
-                                # ADX < 30 = Sideways, chặn trade (giảm false signals)
-                                # ⚠️ TĂNG LÊN 30 để chỉ trade khi có trend rõ ràng, giảm tỷ lệ thua
+ADX_MIN_THRESHOLD = 28         # ⚠️ ĐIỀU CHỈNH: Ngưỡng ADX tối thiểu để cho phép trade (GIẢM xuống 28)
+                                # ADX >= 28 = Trend mạnh, cho phép trade
+                                # ADX < 28 = Sideways/trend yếu, chặn trade (giảm false signals)
+                                # ⚠️ ĐẶT = 28 để cân bằng: vẫn lọc sideways nhưng không quá strict
+                                # Kết hợp với MIN_SIGNAL_STRENGTH=3 và Volume filter để giữ chất lượng
 
 ADX_STRONG_TREND = 40          # ADX >= 40 = Trend rất mạnh (ưu tiên cao hơn)
                                 # Có thể điều chỉnh logic để ưu tiên khi ADX rất cao
