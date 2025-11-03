@@ -646,11 +646,15 @@ class GoldAutoTrader:
         self.deviation = DEVIATION                    # Độ lệch giá cho phép khi đặt lệnh (100 points)
         
         # Telegram Notification Settings (từ configgold.py)
-        self.use_telegram = USE_TELEGRAM_NOTIFICATIONS if 'USE_TELEGRAM_NOTIFICATIONS' in dir() else False
-        self.telegram_bot_token = TELEGRAM_BOT_TOKEN if 'TELEGRAM_BOT_TOKEN' in dir() else ""
-        self.telegram_chat_id = TELEGRAM_CHAT_ID if 'TELEGRAM_CHAT_ID' in dir() else ""
-        self.telegram_send_on_open = TELEGRAM_SEND_ON_ORDER_OPEN if 'TELEGRAM_SEND_ON_ORDER_OPEN' in dir() else True
-        self.telegram_send_on_close = TELEGRAM_SEND_ON_ORDER_CLOSE if 'TELEGRAM_SEND_ON_ORDER_CLOSE' in dir() else False
+        # Kiểm tra biến có tồn tại trong globals() (đã import từ configgold)
+        self.use_telegram = globals().get('USE_TELEGRAM_NOTIFICATIONS', False)
+        self.telegram_bot_token = globals().get('TELEGRAM_BOT_TOKEN', "")
+        self.telegram_chat_id = globals().get('TELEGRAM_CHAT_ID', "")
+        self.telegram_send_on_open = globals().get('TELEGRAM_SEND_ON_ORDER_OPEN', True)
+        self.telegram_send_on_close = globals().get('TELEGRAM_SEND_ON_ORDER_CLOSE', False)
+        
+        # Log để debug
+        logger.info(f"📱 Telegram Config Loaded: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
         # Theo dõi giao dịch trong ngày
         self.daily_stats_file = logs_dir / f"daily_stats_{self.symbol.lower()}.json"  # File lưu số lệnh trong ngày
