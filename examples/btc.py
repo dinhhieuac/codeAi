@@ -725,10 +725,13 @@ class GoldAutoTrader:
             True nếu gửi thành công, False nếu thất bại
         """
         if not self.use_telegram:
+            logger.warning("⚠️ Telegram notifications đã bị tắt (USE_TELEGRAM_NOTIFICATIONS = False)")
             return False
         
         if not self.telegram_bot_token or not self.telegram_chat_id:
-            logger.debug("Telegram chưa được cấu hình (thiếu BOT_TOKEN hoặc CHAT_ID)")
+            logger.error("❌ Telegram chưa được cấu hình (thiếu BOT_TOKEN hoặc CHAT_ID)")
+            logger.error(f"   Bot Token: {'✅ Có' if self.telegram_bot_token else '❌ Không có'}")
+            logger.error(f"   Chat ID: {'✅ Có' if self.telegram_chat_id else '❌ Không có'}")
             return False
         
         try:
@@ -739,17 +742,28 @@ class GoldAutoTrader:
                 "parse_mode": "HTML"
             }
             
+            logger.info(f"📤 Đang gửi thông báo Telegram...")
             response = requests.post(url, json=payload, timeout=5)
             response.raise_for_status()
             
-            logger.debug(f"✅ Đã gửi thông báo Telegram")
-            return True
+            result = response.json()
+            if result.get('ok'):
+                message_id = result.get('result', {}).get('message_id', 'N/A')
+                logger.info(f"✅ Đã gửi thông báo Telegram thành công! Message ID: {message_id}")
+                return True
+            else:
+                error_desc = result.get('description', 'Unknown error')
+                logger.error(f"❌ Telegram API trả về lỗi: {error_desc}")
+                return False
             
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout khi gửi thông báo Telegram (quá 5 giây)")
+            return False
         except requests.exceptions.RequestException as e:
-            logger.warning(f"⚠️ Không thể gửi thông báo Telegram: {e}")
+            logger.error(f"❌ Không thể gửi thông báo Telegram: {e}")
             return False
         except Exception as e:
-            logger.error(f"❌ Lỗi khi gửi Telegram: {e}")
+            logger.error(f"❌ Lỗi không mong đợi khi gửi Telegram: {e}", exc_info=True)
             return False
     
     def get_historical_data(self, timeframe: int = None, bars: int = None) -> Optional[pd.DataFrame]:
@@ -1470,25 +1484,33 @@ class GoldAutoTrader:
         self._log_trade_to_csv(result, 'BUY', reason)
         
         # Gửi thông báo Telegram
+        logger.info(f"📱 Kiểm tra Telegram: use_telegram={self.use_telegram}, send_on_open={self.telegram_send_on_open}")
         if self.telegram_send_on_open:
-            account_info = mt5.account_info()
-            ticket = result.order if result else 0
-            message = (
-                f"🟢 <b>LỆNH MỚI: BUY {self.symbol}</b>\n\n"
-                f"📊 <b>Thông tin lệnh:</b>\n"
-                f"   • Ticket: <code>{ticket}</code>\n"
-                f"   • Volume: <b>{lot:.2f}</b> lots\n"
-                f"   • Giá vào: <b>{price:.2f}</b>\n"
-                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
-                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
-                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
-                f"📈 <b>Thông tin tài khoản:</b>\n"
-                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
-                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
-                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
-                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
-            )
-            self.send_telegram_message(message)
+            try:
+                account_info = mt5.account_info()
+                ticket = result.order if result else 0
+                message = (
+                    f"🟢 <b>LỆNH MỚI: BUY {self.symbol}</b>\n\n"
+                    f"📊 <b>Thông tin lệnh:</b>\n"
+                    f"   • Ticket: <code>{ticket}</code>\n"
+                    f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                    f"   • Giá vào: <b>{price:.2f}</b>\n"
+                    f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                    f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                    f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                    f"📈 <b>Thông tin tài khoản:</b>\n"
+                    f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                    f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                    f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                    f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+                )
+                telegram_success = self.send_telegram_message(message)
+                if not telegram_success:
+                    logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh BUY")
+            except Exception as e:
+                logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
+        else:
+            logger.info("ℹ️  Telegram notifications đã bị tắt (TELEGRAM_SEND_ON_ORDER_OPEN = False)")
         
         return result
     
@@ -1561,25 +1583,33 @@ class GoldAutoTrader:
         self._log_trade_to_csv(result, 'SELL', reason)
         
         # Gửi thông báo Telegram
+        logger.info(f"📱 Kiểm tra Telegram: use_telegram={self.use_telegram}, send_on_open={self.telegram_send_on_open}")
         if self.telegram_send_on_open:
-            account_info = mt5.account_info()
-            ticket = result.order if result else 0
-            message = (
-                f"🔴 <b>LỆNH MỚI: SELL {self.symbol}</b>\n\n"
-                f"📊 <b>Thông tin lệnh:</b>\n"
-                f"   • Ticket: <code>{ticket}</code>\n"
-                f"   • Volume: <b>{lot:.2f}</b> lots\n"
-                f"   • Giá vào: <b>{price:.2f}</b>\n"
-                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
-                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
-                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
-                f"📈 <b>Thông tin tài khoản:</b>\n"
-                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
-                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
-                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
-                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
-            )
-            self.send_telegram_message(message)
+            try:
+                account_info = mt5.account_info()
+                ticket = result.order if result else 0
+                message = (
+                    f"🔴 <b>LỆNH MỚI: SELL {self.symbol}</b>\n\n"
+                    f"📊 <b>Thông tin lệnh:</b>\n"
+                    f"   • Ticket: <code>{ticket}</code>\n"
+                    f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                    f"   • Giá vào: <b>{price:.2f}</b>\n"
+                    f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                    f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                    f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                    f"📈 <b>Thông tin tài khoản:</b>\n"
+                    f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                    f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                    f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                    f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+                )
+                telegram_success = self.send_telegram_message(message)
+                if not telegram_success:
+                    logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh SELL")
+            except Exception as e:
+                logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
+        else:
+            logger.info("ℹ️  Telegram notifications đã bị tắt (TELEGRAM_SEND_ON_ORDER_OPEN = False)")
         
         return result
     
