@@ -558,8 +558,8 @@ class GoldAutoTrader:
         
         # Giá trị SL/TP cố định (chỉ dùng khi USE_ATR_SL_TP = False)
         try:
-        self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
-        self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
+            self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
+            self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
         except:
             self.fixed_sl_points = None
             self.fixed_tp_points = None
