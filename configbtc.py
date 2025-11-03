@@ -42,11 +42,11 @@ MAX_LOT_SIZE = 0.01            # Lot size tối đa cho phép mỗi lệnh
                                 # Giới hạn này ngăn bot mở lệnh quá lớn
                                 # Với BTCUSD, thường đặt 0.01-0.1 tùy vốn
 
-MAX_POSITIONS = 10              # Số lượng vị thế tối đa cùng lúc (mở bao nhiêu lệnh cùng thời điểm)
+MAX_POSITIONS = 3              # Số lượng vị thế tối đa cùng lúc (mở bao nhiêu lệnh cùng thời điểm)
                                 # Bot sẽ không mở lệnh mới nếu đã có MAX_POSITIONS lệnh mở
                                 # Khuyến nghị: 3-5 cho BTC vì volatility cao
 
-MAX_DAILY_TRADES = 300         # Giới hạn số lệnh trong 1 ngày (reset lúc 0h mỗi ngày)
+MAX_DAILY_TRADES = 50         # Giới hạn số lệnh trong 1 ngày (reset lúc 0h mỗi ngày)
                                 # Ngăn bot giao dịch quá nhiều (tránh overtrading)
                                 # Với M15 timeframe, 300 lệnh/ngày là hợp lý
 
@@ -216,7 +216,7 @@ REQUIRE_MOMENTUM_CONFIRMATION = True  # True: Yêu cầu MACD momentum phải đ
                                        # MACD histogram phải tăng (bullish) cho BUY
                                        # Giúp xác nhận momentum trước khi vào lệnh
 
-REQUIRE_BOTH_TREND_AND_MOMENTUM = True  # ⚠️ MỚI: True = CẦN CẢ trend VÀ momentum (AND logic)
+REQUIRE_BOTH_TREND_AND_MOMENTUM = False  # ⚠️ MỚI: True = CẦN CẢ trend VÀ momentum (AND logic)
                                          # False = Chỉ cần 1 trong 2 (OR logic)
                                          # True = Tăng độ chính xác, giảm false signals
                                          # False = Nhiều cơ hội hơn nhưng có thể thua nhiều hơn
