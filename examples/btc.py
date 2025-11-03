@@ -1510,6 +1510,10 @@ class GoldAutoTrader:
         
         Returns:
             True nếu đủ thời gian để mở lệnh
+        
+        Note:
+            Rule "bỏ qua nếu không còn position" đã được xử lý ở _check_all_trade_rules()
+            Hàm này chỉ được gọi khi còn có position mở
         """
         now = datetime.now()
         
@@ -1578,15 +1582,22 @@ class GoldAutoTrader:
         Returns:
             True nếu đủ điều kiện để mở lệnh
         """
-        # Kiểm tra giới hạn lệnh trong ngày
+        # Kiểm tra giới hạn lệnh trong ngày (luôn kiểm tra, không bỏ qua)
         if not self._check_daily_trade_limit():
             return False
         
-        # Kiểm tra giới hạn lệnh trong 1 giờ
+        # ⚠️ RULE MỚI: Nếu không còn position nào mở → Bỏ qua tất cả rule về thời gian
+        # Cho phép mở lệnh mới ngay lập tức (bỏ qua cooldown, thời gian giữa lệnh, trades per hour)
+        open_positions = self.get_open_positions()
+        if len(open_positions) == 0:
+            logger.info(f"✅ Không còn position nào mở → Bỏ qua các rule về thời gian, cho phép mở lệnh mới")
+            return True
+        
+        # Kiểm tra giới hạn lệnh trong 1 giờ (chỉ kiểm tra nếu còn position)
         if not self._check_trades_per_hour_limit():
             return False
         
-        # Kiểm tra thời gian giữa các lệnh
+        # Kiểm tra thời gian giữa các lệnh (chỉ kiểm tra nếu còn position)
         if not self._check_time_between_trades(order_type):
             return False
         
