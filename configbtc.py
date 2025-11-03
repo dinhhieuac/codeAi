@@ -42,7 +42,7 @@ MAX_LOT_SIZE = 0.01            # Lot size tối đa cho phép mỗi lệnh
                                 # Giới hạn này ngăn bot mở lệnh quá lớn
                                 # Với BTCUSD, thường đặt 0.01-0.1 tùy vốn
 
-MAX_POSITIONS = 3              # Số lượng vị thế tối đa cùng lúc (mở bao nhiêu lệnh cùng thời điểm)
+MAX_POSITIONS = 10              # Số lượng vị thế tối đa cùng lúc (mở bao nhiêu lệnh cùng thời điểm)
                                 # Bot sẽ không mở lệnh mới nếu đã có MAX_POSITIONS lệnh mở
                                 # Khuyến nghị: 3-5 cho BTC vì volatility cao
 
