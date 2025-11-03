@@ -384,7 +384,7 @@ TELEGRAM_CHAT_ID = "1887610382"           # Chat ID để nhận thông báo (c�
 
 # Format thông báo Telegram
 TELEGRAM_SEND_ON_ORDER_OPEN = True      # Gửi thông báo khi mở lệnh
-TELEGRAM_SEND_ON_ORDER_CLOSE = False    # Gửi thông báo khi đóng lệnh (có thể bật sau)
+TELEGRAM_SEND_ON_ORDER_CLOSE = True    # Gửi thông báo khi đóng lệnh (có thể bật sau)
 
 # ============================================
 # Helper: Convert timeframe string sang MT5 constant
