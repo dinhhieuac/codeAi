@@ -656,6 +656,18 @@ class GoldAutoTrader:
         # Log để debug
         logger.info(f"📱 Telegram Config Loaded: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
+        # Trading Time Rules (từ config)
+        self.min_time_same_direction = globals().get('MIN_TIME_BETWEEN_SAME_DIRECTION', 30 * 60)  # 30 phút
+        self.min_time_opposite_direction = globals().get('MIN_TIME_BETWEEN_OPPOSITE_DIRECTION', 15 * 60)  # 15 phút
+        self.max_trades_per_hour = globals().get('MAX_TRADES_PER_HOUR', 2)
+        self.cooldown_after_loss = globals().get('COOLDOWN_AFTER_LOSS', 45 * 60)  # 45 phút
+        
+        # Theo dõi thời gian giao dịch
+        self.last_trade_time = None           # Thời gian lệnh cuối cùng
+        self.last_trade_type = None           # Loại lệnh cuối cùng ('BUY' hoặc 'SELL')
+        self.last_loss_time = None             # Thời gian thua lỗ cuối cùng
+        self.trades_in_last_hour = []          # Danh sách thời gian các lệnh trong 1 giờ qua
+        
         # Theo dõi giao dịch trong ngày
         self.daily_stats_file = logs_dir / f"daily_stats_{self.symbol.lower()}.json"  # File lưu số lệnh trong ngày
         self.daily_trades_count = 0                   # Đếm số lệnh đã mở hôm nay
@@ -1380,6 +1392,118 @@ class GoldAutoTrader:
             self._save_daily_stats()  # Lưu reset counter
             logger.info(f"🔄 Reset counter ngày mới. Cho phép {self.max_daily_trades} lệnh hôm nay")
     
+    def _update_trades_in_last_hour(self):
+        """Làm sạch danh sách trades trong 1 giờ qua - chỉ giữ lại những lệnh trong 1 giờ"""
+        now = datetime.now()
+        one_hour_ago = now - timedelta(hours=1)
+        self.trades_in_last_hour = [t for t in self.trades_in_last_hour if t > one_hour_ago]
+    
+    def _check_trades_per_hour_limit(self) -> bool:
+        """
+        Kiểm tra giới hạn số lệnh trong 1 giờ
+        
+        Returns:
+            True nếu còn có thể trade (< MAX_TRADES_PER_HOUR)
+        """
+        self._update_trades_in_last_hour()
+        
+        if len(self.trades_in_last_hour) >= self.max_trades_per_hour:
+            logger.warning(f"⚠️ Đã đạt giới hạn {self.max_trades_per_hour} lệnh/giờ. Đã trade: {len(self.trades_in_last_hour)}")
+            return False
+        
+        return True
+    
+    def _check_time_between_trades(self, order_type: str) -> bool:
+        """
+        Kiểm tra thời gian tối thiểu giữa các lệnh
+        
+        Args:
+            order_type: 'BUY' hoặc 'SELL'
+        
+        Returns:
+            True nếu đủ thời gian để mở lệnh
+        """
+        now = datetime.now()
+        
+        # 1. Kiểm tra cooldown sau khi thua
+        if self.last_loss_time:
+            time_since_loss = (now - self.last_loss_time).total_seconds()
+            if time_since_loss < self.cooldown_after_loss:
+                remaining = int((self.cooldown_after_loss - time_since_loss) / 60)
+                logger.warning(f"⏸️ Đang trong thời gian nghỉ sau khi thua: Còn {remaining} phút")
+                return False
+        
+        # 2. Nếu chưa có lệnh nào → Cho phép
+        if self.last_trade_time is None:
+            return True
+        
+        # 3. Tính thời gian từ lệnh cuối cùng
+        time_since_last_trade = (now - self.last_trade_time).total_seconds()
+        
+        # 4. Kiểm tra cùng chiều hay ngược chiều
+        if self.last_trade_type == order_type:
+            # Cùng chiều: Cần đợi MIN_TIME_BETWEEN_SAME_DIRECTION
+            if time_since_last_trade < self.min_time_same_direction:
+                remaining = int((self.min_time_same_direction - time_since_last_trade) / 60)
+                logger.warning(f"⏸️ Đã mở {order_type} gần đây: Còn {remaining} phút (cần {self.min_time_same_direction // 60} phút giữa 2 lệnh cùng chiều)")
+                return False
+        else:
+            # Ngược chiều: Cần đợi MIN_TIME_BETWEEN_OPPOSITE_DIRECTION
+            if time_since_last_trade < self.min_time_opposite_direction:
+                remaining = int((self.min_time_opposite_direction - time_since_last_trade) / 60)
+                logger.warning(f"⏸️ Đã mở {self.last_trade_type} gần đây: Còn {remaining} phút (cần {self.min_time_opposite_direction // 60} phút giữa 2 lệnh ngược chiều)")
+                return False
+        
+        return True
+    
+    def _check_recent_losses(self):
+        """
+        Kiểm tra deals history để tìm lệnh thua gần đây và cập nhật last_loss_time
+        """
+        try:
+            # Lấy deals trong 2 giờ qua (để đảm bảo không bỏ sót)
+            from_time = datetime.now() - timedelta(hours=2)
+            deals = mt5.history_deals_get(from_time, datetime.now(), group="*")
+            
+            if deals is None:
+                return
+            
+            # Tìm deals của bot (theo magic number) và có profit < 0 (thua)
+            for deal in deals:
+                if deal.magic == self.magic_number and deal.profit < 0:
+                    # Kiểm tra xem đây có phải là lệnh thua mới nhất không
+                    deal_time = datetime.fromtimestamp(deal.time)
+                    if self.last_loss_time is None or deal_time > self.last_loss_time:
+                        self.last_loss_time = deal_time
+                        logger.warning(f"💔 Phát hiện lệnh thua: Ticket {deal.position_id}, Profit: {deal.profit:.2f}, Time: {deal_time.strftime('%H:%M:%S')}")
+                        logger.info(f"⏸️ Bắt đầu cooldown 45 phút từ {deal_time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            logger.debug(f"Không thể kiểm tra recent losses: {e}")
+    
+    def _check_all_trade_rules(self, order_type: str) -> bool:
+        """
+        Kiểm tra tất cả các rule về thời gian trước khi mở lệnh
+        
+        Args:
+            order_type: 'BUY' hoặc 'SELL'
+        
+        Returns:
+            True nếu đủ điều kiện để mở lệnh
+        """
+        # Kiểm tra giới hạn lệnh trong ngày
+        if not self._check_daily_trade_limit():
+            return False
+        
+        # Kiểm tra giới hạn lệnh trong 1 giờ
+        if not self._check_trades_per_hour_limit():
+            return False
+        
+        # Kiểm tra thời gian giữa các lệnh
+        if not self._check_time_between_trades(order_type):
+            return False
+        
+        return True
+    
     def _check_daily_trade_limit(self) -> bool:
         """
         R3: Kiểm tra giới hạn số lệnh trong ngày
@@ -1461,8 +1585,8 @@ class GoldAutoTrader:
             logger.error(f"❌ DỪNG TRADE: Equity không an toàn ({current_equity:.2f})")
             return None
         
-        # R3: Kiểm tra giới hạn lệnh trong ngày
-        if not self._check_daily_trade_limit():
+        # Kiểm tra tất cả các rule về thời gian (ngày, giờ, thời gian giữa lệnh, cooldown)
+        if not self._check_all_trade_rules('BUY'):
             return None
         
         symbol_info = mt5.symbol_info(self.symbol)
@@ -1516,8 +1640,16 @@ class GoldAutoTrader:
         # Tăng counter và log CSV
         self.daily_trades_count += 1
         self._save_daily_stats()  # Lưu số lệnh vào file ngay sau khi tăng counter
+        
+        # Cập nhật tracking thời gian giao dịch
+        now = datetime.now()
+        self.last_trade_time = now
+        self.last_trade_type = 'BUY'
+        self.trades_in_last_hour.append(now)
+        
         logger.info(f"✅ Đã mở lệnh BUY {self.symbol} {lot:.2f} lots tại {price:.2f}, SL: {sl:.2f}, TP: {tp:.2f}")
         logger.info(f"📈 Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}")
+        logger.info(f"⏰ Tracking: Lệnh cuối = BUY lúc {now.strftime('%H:%M:%S')}, Tổng lệnh trong giờ: {len(self.trades_in_last_hour)}")
         
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'BUY', reason)
@@ -1562,8 +1694,8 @@ class GoldAutoTrader:
             logger.error(f"❌ DỪNG TRADE: Equity không an toàn ({current_equity:.2f})")
             return None
         
-        # R3: Kiểm tra giới hạn lệnh trong ngày
-        if not self._check_daily_trade_limit():
+        # Kiểm tra tất cả các rule về thời gian (ngày, giờ, thời gian giữa lệnh, cooldown)
+        if not self._check_all_trade_rules('SELL'):
             return None
         
         symbol_info = mt5.symbol_info(self.symbol)
@@ -1617,8 +1749,16 @@ class GoldAutoTrader:
         # Tăng counter và log CSV
         self.daily_trades_count += 1
         self._save_daily_stats()  # Lưu số lệnh vào file ngay sau khi tăng counter
+        
+        # Cập nhật tracking thời gian giao dịch
+        now = datetime.now()
+        self.last_trade_time = now
+        self.last_trade_type = 'SELL'
+        self.trades_in_last_hour.append(now)
+        
         logger.info(f"✅ Đã mở lệnh SELL {self.symbol} {lot:.2f} lots tại {price:.2f}, SL: {sl:.2f}, TP: {tp:.2f}")
         logger.info(f"📈 Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}")
+        logger.info(f"⏰ Tracking: Lệnh cuối = SELL lúc {now.strftime('%H:%M:%S')}, Tổng lệnh trong giờ: {len(self.trades_in_last_hour)}")
         
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'SELL', reason)
@@ -1670,6 +1810,11 @@ class GoldAutoTrader:
         logger.info(f"   - Tối đa {self.max_daily_trades} lệnh/ngày")
         logger.info(f"   - Equity an toàn: {self.min_equity_ratio*100}% Balance")
         logger.info(f"   - CSV log: {self.csv_log_file}")
+        logger.info(f"📋 Quy tắc thời gian giao dịch:")
+        logger.info(f"   - Thời gian tối thiểu giữa 2 lệnh cùng chiều: {self.min_time_same_direction // 60} phút")
+        logger.info(f"   - Thời gian tối thiểu giữa 2 lệnh ngược chiều: {self.min_time_opposite_direction // 60} phút")
+        logger.info(f"   - Giới hạn số lệnh trong 1 giờ: {self.max_trades_per_hour}")
+        logger.info(f"   - Nghỉ sau khi thua: {self.cooldown_after_loss // 60} phút")
         
         try:
             while True:
@@ -1680,6 +1825,9 @@ class GoldAutoTrader:
                     logger.info("⏸️  Bot sẽ tạm dừng. Chờ Equity cải thiện...")
                     time.sleep(interval_seconds * 5)  # Chờ lâu hơn nếu equity không an toàn
                     continue
+                
+                # Kiểm tra lệnh thua gần đây (để cập nhật cooldown)
+                self._check_recent_losses()
                 
                 # Kiểm tra số lượng vị thế hiện tại
                 positions = self.get_open_positions()

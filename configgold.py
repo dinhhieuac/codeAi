@@ -56,6 +56,25 @@ MIN_EQUITY_RATIO = 0.9         # Tỷ lệ Equity tối thiểu so với Balance
                                 # Đây là circuit breaker để bảo vệ tài khoản khỏi drawdown quá lớn
 
 # ============================================
+# Trading Time Rules - Quy tắc về thời gian giao dịch
+# ============================================
+MIN_TIME_BETWEEN_SAME_DIRECTION = 30 * 60  # Thời gian tối thiểu giữa 2 lệnh cùng chiều (30 phút = 1800 giây)
+                                            # Ví dụ: Đã mở BUY lúc 10:00 → Chỉ mở BUY tiếp theo sau 10:30
+                                            # Giúp tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
+
+MIN_TIME_BETWEEN_OPPOSITE_DIRECTION = 15 * 60  # Thời gian tối thiểu giữa 2 lệnh ngược chiều (15 phút = 900 giây)
+                                                # Ví dụ: Đã mở BUY lúc 10:00 → Có thể mở SELL sau 10:15 (nếu tín hiệu đảo mạnh)
+                                                # Cho phép đảo chiều nhanh hơn khi có tín hiệu đảo mạnh
+
+MAX_TRADES_PER_HOUR = 2        # Số lệnh tối đa trong 1 giờ (2 lệnh)
+                                # Bot sẽ đếm số lệnh đã mở trong 1 giờ qua và chặn nếu >= 2
+                                # Giúp kiểm soát tần suất giao dịch, tránh over-trading
+
+COOLDOWN_AFTER_LOSS = 45 * 60  # Thời gian nghỉ sau khi thua 1 lệnh (45 phút = 2700 giây)
+                                # Ví dụ: Đã thua 1 lệnh lúc 10:00 → Tạm dừng trade đến 10:45
+                                # Giúp tránh revenge trading (giao dịch để "trả thù" sau khi thua)
+
+# ============================================
 # Stop Loss / Take Profit Settings
 # ============================================
 # Cài đặt Stop Loss và Take Profit - Bảo vệ lợi nhuận và giới hạn thua lỗ
