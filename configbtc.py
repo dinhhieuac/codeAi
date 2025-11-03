@@ -155,7 +155,7 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 4        # ⚠️ TĂNG: Số lượng chỉ báo tối thiểu phải đồng thuận (Từ 3 lên 4)
+MIN_SIGNAL_STRENGTH = 2        # ⚠️ TĂNG: Số lượng chỉ báo tối thiểu phải đồng thuận (Từ 3 lên 4)
                                 # Ví dụ: 4 = cần ít nhất 4 chỉ báo cùng BUY mới mở lệnh BUY
                                 # Giá trị cao hơn (4-5) = ít lệnh nhưng chính xác hơn ✅
                                 # Giá trị thấp hơn (1-3) = nhiều lệnh nhưng nhiều false signal ❌
