@@ -559,8 +559,8 @@ class GoldAutoTrader:
         
         # Giá trị SL/TP cố định (chỉ dùng khi USE_ATR_SL_TP = False)
         try:
-            self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
-            self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
+        self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
+        self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
         except:
             self.fixed_sl_points = None
             self.fixed_tp_points = None
@@ -1193,16 +1193,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'BUY'
-                    final_strength = strong_buy_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
-                else:
+            if trend_ok or momentum_ok:
+                final_signal = 'BUY'
+                final_strength = strong_buy_signals
+                if not trend_ok and not momentum_ok:
+                    strong_reasons.append('Warning: No trend or momentum')
+            else:
                     missing = []
-                    if require_trend and not trend_ok:
+                if require_trend and not trend_ok:
                         missing.append('no trend')
-                    if require_momentum and not momentum_ok:
+                if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1228,16 +1228,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'SELL'
-                    final_strength = strong_sell_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
-                else:
+            if trend_ok or momentum_ok:
+                final_signal = 'SELL'
+                final_strength = strong_sell_signals
+                if not trend_ok and not momentum_ok:
+                    strong_reasons.append('Warning: No trend or momentum')
+            else:
                     missing = []
-                    if require_trend and not trend_ok:
+                if require_trend and not trend_ok:
                         missing.append('no trend')
-                    if require_momentum and not momentum_ok:
+                if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1314,16 +1314,27 @@ class GoldAutoTrader:
                 current_price = df['close'].iloc[-1]
                 min_sl_from_price = int((current_price * self.min_sl_percent) / point)
                 
-                # Log thông tin tính SL
+                # Log thông tin tính SL/TP trước khi điều chỉnh
                 sl_from_atr = sl_points
+                tp_from_atr = tp_points
+                
+                logger.info(f"📊 Tính SL/TP từ ATR:")
+                logger.info(f"   ATR hiện tại: {atr_current:.2f} (≈ {int(atr_current/point)} points)")
+                logger.info(f"   SL từ ATR: {atr_current:.2f} × {self.atr_sl_multiplier} / {point:.5f} = {sl_from_atr} points (≈ ${sl_from_atr:.0f})")
+                logger.info(f"   TP từ ATR: {atr_current:.2f} × {self.atr_tp_multiplier} / {point:.5f} = {tp_from_atr} points (≈ ${tp_from_atr:.0f})")
+                logger.info(f"   Giá hiện tại: ${current_price:.2f}")
+                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points (≈ ${min_sl_from_price:.0f})")
+                logger.info(f"   Giới hạn: SL = [{self.min_sl_points}, {self.max_sl_points}] points, TP = [{self.min_tp_points}, {self.max_tp_points}] points")
                 
                 # Giới hạn min/max - Đảm bảo SL không nhỏ hơn cả MIN_SL_POINTS và MIN_SL_PERCENT × giá
                 sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
                 tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
                 
-                # Log nếu SL được điều chỉnh
-                if sl_points != sl_from_atr:
-                    logger.debug(f"📊 SL điều chỉnh: {sl_from_atr} → {sl_points} points (min: {self.min_sl_points}, min từ giá: {min_sl_from_price})")
+                # Log sau khi điều chỉnh
+                logger.info(f"📊 SL/TP sau điều chỉnh:")
+                logger.info(f"   SL: {sl_from_atr} → {sl_points} points (≈ ${sl_points:.0f}, {sl_points/current_price*100:.2f}% giá)")
+                logger.info(f"   TP: {tp_from_atr} → {tp_points} points (≈ ${tp_points:.0f}, {tp_points/current_price*100:.2f}% giá)")
+                logger.info(f"   Risk:Reward Ratio: {tp_points/sl_points:.2f}:1")
         else:
             # Sử dụng giá trị cố định
             sl_points = self.fixed_sl_points
@@ -1346,7 +1357,7 @@ class GoldAutoTrader:
                 min_sl_from_price = int((current_price * self.min_sl_percent) / point)
                 sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
             else:
-                sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
+            sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
             
             tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
         
