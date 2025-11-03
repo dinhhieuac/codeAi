@@ -485,6 +485,142 @@ class TechnicalAnalyzer:
             'plus_di': plus_di,
             'minus_di': minus_di
         }
+    
+    def calculate_ma_slope(self, ma_series: pd.Series, periods: int = None) -> Tuple[float, bool]:
+        """
+        Tính slope (độ dốc) của Moving Average
+        
+        Args:
+            ma_series: Series của MA (ví dụ: MA20, MA50)
+            periods: Số nến để tính slope (mặc định từ config)
+        
+        Returns:
+            (slope_value, is_positive): Giá trị slope và True nếu slope dương
+        """
+        if periods is None:
+            periods = getattr(self.trader, 'ma_slope_periods', 5)
+        
+        if len(ma_series) < periods + 1:
+            return 0.0, False
+        
+        current_ma = ma_series.iloc[-1]
+        past_ma = ma_series.iloc[-(periods + 1)]
+        
+        if pd.isna(current_ma) or pd.isna(past_ma):
+            return 0.0, False
+        
+        # Slope = (MA hiện tại - MA N nến trước) / N
+        slope = (current_ma - past_ma) / periods
+        is_positive = slope > 0
+        
+        return slope, is_positive
+    
+    def check_macd_magnitude(self, macd_hist: float, threshold: float = None) -> Tuple[bool, str]:
+        """
+        Kiểm tra magnitude (độ lớn) của MACD histogram
+        
+        Args:
+            macd_hist: Giá trị MACD histogram hiện tại
+            threshold: Ngưỡng tối thiểu (mặc định từ config)
+        
+        Returns:
+            (is_strong, description): True nếu magnitude mạnh
+        """
+        if threshold is None:
+            threshold = getattr(self.trader, 'macd_magnitude_threshold', 0.5)
+        
+        if np.isnan(macd_hist):
+            return False, "MACD histogram invalid"
+        
+        magnitude = abs(macd_hist)
+        is_strong = magnitude >= threshold
+        
+        direction = "bullish" if macd_hist > 0 else "bearish"
+        description = f"MACD {direction} magnitude: {magnitude:.2f} ({'Strong' if is_strong else 'Weak'})"
+        
+        return is_strong, description
+    
+    def check_macd_persistence(self, macd_hist_series: pd.Series, periods: int = None) -> Tuple[bool, str]:
+        """
+        Kiểm tra persistence (tính bền vững) của MACD - MACD cùng chiều trong N nến liên tục
+        
+        Args:
+            macd_hist_series: Series của MACD histogram
+            periods: Số nến liên tục cần kiểm tra (mặc định từ config)
+        
+        Returns:
+            (is_persistent, description): True nếu MACD persistent
+        """
+        if periods is None:
+            periods = getattr(self.trader, 'macd_persistence_periods', 3)
+        
+        if len(macd_hist_series) < periods:
+            return False, f"Insufficient data for persistence check ({len(macd_hist_series)} < {periods})"
+        
+        # Lấy N nến cuối cùng
+        recent_hist = macd_hist_series.iloc[-periods:].values
+        
+        # Kiểm tra xem tất cả có cùng dấu không
+        all_positive = np.all(recent_hist > 0)
+        all_negative = np.all(recent_hist < 0)
+        
+        is_persistent = all_positive or all_negative
+        
+        if is_persistent:
+            direction = "bullish" if all_positive else "bearish"
+            description = f"MACD {direction} persistent ({periods} candles)"
+        else:
+            description = f"MACD not persistent (mixed signals in {periods} candles)"
+        
+        return is_persistent, description
+    
+    def check_bb_proximity(self, price: float, bb_lower: float, bb_upper: float, bb_middle: float, tolerance: float = None) -> Dict[str, any]:
+        """
+        Kiểm tra giá có gần Bollinger Bands không (để xác nhận counter-trend safe)
+        
+        Args:
+            price: Giá hiện tại
+            bb_lower: BB lower band
+            bb_upper: BB upper band
+            bb_middle: BB middle band
+            tolerance: Dung sai (% giá) để coi là "gần" BB (mặc định từ config)
+        
+        Returns:
+            Dict với thông tin proximity: {'near_lower', 'near_upper', 'proximity_pct', 'is_safe'}
+        """
+        if tolerance is None:
+            tolerance = getattr(self.trader, 'counter_trend_bb_proximity', 0.02)
+        
+        if np.isnan(bb_lower) or np.isnan(bb_upper) or np.isnan(bb_middle):
+            return {'near_lower': False, 'near_upper': False, 'proximity_pct': None, 'is_safe': False}
+        
+        # Tính % khoảng cách từ giá đến BB bands
+        distance_to_lower = abs(price - bb_lower) / bb_lower if bb_lower > 0 else float('inf')
+        distance_to_upper = abs(price - bb_upper) / bb_upper if bb_upper > 0 else float('inf')
+        
+        near_lower = distance_to_lower <= tolerance
+        near_upper = distance_to_upper <= tolerance
+        
+        # An toàn để counter-trend khi giá gần BB (oversold/overbought)
+        is_safe = near_lower or near_upper
+        
+        # Tính proximity % (khoảng cách đến BB gần nhất)
+        if near_lower:
+            proximity_pct = distance_to_lower * 100
+        elif near_upper:
+            proximity_pct = distance_to_upper * 100
+        else:
+            # Khoảng cách đến BB gần nhất
+            proximity_pct = min(distance_to_lower, distance_to_upper) * 100
+        
+        return {
+            'near_lower': near_lower,
+            'near_upper': near_upper,
+            'proximity_pct': proximity_pct,
+            'is_safe': is_safe,
+            'distance_to_lower': distance_to_lower,
+            'distance_to_upper': distance_to_upper
+        }
 
 
 class GoldAutoTrader:
@@ -640,6 +776,25 @@ class GoldAutoTrader:
         
         # Logic quyết định - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
         self.require_both_trend_and_momentum = REQUIRE_BOTH_TREND_AND_MOMENTUM if 'REQUIRE_BOTH_TREND_AND_MOMENTUM' in dir() else True
+        
+        # Advanced Trend/Momentum Analysis (từ configbtc.py)
+        self.use_ma_slope = globals().get('USE_MA_SLOPE', True)
+        self.ma_slope_periods = globals().get('MA_SLOPE_PERIODS', 5)
+        self.ma_slope_threshold = globals().get('MA_SLOPE_THRESHOLD', 0.001)
+        
+        self.use_macd_magnitude = globals().get('USE_MACD_MAGNITUDE', True)
+        self.macd_magnitude_threshold = globals().get('MACD_MAGNITUDE_THRESHOLD', 0.5)
+        
+        self.use_macd_persistence = globals().get('USE_MACD_PERSISTENCE', True)
+        self.macd_persistence_periods = globals().get('MACD_PERSISTENCE_PERIODS', 3)
+        
+        self.allow_adx_override = globals().get('ALLOW_ADX_OVERRIDE', True)
+        self.adx_override_macd_magnitude = globals().get('ADX_OVERRIDE_MACD_MAGNITUDE', 2.0)
+        
+        self.allow_counter_trend = globals().get('ALLOW_COUNTER_TREND', True)
+        self.counter_trend_min_volume = globals().get('COUNTER_TREND_MIN_VOLUME', 1.5)
+        self.counter_trend_bb_proximity = globals().get('COUNTER_TREND_BB_PROXIMITY', 0.02)
+        self.counter_trend_min_signals = globals().get('COUNTER_TREND_MIN_SIGNALS', 3)
         
         # Trading Settings - Cài đặt giao dịch
         self.interval_seconds = INTERVAL_SECONDS       # Thời gian chờ giữa các lần kiểm tra (30 giây)
@@ -965,8 +1120,10 @@ class GoldAutoTrader:
                         fib_reason = f'Price at Fibonacci {fib_level_hit} resistance (Downtrend - Moderate)'
         
         # 7. ADX Filter - Lọc Sideways Market (QUAN TRỌNG để giảm tỷ lệ thua)
+        # ⚠️ CẢI THIỆN: Thêm ADX Override rule khi momentum rất mạnh
         adx_data = None
         adx_ok = True  # Mặc định cho phép trade
+        adx_override = False  # Override ADX filter
         
         if self.use_adx_filter:
             adx_data = self.analyzer.calculate_adx(df)
@@ -977,7 +1134,16 @@ class GoldAutoTrader:
                 # ADX < threshold = Sideways → Chặn trade (giảm false signals)
                 adx_ok = (adx_current >= self.adx_min_threshold)
                 
-                if not adx_ok:
+                # ⚠️ MỚI: ADX Override - Cho phép override khi MACD magnitude RẤT mạnh
+                if not adx_ok and self.allow_adx_override:
+                    override_threshold = self.macd_magnitude_threshold * self.adx_override_macd_magnitude
+                    if macd_magnitude_strong and macd_magnitude_value >= override_threshold and macd_persistent:
+                        adx_override = True
+                        adx_ok = True  # Override: Cho phép trade dù ADX thấp
+                        strong_reasons.append(f'ADX Override: MACD magnitude {macd_magnitude_value:.2f} >= {override_threshold:.2f} + persistent')
+                        logger.info(f"⚠️ ADX Override: ADX={adx_current:.2f} < {self.adx_min_threshold} nhưng MACD magnitude={macd_magnitude_value:.2f} >= {override_threshold:.2f}")
+                
+                if not adx_ok and not adx_override:
                     logger.debug(f"⚠️ ADX thấp ({adx_current:.2f} < {self.adx_min_threshold}) - Sideways market, không trade")
             else:
                 adx_ok = True  # Nếu không tính được ADX, cho phép trade (fallback)
@@ -1049,23 +1215,55 @@ class GoldAutoTrader:
             else:
                 sell_count += 1
         
-        # CẢI THIỆN LOGIC QUYẾT ĐỊNH - Kiểm tra kỹ hơn để giảm false signals
+        # ⚠️ CẢI THIỆN LOGIC QUYẾT ĐỊNH - Advanced Trend/Momentum Analysis cho M15 Aggressive
         
-        # 1. Kiểm tra xu hướng từ Moving Averages (làm mềm điều kiện)
+        # 1. Kiểm tra xu hướng từ Moving Averages + MA Slope
         trend_buy = False
         trend_sell = False
+        ma_slope_20 = None
+        ma_slope_50 = None
+        ma_slope_strength = False
+        
         if not np.isnan(ma20) and not np.isnan(ma50):
-            # Xu hướng tăng: Price > MA20 > MA50 (không cần MA phải đang tăng)
+            # Xu hướng cơ bản: Price > MA20 > MA50
             trend_buy = (price > ma20 and ma20 > ma50)  # Uptrend
             trend_sell = (price < ma20 and ma20 < ma50)  # Downtrend
+            
+            # ⚠️ MỚI: Kiểm tra MA Slope (độ dốc) để xác nhận trend mạnh
+            if self.use_ma_slope:
+                ma_slope_20, slope_20_positive = self.analyzer.calculate_ma_slope(mas['MA_20'], self.ma_slope_periods)
+                ma_slope_50, slope_50_positive = self.analyzer.calculate_ma_slope(mas['MA_50'], self.ma_slope_periods)
+                
+                # Slope mạnh = slope >= threshold (% giá)
+                slope_20_strong = abs(ma_slope_20) >= (price * self.ma_slope_threshold) if not np.isnan(ma_slope_20) and ma_slope_20 is not None else False
+                slope_50_strong = abs(ma_slope_50) >= (price * self.ma_slope_threshold) if not np.isnan(ma_slope_50) and ma_slope_50 is not None else False
+                
+                # MA slope strength: cả MA20 và MA50 đều có slope mạnh và cùng chiều với trend
+                if trend_buy:
+                    ma_slope_strength = slope_20_positive and slope_50_positive and (slope_20_strong or slope_50_strong)
+                elif trend_sell:
+                    ma_slope_strength = not slope_20_positive and not slope_50_positive and (slope_20_strong or slope_50_strong)
         
-        # 2. Kiểm tra MACD momentum (phải có momentum rõ ràng)
+        # 2. Kiểm tra MACD momentum với Magnitude và Persistence
         macd_bullish = False
         macd_bearish = False
+        macd_magnitude_strong = False
+        macd_persistent = False
+        macd_magnitude_value = 0.0
+        
         if not np.isnan(macd_hist):
-            # MACD phải trên/below zero và tăng/giảm
+            # MACD cơ bản: trên/below zero và tăng/giảm
             macd_bullish = (macd_hist > 0 and macd > macd_signal)
             macd_bearish = (macd_hist < 0 and macd < macd_signal)
+            
+            # ⚠️ MỚI: Kiểm tra MACD Magnitude (độ lớn)
+            if self.use_macd_magnitude:
+                macd_magnitude_strong, macd_mag_desc = self.analyzer.check_macd_magnitude(macd_hist, self.macd_magnitude_threshold)
+                macd_magnitude_value = abs(macd_hist)
+            
+            # ⚠️ MỚI: Kiểm tra MACD Persistence (tính bền vững)
+            if self.use_macd_persistence:
+                macd_persistent, macd_persist_desc = self.analyzer.check_macd_persistence(macd_data['hist'], self.macd_persistence_periods)
         
         # 3. Kiểm tra RSI không ở vùng quá cực đoan
         rsi_extreme_buy = False
@@ -1088,21 +1286,41 @@ class GoldAutoTrader:
             strong_sell_signals += 1
             strong_reasons.append(f'RSI overbought ({rsi_current:.2f})')
         
-        # MACD - chỉ tính khi có momentum rõ ràng
+        # MACD - chỉ tính khi có momentum rõ ràng + magnitude/persistence check
         if macd_bullish and macd_hist > 0:
-            strong_buy_signals += 1
-            strong_reasons.append('MACD bullish momentum')
+            if self.use_macd_magnitude and macd_magnitude_strong:
+                strong_buy_signals += 1
+                strong_reasons.append(f'MACD bullish momentum (magnitude: {macd_magnitude_value:.2f})')
+            elif not self.use_macd_magnitude:
+                strong_buy_signals += 1
+                strong_reasons.append('MACD bullish momentum')
         elif macd_bearish and macd_hist < 0:
-            strong_sell_signals += 1
-            strong_reasons.append('MACD bearish momentum')
+            if self.use_macd_magnitude and macd_magnitude_strong:
+                strong_sell_signals += 1
+                strong_reasons.append(f'MACD bearish momentum (magnitude: {macd_magnitude_value:.2f})')
+            elif not self.use_macd_magnitude:
+                strong_sell_signals += 1
+                strong_reasons.append('MACD bearish momentum')
         
-        # MA Trend - chỉ tính khi xu hướng rõ ràng
+        # MA Trend - chỉ tính khi xu hướng rõ ràng + MA Slope check
         if trend_buy:
-            strong_buy_signals += 1
-            strong_reasons.append('Strong Uptrend (Price>MA20>MA50)')
+            if self.use_ma_slope and ma_slope_strength:
+                strong_buy_signals += 1
+                slope_20_str = f"{ma_slope_20:.2f}" if ma_slope_20 is not None else "N/A"
+                slope_50_str = f"{ma_slope_50:.2f}" if ma_slope_50 is not None else "N/A"
+                strong_reasons.append(f'Strong Uptrend + MA Slope (Price>MA20>MA50, Slope20={slope_20_str}, Slope50={slope_50_str})')
+            else:
+                strong_buy_signals += 1
+                strong_reasons.append('Strong Uptrend (Price>MA20>MA50)')
         elif trend_sell:
-            strong_sell_signals += 1
-            strong_reasons.append('Strong Downtrend (Price<MA20<MA50)')
+            if self.use_ma_slope and ma_slope_strength:
+                strong_sell_signals += 1
+                slope_20_str = f"{ma_slope_20:.2f}" if ma_slope_20 is not None else "N/A"
+                slope_50_str = f"{ma_slope_50:.2f}" if ma_slope_50 is not None else "N/A"
+                strong_reasons.append(f'Strong Downtrend + MA Slope (Price<MA20<MA50, Slope20={slope_20_str}, Slope50={slope_50_str})')
+            else:
+                strong_sell_signals += 1
+                strong_reasons.append('Strong Downtrend (Price<MA20<MA50)')
         
         # Bollinger Bands - giá chạm biên là signal mạnh (sửa logic)
         if not np.isnan(bb_lower) and not np.isnan(bb_upper):
@@ -1169,7 +1387,13 @@ class GoldAutoTrader:
             if not volume_ok:
                 strong_reasons.append('Volume thấp - tín hiệu không được xác nhận')
         
+        # ⚠️ MỚI: Kiểm tra BB Proximity cho counter-trend safety
+        bb_proximity = None
+        if self.allow_counter_trend:
+            bb_proximity = self.analyzer.check_bb_proximity(price, bb_lower, bb_upper, bb_middle, self.counter_trend_bb_proximity)
+        
         # ⚠️ QUAN TRỌNG: Chỉ trade khi ADX OK (có trend) và Volume OK
+        # HOẶC Counter-trend nếu đủ điều kiện an toàn
         if strong_buy_signals >= self.min_signal_strength and adx_ok and volume_ok:
             # Kiểm tra điều kiện bổ sung
             trend_ok = not require_trend or trend_buy
@@ -1180,30 +1404,50 @@ class GoldAutoTrader:
             # False = Chỉ cần 1 trong 2 (OR logic) → Nhiều cơ hội nhưng có thể thua nhiều hơn
             require_both = getattr(self, 'require_both_trend_and_momentum', True)
             
-            if require_both:
-                # CẦN CẢ trend VÀ momentum (AND logic)
-                if trend_ok and momentum_ok:
+            # ⚠️ MỚI: Kiểm tra Counter-trend (Trend và Momentum mâu thuẫn)
+            is_counter_trend = False
+            if self.allow_counter_trend and not trend_ok and momentum_ok:
+                # Counter-trend BUY: Trend down nhưng momentum up mạnh
+                # Điều kiện an toàn:
+                # 1. Volume cao (>= COUNTER_TREND_MIN_VOLUME)
+                # 2. Giá gần BB lower (oversold)
+                # 3. Đủ signals (>= COUNTER_TREND_MIN_SIGNALS)
+                volume_high = volume_data and volume_data.get('volume_ratio', 0) >= self.counter_trend_min_volume if volume_data else False
+                bb_safe = bb_proximity and bb_proximity.get('is_safe', False) and bb_proximity.get('near_lower', False) if bb_proximity else False
+                enough_signals = strong_buy_signals >= self.counter_trend_min_signals
+                
+                if volume_high and bb_safe and enough_signals:
+                    is_counter_trend = True
                     final_signal = 'BUY'
                     final_strength = strong_buy_signals
+                    strong_reasons.append(f'Counter-trend BUY: Momentum override (Volume={volume_data.get("volume_ratio", 0):.2f}x, BB proximity={bb_proximity.get("proximity_pct", 0):.2f}%)')
+                    logger.info(f"⚠️ Counter-trend BUY: Trend down nhưng momentum up mạnh + Volume cao + BB proximity")
+            
+            if not is_counter_trend:
+                if require_both:
+                    # CẦN CẢ trend VÀ momentum (AND logic)
+                    if trend_ok and momentum_ok:
+                        final_signal = 'BUY'
+                        final_strength = strong_buy_signals
+                    else:
+                        missing = []
+                        if require_trend and not trend_ok:
+                            missing.append('no trend')
+                        if require_momentum and not momentum_ok:
+                            missing.append('no momentum')
+                        strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
                 else:
-                    missing = []
-                    if require_trend and not trend_ok:
-                        missing.append('no trend')
-                    if require_momentum and not momentum_ok:
-                        missing.append('no momentum')
-                    strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
-            else:
-                # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'BUY'
-                    final_strength = strong_buy_signals
-                else:
-                    missing = []
-                    if require_trend and not trend_ok:
-                        missing.append('no trend')
-                    if require_momentum and not momentum_ok:
-                        missing.append('no momentum')
-                    strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
+                    # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
+                    if trend_ok or momentum_ok:
+                        final_signal = 'BUY'
+                        final_strength = strong_buy_signals
+                    else:
+                        missing = []
+                        if require_trend and not trend_ok:
+                            missing.append('no trend')
+                        if require_momentum and not momentum_ok:
+                            missing.append('no momentum')
+                        strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
         elif strong_sell_signals >= self.min_signal_strength and adx_ok and volume_ok:
             # Kiểm tra điều kiện bổ sung
@@ -1213,30 +1457,50 @@ class GoldAutoTrader:
             # ⚠️ THAY ĐỔI: REQUIRE_BOTH_TREND_AND_MOMENTUM
             require_both = getattr(self, 'require_both_trend_and_momentum', True)
             
-            if require_both:
-                # CẦN CẢ trend VÀ momentum (AND logic)
-                if trend_ok and momentum_ok:
+            # ⚠️ MỚI: Kiểm tra Counter-trend (Trend và Momentum mâu thuẫn)
+            is_counter_trend = False
+            if self.allow_counter_trend and not trend_ok and momentum_ok:
+                # Counter-trend SELL: Trend up nhưng momentum down mạnh
+                # Điều kiện an toàn:
+                # 1. Volume cao (>= COUNTER_TREND_MIN_VOLUME)
+                # 2. Giá gần BB upper (overbought)
+                # 3. Đủ signals (>= COUNTER_TREND_MIN_SIGNALS)
+                volume_high = volume_data and volume_data.get('volume_ratio', 0) >= self.counter_trend_min_volume if volume_data else False
+                bb_safe = bb_proximity and bb_proximity.get('is_safe', False) and bb_proximity.get('near_upper', False) if bb_proximity else False
+                enough_signals = strong_sell_signals >= self.counter_trend_min_signals
+                
+                if volume_high and bb_safe and enough_signals:
+                    is_counter_trend = True
                     final_signal = 'SELL'
                     final_strength = strong_sell_signals
+                    strong_reasons.append(f'Counter-trend SELL: Momentum override (Volume={volume_data.get("volume_ratio", 0):.2f}x, BB proximity={bb_proximity.get("proximity_pct", 0):.2f}%)')
+                    logger.info(f"⚠️ Counter-trend SELL: Trend up nhưng momentum down mạnh + Volume cao + BB proximity")
+            
+            if not is_counter_trend:
+                if require_both:
+                    # CẦN CẢ trend VÀ momentum (AND logic)
+                    if trend_ok and momentum_ok:
+                        final_signal = 'SELL'
+                        final_strength = strong_sell_signals
+                    else:
+                        missing = []
+                        if require_trend and not trend_ok:
+                            missing.append('no trend')
+                        if require_momentum and not momentum_ok:
+                            missing.append('no momentum')
+                        strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
                 else:
-                    missing = []
-                    if require_trend and not trend_ok:
-                        missing.append('no trend')
-                    if require_momentum and not momentum_ok:
-                        missing.append('no momentum')
-                    strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
-            else:
-                # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'SELL'
-                    final_strength = strong_sell_signals
-                else:
-                    missing = []
-                    if require_trend and not trend_ok:
-                        missing.append('no trend')
-                    if require_momentum and not momentum_ok:
-                        missing.append('no momentum')
-                    strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
+                    # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
+                    if trend_ok or momentum_ok:
+                        final_signal = 'SELL'
+                        final_strength = strong_sell_signals
+                    else:
+                        missing = []
+                        if require_trend and not trend_ok:
+                            missing.append('no trend')
+                        if require_momentum and not momentum_ok:
+                            missing.append('no momentum')
+                        strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
         return {
             'signal': final_signal,
@@ -1259,6 +1523,7 @@ class GoldAutoTrader:
             'adx': {
                 'value': adx_data['adx'].iloc[-1] if (adx_data is not None and len(adx_data['adx']) > 0 and not pd.isna(adx_data['adx'].iloc[-1])) else None,
                 'is_strong_trend': adx_ok,
+                'override': adx_override if self.use_adx_filter else False,
                 'plus_di': adx_data['plus_di'].iloc[-1] if (adx_data is not None and len(adx_data['plus_di']) > 0 and not pd.isna(adx_data['plus_di'].iloc[-1])) else None,
                 'minus_di': adx_data['minus_di'].iloc[-1] if (adx_data is not None and len(adx_data['minus_di']) > 0 and not pd.isna(adx_data['minus_di'].iloc[-1])) else None
             } if self.use_adx_filter else None,
@@ -1266,7 +1531,19 @@ class GoldAutoTrader:
                 'signal': sr_signal,
                 'reason': sr_reason,
                 'zone_type': sr_check.get('zone_type') if use_sr_analysis else None
-            } if self.use_support_resistance else None
+            } if self.use_support_resistance else None,
+            # ⚠️ MỚI: Thông tin MA Slope và MACD Magnitude/Persistence
+            'ma_slope': {
+                'ma20_slope': ma_slope_20,
+                'ma50_slope': ma_slope_50,
+                'strength': ma_slope_strength
+            } if self.use_ma_slope else None,
+            'macd_advanced': {
+                'magnitude_strong': macd_magnitude_strong,
+                'magnitude_value': macd_magnitude_value,
+                'persistent': macd_persistent
+            } if (self.use_macd_magnitude or self.use_macd_persistence) else None,
+            'bb_proximity': bb_proximity if self.allow_counter_trend else None
         }
     
     def calculate_risk_parameters(self, df: pd.DataFrame) -> Tuple[float, float, float]:
