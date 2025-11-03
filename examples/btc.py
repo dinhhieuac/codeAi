@@ -730,7 +730,7 @@ class GoldAutoTrader:
             True nếu gửi thành công, False nếu thất bại
         """
         if not self.use_telegram:
-            logger.warning("⚠️ Telegram notifications đã bị tắt (USE_TELEGRAM_NOTIFICATIONS = False)")
+            # Telegram đã tắt có chủ ý - không log warning, chỉ return False im lặng
             return False
         
         if not self.telegram_bot_token or not self.telegram_chat_id:
@@ -1339,12 +1339,67 @@ class GoldAutoTrader:
         
         return True, current_equity
     
+    def _load_daily_stats(self):
+        """
+        Load số lệnh đã trade trong ngày từ file JSON
+        Sử dụng khi bot start lại để tiếp tục đếm từ số lệnh đã trade trước đó
+        """
+        today_str = date.today().isoformat()
+        
+        if self.daily_stats_file.exists():
+            try:
+                with open(self.daily_stats_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    saved_date = data.get('date', '')
+                    saved_count = data.get('count', 0)
+                    
+                    if saved_date == today_str:
+                        # Cùng ngày: Load số lệnh đã trade
+                        self.daily_trades_count = saved_count
+                        self.last_trade_date = date.today()
+                        logger.info(f"📥 Đã load số lệnh trong ngày: {self.daily_trades_count}/{self.max_daily_trades} (từ file)")
+                    else:
+                        # Khác ngày: Reset về 0
+                        self.daily_trades_count = 0
+                        self.last_trade_date = date.today()
+                        self._save_daily_stats()  # Save ngày mới
+                        logger.info(f"🔄 Sang ngày mới ({today_str}). Reset counter về 0")
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể load daily stats: {e}. Sử dụng giá trị mặc định (0)")
+                self.daily_trades_count = 0
+                self.last_trade_date = date.today()
+        else:
+            # File chưa tồn tại: Khởi tạo mới
+            self.daily_trades_count = 0
+            self.last_trade_date = date.today()
+            self._save_daily_stats()
+            logger.info(f"📝 Tạo file daily stats mới: {self.daily_stats_file}")
+    
+    def _save_daily_stats(self):
+        """
+        Lưu số lệnh đã trade trong ngày vào file JSON
+        """
+        try:
+            data = {
+                'date': date.today().isoformat(),
+                'count': self.daily_trades_count,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            with open(self.daily_stats_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            logger.debug(f"💾 Đã lưu daily stats: {self.daily_trades_count} lệnh (ngày {data['date']})")
+        except Exception as e:
+            logger.error(f"❌ Không thể lưu daily stats: {e}")
+    
     def _reset_daily_counter(self):
         """Reset daily trade counter nếu sang ngày mới"""
         today = date.today()
         if self.last_trade_date != today:
             self.daily_trades_count = 0
             self.last_trade_date = today
+            self._save_daily_stats()  # Lưu reset counter
             logger.info(f"🔄 Reset counter ngày mới. Cho phép {self.max_daily_trades} lệnh hôm nay")
     
     def _check_daily_trade_limit(self) -> bool:
@@ -1482,6 +1537,7 @@ class GoldAutoTrader:
         
         # Tăng counter và log CSV
         self.daily_trades_count += 1
+        self._save_daily_stats()  # Lưu số lệnh vào file ngay sau khi tăng counter
         logger.info(f"✅ Đã mở lệnh BUY {self.symbol} {lot:.2f} lots tại {price:.2f}, SL: {sl:.2f}, TP: {tp:.2f}")
         logger.info(f"📈 Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}")
         
@@ -1510,7 +1566,8 @@ class GoldAutoTrader:
                     f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
                 )
                 telegram_success = self.send_telegram_message(message)
-                if not telegram_success:
+                # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
+                if not telegram_success and self.use_telegram:
                     logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh BUY")
             except Exception as e:
                 logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
@@ -1610,7 +1667,8 @@ class GoldAutoTrader:
                     f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
                 )
                 telegram_success = self.send_telegram_message(message)
-                if not telegram_success:
+                # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
+                if not telegram_success and self.use_telegram:
                     logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh SELL")
             except Exception as e:
                 logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
