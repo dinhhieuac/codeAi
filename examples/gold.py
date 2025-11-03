@@ -712,7 +712,7 @@ class GoldAutoTrader:
             True nếu gửi thành công, False nếu thất bại
         """
         if not self.use_telegram:
-            logger.warning("⚠️ Telegram notifications đã bị tắt (USE_TELEGRAM_NOTIFICATIONS = False)")
+            # Telegram đã tắt có chủ ý - không log warning, chỉ return False im lặng
             return False
         
         if not self.telegram_bot_token or not self.telegram_chat_id:
@@ -1540,7 +1540,8 @@ class GoldAutoTrader:
                     f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
                 )
                 telegram_success = self.send_telegram_message(message)
-                if not telegram_success:
+                # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
+                if not telegram_success and self.use_telegram:
                     logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh BUY")
             except Exception as e:
                 logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
@@ -1640,7 +1641,8 @@ class GoldAutoTrader:
                     f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
                 )
                 telegram_success = self.send_telegram_message(message)
-                if not telegram_success:
+                # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
+                if not telegram_success and self.use_telegram:
                     logger.warning(f"⚠️ Không thể gửi thông báo Telegram cho lệnh SELL")
             except Exception as e:
                 logger.error(f"❌ Lỗi khi chuẩn bị gửi Telegram: {e}", exc_info=True)
