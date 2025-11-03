@@ -118,6 +118,31 @@ RISK_REWARD_RATIO = 2.0        # Tỷ lệ Risk:Reward nếu dùng cố định 
                                 # Chỉ có hiệu lực khi USE_RISK_REWARD_RATIO = True
 
 # ============================================
+# Advanced SL/TP Methods - Các phương pháp tính SL/TP từ chỉ báo kỹ thuật
+# ============================================
+# Bổ sung thêm các phương pháp tính SL/TP dựa trên các chỉ báo kỹ thuật khác
+
+# Phương pháp tính SL/TP (ưu tiên từ trên xuống)
+USE_SR_BASED_SL_TP = False      # True: Dùng Support/Resistance làm SL/TP
+                                # Ví dụ: BUY → SL tại Support gần nhất, TP tại Resistance gần nhất
+                                # False: Dùng ATR (mặc định)
+
+USE_BB_BASED_SL_TP = False     # True: Dùng Bollinger Bands làm SL/TP
+                                # Ví dụ: BUY → SL tại BB lower, TP tại BB middle hoặc upper
+                                # False: Dùng ATR (mặc định)
+
+USE_FIB_BASED_SL_TP = False    # True: Dùng Fibonacci levels làm SL/TP
+                                # Ví dụ: BUY tại FIB_618 → SL tại FIB_786, TP tại FIB_382
+                                # False: Dùng ATR (mặc định)
+
+USE_RECENT_HL_SL_TP = False    # True: Dùng Recent High/Low làm SL/TP
+                                # Ví dụ: BUY → SL tại Low của nến trước, TP tại High của nến trước
+                                # False: Dùng ATR (mặc định)
+
+# Lưu ý: Các phương pháp trên chỉ hoạt động khi USE_ATR_SL_TP = True
+# Nếu USE_ATR_SL_TP = False, sẽ dùng giá trị cố định (FIXED_SL_POINTS, FIXED_TP_POINTS)
+
+# ============================================
 # Technical Analysis Settings
 # ============================================
 # Cài đặt các chỉ báo kỹ thuật để phân tích thị trường
