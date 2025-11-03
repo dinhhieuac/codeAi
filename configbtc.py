@@ -65,30 +65,38 @@ USE_ATR_SL_TP = True           # True: Dùng ATR (Average True Range) để tín
 
 # Hệ số nhân ATR để tính SL/TP (chỉ dùng khi USE_ATR_SL_TP = True)
 # Với BTC, ATR thường nhỏ nên ta nhân hệ số lớn hơn so với forex
-ATR_SL_MULTIPLIER = 6.0        # Hệ số nhân ATR cho Stop Loss: SL = 6.0 × ATR
+ATR_SL_MULTIPLIER = 10.0       # ⚠️ TĂNG: Hệ số nhân ATR cho Stop Loss: SL = 10.0 × ATR (từ 6.0)
                                 # Giá trị cao hơn = SL xa hơn = ít bị stop loss sớm (whipsaw)
-                                # Với BTC volatile: 6.0-8.0 là hợp lý
+                                # Với BTC volatile cao: 8.0-12.0 là hợp lý để tránh cắt lỗ sớm
 
-ATR_TP_MULTIPLIER = 10.0       # Hệ số nhân ATR cho Take Profit: TP = 10.0 × ATR
-                                # Risk:Reward Ratio ≈ (10.0 / 6.0) = 1.67:1
-                                # Tức là nếu risk $100 thì reward $167
+ATR_TP_MULTIPLIER = 15.0       # ⚠️ TĂNG: Hệ số nhân ATR cho Take Profit: TP = 15.0 × ATR (từ 10.0)
+                                # Risk:Reward Ratio ≈ (15.0 / 10.0) = 1.5:1
+                                # Tức là nếu risk $100 thì reward $150
+                                # Tỷ lệ RR hợp lý, không quá tham lam
 
 # Giới hạn SL/TP bằng points (đơn vị nhỏ nhất của giá)
-# Với BTCUSD: giá ~100,000 → 1 point = 1 USD
-# Ví dụ: SL 800 points = $800, TP 1600 points = $1600
-MIN_SL_POINTS = 800            # Stop Loss tối thiểu (points) - Áp dụng khi ATR tính ra quá nhỏ
-                                # Nếu ATR × ATR_SL_MULTIPLIER < 800, sẽ dùng 800 points
-                                # Đảm bảo SL không quá chặt, tránh bị cắt lỗ sớm
+# Với BTCUSD: giá ~60,000-100,000 → 1 point = 1 USD
+# Ví dụ: SL 2000 points = $2000 (~2-3% giá), TP 3000 points = $3000
+MIN_SL_POINTS = 2000           # ⚠️ TĂNG: Stop Loss tối thiểu (points) - Từ 800 lên 2000
+                                # Nếu ATR × ATR_SL_MULTIPLIER < 2000, sẽ dùng 2000 points
+                                # Đảm bảo SL không quá chặt, tránh bị cắt lỗ sớm do noise
+                                # Với BTC giá ~$80,000: 2000 points = $2000 = ~2.5% giá (hợp lý)
 
-MAX_SL_POINTS = 5000           # Stop Loss tối đa (points) - Giới hạn trên
-                                # Nếu ATR × ATR_SL_MULTIPLIER > 5000, sẽ dùng 5000 points
-                                # Ngăn SL quá xa, risk quá lớn
+MAX_SL_POINTS = 8000           # ⚠️ TĂNG: Stop Loss tối đa (points) - Từ 5000 lên 8000
+                                # Nếu ATR × ATR_SL_MULTIPLIER > 8000, sẽ dùng 8000 points
+                                # Cho phép SL xa hơn khi volatility cao
 
-MIN_TP_POINTS = 1600           # Take Profit tối thiểu (points)
-                                # Nếu ATR × ATR_TP_MULTIPLIER < 1600, sẽ dùng 1600 points
+MIN_TP_POINTS = 3000           # ⚠️ TĂNG: Take Profit tối thiểu (points) - Từ 1600 lên 3000
+                                # Nếu ATR × ATR_TP_MULTIPLIER < 3000, sẽ dùng 3000 points
+                                # Đảm bảo có đủ reward để justify risk
 
-MAX_TP_POINTS = 10000          # Take Profit tối đa (points)
-                                # Giới hạn trên cho TP, tránh mục tiêu quá xa (khó đạt)
+MAX_TP_POINTS = 15000          # ⚠️ TĂNG: Take Profit tối đa (points) - Từ 10000 lên 15000
+                                # Giới hạn trên cho TP, cho phép mục tiêu cao hơn khi trend mạnh
+
+# ⚠️ MỚI: SL tối thiểu dựa trên % giá (để đảm bảo SL không quá gần)
+MIN_SL_PERCENT = 0.018         # SL tối thiểu = 1.8% giá (ví dụ: giá $80,000 → SL tối thiểu $1,440)
+                                # Nếu SL tính từ ATR < MIN_SL_PERCENT × giá, sẽ dùng MIN_SL_PERCENT
+                                # Giúp tránh SL quá gần, dễ bị noise cắt lỗ
 
 # Risk:Reward Ratio cố định (chỉ dùng khi USE_RISK_REWARD_RATIO = True)
 USE_RISK_REWARD_RATIO = False  # True: Dùng RR cố định (TP = SL × RISK_REWARD_RATIO)
@@ -147,11 +155,11 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 3        # Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (TĂNG từ 2 lên 3)
-                                # Ví dụ: 3 = cần ít nhất 3 chỉ báo cùng BUY mới mở lệnh BUY
-                                # Giá trị cao hơn (3-4) = ít lệnh nhưng chính xác hơn ✅
-                                # Giá trị thấp hơn (1-2) = nhiều lệnh nhưng nhiều false signal ❌
-                                # ⚠️ ĐÃ TĂNG để giảm false signals và tăng win rate
+MIN_SIGNAL_STRENGTH = 4        # ⚠️ TĂNG: Số lượng chỉ báo tối thiểu phải đồng thuận (Từ 3 lên 4)
+                                # Ví dụ: 4 = cần ít nhất 4 chỉ báo cùng BUY mới mở lệnh BUY
+                                # Giá trị cao hơn (4-5) = ít lệnh nhưng chính xác hơn ✅
+                                # Giá trị thấp hơn (1-3) = nhiều lệnh nhưng nhiều false signal ❌
+                                # ⚠️ TĂNG lên 4 để giảm false signals và tăng win rate
 
 REQUIRE_TREND_CONFIRMATION = True  # True: Yêu cầu xu hướng từ MA phải đồng thuận
                                     # Ví dụ: BUY signal chỉ được chấp nhận nếu Price > MA20 > MA50
@@ -243,9 +251,10 @@ USE_ADX_FILTER = True          # ⚠️ MỚI: Sử dụng ADX để lọc sidew
 
 ADX_PERIOD = 14                # Chu kỳ tính ADX (14 là chuẩn)
 
-ADX_MIN_THRESHOLD = 25         # Ngưỡng ADX tối thiểu để cho phép trade
-                                # ADX >= 25 = Trend mạnh, cho phép trade
-                                # ADX < 25 = Sideways, chặn trade (giảm false signals)
+ADX_MIN_THRESHOLD = 30         # ⚠️ TĂNG: Ngưỡng ADX tối thiểu để cho phép trade (Từ 25 lên 30)
+                                # ADX >= 30 = Trend rất mạnh, cho phép trade
+                                # ADX < 30 = Sideways hoặc trend yếu, chặn trade (giảm false signals)
+                                # Tăng ngưỡng để chỉ trade khi trend RẤT rõ ràng
 
 ADX_STRONG_TREND = 40          # ADX >= 40 = Trend rất mạnh (ưu tiên cao hơn)
                                 # Có thể điều chỉnh logic để ưu tiên khi ADX rất cao
@@ -311,6 +320,24 @@ ORDER_FILLING = "IOC"          # Loại điền lệnh: "IOC" (Immediate or Canc
 ORDER_TIME = "GTC"             # Thời gian hiệu lực lệnh: "GTC" (Good Till Cancel - đến khi hủy)
                                 # Hoặc "DAY" (chỉ hiệu lực trong ngày)
                                 # GTC: Lệnh tồn tại cho đến khi đóng thủ công hoặc đạt SL/TP
+
+# ============================================
+# Telegram Notifications Settings
+# ============================================
+USE_TELEGRAM_NOTIFICATIONS = True  # True: Gửi thông báo Telegram khi mở/đóng lệnh
+                                    # False: Tắt thông báo Telegram
+
+TELEGRAM_BOT_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
+                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+
+TELEGRAM_CHAT_ID = "1887610382"           # Chat ID để nhận thông báo (có thể là user ID hoặc group ID)
+                                # Lấy chat ID: Gửi message cho bot @userinfobot hoặc thêm bot vào group
+                                # Ví dụ: "123456789" (user) hoặc "-1001234567890" (group)
+
+# Format thông báo Telegram
+TELEGRAM_SEND_ON_ORDER_OPEN = True      # Gửi thông báo khi mở lệnh
+TELEGRAM_SEND_ON_ORDER_CLOSE = False    # Gửi thông báo khi đóng lệnh (có thể bật sau)
 
 # ============================================
 # Helper: Convert timeframe string sang MT5 constant

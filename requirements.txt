@@ -17,6 +17,9 @@ python-telegram-bot>=20.0
 # Utilities
 python-dotenv>=1.0.0  # For environment variables
 
+# HTTP requests (for Telegram notifications)
+requests>=2.28.0  # For sending Telegram messages
+
 # Logging and monitoring
 colorlog>=6.7.0  # Colored logs (optional)
 

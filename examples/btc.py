@@ -13,6 +13,7 @@ import csv
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Tuple
+import requests
 
 # Import config
 script_dir = Path(__file__).parent.parent
@@ -177,7 +178,7 @@ class TechnicalAnalyzer:
         k = 100 * ((df['close'] - low_min) / (high_max - low_min))
         d = k.rolling(window=d_period).mean()
         return {'k': k, 'd': d}
-    
+
     def calculate_fibonacci_levels(self, df: pd.DataFrame, lookback: int = None) -> Dict[str, any]:
         """
         Tính Fibonacci Retracement levels từ swing high/low
@@ -557,17 +558,20 @@ class GoldAutoTrader:
         
         # Giá trị SL/TP cố định (chỉ dùng khi USE_ATR_SL_TP = False)
         try:
-            self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
-            self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
+        self.fixed_sl_points = FIXED_SL_POINTS if not USE_ATR_SL_TP else None
+        self.fixed_tp_points = FIXED_TP_POINTS if not USE_ATR_SL_TP else None
         except:
             self.fixed_sl_points = None
             self.fixed_tp_points = None
         
         # Giới hạn min/max cho SL/TP (points)
-        self.min_sl_points = MIN_SL_POINTS             # SL tối thiểu (800 points)
-        self.max_sl_points = MAX_SL_POINTS             # SL tối đa (5000 points)
-        self.min_tp_points = MIN_TP_POINTS             # TP tối thiểu (1600 points)
-        self.max_tp_points = MAX_TP_POINTS             # TP tối đa (10000 points)
+        self.min_sl_points = MIN_SL_POINTS             # SL tối thiểu (2000 points)
+        self.max_sl_points = MAX_SL_POINTS             # SL tối đa (8000 points)
+        self.min_tp_points = MIN_TP_POINTS             # TP tối thiểu (3000 points)
+        self.max_tp_points = MAX_TP_POINTS             # TP tối đa (15000 points)
+        
+        # SL tối thiểu dựa trên % giá (để đảm bảo SL không quá gần)
+        self.min_sl_percent = MIN_SL_PERCENT if 'MIN_SL_PERCENT' in dir() else 0.018  # 1.8% giá
         
         # Risk:Reward Ratio (chỉ dùng khi USE_RISK_REWARD_RATIO = True)
         self.use_risk_reward_ratio = USE_RISK_REWARD_RATIO if 'USE_RISK_REWARD_RATIO' in dir() else False
@@ -651,6 +655,13 @@ class GoldAutoTrader:
         self.csv_log_file = logs_dir / Path(CSV_LOG_FILE).name
         self._init_csv_log()
         
+        # Telegram Notifications Settings (từ config)
+        self.use_telegram = USE_TELEGRAM_NOTIFICATIONS if 'USE_TELEGRAM_NOTIFICATIONS' in dir() else False
+        self.telegram_bot_token = TELEGRAM_BOT_TOKEN if 'TELEGRAM_BOT_TOKEN' in dir() else ""
+        self.telegram_chat_id = TELEGRAM_CHAT_ID if 'TELEGRAM_CHAT_ID' in dir() else ""
+        self.telegram_send_on_open = TELEGRAM_SEND_ON_ORDER_OPEN if 'TELEGRAM_SEND_ON_ORDER_OPEN' in dir() else True
+        self.telegram_send_on_close = TELEGRAM_SEND_ON_ORDER_CLOSE if 'TELEGRAM_SEND_ON_ORDER_CLOSE' in dir() else False
+        
         # Khởi tạo TechnicalAnalyzer sau khi đã có config
         self.analyzer = TechnicalAnalyzer(self)
         
@@ -702,6 +713,44 @@ class GoldAutoTrader:
         
         logger.info(f"✅ Symbol {self.symbol} đã sẵn sàng")
         return True
+    
+    def send_telegram_message(self, message: str) -> bool:
+        """
+        Gửi thông báo qua Telegram
+        
+        Args:
+            message: Nội dung tin nhắn cần gửi
+            
+        Returns:
+            True nếu gửi thành công, False nếu thất bại
+        """
+        if not self.use_telegram:
+            return False
+        
+        if not self.telegram_bot_token or not self.telegram_chat_id:
+            logger.debug("Telegram chưa được cấu hình (thiếu BOT_TOKEN hoặc CHAT_ID)")
+            return False
+        
+        try:
+            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            payload = {
+                "chat_id": self.telegram_chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            
+            logger.debug(f"✅ Đã gửi thông báo Telegram")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️ Không thể gửi thông báo Telegram: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Lỗi khi gửi Telegram: {e}")
+            return False
     
     def get_historical_data(self, timeframe: int = None, bars: int = None) -> Optional[pd.DataFrame]:
         """Lấy dữ liệu lịch sử"""
@@ -1058,16 +1107,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'BUY'
-                    final_strength = strong_buy_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
-                else:
+            if trend_ok or momentum_ok:
+                final_signal = 'BUY'
+                final_strength = strong_buy_signals
+                if not trend_ok and not momentum_ok:
+                    strong_reasons.append('Warning: No trend or momentum')
+            else:
                     missing = []
-                    if require_trend and not trend_ok:
+                if require_trend and not trend_ok:
                         missing.append('no trend')
-                    if require_momentum and not momentum_ok:
+                if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1093,16 +1142,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-                if trend_ok or momentum_ok:
-                    final_signal = 'SELL'
-                    final_strength = strong_sell_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
-                else:
+            if trend_ok or momentum_ok:
+                final_signal = 'SELL'
+                final_strength = strong_sell_signals
+                if not trend_ok and not momentum_ok:
+                    strong_reasons.append('Warning: No trend or momentum')
+            else:
                     missing = []
-                    if require_trend and not trend_ok:
+                if require_trend and not trend_ok:
                         missing.append('no trend')
-                    if require_momentum and not momentum_ok:
+                if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1175,9 +1224,20 @@ class GoldAutoTrader:
                     # Tính TP từ ATR
                     tp_points = int((self.atr_tp_multiplier * atr_current) / point)
                 
-                # Giới hạn min/max
-                sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
+                # ⚠️ QUAN TRỌNG: Kiểm tra SL tối thiểu dựa trên % giá (để tránh SL quá gần)
+                current_price = df['close'].iloc[-1]
+                min_sl_from_price = int((current_price * self.min_sl_percent) / point)
+                
+                # Log thông tin tính SL
+                sl_from_atr = sl_points
+                
+                # Giới hạn min/max - Đảm bảo SL không nhỏ hơn cả MIN_SL_POINTS và MIN_SL_PERCENT × giá
+                sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
                 tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
+                
+                # Log nếu SL được điều chỉnh
+                if sl_points != sl_from_atr:
+                    logger.debug(f"📊 SL điều chỉnh: {sl_from_atr} → {sl_points} points (min: {self.min_sl_points}, min từ giá: {min_sl_from_price})")
         else:
             # Sử dụng giá trị cố định
             sl_points = self.fixed_sl_points
@@ -1188,8 +1248,20 @@ class GoldAutoTrader:
             else:
                 tp_points = self.fixed_tp_points
             
-            # Giới hạn min/max
+            # ⚠️ QUAN TRỌNG: Kiểm tra SL tối thiểu dựa trên % giá (cho trường hợp fixed SL)
+            # Lấy giá hiện tại từ symbol info hoặc df
+            tick = mt5.symbol_info_tick(self.symbol)
+            if tick:
+                current_price = tick.bid if tick.bid > 0 else tick.ask
+            else:
+                current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else 0
+            
+            if current_price > 0:
+                min_sl_from_price = int((current_price * self.min_sl_percent) / point)
+                sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
+            else:
             sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
+            
             tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
         
         # R1: Tính lot size dựa trên risk 1-2% per trade
@@ -1397,6 +1469,27 @@ class GoldAutoTrader:
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'BUY', reason)
         
+        # Gửi thông báo Telegram
+        if self.telegram_send_on_open:
+            account_info = mt5.account_info()
+            ticket = result.order if result else 0
+            message = (
+                f"🟢 <b>LỆNH MỚI: BUY {self.symbol}</b>\n\n"
+                f"📊 <b>Thông tin lệnh:</b>\n"
+                f"   • Ticket: <code>{ticket}</code>\n"
+                f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                f"   • Giá vào: <b>{price:.2f}</b>\n"
+                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                f"📈 <b>Thông tin tài khoản:</b>\n"
+                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+            )
+            self.send_telegram_message(message)
+        
         return result
     
     def place_sell_order(self, lot: float = None, sl_points: float = None, tp_points: float = None, reason: str = "") -> Optional[dict]:
@@ -1466,6 +1559,27 @@ class GoldAutoTrader:
         
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'SELL', reason)
+        
+        # Gửi thông báo Telegram
+        if self.telegram_send_on_open:
+            account_info = mt5.account_info()
+            ticket = result.order if result else 0
+            message = (
+                f"🔴 <b>LỆNH MỚI: SELL {self.symbol}</b>\n\n"
+                f"📊 <b>Thông tin lệnh:</b>\n"
+                f"   • Ticket: <code>{ticket}</code>\n"
+                f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                f"   • Giá vào: <b>{price:.2f}</b>\n"
+                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                f"📈 <b>Thông tin tài khoản:</b>\n"
+                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+            )
+            self.send_telegram_message(message)
         
         return result
     
