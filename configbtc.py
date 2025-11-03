@@ -228,6 +228,49 @@ USE_BB_CONFIRM = True          # Có sử dụng Bollinger Bands để xác nh�
                                 # Giá chạm BB biên = signal mạnh
 
 # ============================================
+# Advanced Trend/Momentum Analysis - Phân tích Trend/Momentum nâng cao cho M15 Aggressive
+# ============================================
+USE_MA_SLOPE = True            # True: Kiểm tra slope (độ dốc) của MA - MA đang tăng hay giảm
+                                # MA slope dương = trend đang tăng mạnh
+                                # MA slope âm = trend đang giảm mạnh
+
+MA_SLOPE_PERIODS = 5           # Số nến để tính slope của MA (5 nến = slope ngắn hạn)
+                                # Slope = (MA hiện tại - MA 5 nến trước) / 5
+
+MA_SLOPE_THRESHOLD = 0.001     # Ngưỡng tối thiểu của slope để coi là có trend (0.1% giá)
+                                # Ví dụ: giá $80k, slope >= $80 = trend mạnh
+
+USE_MACD_MAGNITUDE = True      # True: Kiểm tra magnitude (độ lớn) của MACD histogram
+                                # MACD magnitude cao = momentum mạnh
+
+MACD_MAGNITUDE_THRESHOLD = 0.5 # Ngưỡng tối thiểu MACD histogram để coi là momentum mạnh
+                                # Giá trị tùy thuộc vào symbol (BTC thường lớn hơn vàng)
+
+USE_MACD_PERSISTENCE = True    # True: Kiểm tra persistence (tính bền vững) của MACD
+                                # MACD histogram tăng/giảm liên tục trong N nến = momentum bền vững
+
+MACD_PERSISTENCE_PERIODS = 3   # Số nến liên tục MACD phải cùng chiều để coi là persistent
+
+ALLOW_ADX_OVERRIDE = True      # True: Cho phép override ADX filter khi momentum rất mạnh
+                                # ADX thấp nhưng MACD magnitude cao + persistent = cho phép trade
+
+ADX_OVERRIDE_MACD_MAGNITUDE = 2.0  # MACD magnitude tối thiểu để override ADX (2x threshold)
+                                    # Chỉ override khi momentum RẤT mạnh
+
+ALLOW_COUNTER_TREND = True      # True: Cho phép counter-trend trade (ngược trend chính)
+                                # Counter-trend: Trend down nhưng momentum up mạnh → BUY
+                                # Chỉ cho phép khi có volume + BB proximity
+
+COUNTER_TREND_MIN_VOLUME = 1.5  # Volume ratio tối thiểu để cho phép counter-trend (1.5x MA)
+                                 # Counter-trend cần volume cao để xác nhận
+
+COUNTER_TREND_BB_PROXIMITY = 0.02  # Giá phải gần BB band (2% BB) để cho phép counter-trend
+                                    # Ví dụ: Counter-trend BUY khi giá gần BB lower (oversold)
+
+COUNTER_TREND_MIN_SIGNALS = 3   # Số signals tối thiểu để cho phép counter-trend (3 signals)
+                                 # Cần nhiều signals hơn để justify counter-trend risk
+
+# ============================================
 # Fibonacci Retracement Settings
 # ============================================
 USE_FIBONACCI = True           # Có sử dụng Fibonacci Retracement không
@@ -384,7 +427,7 @@ TELEGRAM_CHAT_ID = "1887610382"           # Chat ID để nhận thông báo (c�
 
 # Format thông báo Telegram
 TELEGRAM_SEND_ON_ORDER_OPEN = True      # Gửi thông báo khi mở lệnh
-TELEGRAM_SEND_ON_ORDER_CLOSE = False    # Gửi thông báo khi đóng lệnh (có thể bật sau)
+TELEGRAM_SEND_ON_ORDER_CLOSE = True    # Gửi thông báo khi đóng lệnh (có thể bật sau)
 
 # ============================================
 # Helper: Convert timeframe string sang MT5 constant
