@@ -1152,10 +1152,11 @@ class GoldAutoTrader:
         require_momentum = getattr(self, 'require_momentum_confirmation', True)
         
         # Điều kiện vào lệnh - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA:
-        # 1. Có đủ signals (>= min_signal_strength) - ĐÃ TĂNG lên 3
-        # 2. ADX >= 25 (có trend mạnh, không sideways) - ⚠️ MỚI
-        # 3. Volume confirmation (nếu REQUIRE_VOLUME_CONFIRMATION = True) - BẮT BUỘC
-        # 4. Trend VÀ Momentum (nếu REQUIRE_BOTH_TREND_AND_MOMENTUM = True) - ⚠️ MỚI: AND logic thay vì OR
+        # 1. Có đủ signals (>= min_signal_strength) - Cần ít nhất MIN_SIGNAL_STRENGTH chỉ báo đồng thuận
+        # 2. ADX >= threshold (có trend mạnh, không sideways) - Lọc sideways market
+        # 3. Volume confirmation (nếu REQUIRE_VOLUME_CONFIRMATION = True) - Xác nhận volume cao
+        # 4. Trend VÀ Momentum (nếu REQUIRE_BOTH_TREND_AND_MOMENTUM = True) - AND logic: cần cả 2
+        #    HOẶC chỉ cần 1 trong 2 (nếu REQUIRE_BOTH_TREND_AND_MOMENTUM = False)
         
         # Kiểm tra ADX filter (chặn trade trong sideways market)
         if not adx_ok:
@@ -1196,8 +1197,6 @@ class GoldAutoTrader:
                 if trend_ok or momentum_ok:
                     final_signal = 'BUY'
                     final_strength = strong_buy_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
                 else:
                     missing = []
                     if require_trend and not trend_ok:
@@ -1231,8 +1230,6 @@ class GoldAutoTrader:
                 if trend_ok or momentum_ok:
                     final_signal = 'SELL'
                     final_strength = strong_sell_signals
-                    if not trend_ok and not momentum_ok:
-                        strong_reasons.append('Warning: No trend or momentum')
                 else:
                     missing = []
                     if require_trend and not trend_ok:
@@ -2002,12 +1999,12 @@ class GoldAutoTrader:
                             logger.warning(f"⚠️  Đã đạt giới hạn {self.max_positions} vị thế. Bỏ qua tín hiệu này.")
                         # Thực thi lệnh nếu có tín hiệu mạnh
                         # ⚠️ Đã kiểm tra strength >= MIN_SIGNAL_STRENGTH trong analyze_market()
-                        # Nếu đến đây và signal != HOLD nghĩa là đã đủ điều kiện
-                        elif analysis['signal'] == 'BUY' and analysis['strength'] >= self.min_signal_strength:
+                        # Nếu signal != 'HOLD' nghĩa là đã đủ điều kiện (strength, ADX, Volume, Trend, Momentum)
+                        elif analysis['signal'] == 'BUY':
                             logger.info(f"📊 Hiện có {current_positions}/{self.max_positions} vị thế. Cho phép mở lệnh mới.")
                             logger.info(f"✅ Đủ điều kiện: {analysis['strength']} signals (>= {self.min_signal_strength}), ADX OK, Volume OK")
                             self.place_buy_order(reason=reason_str)
-                        elif analysis['signal'] == 'SELL' and analysis['strength'] >= self.min_signal_strength:
+                        elif analysis['signal'] == 'SELL':
                             logger.info(f"📊 Hiện có {current_positions}/{self.max_positions} vị thế. Cho phép mở lệnh mới.")
                             logger.info(f"✅ Đủ điều kiện: {analysis['strength']} signals (>= {self.min_signal_strength}), ADX OK, Volume OK")
                             self.place_sell_order(reason=reason_str)

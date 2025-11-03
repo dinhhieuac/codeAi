@@ -201,11 +201,12 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 2        # ⚠️ TĂNG: Số lượng chỉ báo tối thiểu phải đồng thuận (Từ 3 lên 4)
-                                # Ví dụ: 4 = cần ít nhất 4 chỉ báo cùng BUY mới mở lệnh BUY
-                                # Giá trị cao hơn (4-5) = ít lệnh nhưng chính xác hơn ✅
-                                # Giá trị thấp hơn (1-3) = nhiều lệnh nhưng nhiều false signal ❌
-                                # ⚠️ TĂNG lên 4 để giảm false signals và tăng win rate
+MIN_SIGNAL_STRENGTH = 2        # Số lượng chỉ báo tối thiểu phải đồng thuận
+                                # Ví dụ: 2 = cần ít nhất 2 chỉ báo cùng BUY mới mở lệnh BUY
+                                # Giá trị cao hơn (3-4) = ít lệnh nhưng chính xác hơn ✅
+                                # Giá trị thấp hơn (1-2) = nhiều lệnh nhưng nhiều false signal ❌
+                                # Khuyến nghị: 2-3 cho BTC (volatility cao, cần nhiều cơ hội)
+                                # Tăng lên 3-4 nếu muốn ít lệnh nhưng chính xác hơn
 
 REQUIRE_TREND_CONFIRMATION = True  # True: Yêu cầu xu hướng từ MA phải đồng thuận
                                     # Ví dụ: BUY signal chỉ được chấp nhận nếu Price > MA20 > MA50
