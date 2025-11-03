@@ -147,11 +147,11 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 3        # Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (TĂNG từ 2 lên 3)
-                                # Ví dụ: 3 = cần ít nhất 3 chỉ báo cùng BUY mới mở lệnh BUY
-                                # Giá trị cao hơn (3-4) = ít lệnh nhưng chính xác hơn ✅
-                                # Giá trị thấp hơn (1-2) = nhiều lệnh nhưng nhiều false signal ❌
-                                # ⚠️ ĐÃ TĂNG để giảm false signals và tăng win rate
+MIN_SIGNAL_STRENGTH = 4        # Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (TĂNG từ 3 lên 4)
+                                # Ví dụ: 4 = cần ít nhất 4 chỉ báo cùng BUY mới mở lệnh BUY
+                                # Giá trị cao hơn (4-5) = ít lệnh nhưng chính xác hơn ✅
+                                # Giá trị thấp hơn (1-3) = nhiều lệnh nhưng nhiều false signal ❌
+                                # ⚠️ ĐÃ TĂNG LÊN 4 để giảm false signals và tăng win rate
 
 REQUIRE_TREND_CONFIRMATION = True  # True: Yêu cầu xu hướng từ MA phải đồng thuận
                                     # Ví dụ: BUY signal chỉ được chấp nhận nếu Price > MA20 > MA50
@@ -237,15 +237,16 @@ USE_SR_WHEN_NO_FIB = True      # Chỉ dùng S/R khi không có tín hiệu Fibo
 # ============================================
 USE_ADX_FILTER = True          # ⚠️ MỚI: Sử dụng ADX để lọc sideways market
                                 # ADX (Average Directional Index) đo lường strength của trend
-                                # ADX < 25 = Sideways (không có trend rõ ràng) → KHÔNG TRADE
-                                # ADX >= 25 = Có trend mạnh → CHO PHÉP TRADE
+                                # ADX < 30 = Sideways (không có trend rõ ràng) → KHÔNG TRADE
+                                # ADX >= 30 = Có trend mạnh → CHO PHÉP TRADE
                                 # ⚠️ QUAN TRỌNG: Giảm tỷ lệ thua bằng cách chỉ trade khi có trend rõ ràng
 
 ADX_PERIOD = 14                # Chu kỳ tính ADX (14 là chuẩn)
 
-ADX_MIN_THRESHOLD = 25         # Ngưỡng ADX tối thiểu để cho phép trade
-                                # ADX >= 25 = Trend mạnh, cho phép trade
-                                # ADX < 25 = Sideways, chặn trade (giảm false signals)
+ADX_MIN_THRESHOLD = 30         # Ngưỡng ADX tối thiểu để cho phép trade (TĂNG từ 25 lên 30)
+                                # ADX >= 30 = Trend mạnh, cho phép trade
+                                # ADX < 30 = Sideways, chặn trade (giảm false signals)
+                                # ⚠️ TĂNG LÊN 30 để chỉ trade khi có trend rõ ràng, giảm tỷ lệ thua
 
 ADX_STRONG_TREND = 40          # ADX >= 40 = Trend rất mạnh (ưu tiên cao hơn)
                                 # Có thể điều chỉnh logic để ưu tiên khi ADX rất cao
@@ -312,6 +313,24 @@ ORDER_FILLING = "IOC"          # Loại điền lệnh: "IOC" (Immediate or Canc
 ORDER_TIME = "GTC"             # Thời gian hiệu lực lệnh: "GTC" (Good Till Cancel - đến khi hủy)
                                 # Hoặc "DAY" (chỉ hiệu lực trong ngày)
                                 # GTC: Lệnh tồn tại cho đến khi đóng thủ công hoặc đạt SL/TP
+
+# ============================================
+# Telegram Notification Settings
+# ============================================
+USE_TELEGRAM_NOTIFICATIONS = True  # True: Gửi thông báo Telegram khi mở/đóng lệnh
+                                    # False: Tắt thông báo Telegram
+
+TELEGRAM_BOT_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
+                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+
+TELEGRAM_CHAT_ID = "1887610382"           # Chat ID để nhận thông báo (có thể là user ID hoặc group ID)
+                                # Lấy chat ID: Gửi message cho bot @userinfobot hoặc thêm bot vào group
+                                # Ví dụ: "123456789" (user) hoặc "-1001234567890" (group)
+
+# Format thông báo Telegram
+TELEGRAM_SEND_ON_ORDER_OPEN = True      # Gửi thông báo khi mở lệnh
+TELEGRAM_SEND_ON_ORDER_CLOSE = False    # Gửi thông báo khi đóng lệnh (có thể bật sau)
 
 # ============================================
 # Helper: Convert timeframe string sang MT5 constant

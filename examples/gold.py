@@ -13,6 +13,7 @@ import csv
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Tuple
+import requests
 
 # Import config
 script_dir = Path(__file__).parent.parent
@@ -643,6 +644,13 @@ class GoldAutoTrader:
         self.sell_comment = SELL_COMMENT              # Comment cho lệnh SELL
         self.deviation = DEVIATION                    # Độ lệch giá cho phép khi đặt lệnh (100 points)
         
+        # Telegram Notification Settings (từ configgold.py)
+        self.use_telegram = USE_TELEGRAM_NOTIFICATIONS if 'USE_TELEGRAM_NOTIFICATIONS' in dir() else False
+        self.telegram_bot_token = TELEGRAM_BOT_TOKEN if 'TELEGRAM_BOT_TOKEN' in dir() else ""
+        self.telegram_chat_id = TELEGRAM_CHAT_ID if 'TELEGRAM_CHAT_ID' in dir() else ""
+        self.telegram_send_on_open = TELEGRAM_SEND_ON_ORDER_OPEN if 'TELEGRAM_SEND_ON_ORDER_OPEN' in dir() else True
+        self.telegram_send_on_close = TELEGRAM_SEND_ON_ORDER_CLOSE if 'TELEGRAM_SEND_ON_ORDER_CLOSE' in dir() else False
+        
         # Theo dõi giao dịch trong ngày
         self.daily_trades_count = 0                   # Đếm số lệnh đã mở hôm nay
         self.last_trade_date = None                   # Ngày giao dịch cuối cùng (để reset counter)
@@ -687,6 +695,44 @@ class GoldAutoTrader:
         mt5.shutdown()
         self.connected = False
         logger.info("Đã ngắt kết nối MT5")
+    
+    def send_telegram_message(self, message: str) -> bool:
+        """
+        Gửi thông báo qua Telegram
+        
+        Args:
+            message: Nội dung tin nhắn cần gửi
+            
+        Returns:
+            True nếu gửi thành công, False nếu thất bại
+        """
+        if not self.use_telegram:
+            return False
+        
+        if not self.telegram_bot_token or not self.telegram_chat_id:
+            logger.debug("Telegram chưa được cấu hình (thiếu BOT_TOKEN hoặc CHAT_ID)")
+            return False
+        
+        try:
+            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            payload = {
+                "chat_id": self.telegram_chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            
+            logger.debug(f"✅ Đã gửi thông báo Telegram")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️ Không thể gửi thông báo Telegram: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Lỗi khi gửi Telegram: {e}")
+            return False
     
     def _enable_symbol(self) -> bool:
         """Kích hoạt symbol nếu chưa được enable"""
@@ -1397,6 +1443,27 @@ class GoldAutoTrader:
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'BUY', reason)
         
+        # Gửi thông báo Telegram
+        if self.telegram_send_on_open:
+            account_info = mt5.account_info()
+            ticket = result.order if result else 0
+            message = (
+                f"🟢 <b>LỆNH MỚI: BUY {self.symbol}</b>\n\n"
+                f"📊 <b>Thông tin lệnh:</b>\n"
+                f"   • Ticket: <code>{ticket}</code>\n"
+                f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                f"   • Giá vào: <b>{price:.2f}</b>\n"
+                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                f"📈 <b>Thông tin tài khoản:</b>\n"
+                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+            )
+            self.send_telegram_message(message)
+        
         return result
     
     def place_sell_order(self, lot: float = None, sl_points: float = None, tp_points: float = None, reason: str = "") -> Optional[dict]:
@@ -1466,6 +1533,27 @@ class GoldAutoTrader:
         
         # R5: Log vào CSV
         self._log_trade_to_csv(result, 'SELL', reason)
+        
+        # Gửi thông báo Telegram
+        if self.telegram_send_on_open:
+            account_info = mt5.account_info()
+            ticket = result.order if result else 0
+            message = (
+                f"🔴 <b>LỆNH MỚI: SELL {self.symbol}</b>\n\n"
+                f"📊 <b>Thông tin lệnh:</b>\n"
+                f"   • Ticket: <code>{ticket}</code>\n"
+                f"   • Volume: <b>{lot:.2f}</b> lots\n"
+                f"   • Giá vào: <b>{price:.2f}</b>\n"
+                f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
+                f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
+                f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                f"📈 <b>Thông tin tài khoản:</b>\n"
+                f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
+                f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
+                f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+            )
+            self.send_telegram_message(message)
         
         return result
     
