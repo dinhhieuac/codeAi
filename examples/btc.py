@@ -1124,26 +1124,21 @@ class GoldAutoTrader:
         adx_data = None
         adx_ok = True  # Mặc định cho phép trade
         adx_override = False  # Override ADX filter
+        adx_current = None  # Giá trị ADX hiện tại (để dùng trong override logic)
         
         if self.use_adx_filter:
             adx_data = self.analyzer.calculate_adx(df)
-            adx_current = adx_data['adx'].iloc[-1]
+            adx_current = adx_data['adx'].iloc[-1] if (adx_data is not None and len(adx_data['adx']) > 0) else None
             
-            if not np.isnan(adx_current):
+            if adx_current is not None and not np.isnan(adx_current):
                 # ADX >= threshold = Có trend mạnh → Cho phép trade
                 # ADX < threshold = Sideways → Chặn trade (giảm false signals)
                 adx_ok = (adx_current >= self.adx_min_threshold)
                 
-                # ⚠️ MỚI: ADX Override - Cho phép override khi MACD magnitude RẤT mạnh
-                if not adx_ok and self.allow_adx_override:
-                    override_threshold = self.macd_magnitude_threshold * self.adx_override_macd_magnitude
-                    if macd_magnitude_strong and macd_magnitude_value >= override_threshold and macd_persistent:
-                        adx_override = True
-                        adx_ok = True  # Override: Cho phép trade dù ADX thấp
-                        strong_reasons.append(f'ADX Override: MACD magnitude {macd_magnitude_value:.2f} >= {override_threshold:.2f} + persistent')
-                        logger.info(f"⚠️ ADX Override: ADX={adx_current:.2f} < {self.adx_min_threshold} nhưng MACD magnitude={macd_magnitude_value:.2f} >= {override_threshold:.2f}")
+                # ⚠️ LƯU Ý: ADX Override sẽ được kiểm tra SAU khi tính MACD magnitude/persistence
+                # (sẽ được cập nhật trong phần 2 - MACD analysis, sau dòng 1266)
                 
-                if not adx_ok and not adx_override:
+                if not adx_ok:
                     logger.debug(f"⚠️ ADX thấp ({adx_current:.2f} < {self.adx_min_threshold}) - Sideways market, không trade")
             else:
                 adx_ok = True  # Nếu không tính được ADX, cho phép trade (fallback)
@@ -1265,6 +1260,15 @@ class GoldAutoTrader:
             if self.use_macd_persistence:
                 macd_persistent, macd_persist_desc = self.analyzer.check_macd_persistence(macd_data['hist'], self.macd_persistence_periods)
         
+        # ⚠️ CẬP NHẬT ADX Override sau khi có MACD magnitude/persistence
+        if self.use_adx_filter and not adx_ok and self.allow_adx_override and adx_current is not None:
+            override_threshold = self.macd_magnitude_threshold * self.adx_override_macd_magnitude
+            if macd_magnitude_strong and macd_magnitude_value >= override_threshold and macd_persistent:
+                adx_override = True
+                adx_ok = True  # Override: Cho phép trade dù ADX thấp
+                strong_reasons.append(f'ADX Override: MACD magnitude {macd_magnitude_value:.2f} >= {override_threshold:.2f} + persistent')
+                logger.info(f"⚠️ ADX Override: ADX={adx_current:.2f} < {self.adx_min_threshold} nhưng MACD magnitude={macd_magnitude_value:.2f} >= {override_threshold:.2f}")
+        
         # 3. Kiểm tra RSI không ở vùng quá cực đoan
         rsi_extreme_buy = False
         rsi_extreme_sell = False
@@ -1286,21 +1290,29 @@ class GoldAutoTrader:
             strong_sell_signals += 1
             strong_reasons.append(f'RSI overbought ({rsi_current:.2f})')
         
-        # MACD - chỉ tính khi có momentum rõ ràng + magnitude/persistence check
+        # MACD - chỉ tính khi có momentum rõ ràng
+        # ⚠️ CẢI THIỆN: Nếu USE_MACD_MAGNITUDE = True, vẫn tính signal nhưng ghi chú magnitude
+        # Chỉ khi magnitude rất yếu (< 50% threshold) mới không tính signal
         if macd_bullish and macd_hist > 0:
-            if self.use_macd_magnitude and macd_magnitude_strong:
+            # Tính signal MACD nếu magnitude đủ hoặc không yêu cầu magnitude check
+            if not self.use_macd_magnitude or macd_magnitude_strong or macd_magnitude_value >= (self.macd_magnitude_threshold * 0.5):
                 strong_buy_signals += 1
-                strong_reasons.append(f'MACD bullish momentum (magnitude: {macd_magnitude_value:.2f})')
-            elif not self.use_macd_magnitude:
-                strong_buy_signals += 1
-                strong_reasons.append('MACD bullish momentum')
+                if macd_magnitude_strong:
+                    strong_reasons.append(f'MACD bullish momentum (magnitude: {macd_magnitude_value:.2f} - Strong)')
+                elif self.use_macd_magnitude:
+                    strong_reasons.append(f'MACD bullish momentum (magnitude: {macd_magnitude_value:.2f} - Moderate)')
+                else:
+                    strong_reasons.append('MACD bullish momentum')
         elif macd_bearish and macd_hist < 0:
-            if self.use_macd_magnitude and macd_magnitude_strong:
+            # Tính signal MACD nếu magnitude đủ hoặc không yêu cầu magnitude check
+            if not self.use_macd_magnitude or macd_magnitude_strong or macd_magnitude_value >= (self.macd_magnitude_threshold * 0.5):
                 strong_sell_signals += 1
-                strong_reasons.append(f'MACD bearish momentum (magnitude: {macd_magnitude_value:.2f})')
-            elif not self.use_macd_magnitude:
-                strong_sell_signals += 1
-                strong_reasons.append('MACD bearish momentum')
+                if macd_magnitude_strong:
+                    strong_reasons.append(f'MACD bearish momentum (magnitude: {macd_magnitude_value:.2f} - Strong)')
+                elif self.use_macd_magnitude:
+                    strong_reasons.append(f'MACD bearish momentum (magnitude: {macd_magnitude_value:.2f} - Moderate)')
+                else:
+                    strong_reasons.append('MACD bearish momentum')
         
         # MA Trend - chỉ tính khi xu hướng rõ ràng + MA Slope check
         if trend_buy:
@@ -2234,10 +2246,10 @@ class GoldAutoTrader:
                         analysis = self.analyze_market(df)
                         reason_str = ', '.join(analysis['reasons']) if analysis['reasons'] else 'No signals'
                         
-                        logger.info(f"Phan tich ({self.timeframe_str}): Signal={analysis['signal']}, Strength={analysis['strength']}")
+                        logger.info(f"📊 Phan tich ({self.timeframe_str}): Signal={analysis['signal']}, Strength={analysis['strength']}")
                         logger.info(f"   RSI: {analysis['rsi']:.2f}" if analysis['rsi'] else "   RSI: N/A")
                         logger.info(f"   MA Type: {self.ma_type}, Trend: {analysis.get('trend', 'N/A')}, Momentum: {analysis.get('momentum', 'N/A')}")
-                        logger.info(f"   Buy signals: {analysis['buy_signals']}, Sell signals: {analysis['sell_signals']}")
+                        logger.info(f"   Buy signals: {analysis['buy_signals']}/{self.min_signal_strength} (cần >= {self.min_signal_strength}), Sell signals: {analysis['sell_signals']}/{self.min_signal_strength}")
                         
                         # Log Fibonacci
                         if analysis.get('fibonacci') and analysis['fibonacci'].get('level_hit'):
@@ -2253,8 +2265,10 @@ class GoldAutoTrader:
                         if analysis.get('adx') and analysis['adx'].get('value') is not None:
                             adx_info = analysis['adx']
                             adx_value = adx_info.get('value', 0)
-                            trend_status = "✅ Strong Trend" if adx_info.get('is_strong_trend') else "❌ Sideways"
-                            logger.info(f"   📊 ADX: {adx_value:.2f} - {trend_status}")
+                            adx_threshold = self.adx_min_threshold
+                            trend_status = "✅ Strong Trend" if adx_info.get('is_strong_trend') else f"❌ Sideways (cần >= {adx_threshold})"
+                            override_status = " (ADX Override)" if adx_info.get('override') else ""
+                            logger.info(f"   📊 ADX: {adx_value:.2f} / {adx_threshold} - {trend_status}{override_status}")
                         
                         # Log Support/Resistance
                         if analysis.get('support_resistance') and analysis['support_resistance'].get('signal'):
@@ -2263,12 +2277,33 @@ class GoldAutoTrader:
                         
                         logger.info(f"   Ly do: {reason_str}")
                         
+                        # Log MA Slope và MACD Advanced (nếu có)
+                        if analysis.get('ma_slope'):
+                            ma_slope_info = analysis['ma_slope']
+                            slope_20 = ma_slope_info.get('ma20_slope', 'N/A')
+                            slope_50 = ma_slope_info.get('ma50_slope', 'N/A')
+                            strength = "✅ Strong" if ma_slope_info.get('strength') else "❌ Weak"
+                            logger.info(f"   📈 MA Slope: MA20={slope_20}, MA50={slope_50} - {strength}")
+                        
+                        if analysis.get('macd_advanced'):
+                            macd_info = analysis['macd_advanced']
+                            magnitude = macd_info.get('magnitude_value', 'N/A')
+                            magnitude_status = "✅ Strong" if macd_info.get('magnitude_strong') else "⚠️ Moderate" if isinstance(magnitude, (int, float)) and magnitude >= (self.macd_magnitude_threshold * 0.5) else "❌ Weak"
+                            persistent_status = "✅ Persistent" if macd_info.get('persistent') else "❌ Not Persistent"
+                            logger.info(f"   📊 MACD Advanced: Magnitude={magnitude} ({magnitude_status}), {persistent_status}")
+                        
                         # Debug log - tại sao không vào lệnh
                         if analysis['signal'] == 'HOLD':
-                            if analysis['buy_signals'] > 0 or analysis['sell_signals'] > 0:
-                                logger.info(f"   DEBUG: Co {analysis['buy_signals'] + analysis['sell_signals']} signal nhung khong du dieu kien")
-                            else:
-                                logger.info(f"   DEBUG: Khong co signal nao")
+                            logger.warning(f"   ⚠️ HOLD - Không đủ điều kiện vào lệnh:")
+                            logger.warning(f"      - Buy signals: {analysis['buy_signals']}/{self.min_signal_strength} (cần >= {self.min_signal_strength})")
+                            logger.warning(f"      - Sell signals: {analysis['sell_signals']}/{self.min_signal_strength} (cần >= {self.min_signal_strength})")
+                            if analysis.get('adx'):
+                                adx_ok = analysis['adx'].get('is_strong_trend', True)
+                                logger.warning(f"      - ADX OK: {adx_ok}")
+                            if analysis.get('volume'):
+                                vol_ok = analysis['volume'].get('is_high_volume', False) if self.require_volume_confirmation else True
+                                logger.warning(f"      - Volume OK: {vol_ok}")
+                            logger.warning(f"      - Lý do chi tiết: {', '.join(analysis.get('reasons', [])[-3:])}")
                         
                         # Kiểm tra lại số lượng vị thế và daily limit trước khi đặt lệnh
                         current_positions = len(self.get_open_positions())

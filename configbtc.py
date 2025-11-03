@@ -243,8 +243,11 @@ MA_SLOPE_THRESHOLD = 0.001     # Ngưỡng tối thiểu của slope để coi l
 USE_MACD_MAGNITUDE = True      # True: Kiểm tra magnitude (độ lớn) của MACD histogram
                                 # MACD magnitude cao = momentum mạnh
 
-MACD_MAGNITUDE_THRESHOLD = 0.5 # Ngưỡng tối thiểu MACD histogram để coi là momentum mạnh
+MACD_MAGNITUDE_THRESHOLD = 0.3 # ⚠️ ĐIỀU CHỈNH: Ngưỡng tối thiểu MACD histogram để coi là momentum mạnh (GIẢM từ 0.5 xuống 0.3)
                                 # Giá trị tùy thuộc vào symbol (BTC thường lớn hơn vàng)
+                                # 0.3 = threshold moderate, 0.5 = threshold strong
+                                # Giảm xuống 0.3 để có nhiều signals hơn nhưng vẫn giữ chất lượng
+                                # Signal MACD vẫn được tính nếu magnitude >= 0.15 (50% threshold)
 
 USE_MACD_PERSISTENCE = True    # True: Kiểm tra persistence (tính bền vững) của MACD
                                 # MACD histogram tăng/giảm liên tục trong N nến = momentum bền vững
@@ -341,10 +344,11 @@ USE_ADX_FILTER = True          # ⚠️ MỚI: Sử dụng ADX để lọc sidew
 
 ADX_PERIOD = 14                # Chu kỳ tính ADX (14 là chuẩn)
 
-ADX_MIN_THRESHOLD = 30         # ⚠️ TĂNG: Ngưỡng ADX tối thiểu để cho phép trade (Từ 25 lên 30)
-                                # ADX >= 30 = Trend rất mạnh, cho phép trade
-                                # ADX < 30 = Sideways hoặc trend yếu, chặn trade (giảm false signals)
-                                # Tăng ngưỡng để chỉ trade khi trend RẤT rõ ràng
+ADX_MIN_THRESHOLD = 25         # ⚠️ ĐIỀU CHỈNH: Ngưỡng ADX tối thiểu để cho phép trade (GIẢM từ 30 xuống 25)
+                                # ADX >= 25 = Trend mạnh, cho phép trade
+                                # ADX < 25 = Sideways hoặc trend yếu, chặn trade (giảm false signals)
+                                # 25 là ngưỡng cân bằng: vẫn lọc sideways nhưng không quá strict
+                                # Có thể override bằng ADX Override khi MACD momentum rất mạnh
 
 ADX_STRONG_TREND = 40          # ADX >= 40 = Trend rất mạnh (ưu tiên cao hơn)
                                 # Có thể điều chỉnh logic để ưu tiên khi ADX rất cao
