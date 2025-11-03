@@ -83,39 +83,41 @@ USE_ATR_SL_TP = True           # True: Dùng ATR (Average True Range) để tín
                                 # ATR phản ánh volatility, phù hợp với BTC vì giá dao động mạnh
 
 # Hệ số nhân ATR để tính SL/TP (chỉ dùng khi USE_ATR_SL_TP = True)
-# Với BTC, ATR thường nhỏ nên ta nhân hệ số lớn hơn so với forex
-ATR_SL_MULTIPLIER = 10.0       # ⚠️ TĂNG: Hệ số nhân ATR cho Stop Loss: SL = 10.0 × ATR (từ 6.0)
-                                # Giá trị cao hơn = SL xa hơn = ít bị stop loss sớm (whipsaw)
-                                # Với BTC volatile cao: 8.0-12.0 là hợp lý để tránh cắt lỗ sớm
+# Với BTC, ATR thường dao động 300-800 points, cần điều chỉnh hợp lý
+ATR_SL_MULTIPLIER = 6.0        # ⚠️ GIẢM: Hệ số nhân ATR cho Stop Loss: SL = 6.0 × ATR (từ 10.0 xuống)
+                                # Giá trị thấp hơn = SL gần hơn = phản ứng nhanh với biến động giá
+                                # Với BTC volatile cao: 5.0-7.0 là hợp lý để cân bằng risk và không bị whipsaw quá nhiều
+                                # Ví dụ: ATR = 500 → SL = 500 × 6.0 = 3000 points = $3000 (~3-4% giá $80k)
 
-ATR_TP_MULTIPLIER = 15.0       # ⚠️ TĂNG: Hệ số nhân ATR cho Take Profit: TP = 15.0 × ATR (từ 10.0)
-                                # Risk:Reward Ratio ≈ (15.0 / 10.0) = 1.5:1
+ATR_TP_MULTIPLIER = 9.0        # ⚠️ GIẢM: Hệ số nhân ATR cho Take Profit: TP = 9.0 × ATR (từ 15.0 xuống)
+                                # Risk:Reward Ratio ≈ (9.0 / 6.0) = 1.5:1 (vẫn giữ tỷ lệ RR tốt)
                                 # Tức là nếu risk $100 thì reward $150
-                                # Tỷ lệ RR hợp lý, không quá tham lam
+                                # Ví dụ: ATR = 500 → TP = 500 × 9.0 = 4500 points = $4500
 
 # Giới hạn SL/TP bằng points (đơn vị nhỏ nhất của giá)
 # Với BTCUSD: giá ~60,000-100,000 → 1 point = 1 USD
-# Ví dụ: SL 2000 points = $2000 (~2-3% giá), TP 3000 points = $3000
-MIN_SL_POINTS = 2000           # ⚠️ TĂNG: Stop Loss tối thiểu (points) - Từ 800 lên 2000
-                                # Nếu ATR × ATR_SL_MULTIPLIER < 2000, sẽ dùng 2000 points
-                                # Đảm bảo SL không quá chặt, tránh bị cắt lỗ sớm do noise
-                                # Với BTC giá ~$80,000: 2000 points = $2000 = ~2.5% giá (hợp lý)
+# Ví dụ: SL 1000 points = $1000 (~1-1.5% giá), TP 2000 points = $2000
+MIN_SL_POINTS = 1000           # ⚠️ GIẢM: Stop Loss tối thiểu (points) - Từ 2000 xuống 1000
+                                # Nếu ATR × ATR_SL_MULTIPLIER < 1000, sẽ dùng 1000 points
+                                # Với BTC giá ~$80,000: 1000 points = $1000 = ~1.25% giá (hợp lý hơn)
 
-MAX_SL_POINTS = 8000           # ⚠️ TĂNG: Stop Loss tối đa (points) - Từ 5000 lên 8000
-                                # Nếu ATR × ATR_SL_MULTIPLIER > 8000, sẽ dùng 8000 points
-                                # Cho phép SL xa hơn khi volatility cao
+MAX_SL_POINTS = 5000           # ⚠️ GIẢM: Stop Loss tối đa (points) - Từ 8000 xuống 5000
+                                # Nếu ATR × ATR_SL_MULTIPLIER > 5000, sẽ dùng 5000 points
+                                # Giới hạn SL không quá xa, tránh risk quá lớn
+                                # Với BTC giá ~$80,000: 5000 points = $5000 = ~6.25% giá (tối đa)
 
-MIN_TP_POINTS = 3000           # ⚠️ TĂNG: Take Profit tối thiểu (points) - Từ 1600 lên 3000
-                                # Nếu ATR × ATR_TP_MULTIPLIER < 3000, sẽ dùng 3000 points
-                                # Đảm bảo có đủ reward để justify risk
+MIN_TP_POINTS = 1500           # ⚠️ GIẢM: Take Profit tối thiểu (points) - Từ 3000 xuống 1500
+                                # Nếu ATR × ATR_TP_MULTIPLIER < 1500, sẽ dùng 1500 points
+                                # Đảm bảo có đủ reward để justify risk nhưng không quá tham lam
 
-MAX_TP_POINTS = 15000          # ⚠️ TĂNG: Take Profit tối đa (points) - Từ 10000 lên 15000
-                                # Giới hạn trên cho TP, cho phép mục tiêu cao hơn khi trend mạnh
+MAX_TP_POINTS = 10000          # ⚠️ GIẢM: Take Profit tối đa (points) - Từ 15000 xuống 10000
+                                # Giới hạn trên cho TP, đảm bảo mục tiêu thực tế
 
-# ⚠️ MỚI: SL tối thiểu dựa trên % giá (để đảm bảo SL không quá gần)
-MIN_SL_PERCENT = 0.018         # SL tối thiểu = 1.8% giá (ví dụ: giá $80,000 → SL tối thiểu $1,440)
+# ⚠️ SL tối thiểu dựa trên % giá (để đảm bảo SL không quá gần)
+MIN_SL_PERCENT = 0.012         # ⚠️ GIẢM: SL tối thiểu = 1.2% giá (từ 1.8% xuống 1.2%)
+                                # Ví dụ: giá $80,000 → SL tối thiểu $960 (thay vì $1,440)
                                 # Nếu SL tính từ ATR < MIN_SL_PERCENT × giá, sẽ dùng MIN_SL_PERCENT
-                                # Giúp tránh SL quá gần, dễ bị noise cắt lỗ
+                                # Giúp tránh SL quá gần nhưng không quá xa
 
 # Risk:Reward Ratio cố định (chỉ dùng khi USE_RISK_REWARD_RATIO = True)
 USE_RISK_REWARD_RATIO = False  # True: Dùng RR cố định (TP = SL × RISK_REWARD_RATIO)
