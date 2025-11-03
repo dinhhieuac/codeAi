@@ -1130,16 +1130,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-            if trend_ok or momentum_ok:
-                final_signal = 'BUY'
-                final_strength = strong_buy_signals
-                if not trend_ok and not momentum_ok:
-                    strong_reasons.append('Warning: No trend or momentum')
-            else:
+                if trend_ok or momentum_ok:
+                    final_signal = 'BUY'
+                    final_strength = strong_buy_signals
+                    if not trend_ok and not momentum_ok:
+                        strong_reasons.append('Warning: No trend or momentum')
+                else:
                     missing = []
-                if require_trend and not trend_ok:
+                    if require_trend and not trend_ok:
                         missing.append('no trend')
-                if require_momentum and not momentum_ok:
+                    if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1165,16 +1165,16 @@ class GoldAutoTrader:
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)} (cần cả 2)')
             else:
                 # Chỉ cần 1 trong 2 (OR logic) - Logic cũ
-            if trend_ok or momentum_ok:
-                final_signal = 'SELL'
-                final_strength = strong_sell_signals
-                if not trend_ok and not momentum_ok:
-                    strong_reasons.append('Warning: No trend or momentum')
-            else:
+                if trend_ok or momentum_ok:
+                    final_signal = 'SELL'
+                    final_strength = strong_sell_signals
+                    if not trend_ok and not momentum_ok:
+                        strong_reasons.append('Warning: No trend or momentum')
+                else:
                     missing = []
-                if require_trend and not trend_ok:
+                    if require_trend and not trend_ok:
                         missing.append('no trend')
-                if require_momentum and not momentum_ok:
+                    if require_momentum and not momentum_ok:
                         missing.append('no momentum')
                     strong_reasons.append(f'HOLD: Missing {", ".join(missing)}')
         
@@ -1283,7 +1283,7 @@ class GoldAutoTrader:
                 min_sl_from_price = int((current_price * self.min_sl_percent) / point)
                 sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
             else:
-            sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
+                sl_points = max(self.min_sl_points, min(sl_points, self.max_sl_points))
             
             tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
         
