@@ -2,6 +2,8 @@ import MetaTrader5 as mt5
 import pandas as pd
 import time
 import json
+import sys
+import re
 from datetime import datetime, timedelta
 from config_xauusd import *
 from risk_manager import XAUUSD_RiskManager
@@ -9,13 +11,69 @@ from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
 
+# Setup logging với encoding UTF-8 để hỗ trợ emoji
+# Tạo custom StreamHandler để xử lý encoding errors trên Windows
+class SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler với error handling cho encoding trên Windows"""
+    def __init__(self, stream=None):
+        super().__init__(stream)
+        # Thử cấu hình stdout/stderr để dùng UTF-8 (Python >= 3.7)
+        if stream in (sys.stdout, sys.stderr):
+            try:
+                if hasattr(stream, 'reconfigure'):
+                    stream.reconfigure(encoding='utf-8', errors='replace')
+            except (AttributeError, ValueError):
+                pass  # Không hỗ trợ reconfigure hoặc đã được cấu hình
+    
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            # Thử write bình thường
+            try:
+                stream.write(msg + self.terminator)
+            except UnicodeEncodeError:
+                # Nếu lỗi encoding, replace các ký tự không encode được
+                # Giữ lại text tiếng Việt, chỉ thay thế emoji
+                try:
+                    # Thử encode với errors='replace' để thay thế emoji bằng ?
+                    msg_bytes = msg.encode(stream.encoding if hasattr(stream, 'encoding') else 'cp1252', errors='replace')
+                    msg_safe = msg_bytes.decode(stream.encoding if hasattr(stream, 'encoding') else 'cp1252', errors='replace')
+                    stream.write(msg_safe + self.terminator)
+                except Exception:
+                    # Fallback: chỉ in text, bỏ emoji bằng regex
+                    msg_no_emoji = re.sub(r'[^\x00-\x7F]+', '?', msg)
+                    try:
+                        stream.write(msg_no_emoji + self.terminator)
+                    except:
+                        # Cuối cùng: chỉ in ASCII safe
+                        stream.write(msg_no_emoji.encode('ascii', 'ignore').decode('ascii') + self.terminator)
+            stream.flush()
+        except Exception:
+            self.handleError(record)
+
+# Cấu hình UTF-8 cho console (Windows)
+if sys.platform == 'win32':
+    try:
+        # Thử set UTF-8 cho stdout/stderr (Python >= 3.7)
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError, OSError):
+        pass  # Không hỗ trợ hoặc không thể cấu hình
+
 # Setup logging
+log_file = os.path.join('logs', 'xauusd_bot.log') if os.path.exists('logs') else 'xauusd_bot.log'
+os.makedirs('logs', exist_ok=True)
+log_file = os.path.join('logs', 'xauusd_bot.log')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('xauusd_bot.log'),
-        logging.StreamHandler()
+        logging.FileHandler(log_file, encoding='utf-8'),
+        SafeStreamHandler(sys.stdout)
     ]
 )
 
