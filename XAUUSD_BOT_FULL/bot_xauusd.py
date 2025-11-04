@@ -485,18 +485,7 @@ class XAUUSD_Bot:
         logging.info("🚀 BOT XAUUSD BẮT ĐẦU CHẠY")
         logging.info("=" * 60)
         
-        # Gửi thông báo Telegram khi bot khởi động
-        if self.use_telegram:
-            start_message = (
-                f"🚀 <b>BOT XAUUSD ĐÃ KHỞI ĐỘNG</b>\n\n"
-                f"📊 Symbol: <code>{self.symbol}</code>\n"
-                f"⏱️ Timeframe: <code>{TIMEFRAME}</code>\n"
-                f"💰 Risk: <code>{RISK_PER_TRADE}%</code>\n"
-                f"📈 Max positions: <code>{MAX_POSITIONS}</code>\n"
-                f"📅 Max daily trades: <code>{MAX_DAILY_TRADES}</code>\n"
-                f"⏰ Check interval: <code>{CHECK_INTERVAL}s</code>"
-            )
-            self.send_telegram_message(start_message)
+        # Không gửi Telegram khi bot khởi động (chỉ gửi khi có kết quả lệnh)
         
         cycle_count = 0
         last_logged_account_info = None  # Lưu thông tin tài khoản lần log cuối để tránh log trùng
@@ -650,33 +639,18 @@ class XAUUSD_Bot:
                                 remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
                                 logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - cooldown còn {remaining}s")
                         
-                        # Gửi thông báo Telegram về tín hiệu (chỉ khi tín hiệu mới hoặc thay đổi)
-                        
-                        if self.use_telegram and should_send_signal:
-                            signal_message = (
-                                f"🎯 <b>TÍN HIỆU {action} {self.symbol}</b>\n\n"
-                                f"📊 <b>Thông tin tín hiệu:</b>\n"
-                                f"   • Strength: <b>{strength}</b>\n"
-                                f"   • SL: <b>{signal.get('sl_pips', 0)}</b> pips\n"
-                                f"   • TP: <b>{signal.get('tp_pips', 0)}</b> pips\n"
-                                f"   • Timeframe: <code>{TIMEFRAME}</code>\n\n"
-                                f"💰 <b>Thông tin tài khoản:</b>\n"
-                                f"   • Equity: <b>${account_info['equity']:.2f}</b>\n"
-                                f"   • Balance: <b>${account_info['balance']:.2f}</b>\n"
-                                f"   • Positions: <b>{num_positions}/{MAX_POSITIONS}</b>\n\n"
-                                f"⏰ {now_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                            )
-                            if self.send_telegram_message(signal_message):
-                                # Chỉ cập nhật khi gửi thành công
-                                self.last_signal_sent = signal_signature
-                                self.last_signal_time = now_time
-                                logging.debug(f"📱 Đã gửi thông báo Telegram về tín hiệu {action}")
-                        elif self.use_telegram and not should_send_signal:
+                        # Không gửi Telegram khi có tín hiệu (chỉ gửi khi có kết quả lệnh)
+                        # Cập nhật tracking để tránh spam log
+                        if should_send_signal:
+                            self.last_signal_sent = signal_signature
+                            self.last_signal_time = now_time
+                            logging.debug(f"📊 Tín hiệu {action} mới - đang xử lý...")
+                        else:
                             if not signal_changed:
-                                logging.debug(f"📱 Tín hiệu {action} giống tín hiệu trước → Không gửi Telegram (tránh spam)")
+                                logging.debug(f"📊 Tín hiệu {action} giống tín hiệu trước (đã log)")
                             elif not cooldown_passed:
                                 remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
-                                logging.debug(f"📱 Cooldown Telegram còn {remaining}s → Không gửi tín hiệu (tránh spam)")
+                                logging.debug(f"📊 Tín hiệu {action} - cooldown còn {remaining}s")
                         
                         # ⚠️ QUAN TRỌNG: Check lại lệnh đang mở trên MT5 trước khi mở lệnh mới
                         # Đảm bảo lấy số positions mới nhất từ MT5 để tránh vượt quá MAX_POSITIONS
@@ -856,13 +830,7 @@ class XAUUSD_Bot:
         logging.info("🛑 ĐANG DỪNG BOT...")
         logging.info("=" * 60)
         
-        # Gửi thông báo Telegram khi bot dừng
-        if self.use_telegram:
-            stop_message = (
-                f"🛑 <b>BOT XAUUSD ĐÃ DỪNG</b>\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-            self.send_telegram_message(stop_message)
+        # Không gửi Telegram khi bot dừng (chỉ gửi khi có kết quả lệnh)
         
         mt5.shutdown()
         logging.info("✅ MT5 đã ngắt kết nối")
