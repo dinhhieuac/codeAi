@@ -456,33 +456,61 @@ class XAUUSD_Bot:
             self.send_telegram_message(start_message)
         
         cycle_count = 0
+        last_logged_account_info = None  # Lưu thông tin tài khoản lần log cuối để tránh log trùng
+        last_logged_price = None  # Lưu giá lần log cuối
+        last_logged_positions = None  # Lưu số positions lần log cuối
         
         while True:
             try:
                 cycle_count += 1
-                logging.info("-" * 60)
-                logging.info(f"🔄 CYCLE #{cycle_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                logging.info("-" * 60)
+                
+                # Chỉ log cycle summary mỗi 10 cycles hoặc khi có thay đổi quan trọng
+                should_log_summary = (cycle_count % 10 == 0) or (cycle_count == 1)
+                
+                if should_log_summary:
+                    logging.info("-" * 60)
+                    logging.info(f"🔄 CYCLE #{cycle_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    logging.info("-" * 60)
                 
                 # Lấy thông tin tài khoản
                 account_info = self.get_account_info()
                 num_positions = 0
                 if account_info:
-                    logging.info(f"💵 Tài khoản: Equity=${account_info['equity']:.2f} | Balance=${account_info['balance']:.2f} | Free Margin=${account_info['free_margin']:.2f}")
+                    # Chỉ log khi có thay đổi đáng kể (equity thay đổi > 1% hoặc số positions thay đổi)
+                    account_changed = False
+                    if last_logged_account_info is None:
+                        account_changed = True
+                    else:
+                        equity_change_pct = abs(account_info['equity'] - last_logged_account_info['equity']) / last_logged_account_info['equity'] if last_logged_account_info['equity'] > 0 else 0
+                        if equity_change_pct > 0.01:  # Thay đổi > 1%
+                            account_changed = True
                     
                     # Kiểm tra số position đang mở
                     positions = mt5.positions_get(symbol=self.symbol)
                     if positions is None:
                         positions = []
                     num_positions = len(positions)
-                    logging.info(f"📊 Vị thế đang mở: {num_positions}/{MAX_POSITIONS}")
                     
-                    if num_positions > 0:
+                    positions_changed = (last_logged_positions is None or last_logged_positions != num_positions)
+                    
+                    if should_log_summary or account_changed or positions_changed:
+                        logging.info(f"💵 Tài khoản: Equity=${account_info['equity']:.2f} | Balance=${account_info['balance']:.2f} | Free Margin=${account_info['free_margin']:.2f}")
+                        logging.info(f"📊 Vị thế đang mở: {num_positions}/{MAX_POSITIONS}")
+                        last_logged_account_info = account_info.copy()
+                        last_logged_positions = num_positions
+                    else:
+                        logging.debug(f"💵 Tài khoản: Equity=${account_info['equity']:.2f} | Balance=${account_info['balance']:.2f} | Free Margin=${account_info['free_margin']:.2f}")
+                        logging.debug(f"📊 Vị thế đang mở: {num_positions}/{MAX_POSITIONS}")
+                    
+                    if num_positions > 0 and (should_log_summary or positions_changed):
                         total_profit = sum(pos.profit for pos in positions)
                         logging.info(f"   - Tổng P&L: ${total_profit:.2f}")
                         for pos in positions:
                             order_type = "BUY" if pos.type == 0 else "SELL"
                             logging.info(f"   - {order_type} {pos.volume} lots @ {pos.price_open:.2f}, P&L: ${pos.profit:.2f}")
+                    elif num_positions > 0:
+                        total_profit = sum(pos.profit for pos in positions)
+                        logging.debug(f"   - Tổng P&L: ${total_profit:.2f}")
                 else:
                     account_info = {'equity': 0, 'balance': 0, 'free_margin': 0}
                 
@@ -493,17 +521,31 @@ class XAUUSD_Bot:
                     time.sleep(30)
                     continue
                 
-                # Log giá hiện tại
+                # Log giá hiện tại (chỉ khi thay đổi đáng kể hoặc mỗi 10 cycles)
                 if len(df) > 0:
-                    latest_price = df.iloc[-1]
+                    latest_price = df.iloc[-1]['close']
                     tick = mt5.symbol_info_tick(self.symbol)
-                    if tick:
-                        logging.info(f"📈 Giá hiện tại: {latest_price['close']:.2f} (Bid/Ask: {tick.bid:.2f}/{tick.ask:.2f})")
+                    
+                    # Chỉ log khi giá thay đổi > 0.1% hoặc mỗi 10 cycles
+                    price_changed = False
+                    if last_logged_price is None:
+                        price_changed = True
                     else:
-                        logging.info(f"📈 Giá hiện tại: {latest_price['close']:.2f}")
+                        price_change_pct = abs(latest_price - last_logged_price) / last_logged_price if last_logged_price > 0 else 0
+                        if price_change_pct > 0.001:  # Thay đổi > 0.1%
+                            price_changed = True
+                    
+                    if should_log_summary or price_changed:
+                        if tick:
+                            logging.info(f"📈 Giá hiện tại: {latest_price:.2f} (Bid/Ask: {tick.bid:.2f}/{tick.ask:.2f})")
+                        else:
+                            logging.info(f"📈 Giá hiện tại: {latest_price:.2f}")
+                        last_logged_price = latest_price
+                    else:
+                        logging.debug(f"📈 Giá hiện tại: {latest_price:.2f}")
                 
-                # Phân tích kỹ thuật
-                logging.info("🔍 Đang phân tích kỹ thuật...")
+                # Phân tích kỹ thuật (chuyển sang debug để giảm log)
+                logging.debug("🔍 Đang phân tích kỹ thuật...")
                 signal = self.technical_analyzer.analyze(df)
                 
                 if signal:
