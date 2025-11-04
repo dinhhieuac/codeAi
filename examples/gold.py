@@ -878,12 +878,31 @@ class GoldAutoTrader:
         self.connected = False
         logger.info("Đã ngắt kết nối MT5")
     
+    def _escape_html(self, text: str) -> str:
+        """
+        Escape các ký tự đặc biệt trong HTML để tránh lỗi parsing
+        
+        Args:
+            text: Chuỗi cần escape
+            
+        Returns:
+            Chuỗi đã được escape
+        """
+        if text is None:
+            return ""
+        text = str(text)
+        # Escape các ký tự đặc biệt trong HTML
+        text = text.replace('&', '&amp;')
+        text = text.replace('<', '&lt;')
+        text = text.replace('>', '&gt;')
+        return text
+    
     def send_telegram_message(self, message: str) -> bool:
         """
         Gửi thông báo qua Telegram
         
         Args:
-            message: Nội dung tin nhắn cần gửi
+            message: Nội dung tin nhắn cần gửi (đã có HTML tags)
             
         Returns:
             True nếu gửi thành công, False nếu thất bại
@@ -898,30 +917,110 @@ class GoldAutoTrader:
             logger.error(f"   Chat ID: {'✅ Có' if self.telegram_chat_id else '❌ Không có'}")
             return False
         
+        # Kiểm tra và validate chat_id
+        chat_id = str(self.telegram_chat_id).strip()
+        if not chat_id or (not chat_id.lstrip('-').isdigit() and not chat_id.startswith('@')):
+            logger.error(f"❌ Chat ID không hợp lệ: {chat_id}")
+            return False
+        
+        # Giới hạn độ dài message (Telegram: 4096 ký tự)
+        if len(message) > 4096:
+            logger.warning(f"⚠️ Message quá dài ({len(message)} ký tự), cắt xuống 4096 ký tự")
+            message = message[:4096]
+        
         try:
             url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            
+            # Thử gửi với HTML parse_mode trước
             payload = {
-                "chat_id": self.telegram_chat_id,
+                "chat_id": chat_id,
                 "text": message,
                 "parse_mode": "HTML"
             }
             
-            logger.info(f"📤 Đang gửi thông báo Telegram...")
-            response = requests.post(url, json=payload, timeout=5)
-            response.raise_for_status()
+            logger.debug(f"📤 Đang gửi thông báo Telegram đến chat_id: {chat_id}")
+            logger.debug(f"📝 Message length: {len(message)} ký tự")
             
-            result = response.json()
+            response = requests.post(url, json=payload, timeout=10)
+            
+            # Kiểm tra response
+            try:
+                result = response.json()
+            except:
+                # Nếu không parse được JSON, log response text
+                logger.error(f"❌ Telegram API trả về response không hợp lệ: {response.text[:500]}")
+                result = {'ok': False, 'description': 'Invalid JSON response'}
+            
             if result.get('ok'):
                 message_id = result.get('result', {}).get('message_id', 'N/A')
                 logger.info(f"✅ Đã gửi thông báo Telegram thành công! Message ID: {message_id}")
                 return True
             else:
+                # Log chi tiết lỗi từ Telegram API
+                error_code = result.get('error_code', 'N/A')
                 error_desc = result.get('description', 'Unknown error')
-                logger.error(f"❌ Telegram API trả về lỗi: {error_desc}")
+                logger.error(f"❌ Telegram API trả về lỗi: [{error_code}] {error_desc}")
+                
+                # Nếu lỗi do HTML parsing, thử lại với Markdown hoặc plain text
+                if 'HTML' in error_desc or 'parse' in error_desc.lower() or 'bad' in error_desc.lower():
+                    logger.warning(f"⚠️ Lỗi HTML parsing, thử lại với Markdown")
+                    # Convert HTML sang Markdown
+                    message_md = message.replace('<b>', '*').replace('</b>', '*')
+                    message_md = message_md.replace('<code>', '`').replace('</code>', '`')
+                    message_md = message_md.replace('<i>', '_').replace('</i>', '_')
+                    message_md = message_md.replace('<u>', '').replace('</u>', '')
+                    message_md = message_md.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                    
+                    payload_md = {
+                        "chat_id": chat_id,
+                        "text": message_md,
+                        "parse_mode": "Markdown"
+                    }
+                    response2 = requests.post(url, json=payload_md, timeout=10)
+                    try:
+                        result2 = response2.json()
+                        if result2.get('ok'):
+                            logger.info(f"✅ Đã gửi thành công (dùng Markdown parse_mode)")
+                            return True
+                        else:
+                            # Thử lại với plain text (không có parse_mode)
+                            logger.warning(f"⚠️ Lỗi Markdown, thử lại với plain text")
+                            message_plain = message.replace('<b>', '').replace('</b>', '')
+                            message_plain = message_plain.replace('<code>', '').replace('</code>', '')
+                            message_plain = message_plain.replace('<i>', '').replace('</i>', '')
+                            message_plain = message_plain.replace('<u>', '').replace('</u>', '')
+                            message_plain = message_plain.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                            
+                            payload_plain = {
+                                "chat_id": chat_id,
+                                "text": message_plain
+                            }
+                            response3 = requests.post(url, json=payload_plain, timeout=10)
+                            try:
+                                result3 = response3.json()
+                                if result3.get('ok'):
+                                    logger.info(f"✅ Đã gửi thành công (plain text)")
+                                    return True
+                                else:
+                                    logger.error(f"❌ Vẫn lỗi với plain text: {result3.get('description', 'Unknown')}")
+                            except:
+                                logger.error(f"❌ Không thể parse response plain text: {response3.text[:500]}")
+                    except:
+                        logger.error(f"❌ Không thể parse response Markdown: {response2.text[:500]}")
+                
                 return False
             
+        except requests.exceptions.HTTPError as e:
+            # Log response body nếu có
+            try:
+                response_body = e.response.text if hasattr(e, 'response') else 'N/A'
+                logger.error(f"❌ HTTP Error khi gửi Telegram: {e}")
+                logger.error(f"   Response body: {response_body[:500]}")
+            except:
+                logger.error(f"❌ HTTP Error khi gửi Telegram: {e}")
+            return False
         except requests.exceptions.Timeout:
-            logger.error(f"❌ Timeout khi gửi thông báo Telegram (quá 5 giây)")
+            logger.error(f"❌ Timeout khi gửi thông báo Telegram (quá 10 giây)")
             return False
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Không thể gửi thông báo Telegram: {e}")
@@ -1954,20 +2053,32 @@ class GoldAutoTrader:
             try:
                 account_info = mt5.account_info()
                 ticket = result.order if result else 0
+                # Escape các giá trị số để tránh lỗi HTML parsing
+                ticket_str = str(ticket)
+                lot_str = f"{lot:.2f}"
+                price_str = f"{price:.2f}"
+                sl_str = f"{sl:.2f}"
+                tp_str = f"{tp:.2f}"
+                risk_str = f"{current_equity * self.risk_per_trade:.2f}"
+                equity_str = f"{account_info.equity:.2f}"
+                balance_str = f"{account_info.balance:.2f}"
+                risk_pct_str = f"{self.risk_per_trade*100:.1f}"
+                reason_str = self._escape_html(reason[:200] if reason else 'Technical Analysis')
+                
                 message = (
                     f"🟢 <b>LỆNH MỚI: BUY {self.symbol}</b>\n\n"
                     f"📊 <b>Thông tin lệnh:</b>\n"
-                    f"   • Ticket: <code>{ticket}</code>\n"
-                    f"   • Volume: <b>{lot:.2f}</b> lots\n"
-                    f"   • Giá vào: <b>{price:.2f}</b>\n"
-                    f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
-                    f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
-                    f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                    f"   • Ticket: <code>{ticket_str}</code>\n"
+                    f"   • Volume: <b>{lot_str}</b> lots\n"
+                    f"   • Giá vào: <b>{price_str}</b>\n"
+                    f"   • SL: <b>{sl_str}</b> ({sl_points} points)\n"
+                    f"   • TP: <b>{tp_str}</b> ({tp_points} points)\n"
+                    f"   • Risk: <b>{risk_str}</b> ({risk_pct_str}%)\n\n"
                     f"📈 <b>Thông tin tài khoản:</b>\n"
-                    f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
-                    f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                    f"   • Equity: <b>{equity_str}</b>\n"
+                    f"   • Balance: <b>{balance_str}</b>\n"
                     f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
-                    f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+                    f"💡 <b>Lý do:</b>\n{reason_str}"
                 )
                 telegram_success = self.send_telegram_message(message)
                 # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
@@ -2063,20 +2174,32 @@ class GoldAutoTrader:
             try:
                 account_info = mt5.account_info()
                 ticket = result.order if result else 0
+                # Escape các giá trị số để tránh lỗi HTML parsing
+                ticket_str = str(ticket)
+                lot_str = f"{lot:.2f}"
+                price_str = f"{price:.2f}"
+                sl_str = f"{sl:.2f}"
+                tp_str = f"{tp:.2f}"
+                risk_str = f"{current_equity * self.risk_per_trade:.2f}"
+                equity_str = f"{account_info.equity:.2f}"
+                balance_str = f"{account_info.balance:.2f}"
+                risk_pct_str = f"{self.risk_per_trade*100:.1f}"
+                reason_str = self._escape_html(reason[:200] if reason else 'Technical Analysis')
+                
                 message = (
                     f"🔴 <b>LỆNH MỚI: SELL {self.symbol}</b>\n\n"
                     f"📊 <b>Thông tin lệnh:</b>\n"
-                    f"   • Ticket: <code>{ticket}</code>\n"
-                    f"   • Volume: <b>{lot:.2f}</b> lots\n"
-                    f"   • Giá vào: <b>{price:.2f}</b>\n"
-                    f"   • SL: <b>{sl:.2f}</b> ({sl_points} points)\n"
-                    f"   • TP: <b>{tp:.2f}</b> ({tp_points} points)\n"
-                    f"   • Risk: <b>{current_equity * self.risk_per_trade:.2f}</b> ({self.risk_per_trade*100:.1f}%)\n\n"
+                    f"   • Ticket: <code>{ticket_str}</code>\n"
+                    f"   • Volume: <b>{lot_str}</b> lots\n"
+                    f"   • Giá vào: <b>{price_str}</b>\n"
+                    f"   • SL: <b>{sl_str}</b> ({sl_points} points)\n"
+                    f"   • TP: <b>{tp_str}</b> ({tp_points} points)\n"
+                    f"   • Risk: <b>{risk_str}</b> ({risk_pct_str}%)\n\n"
                     f"📈 <b>Thông tin tài khoản:</b>\n"
-                    f"   • Equity: <b>{account_info.equity:.2f}</b>\n"
-                    f"   • Balance: <b>{account_info.balance:.2f}</b>\n"
+                    f"   • Equity: <b>{equity_str}</b>\n"
+                    f"   • Balance: <b>{balance_str}</b>\n"
                     f"   • Lệnh hôm nay: {self.daily_trades_count}/{self.max_daily_trades}\n\n"
-                    f"💡 <b>Lý do:</b>\n{reason[:200] if reason else 'Technical Analysis'}"
+                    f"💡 <b>Lý do:</b>\n{reason_str}"
                 )
                 telegram_success = self.send_telegram_message(message)
                 # Chỉ log warning nếu Telegram được bật nhưng gửi thất bại (không phải do tắt có chủ ý)
