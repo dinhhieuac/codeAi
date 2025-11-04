@@ -112,6 +112,16 @@ NO_TRADE_FRIDAY_AFTER = "20:00"
 BREAK_AFTER_LOSS_MINUTES = 30
 
 # ============================================================================
+# PHÂN TÍCH KỸ THUẬT - Cấu hình các chỉ báo và điều kiện tín hiệu
+# ============================================================================
+
+# Số lượng tín hiệu tối thiểu cần có để mở lệnh
+# Bot sẽ chỉ mở lệnh khi có ít nhất MIN_SIGNAL_STRENGTH tín hiệu đồng thuận
+# Giá trị cao hơn = ít lệnh nhưng chính xác hơn
+# Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
+MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
+
+# ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức
 # ============================================================================
 
