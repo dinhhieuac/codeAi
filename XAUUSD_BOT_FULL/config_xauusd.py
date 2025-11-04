@@ -2,7 +2,7 @@
 
 # Symbol và Timeframe
 SYMBOL = "XAUUSD"
-TIMEFRAME = "M30"  # M30, H1, H4
+TIMEFRAME = "M15"  # M30, H1, H4
 TIMEFRAME_MT5 = {
     "M15": 15,
     "M30": 30,
@@ -46,6 +46,10 @@ CHECK_INTERVAL = 30  # seconds
 LOG_TRADES = True
 
 # Tài khoản MT5
-ACCOUNT_NUMBER = 272736909
-SERVER = "Exness-MT5Trial14"
+ACCOUNT_NUMBER = 270358962
+SERVER = "Exness-MT5Trial7"
 PASSWORD = "@Dinhhieu273"  # Để trống, MT5 sẽ sử dụng saved password
+# Telegram Notifications
+USE_TELEGRAM = True
+TELEGRAM_BOT_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+TELEGRAM_CHAT_ID = "1887610382"
