@@ -242,11 +242,13 @@ class XAUUSD_RiskManager:
         # Log timezone để debug (chỉ log debug)
         logging.debug(f"🕐 Thời gian hiện tại: Local={now_local.strftime('%Y-%m-%d %H:%M:%S')}, US/Eastern={now_us.strftime('%Y-%m-%d %H:%M:%S')} ({current_time})")
         
-        # Kiểm tra các session cấm giao dịch (từ config, theo giờ US/Eastern)
-        # Ví dụ: ("08:00", "10:00") → Không giao dịch từ 8:00 AM đến 10:00 AM EST/EDT
-        for start, end in NO_TRADE_SESSIONS:
-            if start <= current_time <= end:
-                return False, f"Trong session cấm {start}-{end} (US/Eastern)"
+        TIMEZONE_ONLY = False  # Nếu chỉ kiểm tra timezone mà không kiểm tra session cấm
+        if TIMEZONE_ONLY:
+            # Kiểm tra các session cấm giao dịch (từ config, theo giờ US/Eastern)
+            # Ví dụ: ("08:00", "10:00") → Không giao dịch từ 8:00 AM đến 10:00 AM EST/EDT
+            for start, end in NO_TRADE_SESSIONS:
+                if start <= current_time <= end:
+                    return False, f"Trong session cấm {start}-{end} (US/Eastern)"
         
         # Kiểm tra thứ 6 (weekday() = 4)
         # Sau giờ NO_TRADE_FRIDAY_AFTER (ví dụ: 17:00) → Không giao dịch (tránh rủi ro cuối tuần)
