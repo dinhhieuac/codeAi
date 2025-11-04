@@ -21,8 +21,8 @@ import requests
 script_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(script_dir))
 try:
-    import configgold
-    from configgold import *
+    import GOLD_BOT.configgold as configgold
+    from GOLD_BOT.configgold import *
 except ImportError:
     print("⚠️  File configgold.py không tìm thấy! Sử dụng giá trị mặc định.")
     # Fallback values theo rules_gold_usd.md
@@ -666,7 +666,7 @@ class GoldGPTrader:
         self.timeframe_str = TIMEFRAME  # Timeframe dạng string (ví dụ: "M15")
         try:
             # Thử import hàm từ configgold.py để convert timeframe
-            import configgold as config
+            import GOLD_BOT.configgold as config
             self.timeframe = config.get_timeframe_mt5()  # Convert "M15" → mt5.TIMEFRAME_M15
         except:
             # Fallback: Nếu không có hàm, tự mapping
