@@ -47,5 +47,5 @@ LOG_TRADES = True
 
 # Tài khoản MT5
 ACCOUNT_NUMBER = 272736909
-SERVER = "Exness-MT5Trial7"
-PASSWORD = ""  # Để trống, MT5 sẽ sử dụng saved password
+SERVER = "Exness-MT5Trial14"
+PASSWORD = "@Dinhhieu273"  # Để trống, MT5 sẽ sử dụng saved password
