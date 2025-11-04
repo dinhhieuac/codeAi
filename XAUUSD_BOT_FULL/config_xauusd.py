@@ -47,7 +47,8 @@ MAX_DAILY_TRADES = 30
 
 # Số lượng lệnh tối đa có thể mở trong 1 giờ
 # Mục đích: Tránh mở quá nhiều lệnh trong thời gian ngắn
-MAX_HOURLY_TRADES = 1
+# Tăng từ 1 lên 2 để tăng cơ hội giao dịch
+MAX_HOURLY_TRADES = 2
 
 # ============================================================================
 # STOP LOSS & TAKE PROFIT - Cấu hình SL/TP
@@ -93,10 +94,11 @@ MAX_LOSS_PER_TRADE = 2.0  # Đơn vị: %
 
 # Danh sách các khung giờ không được giao dịch (format: "HH:MM")
 # Bot sẽ tự động bỏ qua các tín hiệu trong các khung giờ này
+# Giảm số session cấm để tăng cơ hội giao dịch (chỉ giữ lại session rủi ro cao nhất)
 NO_TRADE_SESSIONS = [
     ("20:00", "22:00"),  # NY Open - Giờ mở cửa thị trường New York (thường biến động mạnh)
-    ("14:30", "15:30"),  # US News - Giờ công bố tin tức Mỹ (thường biến động mạnh)
-    ("00:00", "01:00")   # Asian session - Giờ thị trường châu Á (thường ít thanh khoản)
+    # ("14:30", "15:30"),  # US News - Tạm thời bỏ để tăng cơ hội giao dịch
+    # ("00:00", "01:00")   # Asian session - Tạm thời bỏ để tăng cơ hội giao dịch
 ]
 
 # Thời gian sau khi không được giao dịch vào thứ 6 (format: "HH:MM")
@@ -106,7 +108,8 @@ NO_TRADE_FRIDAY_AFTER = "20:00"
 # Thời gian nghỉ sau khi thua 1 lệnh (đơn vị: phút)
 # Sau khi thua 1 lệnh, bot sẽ đợi BREAK_AFTER_LOSS_MINUTES phút trước khi tìm tín hiệu mới
 # Mục đích: Tránh revenge trading (giao dịch trả thù)
-BREAK_AFTER_LOSS_MINUTES = 60
+# Giảm từ 60 xuống 30 phút để tăng cơ hội giao dịch
+BREAK_AFTER_LOSS_MINUTES = 30
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức

@@ -192,9 +192,9 @@ class TechnicalAnalyzer:
         4. Tính toán SL/TP dựa trên ATR và Risk/Reward ratio
         
         Điều kiện tín hiệu:
-        - Cần tối thiểu 3 tín hiệu đồng thuận để mở lệnh
-        - RSI có trọng số x2 (2 điểm) vì là chỉ báo mạnh
-        - EMA, MACD, BB mỗi cái 1 điểm
+        - Cần tối thiểu 2 tín hiệu đồng thuận để mở lệnh (đã giảm từ 3 xuống 2)
+        - RSI có trọng số x2 (2 điểm) khi cắt ngưỡng, x1 (1 điểm) khi đang ở vùng
+        - EMA, MACD, BB mỗi cái 1 điểm (kích hoạt cả khi cắt và khi đang ở trạng thái)
         
         Args:
             df: DataFrame chứa dữ liệu giá (columns: open, high, low, close, time)
@@ -258,30 +258,48 @@ class TechnicalAnalyzer:
         sell_signals = 0  # Số tín hiệu bán (cộng dồn)
         
         # --- Tín hiệu RSI (trọng số x2 = 2 điểm) ---
-        # RSI cắt từ trên xuống dưới 30 → Quá bán → Tín hiệu mua mạnh
+        # RSI cắt từ trên xuống dưới 30 → Quá bán → Tín hiệu mua mạnh (ưu tiên)
         if current['rsi'] < 30 and prev['rsi'] >= 30:
             buy_signals += 2  # RSI có trọng số cao hơn (2 điểm)
+        # RSI đang ở vùng quá bán (< 35) → Tín hiệu mua (chỉ khi chưa cắt)
+        elif current['rsi'] < 35:
+            buy_signals += 1  # RSI đang ở vùng quá bán (1 điểm)
         
-        # RSI cắt từ dưới lên trên 70 → Quá mua → Tín hiệu bán mạnh
-        elif current['rsi'] > 70 and prev['rsi'] <= 70:
+        # RSI cắt từ dưới lên trên 70 → Quá mua → Tín hiệu bán mạnh (ưu tiên)
+        if current['rsi'] > 70 and prev['rsi'] <= 70:
             sell_signals += 2  # RSI có trọng số cao hơn (2 điểm)
+        # RSI đang ở vùng quá mua (> 65) → Tín hiệu bán (chỉ khi chưa cắt)
+        elif current['rsi'] > 65:
+            sell_signals += 1  # RSI đang ở vùng quá mua (1 điểm)
         
         # --- Tín hiệu EMA (trọng số x1 = 1 điểm) ---
-        # EMA20 cắt EMA50 từ dưới lên → Uptrend mới → Tín hiệu mua
+        # EMA20 cắt EMA50 từ dưới lên → Uptrend mới → Tín hiệu mua (ưu tiên)
         if current['ema_20'] > current['ema_50'] and prev['ema_20'] <= prev['ema_50']:
             buy_signals += 1
+        # EMA20 đang ở trên EMA50 → Uptrend đang diễn ra → Tín hiệu mua
+        elif current['ema_20'] > current['ema_50']:
+            buy_signals += 1
         
-        # EMA20 cắt EMA50 từ trên xuống → Downtrend mới → Tín hiệu bán
-        elif current['ema_20'] < current['ema_50'] and prev['ema_20'] >= prev['ema_50']:
+        # EMA20 cắt EMA50 từ trên xuống → Downtrend mới → Tín hiệu bán (ưu tiên)
+        if current['ema_20'] < current['ema_50'] and prev['ema_20'] >= prev['ema_50']:
+            sell_signals += 1
+        # EMA20 đang ở dưới EMA50 → Downtrend đang diễn ra → Tín hiệu bán
+        elif current['ema_20'] < current['ema_50']:
             sell_signals += 1
         
         # --- Tín hiệu MACD (trọng số x1 = 1 điểm) ---
-        # MACD cắt Signal từ dưới lên → Momentum tăng → Tín hiệu mua
+        # MACD cắt Signal từ dưới lên → Momentum tăng → Tín hiệu mua (ưu tiên)
         if current['macd'] > current['macd_signal'] and prev['macd'] <= prev['macd_signal']:
             buy_signals += 1
+        # MACD đang ở trên Signal → Momentum tăng → Tín hiệu mua
+        elif current['macd'] > current['macd_signal']:
+            buy_signals += 1
         
-        # MACD cắt Signal từ trên xuống → Momentum giảm → Tín hiệu bán
-        elif current['macd'] < current['macd_signal'] and prev['macd'] >= prev['macd_signal']:
+        # MACD cắt Signal từ trên xuống → Momentum giảm → Tín hiệu bán (ưu tiên)
+        if current['macd'] < current['macd_signal'] and prev['macd'] >= prev['macd_signal']:
+            sell_signals += 1
+        # MACD đang ở dưới Signal → Momentum giảm → Tín hiệu bán
+        elif current['macd'] < current['macd_signal']:
             sell_signals += 1
         
         # --- Tín hiệu Bollinger Bands (trọng số x1 = 1 điểm) ---
@@ -300,8 +318,9 @@ class TechnicalAnalyzer:
         # Chuyển đổi ATR từ giá trị giá sang pips (1 pip XAUUSD = 0.01)
         atr_value = current['atr'] / 0.01  # ATR tính bằng pips
         
-        # --- Tín hiệu BUY: Cần tối thiểu 3 tín hiệu mua và nhiều hơn tín hiệu bán ---
-        if buy_signals >= 3 and buy_signals > sell_signals:
+        # --- Tín hiệu BUY: Cần tối thiểu 2 tín hiệu mua và nhiều hơn tín hiệu bán ---
+        # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
+        if buy_signals >= 2 and buy_signals > sell_signals:
             # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
             sl_pips = max(self.min_sl_pips, atr_value * 1.5)
             
@@ -315,8 +334,9 @@ class TechnicalAnalyzer:
                 'tp_pips': tp_pips        # Take Profit (pips)
             }
         
-        # --- Tín hiệu SELL: Cần tối thiểu 3 tín hiệu bán và nhiều hơn tín hiệu mua ---
-        elif sell_signals >= 3 and sell_signals > buy_signals:
+        # --- Tín hiệu SELL: Cần tối thiểu 2 tín hiệu bán và nhiều hơn tín hiệu mua ---
+        # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
+        elif sell_signals >= 2 and sell_signals > buy_signals:
             # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
             sl_pips = max(self.min_sl_pips, atr_value * 1.5)
             
