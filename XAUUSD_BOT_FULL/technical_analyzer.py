@@ -388,11 +388,31 @@ class TechnicalAnalyzer:
         # --- Tín hiệu BUY: Cần tối thiểu 2 tín hiệu mua và nhiều hơn tín hiệu bán ---
         # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
         if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals:
-            # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
-            sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+            # Tính SL/TP theo ATR động hoặc công thức cố định
+            use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+            atr_multiplier_sl = ATR_MULTIPLIER_SL if 'ATR_MULTIPLIER_SL' in globals() else 1.5
+            atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
             
-            # Tính TP: Tối thiểu MIN_TP_PIPS hoặc SL * MIN_RR_RATIO (lấy giá trị lớn hơn)
-            tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+            if use_atr_sl_tp:
+                # Tính SL/TP theo ATR động
+                sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+            else:
+                # Tính SL/TP theo công thức cố định (giữ nguyên logic cũ)
+                sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+                tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+            
+            # TP Boost: Tăng TP khi trend mạnh (nếu bật)
+            enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
+            if enable_tp_boost:
+                rsi_current = current['rsi']
+                rsi_threshold_up = RSI_TREND_THRESHOLD_UP if 'RSI_TREND_THRESHOLD_UP' in globals() else 65
+                strong_trend_boost = STRONG_TREND_TP_BOOST if 'STRONG_TREND_TP_BOOST' in globals() else 0.3
+                
+                # Nếu RSI > threshold (uptrend mạnh) → Tăng TP
+                if rsi_current > rsi_threshold_up:
+                    tp_pips = int(tp_pips * (1 + strong_trend_boost))
+                    logging.info(f"📈 TP Boost kích hoạt: RSI={rsi_current:.2f} > {rsi_threshold_up} → TP tăng {strong_trend_boost*100}%: {tp_pips} pips")
             
             return {
                 'action': 'BUY',           # Hành động: Mua
@@ -404,11 +424,31 @@ class TechnicalAnalyzer:
         # --- Tín hiệu SELL: Cần tối thiểu 2 tín hiệu bán và nhiều hơn tín hiệu mua ---
         # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
         elif sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals:
-            # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
-            sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+            # Tính SL/TP theo ATR động hoặc công thức cố định
+            use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+            atr_multiplier_sl = ATR_MULTIPLIER_SL if 'ATR_MULTIPLIER_SL' in globals() else 1.5
+            atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
             
-            # Tính TP: Tối thiểu MIN_TP_PIPS hoặc SL * MIN_RR_RATIO (lấy giá trị lớn hơn)
-            tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+            if use_atr_sl_tp:
+                # Tính SL/TP theo ATR động
+                sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+            else:
+                # Tính SL/TP theo công thức cố định (giữ nguyên logic cũ)
+                sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+                tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+            
+            # TP Boost: Tăng TP khi trend mạnh (nếu bật)
+            enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
+            if enable_tp_boost:
+                rsi_current = current['rsi']
+                rsi_threshold_down = RSI_TREND_THRESHOLD_DOWN if 'RSI_TREND_THRESHOLD_DOWN' in globals() else 35
+                strong_trend_boost = STRONG_TREND_TP_BOOST if 'STRONG_TREND_TP_BOOST' in globals() else 0.3
+                
+                # Nếu RSI < threshold (downtrend mạnh) → Tăng TP
+                if rsi_current < rsi_threshold_down:
+                    tp_pips = int(tp_pips * (1 + strong_trend_boost))
+                    logging.info(f"📉 TP Boost kích hoạt: RSI={rsi_current:.2f} < {rsi_threshold_down} → TP tăng {strong_trend_boost*100}%: {tp_pips} pips")
             
             return {
                 'action': 'SELL',          # Hành động: Bán

@@ -595,8 +595,9 @@ class XAUUSD_Bot:
                 else:
                     account_info = {'equity': 0, 'balance': 0, 'free_margin': 0}
                 
-                # Quản lý trailing stop cho các lệnh đang mở
+                # Quản lý Smart Trailing Stop và Smart Exit cho các lệnh đang mở
                 self._manage_trailing_stops()
+                self._manage_smart_exit()
                 
                 # Lấy dữ liệu giá
                 df = self.get_price_data(100)
@@ -771,7 +772,7 @@ class XAUUSD_Bot:
                         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             ticket = result.order
                             logging.info("=" * 60)
-                            logging.info(f"✅ LỆNH {action} THÀNH CÔNG!")
+                            logging.info(f"✅ LỆNH  {action} XAUUSD THÀNH CÔNG!")
                             logging.info("=" * 60)
                             logging.info(f"   - Ticket: {ticket}")
                             logging.info(f"   - Volume: {result.volume} lots")
@@ -874,53 +875,39 @@ class XAUUSD_Bot:
     
     def _manage_trailing_stops(self):
         """
-        Quản lý Trailing Stop: Dời SL khi đạt 1R (1×Risk) để bảo vệ lãi
+        Quản lý Smart Trailing Stop: Dời SL thông minh để bảo vệ lợi nhuận
         
         Logic:
-        - Kích hoạt khi profit ≥ 1R (1×SL)
-        - Khi đạt 1R, dời SL về entry (breakeven)
-        - Tiếp tục dời SL lên theo giá khi profit tăng
+        - Kích hoạt khi profit ≥ TRAIL_START_PIPS
+        - SL sẽ cách giá hiện tại TRAIL_DISTANCE_PIPS
+        - Khi profit > TRAIL_HARD_LOCK_PIPS → Chốt cứng SL ở mức an toàn
         """
+        # Kiểm tra xem có bật trailing stop không
+        enable_trailing = ENABLE_TRAILING_STOP if 'ENABLE_TRAILING_STOP' in globals() else True
+        if not enable_trailing:
+            return
+        
         positions = mt5.positions_get(symbol=self.symbol)
         if positions is None or len(positions) == 0:
             return
         
-        # Lấy ATR hiện tại để tính toán
-        df = self.get_price_data(100)
-        if df is None or len(df) < 14:
-            return
+        # Lấy tham số từ config
+        trail_start_pips = TRAIL_START_PIPS if 'TRAIL_START_PIPS' in globals() else 150
+        trail_distance_pips = TRAIL_DISTANCE_PIPS if 'TRAIL_DISTANCE_PIPS' in globals() else 100
+        trail_hard_lock_pips = TRAIL_HARD_LOCK_PIPS if 'TRAIL_HARD_LOCK_PIPS' in globals() else 250
         
-        # Tính ATR
-        atr = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
-        if len(atr) == 0:
-            return
-        
-        atr_current = atr.iloc[-1]
-        if atr_current == 0 or pd.isna(atr_current):
+        tick = mt5.symbol_info_tick(self.symbol)
+        if not tick:
             return
         
         symbol_info = mt5.symbol_info(self.symbol)
         if not symbol_info:
             return
         
-        point = symbol_info.point
-        atr_points = atr_current / point
-        
-        tick = mt5.symbol_info_tick(self.symbol)
-        if not tick:
-            return
-        
         for pos in positions:
             ticket = pos.ticket
             entry_price = pos.price_open
             current_sl = pos.sl
-            initial_sl_distance = abs(entry_price - pos.sl) if pos.sl > 0 else 0
-            
-            # Tính SL ban đầu (pips) - 1R
-            initial_sl_pips = initial_sl_distance / 0.01 if initial_sl_distance > 0 else 0
-            
-            if initial_sl_pips == 0:
-                continue  # Bỏ qua nếu không có SL ban đầu
             
             # Tính profit hiện tại (pips)
             if pos.type == mt5.ORDER_TYPE_BUY:
@@ -930,64 +917,228 @@ class XAUUSD_Bot:
                 current_price = tick.ask
                 profit_pips = (entry_price - current_price) / 0.01
             
-            # Tính profit theo R (Risk)
-            profit_r = profit_pips / initial_sl_pips if initial_sl_pips > 0 else 0
+            # Chỉ kích hoạt trailing stop khi profit ≥ TRAIL_START_PIPS
+            if profit_pips < trail_start_pips:
+                continue  # Chưa đạt ngưỡng để bắt đầu trailing
             
-            # Kích hoạt trailing stop khi profit ≥ 1R
-            if profit_r >= 1.0:
-                if ticket not in self.trailing_stop_activated:
-                    self.trailing_stop_activated.add(ticket)
-                    logging.info(f"✅ Trailing Stop kích hoạt: Ticket {ticket}, Profit: {profit_r:.2f}R ({profit_pips:.1f} pips)")
+            if ticket not in self.trailing_stop_activated:
+                self.trailing_stop_activated.add(ticket)
+                logging.info(f"✅ Smart Trailing Stop kích hoạt: Ticket {ticket}, Profit: {profit_pips:.1f} pips (≥ {trail_start_pips} pips)")
+            
+            # Tính SL mới: Cách giá hiện tại TRAIL_DISTANCE_PIPS
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                new_sl = current_price - (trail_distance_pips * 0.01)
                 
-                # Tính SL mới: Bảo vệ lãi đã đạt được
-                # Khi profit = 1R → SL = Entry (breakeven)
-                # Khi profit = 2R → SL = Entry + 1R (bảo vệ 1R lãi)
-                # Khi profit = 3R → SL = Entry + 2R (bảo vệ 2R lãi)
-                # Công thức: SL mới = Entry + (Profit - 1R) để bảo vệ lãi
+                # Hard Lock: Khi profit > TRAIL_HARD_LOCK_PIPS, đảm bảo SL không thấp hơn entry + (profit - hard_lock)
+                if profit_pips > trail_hard_lock_pips:
+                    # Chốt cứng: Bảo vệ ít nhất (profit - hard_lock) pips
+                    protected_profit_pips = profit_pips - trail_hard_lock_pips
+                    min_sl = entry_price + (protected_profit_pips * 0.01)
+                    new_sl = max(new_sl, min_sl)
                 
-                if pos.type == mt5.ORDER_TYPE_BUY:
-                    # SL mới = Entry + (Profit - 1R) trong pips
-                    # Ví dụ: Entry = 2000, Profit = 300 pips, SL ban đầu = 150 pips (1R)
-                    # → SL mới = Entry + (300 - 150) = Entry + 150 pips = 2015
-                    protected_profit_pips = profit_pips - initial_sl_pips  # Lãi được bảo vệ
-                    new_sl = entry_price + (protected_profit_pips * 0.01)
+                # SL mới phải cao hơn SL hiện tại và không thấp hơn Entry (breakeven)
+                if new_sl > current_sl and new_sl >= entry_price:
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "symbol": self.symbol,
+                        "position": ticket,
+                        "sl": new_sl,
+                        "tp": pos.tp
+                    }
+                    result = mt5.order_send(request)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        lock_status = "🔒 Hard Lock" if profit_pips > trail_hard_lock_pips else ""
+                        logging.info(f"📈 Smart Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, Distance: {trail_distance_pips} pips) {lock_status}")
+                    elif result:
+                        logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+            
+            else:  # SELL
+                new_sl = current_price + (trail_distance_pips * 0.01)
+                
+                # Hard Lock: Khi profit > TRAIL_HARD_LOCK_PIPS, đảm bảo SL không cao hơn entry - (profit - hard_lock)
+                if profit_pips > trail_hard_lock_pips:
+                    # Chốt cứng: Bảo vệ ít nhất (profit - hard_lock) pips
+                    protected_profit_pips = profit_pips - trail_hard_lock_pips
+                    max_sl = entry_price - (protected_profit_pips * 0.01)
+                    new_sl = min(new_sl, max_sl)
+                
+                # SL mới phải thấp hơn SL hiện tại và không cao hơn Entry (breakeven)
+                if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "symbol": self.symbol,
+                        "position": ticket,
+                        "sl": new_sl,
+                        "tp": pos.tp
+                    }
+                    result = mt5.order_send(request)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        lock_status = "🔒 Hard Lock" if profit_pips > trail_hard_lock_pips else ""
+                        logging.info(f"📉 Smart Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, Distance: {trail_distance_pips} pips) {lock_status}")
+                    elif result:
+                        logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+    
+    def _manage_smart_exit(self):
+        """
+        Quản lý Smart Exit: Đóng lệnh sớm khi tín hiệu đảo chiều hoặc mất động lượng
+        
+        Logic:
+        - Đóng lệnh nếu có OPPOSITE_SIGNAL_COUNT_TO_EXIT tín hiệu ngược chiều
+        - Đóng lệnh nếu RSI quay đầu vượt vùng trung tính
+        - Đóng lệnh nếu lợi nhuận giảm quá nhanh (drawdown > %)
+        """
+        # Kiểm tra xem có bật smart exit không
+        enable_smart_exit = ENABLE_SMART_EXIT if 'ENABLE_SMART_EXIT' in globals() else True
+        if not enable_smart_exit:
+            return
+        
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions is None or len(positions) == 0:
+            return
+        
+        # Lấy dữ liệu giá để phân tích
+        df = self.get_price_data(100)
+        if df is None or len(df) < 50:
+            return
+        
+        # Phân tích tín hiệu hiện tại
+        current_signal = self.technical_analyzer.analyze(df)
+        if not current_signal:
+            return
+        
+        current_action = current_signal.get('action', 'HOLD')
+        current_rsi = df.iloc[-1]['rsi'] if 'rsi' in df.columns else 50
+        
+        tick = mt5.symbol_info_tick(self.symbol)
+        if not tick:
+            return
+        
+        # Lấy tham số từ config
+        opposite_signal_count = OPPOSITE_SIGNAL_COUNT_TO_EXIT if 'OPPOSITE_SIGNAL_COUNT_TO_EXIT' in globals() else 2
+        enable_rsi_exit = ENABLE_RSI_EXIT if 'ENABLE_RSI_EXIT' in globals() else True
+        rsi_exit_threshold = RSI_EXIT_THRESHOLD if 'RSI_EXIT_THRESHOLD' in globals() else 50
+        enable_profit_dd_exit = ENABLE_PROFIT_DRAWDOWN_EXIT if 'ENABLE_PROFIT_DRAWDOWN_EXIT' in globals() else True
+        profit_dd_exit_percent = PROFIT_DRAWDOWN_EXIT_PERCENT if 'PROFIT_DRAWDOWN_EXIT_PERCENT' in globals() else 40
+        
+        # Track đỉnh profit cho mỗi lệnh
+        if not hasattr(self, 'position_peak_profit'):
+            self.position_peak_profit = {}  # {ticket: peak_profit_pips}
+        
+        for pos in positions:
+            ticket = pos.ticket
+            entry_price = pos.price_open
+            
+            # Tính profit hiện tại (pips)
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                current_price = tick.bid
+                profit_pips = (current_price - entry_price) / 0.01
+            else:  # SELL
+                current_price = tick.ask
+                profit_pips = (entry_price - current_price) / 0.01
+            
+            # Cập nhật đỉnh profit
+            if ticket not in self.position_peak_profit or profit_pips > self.position_peak_profit[ticket]:
+                self.position_peak_profit[ticket] = profit_pips
+            
+            peak_profit_pips = self.position_peak_profit.get(ticket, profit_pips)
+            
+            # Kiểm tra 1: Tín hiệu ngược chiều
+            if current_action != 'HOLD':
+                position_type = 'BUY' if pos.type == mt5.ORDER_TYPE_BUY else 'SELL'
+                if current_action != position_type:
+                    # Có tín hiệu ngược chiều
+                    if not hasattr(self, 'opposite_signal_count'):
+                        self.opposite_signal_count = {}
+                    if ticket not in self.opposite_signal_count:
+                        self.opposite_signal_count[ticket] = 0
                     
-                    # SL mới phải cao hơn SL hiện tại và không thấp hơn Entry (breakeven)
-                    if new_sl > current_sl and new_sl >= entry_price:
-                        request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "symbol": self.symbol,
-                            "position": ticket,
-                            "sl": new_sl,
-                            "tp": pos.tp
-                        }
-                        result = mt5.order_send(request)
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            logging.info(f"📈 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_r:.2f}R, {profit_pips:.1f} pips, Bảo vệ: {protected_profit_pips:.1f} pips)")
-                        elif result:
-                            logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
-                
-                else:  # SELL
-                    # SL mới = Entry - (Profit - 1R) trong pips
-                    # Ví dụ: Entry = 2000, Profit = 300 pips, SL ban đầu = 150 pips (1R)
-                    # → SL mới = Entry - (300 - 150) = Entry - 150 pips = 1985
-                    protected_profit_pips = profit_pips - initial_sl_pips  # Lãi được bảo vệ
-                    new_sl = entry_price - (protected_profit_pips * 0.01)
+                    self.opposite_signal_count[ticket] += 1
                     
-                    # SL mới phải thấp hơn SL hiện tại và không cao hơn Entry (breakeven)
-                    if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
-                        request = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "symbol": self.symbol,
-                            "position": ticket,
-                            "sl": new_sl,
-                            "tp": pos.tp
-                        }
-                        result = mt5.order_send(request)
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            logging.info(f"📉 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_r:.2f}R, {profit_pips:.1f} pips, Bảo vệ: {protected_profit_pips:.1f} pips)")
-                        elif result:
-                            logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+                    if self.opposite_signal_count[ticket] >= opposite_signal_count:
+                        # Đóng lệnh vì có quá nhiều tín hiệu ngược chiều
+                        logging.info(f"🔄 Smart Exit: Ticket {ticket} - {opposite_signal_count} tín hiệu ngược chiều ({current_action})")
+                        self._close_position(ticket, "Smart Exit: Tín hiệu đảo chiều")
+                        continue
+                else:
+                    # Reset counter nếu tín hiệu cùng chiều
+                    if hasattr(self, 'opposite_signal_count') and ticket in self.opposite_signal_count:
+                        self.opposite_signal_count[ticket] = 0
+            
+            # Kiểm tra 2: RSI quay đầu vượt vùng trung tính
+            if enable_rsi_exit and profit_pips > 0:  # Chỉ exit khi đang lời
+                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold:
+                    # BUY nhưng RSI < 50 → Momentum giảm
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold})")
+                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+                    continue
+                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold:
+                    # SELL nhưng RSI > 50 → Momentum giảm
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold})")
+                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+                    continue
+            
+            # Kiểm tra 3: Profit drawdown (lợi nhuận giảm quá nhanh)
+            if enable_profit_dd_exit and peak_profit_pips > 0:
+                profit_drawdown_percent = ((peak_profit_pips - profit_pips) / peak_profit_pips) * 100
+                if profit_drawdown_percent > profit_dd_exit_percent:
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - Profit drawdown {profit_drawdown_percent:.1f}% (từ đỉnh {peak_profit_pips:.1f} → {profit_pips:.1f} pips)")
+                    self._close_position(ticket, f"Smart Exit: Profit drawdown {profit_drawdown_percent:.1f}%")
+                    continue
+    
+    def _close_position(self, ticket, reason):
+        """
+        Đóng lệnh với lý do cụ thể
+        
+        Args:
+            ticket: Ticket của lệnh cần đóng
+            reason: Lý do đóng lệnh
+        """
+        position = None
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions:
+            for pos in positions:
+                if pos.ticket == ticket:
+                    position = pos
+                    break
+        
+        if not position:
+            logging.warning(f"⚠️ Không tìm thấy position với ticket {ticket}")
+            return
+        
+        # Xác định loại lệnh đóng (ngược với loại mở)
+        if position.type == mt5.ORDER_TYPE_BUY:
+            order_type = mt5.ORDER_TYPE_SELL
+            price = mt5.symbol_info_tick(self.symbol).bid
+        else:  # SELL
+            order_type = mt5.ORDER_TYPE_BUY
+            price = mt5.symbol_info_tick(self.symbol).ask
+        
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.symbol,
+            "volume": position.volume,
+            "type": order_type,
+            "position": ticket,
+            "price": price,
+            "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
+            "magic": 202411,
+            "comment": f"Smart_Exit_{reason}",
+            "type_time": mt5.TRADE_TIME_GTC,
+        }
+        
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            logging.info(f"✅ Smart Exit thành công: Ticket {ticket}, Lý do: {reason}")
+            
+            # Cleanup tracking
+            if hasattr(self, 'position_peak_profit') and ticket in self.position_peak_profit:
+                del self.position_peak_profit[ticket]
+            if hasattr(self, 'opposite_signal_count') and ticket in self.opposite_signal_count:
+                del self.opposite_signal_count[ticket]
+            if ticket in self.trailing_stop_activated:
+                self.trailing_stop_activated.remove(ticket)
+        elif result:
+            logging.warning(f"⚠️ Smart Exit thất bại: Ticket {ticket}, {result.comment if hasattr(result, 'comment') else 'Unknown'}")
 
 def main():
     logging.info("=" * 60)
