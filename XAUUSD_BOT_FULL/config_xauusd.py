@@ -116,6 +116,12 @@ NO_TRADE_FRIDAY_AFTER = "20:00"
 # Giảm từ 60 xuống 30 phút để tăng cơ hội giao dịch
 BREAK_AFTER_LOSS_MINUTES = 30
 
+# Thời gian tối thiểu giữa 2 lệnh cùng chiều (đơn vị: phút)
+# Bot sẽ không mở lệnh BUY nếu đã có lệnh BUY mở trong vòng MIN_TIME_BETWEEN_SAME_DIRECTION phút
+# Tương tự với SELL
+# Mục đích: Tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
+MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
+
 # ============================================================================
 # PHÂN TÍCH KỸ THUẬT - Cấu hình các chỉ báo và điều kiện tín hiệu
 # ============================================================================
