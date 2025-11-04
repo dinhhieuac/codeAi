@@ -47,7 +47,7 @@ LOG_TRADES = True
 
 # Tài khoản MT5
 ACCOUNT_NUMBER = 270358962
-SERVER = "Exness-MT5Trial7"
+SERVER = "Exness-MT5Trial17"
 PASSWORD = "@Dinhhieu273"  # Để trống, MT5 sẽ sử dụng saved password
 # Telegram Notifications
 USE_TELEGRAM = True

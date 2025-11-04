@@ -28,7 +28,7 @@ except ImportError:
     # Fallback values theo rules_gold_usd.md
     MT5_LOGIN = 270358962  # Số tài khoản MT5 của bạn (số nguyên)
     MT5_PASSWORD = "@Dinhhieu273"  # Mật khẩu đăng nhập MT5 (chuỗi)
-    MT5_SERVER = "Exness-MT5Trial7"  # Tên server MT5 (copy chính xác từ MT5: Tools → Options → Server)
+    MT5_SERVER = "Exness-MT5Trial17"  # Tên server MT5 (copy chính xác từ MT5: Tools → Options → Server)
 
     SYMBOL = "XAUUSD"
     TIMEFRAME = "M15"
