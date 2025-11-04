@@ -1457,7 +1457,24 @@ class GoldAutoTrader:
         if strong_buy_signals >= self.min_signal_strength and adx_ok and volume_ok:
             # Kiểm tra điều kiện bổ sung
             trend_ok = not require_trend or trend_buy
-            momentum_ok = not require_momentum or macd_bullish
+            
+            # ⚠️ CẢI THIỆN: Momentum OK nếu:
+            # 1. MACD bullish cơ bản (macd_hist > 0 and macd > macd_signal)
+            # 2. HOẶC MACD magnitude mạnh + persistent (cho phép momentum override)
+            if require_momentum:
+                if macd_bullish:
+                    momentum_ok = True  # MACD bullish cơ bản
+                elif self.use_macd_magnitude and self.use_macd_persistence:
+                    # MACD magnitude mạnh + persistent = momentum hợp lệ (override)
+                    if macd_magnitude_strong and macd_persistent and macd_hist > 0:
+                        momentum_ok = True
+                        strong_reasons.append(f'Momentum override: MACD magnitude {macd_magnitude_value:.2f} + persistent')
+                    else:
+                        momentum_ok = False
+                else:
+                    momentum_ok = False
+            else:
+                momentum_ok = True  # Không yêu cầu momentum confirmation
             
             # ⚠️ THAY ĐỔI: REQUIRE_BOTH_TREND_AND_MOMENTUM
             # True = CẦN CẢ trend VÀ momentum (AND logic) → Tăng độ chính xác
@@ -1465,8 +1482,13 @@ class GoldAutoTrader:
             require_both = getattr(self, 'require_both_trend_and_momentum', True)
             
             # ⚠️ MỚI: Kiểm tra Counter-trend (Trend và Momentum mâu thuẫn)
+            # Counter-trend: Không có trend nhưng có momentum mạnh (MACD magnitude + persistent)
             is_counter_trend = False
-            if self.allow_counter_trend and not trend_ok and momentum_ok:
+            # Cho phép counter-trend nếu:
+            # 1. Không có trend (trend_ok = False)
+            # 2. Có momentum mạnh (momentum_ok = True) HOẶC MACD magnitude rất mạnh + persistent
+            has_strong_momentum = momentum_ok or (self.use_macd_magnitude and self.use_macd_persistence and macd_magnitude_strong and macd_persistent and macd_hist > 0)
+            if self.allow_counter_trend and not trend_ok and has_strong_momentum:
                 # Counter-trend BUY: Trend down nhưng momentum up mạnh
                 # Điều kiện an toàn:
                 # 1. Volume cao (>= COUNTER_TREND_MIN_VOLUME)
@@ -1512,14 +1534,36 @@ class GoldAutoTrader:
         elif strong_sell_signals >= self.min_signal_strength and adx_ok and volume_ok:
             # Kiểm tra điều kiện bổ sung
             trend_ok = not require_trend or trend_sell
-            momentum_ok = not require_momentum or macd_bearish
+            
+            # ⚠️ CẢI THIỆN: Momentum OK nếu:
+            # 1. MACD bearish cơ bản (macd_hist < 0 and macd < macd_signal)
+            # 2. HOẶC MACD magnitude mạnh + persistent (cho phép momentum override)
+            if require_momentum:
+                if macd_bearish:
+                    momentum_ok = True  # MACD bearish cơ bản
+                elif self.use_macd_magnitude and self.use_macd_persistence:
+                    # MACD magnitude mạnh + persistent = momentum hợp lệ (override)
+                    if macd_magnitude_strong and macd_persistent and macd_hist < 0:
+                        momentum_ok = True
+                        strong_reasons.append(f'Momentum override: MACD magnitude {macd_magnitude_value:.2f} + persistent')
+                    else:
+                        momentum_ok = False
+                else:
+                    momentum_ok = False
+            else:
+                momentum_ok = True  # Không yêu cầu momentum confirmation
             
             # ⚠️ THAY ĐỔI: REQUIRE_BOTH_TREND_AND_MOMENTUM
             require_both = getattr(self, 'require_both_trend_and_momentum', True)
             
             # ⚠️ MỚI: Kiểm tra Counter-trend (Trend và Momentum mâu thuẫn)
+            # Counter-trend: Không có trend nhưng có momentum mạnh (MACD magnitude + persistent)
             is_counter_trend = False
-            if self.allow_counter_trend and not trend_ok and momentum_ok:
+            # Cho phép counter-trend nếu:
+            # 1. Không có trend (trend_ok = False)
+            # 2. Có momentum mạnh (momentum_ok = True) HOẶC MACD magnitude rất mạnh + persistent
+            has_strong_momentum = momentum_ok or (self.use_macd_magnitude and self.use_macd_persistence and macd_magnitude_strong and macd_persistent and macd_hist < 0)
+            if self.allow_counter_trend and not trend_ok and has_strong_momentum:
                 # Counter-trend SELL: Trend up nhưng momentum down mạnh
                 # Điều kiện an toàn:
                 # 1. Volume cao (>= COUNTER_TREND_MIN_VOLUME)
@@ -1895,8 +1939,7 @@ class GoldAutoTrader:
             True nếu đủ thời gian để mở lệnh
         
         Note:
-            Rule "bỏ qua nếu không còn position" đã được xử lý ở _check_all_trade_rules()
-            Hàm này chỉ được gọi khi còn có position mở
+            Hàm này luôn được gọi để kiểm tra thời gian giữa các lệnh, bất kể có position mở hay không
         """
         now = datetime.now()
         
@@ -1969,18 +2012,11 @@ class GoldAutoTrader:
         if not self._check_daily_trade_limit():
             return False
         
-        # ⚠️ RULE MỚI: Nếu không còn position nào mở → Bỏ qua tất cả rule về thời gian
-        # Cho phép mở lệnh mới ngay lập tức (bỏ qua cooldown, thời gian giữa lệnh, trades per hour)
-        open_positions = self.get_open_positions()
-        if len(open_positions) == 0:
-            logger.info(f"✅ Không còn position nào mở → Bỏ qua các rule về thời gian, cho phép mở lệnh mới")
-            return True
-        
-        # Kiểm tra giới hạn lệnh trong 1 giờ (chỉ kiểm tra nếu còn position)
+        # Kiểm tra giới hạn lệnh trong 1 giờ (luôn kiểm tra)
         if not self._check_trades_per_hour_limit():
             return False
         
-        # Kiểm tra thời gian giữa các lệnh (chỉ kiểm tra nếu còn position)
+        # Kiểm tra thời gian giữa các lệnh (luôn kiểm tra)
         if not self._check_time_between_trades(order_type):
             return False
         
