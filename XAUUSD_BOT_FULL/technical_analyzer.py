@@ -239,6 +239,7 @@ class TechnicalAnalyzer:
         # Bollinger Bands - để xác định vùng quá mua/quá bán
         upper_bb, middle_bb, lower_bb = self.calculate_bollinger_bands(close)
         df['upper_bb'] = upper_bb   # Dải trên
+        df['middle_bb'] = middle_bb    # Dải giữa (SMA)
         df['lower_bb'] = lower_bb    # Dải dưới
         
         # ATR (Average True Range) - để tính SL/TP dựa trên độ biến động
