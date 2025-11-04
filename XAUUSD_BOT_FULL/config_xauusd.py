@@ -37,6 +37,13 @@ RISK_PER_TRADE = 0.5  # Đơn vị: phần trăm (%)
 # Mục đích: Bảo vệ tài khoản khi có quá nhiều lệnh đang thua
 SAFE_EQUITY_RATIO = 0.92  # Giá trị từ 0.0 đến 1.0
 
+# Free margin tối thiểu (đơn vị: USD hoặc % của balance)
+# Bot sẽ không mở lệnh mới nếu free margin < MIN_FREE_MARGIN
+# Có 2 cách cấu hình:
+# - Số dương (ví dụ: 50) → Tối thiểu $50 USD
+# - Số âm (ví dụ: -0.1) → Tối thiểu 10% của balance
+MIN_FREE_MARGIN = 50.0  # Đơn vị: USD (hoặc % nếu < 0, ví dụ: -0.1 = 10%)
+
 # Số lượng vị thế tối đa có thể mở cùng lúc
 # Nếu đã có MAX_POSITIONS lệnh mở → Bot sẽ không mở lệnh mới
 MAX_POSITIONS = 2
