@@ -1,6 +1,7 @@
 """
-Configuration file cho Auto Trader - ETH Optimized v3
+Configuration file cho Auto Trader - ETHUSD Optimized v3
 Giảm nhiễu, tránh cắt lỗ sớm, tối ưu cho chạy 24/7
+Điều chỉnh các thông số SL/TP và risk management cho phù hợp với ETHUSD
 """
 
 # ============================================
@@ -17,6 +18,7 @@ MT5_SERVER = "Exness-MT5Trial17"  # Tên server MT5 (copy chính xác từ MT5: 
 # Symbol công cụ tài chính muốn giao dịch
 SYMBOL = "ETHUSD"  # Symbol để giao dịch: "ETHUSD" (Ethereum)
 # Lưu ý: Kiểm tra symbol có sẵn trong Market Watch của MT5 trước khi chạy
+# ETHUSD giá thường ~$2000-4000, volatility cao tương đương BTC
 
 # ============================================
 # Timeframe Settings
@@ -41,12 +43,13 @@ MIN_LOT_SIZE = 0.01            # Lot size tối thiểu cho phép (0.01 = minimu
 MAX_LOT_SIZE = 0.01            # Lot size tối đa cho phép mỗi lệnh
                                 # Giới hạn này ngăn bot mở lệnh quá lớn
                                 # Với ETHUSD, thường đặt 0.01-0.1 tùy vốn
+                                # ETH giá thấp hơn BTC nên có thể trade lot lớn hơn với cùng vốn
 
 MAX_POSITIONS = 3              # Số lượng vị thế tối đa cùng lúc (mở bao nhiêu lệnh cùng thời điểm)
                                 # Bot sẽ không mở lệnh mới nếu đã có MAX_POSITIONS lệnh mở
-                                # Khuyến nghị: 3-5 cho ETH vì volatility cao
+                                # Khuyến nghị: 3-5 cho ETHUSD vì volatility cao (tương đương BTC)
 
-MAX_DAILY_TRADES = 300         # Giới hạn số lệnh trong 1 ngày (reset lúc 0h mỗi ngày)
+MAX_DAILY_TRADES = 50         # Giới hạn số lệnh trong 1 ngày (reset lúc 0h mỗi ngày)
                                 # Ngăn bot giao dịch quá nhiều (tránh overtrading)
                                 # Với M15 timeframe, 300 lệnh/ngày là hợp lý
 
@@ -56,39 +59,73 @@ MIN_EQUITY_RATIO = 0.9         # Tỷ lệ Equity tối thiểu so với Balance
                                 # Đây là circuit breaker để bảo vệ tài khoản khỏi drawdown quá lớn
 
 # ============================================
+# Trading Time Rules - Quy tắc về thời gian giao dịch
+# ============================================
+MIN_TIME_BETWEEN_SAME_DIRECTION = 60 * 60  # Thời gian tối thiểu giữa 2 lệnh cùng chiều (30 phút = 1800 giây)
+                                            # Ví dụ: Đã mở BUY lúc 10:00 → Chỉ mở BUY tiếp theo sau 10:30
+                                            # Giúp tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
+
+MIN_TIME_BETWEEN_OPPOSITE_DIRECTION = 15 * 60  # Thời gian tối thiểu giữa 2 lệnh ngược chiều (15 phút = 900 giây)
+                                                # Ví dụ: Đã mở BUY lúc 10:00 → Có thể mở SELL sau 10:15 (nếu tín hiệu đảo mạnh)
+                                                # Cho phép đảo chiều nhanh hơn khi có tín hiệu đảo mạnh
+
+MAX_TRADES_PER_HOUR = 2        # Số lệnh tối đa trong 1 giờ (2 lệnh)
+                                # Bot sẽ đếm số lệnh đã mở trong 1 giờ qua và chặn nếu >= 2
+                                # Giúp kiểm soát tần suất giao dịch, tránh over-trading
+
+COOLDOWN_AFTER_LOSS = 45 * 60  # Thời gian nghỉ sau khi thua 1 lệnh (45 phút = 2700 giây)
+                                # Ví dụ: Đã thua 1 lệnh lúc 10:00 → Tạm dừng trade đến 10:45
+                                # Giúp tránh revenge trading (giao dịch để "trả thù" sau khi thua)
+
+# ============================================
 # Stop Loss / Take Profit Settings
 # ============================================
 # Cài đặt Stop Loss và Take Profit - Bảo vệ lợi nhuận và giới hạn thua lỗ
 USE_ATR_SL_TP = True           # True: Dùng ATR (Average True Range) để tính SL/TP động
                                 # False: Dùng giá trị cố định (MIN_SL_POINTS, MIN_TP_POINTS)
-                                # ATR phản ánh volatility, phù hợp với ETH vì giá dao động mạnh
+                                # ATR phản ánh volatility, phù hợp với ETHUSD vì giá dao động mạnh
+                                # ETHUSD có volatility tương đương BTC nhưng giá thấp hơn nên ATR tuyệt đối nhỏ hơn
 
 # Hệ số nhân ATR để tính SL/TP (chỉ dùng khi USE_ATR_SL_TP = True)
-# Với ETH, ATR thường nhỏ nên ta nhân hệ số lớn hơn so với forex
+# Với ETHUSD, ATR thường dao động 50-150 points (thấp hơn BTC do giá thấp hơn)
+# ETHUSD giá ~$2000-4000, volatility tương đương BTC nhưng ATR tuyệt đối nhỏ hơn
 ATR_SL_MULTIPLIER = 6.0        # Hệ số nhân ATR cho Stop Loss: SL = 6.0 × ATR
-                                # Giá trị cao hơn = SL xa hơn = ít bị stop loss sớm (whipsaw)
-                                # Với ETH volatile: 6.0-8.0 là hợp lý
+                                # Giá trị này phù hợp với ETHUSD volatile
+                                # Ví dụ: ATR = 100 → SL = 100 × 6.0 = 600 points = $600 (~15-30% của giá $2000-4000)
 
-ATR_TP_MULTIPLIER = 10.0       # Hệ số nhân ATR cho Take Profit: TP = 10.0 × ATR
-                                # Risk:Reward Ratio ≈ (10.0 / 6.0) = 1.67:1
-                                # Tức là nếu risk $100 thì reward $167
+ATR_TP_MULTIPLIER = 9.0        # Hệ số nhân ATR cho Take Profit: TP = 9.0 × ATR
+                                # Risk:Reward Ratio ≈ (9.0 / 6.0) = 1.5:1 (tỷ lệ RR tốt)
+                                # Tức là nếu risk $100 thì reward $150
+                                # Ví dụ: ATR = 100 → TP = 100 × 9.0 = 900 points = $900
 
 # Giới hạn SL/TP bằng points (đơn vị nhỏ nhất của giá)
-# Với ETHUSD: giá ~3,000 → 1 point = 1 USD (hoặc 0.01 tùy broker)
-# Ví dụ: SL 800 points = $800, TP 1600 points = $1600
-MIN_SL_POINTS = 800            # Stop Loss tối thiểu (points) - Áp dụng khi ATR tính ra quá nhỏ
-                                # Nếu ATR × ATR_SL_MULTIPLIER < 800, sẽ dùng 800 points
-                                # Đảm bảo SL không quá chặt, tránh bị cắt lỗ sớm
+# Với ETHUSD: giá ~$2000-4000 → 1 point = 1 USD
+# Ví dụ: SL 300 points = $300 (~7-15% giá), TP 500 points = $500
+MIN_SL_POINTS = 300            # Stop Loss tối thiểu (points) - Điều chỉnh cho ETHUSD
+                                # Nếu ATR × ATR_SL_MULTIPLIER < 300, sẽ dùng 300 points
+                                # Với ETH giá ~$3000: 300 points = $300 = ~10% giá
+                                # Lưu ý: % này cao hơn BTC do giá ETH thấp hơn, nhưng vẫn phù hợp với crypto volatile
+                                # Thực tế SL sẽ được tính từ ATR và có thể lớn hơn 300 points
 
-MAX_SL_POINTS = 5000           # Stop Loss tối đa (points) - Giới hạn trên
-                                # Nếu ATR × ATR_SL_MULTIPLIER > 5000, sẽ dùng 5000 points
-                                # Ngăn SL quá xa, risk quá lớn
+MAX_SL_POINTS = 2000           # Stop Loss tối đa (points) - Điều chỉnh cho ETHUSD
+                                # Nếu ATR × ATR_SL_MULTIPLIER > 2000, sẽ dùng 2000 points
+                                # Giới hạn SL không quá xa, tránh risk quá lớn
+                                # Với ETH giá ~$3000: 2000 points = $2000 = ~67% giá (tối đa, hiếm khi đạt)
 
-MIN_TP_POINTS = 1600           # Take Profit tối thiểu (points)
-                                # Nếu ATR × ATR_TP_MULTIPLIER < 1600, sẽ dùng 1600 points
+MIN_TP_POINTS = 400            # Take Profit tối thiểu (points) - Điều chỉnh cho ETHUSD
+                                # Nếu ATR × ATR_TP_MULTIPLIER < 400, sẽ dùng 400 points
+                                # Đảm bảo có đủ reward để justify risk
+                                # Với ETH giá ~$3000: 400 points = $400
 
-MAX_TP_POINTS = 10000          # Take Profit tối đa (points)
-                                # Giới hạn trên cho TP, tránh mục tiêu quá xa (khó đạt)
+MAX_TP_POINTS = 4000           # Take Profit tối đa (points) - Điều chỉnh cho ETHUSD
+                                # Giới hạn trên cho TP, đảm bảo mục tiêu thực tế
+                                # Với ETH giá ~$3000: 4000 points = $4000 (tối đa)
+
+# SL tối thiểu dựa trên % giá (để đảm bảo SL không quá gần)
+MIN_SL_PERCENT = 0.015         # SL tối thiểu = 1.5% giá (điều chỉnh cho ETHUSD)
+                                # Ví dụ: giá $3000 → SL tối thiểu $45 (thay vì $36 với 1.2%)
+                                # Nếu SL tính từ ATR < MIN_SL_PERCENT × giá, sẽ dùng MIN_SL_PERCENT
+                                # Với ETH giá thấp hơn BTC, cần % cao hơn một chút để tránh SL quá gần
 
 # Risk:Reward Ratio cố định (chỉ dùng khi USE_RISK_REWARD_RATIO = True)
 USE_RISK_REWARD_RATIO = False  # True: Dùng RR cố định (TP = SL × RISK_REWARD_RATIO)
@@ -97,6 +134,31 @@ USE_RISK_REWARD_RATIO = False  # True: Dùng RR cố định (TP = SL × RISK_RE
 
 RISK_REWARD_RATIO = 2.0        # Tỷ lệ Risk:Reward nếu dùng cố định (ví dụ: 2.0 = risk $1, reward $2)
                                 # Chỉ có hiệu lực khi USE_RISK_REWARD_RATIO = True
+
+# ============================================
+# Advanced SL/TP Methods - Các phương pháp tính SL/TP từ chỉ báo kỹ thuật
+# ============================================
+# Bổ sung thêm các phương pháp tính SL/TP dựa trên các chỉ báo kỹ thuật khác
+
+# Phương pháp tính SL/TP (ưu tiên từ trên xuống)
+USE_SR_BASED_SL_TP = False      # True: Dùng Support/Resistance làm SL/TP
+                                # Ví dụ: BUY → SL tại Support gần nhất, TP tại Resistance gần nhất
+                                # False: Dùng ATR (mặc định)
+
+USE_BB_BASED_SL_TP = False     # True: Dùng Bollinger Bands làm SL/TP
+                                # Ví dụ: BUY → SL tại BB lower, TP tại BB middle hoặc upper
+                                # False: Dùng ATR (mặc định)
+
+USE_FIB_BASED_SL_TP = False    # True: Dùng Fibonacci levels làm SL/TP
+                                # Ví dụ: BUY tại FIB_618 → SL tại FIB_786, TP tại FIB_382
+                                # False: Dùng ATR (mặc định)
+
+USE_RECENT_HL_SL_TP = False    # True: Dùng Recent High/Low làm SL/TP
+                                # Ví dụ: BUY → SL tại Low của nến trước, TP tại High của nến trước
+                                # False: Dùng ATR (mặc định)
+
+# Lưu ý: Các phương pháp trên chỉ hoạt động khi USE_ATR_SL_TP = True
+# Nếu USE_ATR_SL_TP = False, sẽ dùng giá trị cố định (FIXED_SL_POINTS, FIXED_TP_POINTS)
 
 # ============================================
 # Technical Analysis Settings
@@ -121,7 +183,7 @@ MACD_SIGNAL = 9                # Chu kỳ đường tín hiệu (signal line)
 
 # Moving Average (Trung bình động) - Xác định xu hướng
 MA_TYPE = "EMA"                # Loại MA: "EMA" (Exponential - nhạy hơn) hoặc "SMA" (Simple - mượt hơn)
-                                # EMA phản ứng nhanh hơn với giá mới, phù hợp cho ETH volatile
+                                # EMA phản ứng nhanh hơn với giá mới, phù hợp cho BTC volatile
 
 MA_PERIODS = [20, 50, 200]     # Danh sách chu kỳ MA để tính toán [MA20, MA50, MA200]
                                 # MA20: xu hướng ngắn hạn, MA50: trung hạn, MA200: dài hạn
@@ -147,11 +209,12 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - TỐI ƯU ĐỂ GIẢM TỶ LỆ THUA
-MIN_SIGNAL_STRENGTH = 3        # Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (TĂNG từ 2 lên 3)
-                                # Ví dụ: 3 = cần ít nhất 3 chỉ báo cùng BUY mới mở lệnh BUY
+MIN_SIGNAL_STRENGTH = 2        # Số lượng chỉ báo tối thiểu phải đồng thuận
+                                # Ví dụ: 2 = cần ít nhất 2 chỉ báo cùng BUY mới mở lệnh BUY
                                 # Giá trị cao hơn (3-4) = ít lệnh nhưng chính xác hơn ✅
                                 # Giá trị thấp hơn (1-2) = nhiều lệnh nhưng nhiều false signal ❌
-                                # ⚠️ ĐÃ TĂNG để giảm false signals và tăng win rate
+                                # Khuyến nghị: 2-3 cho BTC (volatility cao, cần nhiều cơ hội)
+                                # Tăng lên 3-4 nếu muốn ít lệnh nhưng chính xác hơn
 
 REQUIRE_TREND_CONFIRMATION = True  # True: Yêu cầu xu hướng từ MA phải đồng thuận
                                     # Ví dụ: BUY signal chỉ được chấp nhận nếu Price > MA20 > MA50
@@ -161,7 +224,7 @@ REQUIRE_MOMENTUM_CONFIRMATION = True  # True: Yêu cầu MACD momentum phải đ
                                        # MACD histogram phải tăng (bullish) cho BUY
                                        # Giúp xác nhận momentum trước khi vào lệnh
 
-REQUIRE_BOTH_TREND_AND_MOMENTUM = True  # ⚠️ MỚI: True = CẦN CẢ trend VÀ momentum (AND logic)
+REQUIRE_BOTH_TREND_AND_MOMENTUM = False  # ⚠️ MỚI: True = CẦN CẢ trend VÀ momentum (AND logic)
                                          # False = Chỉ cần 1 trong 2 (OR logic)
                                          # True = Tăng độ chính xác, giảm false signals
                                          # False = Nhiều cơ hội hơn nhưng có thể thua nhiều hơn
@@ -171,6 +234,52 @@ USE_STOCH_CONFIRM = True       # Có sử dụng Stochastic để xác nhận t�
 
 USE_BB_CONFIRM = True          # Có sử dụng Bollinger Bands để xác nhận không
                                 # Giá chạm BB biên = signal mạnh
+
+# ============================================
+# Advanced Trend/Momentum Analysis - Phân tích Trend/Momentum nâng cao cho M15 Aggressive
+# ============================================
+USE_MA_SLOPE = True            # True: Kiểm tra slope (độ dốc) của MA - MA đang tăng hay giảm
+                                # MA slope dương = trend đang tăng mạnh
+                                # MA slope âm = trend đang giảm mạnh
+
+MA_SLOPE_PERIODS = 5           # Số nến để tính slope của MA (5 nến = slope ngắn hạn)
+                                # Slope = (MA hiện tại - MA 5 nến trước) / 5
+
+MA_SLOPE_THRESHOLD = 0.001     # Ngưỡng tối thiểu của slope để coi là có trend (0.1% giá)
+                                # Ví dụ: giá $80k, slope >= $80 = trend mạnh
+
+USE_MACD_MAGNITUDE = True      # True: Kiểm tra magnitude (độ lớn) của MACD histogram
+                                # MACD magnitude cao = momentum mạnh
+
+MACD_MAGNITUDE_THRESHOLD = 0.3 # ⚠️ ĐIỀU CHỈNH: Ngưỡng tối thiểu MACD histogram để coi là momentum mạnh (GIẢM từ 0.5 xuống 0.3)
+                                # Giá trị tùy thuộc vào symbol (BTC thường lớn hơn vàng)
+                                # 0.3 = threshold moderate, 0.5 = threshold strong
+                                # Giảm xuống 0.3 để có nhiều signals hơn nhưng vẫn giữ chất lượng
+                                # Signal MACD vẫn được tính nếu magnitude >= 0.15 (50% threshold)
+
+USE_MACD_PERSISTENCE = True    # True: Kiểm tra persistence (tính bền vững) của MACD
+                                # MACD histogram tăng/giảm liên tục trong N nến = momentum bền vững
+
+MACD_PERSISTENCE_PERIODS = 3   # Số nến liên tục MACD phải cùng chiều để coi là persistent
+
+ALLOW_ADX_OVERRIDE = True      # True: Cho phép override ADX filter khi momentum rất mạnh
+                                # ADX thấp nhưng MACD magnitude cao + persistent = cho phép trade
+
+ADX_OVERRIDE_MACD_MAGNITUDE = 2.0  # MACD magnitude tối thiểu để override ADX (2x threshold)
+                                    # Chỉ override khi momentum RẤT mạnh
+
+ALLOW_COUNTER_TREND = True      # True: Cho phép counter-trend trade (ngược trend chính)
+                                # Counter-trend: Trend down nhưng momentum up mạnh → BUY
+                                # Chỉ cho phép khi có volume + BB proximity
+
+COUNTER_TREND_MIN_VOLUME = 1.5  # Volume ratio tối thiểu để cho phép counter-trend (1.5x MA)
+                                 # Counter-trend cần volume cao để xác nhận
+
+COUNTER_TREND_BB_PROXIMITY = 0.02  # Giá phải gần BB band (2% BB) để cho phép counter-trend
+                                    # Ví dụ: Counter-trend BUY khi giá gần BB lower (oversold)
+
+COUNTER_TREND_MIN_SIGNALS = 3   # Số signals tối thiểu để cho phép counter-trend (3 signals)
+                                 # Cần nhiều signals hơn để justify counter-trend risk
 
 # ============================================
 # Fibonacci Retracement Settings
@@ -243,9 +352,11 @@ USE_ADX_FILTER = True          # ⚠️ MỚI: Sử dụng ADX để lọc sidew
 
 ADX_PERIOD = 14                # Chu kỳ tính ADX (14 là chuẩn)
 
-ADX_MIN_THRESHOLD = 25         # Ngưỡng ADX tối thiểu để cho phép trade
+ADX_MIN_THRESHOLD = 25         # ⚠️ ĐIỀU CHỈNH: Ngưỡng ADX tối thiểu để cho phép trade (GIẢM từ 30 xuống 25)
                                 # ADX >= 25 = Trend mạnh, cho phép trade
-                                # ADX < 25 = Sideways, chặn trade (giảm false signals)
+                                # ADX < 25 = Sideways hoặc trend yếu, chặn trade (giảm false signals)
+                                # 25 là ngưỡng cân bằng: vẫn lọc sideways nhưng không quá strict
+                                # Có thể override bằng ADX Override khi MACD momentum rất mạnh
 
 ADX_STRONG_TREND = 40          # ADX >= 40 = Trend rất mạnh (ưu tiên cao hơn)
                                 # Có thể điều chỉnh logic để ưu tiên khi ADX rất cao
@@ -269,14 +380,14 @@ HISTORICAL_BARS = 500          # Số lượng nến lịch sử để phân tí
 # Magic Number & Comments
 # ============================================
 # Magic Number: Mã định danh để phân biệt lệnh của bot với lệnh thủ công
-MAGIC_NUMBER = 888884          # Số nguyên, mỗi bot nên có magic number riêng
+MAGIC_NUMBER = 888883          # Số nguyên, mỗi bot nên có magic number riêng
                                 # Bot chỉ quản lý lệnh có magic number này
-                                # Không trùng với magic number bot khác hoặc EA khác (BTC dùng 888883)
+                                # Không trùng với magic number bot khác hoặc EA khác
 
-BUY_COMMENT = "ETH Trader Buy v3"   # Comment hiển thị trong MT5 khi mở lệnh BUY
+BUY_COMMENT = "AutoTrader Buy v3"   # Comment hiển thị trong MT5 khi mở lệnh BUY
                                      # Giúp nhận biết lệnh từ bot khi xem trong MT5
 
-SELL_COMMENT = "ETH Trader Sell v3" # Comment hiển thị trong MT5 khi mở lệnh SELL
+SELL_COMMENT = "AutoTrader Sell v3" # Comment hiển thị trong MT5 khi mở lệnh SELL
 
 # ============================================
 # Logging Settings
@@ -287,20 +398,21 @@ LOG_LEVEL = "INFO"             # Mức độ log: "DEBUG" (chi tiết nhất), "
                                 # DEBUG: Ghi mọi thứ, dùng khi debug lỗi
                                 # INFO: Ghi hoạt động bình thường (khuyến nghị)
 
-LOG_FILE = "logs/eth_trader.log"      # File log text (ghi mọi hoạt động, phân tích, lỗi)
-                                       # Xem bằng: tail -f logs/eth_trader.log
+LOG_FILE = "logs/auto_trader_v3.log"      # File log text (ghi mọi hoạt động, phân tích, lỗi)
+                                           # Xem bằng: tail -f logs/auto_trader_v3.log
 
-CSV_LOG_FILE = "logs/trades_eth.csv"  # File log CSV (chỉ ghi lệnh đã mở/đóng)
-                                       # Dùng để phân tích performance, backtest
-                                       # Cột: Time, Type, Symbol, Volume, Price, SL, TP, Ticket, Equity, Balance, Profit
+CSV_LOG_FILE = "logs/trades_v3.csv"        # File log CSV (chỉ ghi lệnh đã mở/đóng)
+                                           # Dùng để phân tích performance, backtest
+                                           # Cột: Time, Type, Symbol, Volume, Price, SL, TP, Ticket, Equity, Balance, Profit
 
 # ============================================
 # Advanced Settings
 # ============================================
 # Cài đặt nâng cao cho việc đặt lệnh
-DEVIATION = 100                # Độ lệch giá cho phép khi đặt lệnh (points)
+DEVIATION = 50                 # Độ lệch giá cho phép khi đặt lệnh (points)
                                 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
-                                # Với ETH dao động mạnh: 100-200 points (cho phép trượt nhiều hơn)
+                                # Với ETHUSD dao động mạnh: 50-100 points (cho phép trượt hợp lý)
+                                # ETH giá thấp hơn BTC nên deviation tuyệt đối nhỏ hơn nhưng vẫn cần cho phép trượt
                                 # Với forex: 10-20 points là đủ
 
 ORDER_FILLING = "IOC"          # Loại điền lệnh: "IOC" (Immediate or Cancel - khớp ngay hoặc hủy)
@@ -311,6 +423,24 @@ ORDER_FILLING = "IOC"          # Loại điền lệnh: "IOC" (Immediate or Canc
 ORDER_TIME = "GTC"             # Thời gian hiệu lực lệnh: "GTC" (Good Till Cancel - đến khi hủy)
                                 # Hoặc "DAY" (chỉ hiệu lực trong ngày)
                                 # GTC: Lệnh tồn tại cho đến khi đóng thủ công hoặc đạt SL/TP
+
+# ============================================
+# Telegram Notifications Settings
+# ============================================
+USE_TELEGRAM_NOTIFICATIONS = True  # True: Gửi thông báo Telegram khi mở/đóng lệnh
+                                    # False: Tắt thông báo Telegram
+
+TELEGRAM_BOT_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
+                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+
+TELEGRAM_CHAT_ID = "1887610382"           # Chat ID để nhận thông báo (có thể là user ID hoặc group ID)
+                                # Lấy chat ID: Gửi message cho bot @userinfobot hoặc thêm bot vào group
+                                # Ví dụ: "123456789" (user) hoặc "-1001234567890" (group)
+
+# Format thông báo Telegram
+TELEGRAM_SEND_ON_ORDER_OPEN = True      # Gửi thông báo khi mở lệnh
+TELEGRAM_SEND_ON_ORDER_CLOSE = True    # Gửi thông báo khi đóng lệnh (có thể bật sau)
 
 # ============================================
 # Helper: Convert timeframe string sang MT5 constant
@@ -339,4 +469,3 @@ def get_timeframe_mt5():
         "D1": mt5.TIMEFRAME_D1,      # 1 ngày
     }
     return mapping.get(timeframe_str, mt5.TIMEFRAME_M5)  # Mặc định M5 nếu không tìm thấy
-
