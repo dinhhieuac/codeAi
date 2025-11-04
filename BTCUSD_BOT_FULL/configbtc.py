@@ -58,7 +58,7 @@ MIN_EQUITY_RATIO = 0.9         # Tỷ lệ Equity tối thiểu so với Balance
 # ============================================
 # Trading Time Rules - Quy tắc về thời gian giao dịch
 # ============================================
-MIN_TIME_BETWEEN_SAME_DIRECTION = 30 * 60  # Thời gian tối thiểu giữa 2 lệnh cùng chiều (30 phút = 1800 giây)
+MIN_TIME_BETWEEN_SAME_DIRECTION = 60 * 60  # Thời gian tối thiểu giữa 2 lệnh cùng chiều (30 phút = 1800 giây)
                                             # Ví dụ: Đã mở BUY lúc 10:00 → Chỉ mở BUY tiếp theo sau 10:30
                                             # Giúp tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
 
