@@ -656,6 +656,17 @@ class XAUUSD_Bot:
                                 remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
                                 logging.debug(f"📱 Cooldown Telegram còn {remaining}s → Không gửi tín hiệu (tránh spam)")
                         
+                        # ⚠️ QUAN TRỌNG: Check lại lệnh đang mở trên MT5 trước khi mở lệnh mới
+                        # Đảm bảo lấy số positions mới nhất từ MT5 để tránh vượt quá MAX_POSITIONS
+                        current_positions = mt5.positions_get(symbol=self.symbol)
+                        if current_positions is None:
+                            current_positions = []
+                        current_position_count = len(current_positions)
+                        
+                        if current_position_count >= MAX_POSITIONS:
+                            logging.warning(f"❌ Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở")
+                            continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
                             logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
