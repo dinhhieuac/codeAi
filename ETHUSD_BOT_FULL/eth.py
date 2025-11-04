@@ -2181,6 +2181,8 @@ class GoldAutoTrader:
         """
         Kiểm tra thời gian tối thiểu giữa các lệnh
         
+        Lấy thời gian thực tế từ các position đang mở trên MT5 để tính toán chính xác
+        
         Args:
             order_type: 'BUY' hoặc 'SELL'
         
@@ -2188,7 +2190,8 @@ class GoldAutoTrader:
             True nếu đủ thời gian để mở lệnh
         
         Note:
-            Hàm này luôn được gọi để kiểm tra thời gian giữa các lệnh, bất kể có position mở hay không
+            Hàm này kiểm tra thời gian từ các position thực tế trên MT5, không chỉ dựa vào
+            self.last_trade_time (có thể không chính xác nếu bot restart hoặc có lệnh từ bên ngoài)
         """
         now = datetime.now()
         
@@ -2200,26 +2203,67 @@ class GoldAutoTrader:
                 logger.warning(f"⏸️ Đang trong thời gian nghỉ sau khi thua: Còn {remaining} phút")
                 return False
         
-        # 2. Nếu chưa có lệnh nào → Cho phép
-        if self.last_trade_time is None:
+        # 2. Lấy tất cả các position đang mở trên MT5 (của bot)
+        open_positions = self.get_open_positions()
+        
+        if not open_positions:
+            # Không có position nào → Cho phép
+            logger.debug("✅ Không có position nào đang mở → Cho phép mở lệnh mới")
             return True
         
-        # 3. Tính thời gian từ lệnh cuối cùng
-        time_since_last_trade = (now - self.last_trade_time).total_seconds()
+        # 3. Chuyển đổi order_type sang MT5 constant
+        mt5_order_type = mt5.ORDER_TYPE_BUY if order_type == 'BUY' else mt5.ORDER_TYPE_SELL
+        opposite_mt5_order_type = mt5.ORDER_TYPE_SELL if order_type == 'BUY' else mt5.ORDER_TYPE_BUY
         
-        # 4. Kiểm tra cùng chiều hay ngược chiều
-        if self.last_trade_type == order_type:
-            # Cùng chiều: Cần đợi MIN_TIME_BETWEEN_SAME_DIRECTION
-            if time_since_last_trade < self.min_time_same_direction:
-                remaining = int((self.min_time_same_direction - time_since_last_trade) / 60)
-                logger.warning(f"⏸️ Đã mở {order_type} gần đây: Còn {remaining} phút (cần {self.min_time_same_direction // 60} phút giữa 2 lệnh cùng chiều)")
+        # 4. Tìm position cùng chiều (cùng order_type) mới nhất
+        same_direction_positions = [pos for pos in open_positions if pos.type == mt5_order_type]
+        time_since_same = None  # Khởi tạo biến
+        
+        if same_direction_positions:
+            # Tìm position mới nhất (time lớn nhất)
+            latest_same_position = max(same_direction_positions, key=lambda p: p.time)
+            latest_same_time = datetime.fromtimestamp(latest_same_position.time)
+            time_since_same = (now - latest_same_time).total_seconds()
+            
+            logger.debug(f"📊 Position {order_type} mới nhất: Ticket {latest_same_position.ticket}, Mở lúc {latest_same_time.strftime('%Y-%m-%d %H:%M:%S')} ({int(time_since_same / 60)} phút trước)")
+            
+            # Kiểm tra thời gian tối thiểu giữa 2 lệnh cùng chiều
+            if time_since_same < self.min_time_same_direction:
+                remaining = int((self.min_time_same_direction - time_since_same) / 60)
+                logger.warning(f"⏸️ Đã mở {order_type} gần đây (Ticket {latest_same_position.ticket}): Còn {remaining} phút (cần {self.min_time_same_direction // 60} phút giữa 2 lệnh cùng chiều)")
                 return False
-        else:
-            # Ngược chiều: Cần đợi MIN_TIME_BETWEEN_OPPOSITE_DIRECTION
-            if time_since_last_trade < self.min_time_opposite_direction:
-                remaining = int((self.min_time_opposite_direction - time_since_last_trade) / 60)
-                logger.warning(f"⏸️ Đã mở {self.last_trade_type} gần đây: Còn {remaining} phút (cần {self.min_time_opposite_direction // 60} phút giữa 2 lệnh ngược chiều)")
-                return False
+        
+        # 5. Tìm position ngược chiều mới nhất (nếu có)
+        opposite_positions = [pos for pos in open_positions if pos.type == opposite_mt5_order_type]
+        time_since_opposite = None  # Khởi tạo biến
+        
+        if opposite_positions:
+            # Tìm position ngược chiều mới nhất
+            latest_opposite_position = max(opposite_positions, key=lambda p: p.time)
+            latest_opposite_time = datetime.fromtimestamp(latest_opposite_position.time)
+            time_since_opposite = (now - latest_opposite_time).total_seconds()
+            
+            opposite_type = 'SELL' if order_type == 'BUY' else 'BUY'
+            logger.debug(f"📊 Position {opposite_type} mới nhất: Ticket {latest_opposite_position.ticket}, Mở lúc {latest_opposite_time.strftime('%Y-%m-%d %H:%M:%S')} ({int(time_since_opposite / 60)} phút trước)")
+            
+            # Kiểm tra thời gian tối thiểu giữa 2 lệnh ngược chiều
+            # Chỉ áp dụng nếu không có position cùng chiều HOẶC position cùng chiều đã đủ thời gian
+            if not same_direction_positions or (time_since_same is not None and time_since_same >= self.min_time_same_direction):
+                if time_since_opposite < self.min_time_opposite_direction:
+                    remaining = int((self.min_time_opposite_direction - time_since_opposite) / 60)
+                    logger.warning(f"⏸️ Đã mở {opposite_type} gần đây (Ticket {latest_opposite_position.ticket}): Còn {remaining} phút (cần {self.min_time_opposite_direction // 60} phút giữa 2 lệnh ngược chiều)")
+                    return False
+        
+        # 6. Nếu không có position cùng chiều và không có position ngược chiều (hoặc đã đủ thời gian)
+        # → Cho phép mở lệnh
+        if not same_direction_positions and (not opposite_positions or (time_since_opposite is not None and time_since_opposite >= self.min_time_opposite_direction)):
+            logger.debug(f"✅ Đủ thời gian để mở lệnh {order_type}")
+            return True
+        
+        # 7. Nếu có position cùng chiều và đã đủ thời gian → Cho phép
+        if same_direction_positions and time_since_same is not None and time_since_same >= self.min_time_same_direction:
+            logger.debug(f"✅ Đủ thời gian giữa 2 lệnh {order_type} cùng chiều ({int(time_since_same / 60)} phút)")
+            return True
         
         return True
     
