@@ -841,6 +841,10 @@ class GoldAutoTrader:
         # Khởi tạo TechnicalAnalyzer sau khi đã có config
         self.analyzer = TechnicalAnalyzer(self)
         
+        # Theo dõi trailing stop và breakeven
+        self.trailing_stop_activated = set()  # Set các ticket đã kích hoạt trailing stop
+        self.breakeven_activated = set()  # Set các ticket đã kích hoạt breakeven
+        
     def connect(self) -> bool:
         """Kết nối MT5"""
         if not mt5.initialize():
@@ -1650,9 +1654,76 @@ class GoldAutoTrader:
             'bb_proximity': bb_proximity if self.allow_counter_trend else None
         }
     
-    def calculate_risk_parameters(self, df: pd.DataFrame) -> Tuple[float, float, float]:
+    def _determine_trend_strength(self, adx_value: float, adx_strong_threshold: float = None) -> str:
         """
-        Tính toán SL, TP và Lot size dựa trên ATR và Risk Management
+        Xác định độ mạnh của trend dựa trên ADX
+        
+        Args:
+            adx_value: Giá trị ADX hiện tại
+            adx_strong_threshold: Ngưỡng ADX để coi là strong trend (mặc định từ config)
+        
+        Returns:
+            'STRONG', 'MEDIUM', hoặc 'WEAK'
+        """
+        if adx_strong_threshold is None:
+            adx_strong_threshold = getattr(self, 'adx_strong_trend', 40)
+        
+        adx_min = getattr(self, 'adx_min_threshold', 25)
+        
+        if adx_value >= adx_strong_threshold:
+            return 'STRONG'
+        elif adx_value >= adx_min:
+            return 'MEDIUM'
+        else:
+            return 'WEAK'
+    
+    def _get_recent_trades_performance(self, lookback_count: int = 3) -> Dict[str, any]:
+        """
+        Kiểm tra kết quả của 3 lệnh gần nhất
+        
+        Returns:
+            Dict với thông tin: {'all_break_even_or_loss', 'total_count', 'wins', 'losses'}
+        """
+        try:
+            # Lấy deals trong 24h qua
+            from_time = datetime.now() - timedelta(hours=24)
+            deals = mt5.history_deals_get(from_time, datetime.now(), group="*")
+            
+            if deals is None:
+                return {'all_break_even_or_loss': False, 'total_count': 0, 'wins': 0, 'losses': 0}
+            
+            # Lọc deals của bot và sắp xếp theo thời gian (mới nhất trước)
+            bot_deals = [d for d in deals if d.magic == self.magic_number]
+            bot_deals.sort(key=lambda x: x.time, reverse=True)
+            
+            # Lấy N lệnh gần nhất
+            recent_deals = bot_deals[:lookback_count]
+            
+            if len(recent_deals) < lookback_count:
+                return {'all_break_even_or_loss': False, 'total_count': len(recent_deals), 'wins': 0, 'losses': 0}
+            
+            # Kiểm tra tất cả có hòa/thua nhẹ không (profit <= 0 hoặc profit rất nhỏ)
+            all_break_even_or_loss = all(d.profit <= 0 for d in recent_deals)
+            wins = sum(1 for d in recent_deals if d.profit > 0)
+            losses = sum(1 for d in recent_deals if d.profit < 0)
+            
+            return {
+                'all_break_even_or_loss': all_break_even_or_loss,
+                'total_count': len(recent_deals),
+                'wins': wins,
+                'losses': losses
+            }
+        except Exception as e:
+            logger.debug(f"Không thể kiểm tra recent trades: {e}")
+            return {'all_break_even_or_loss': False, 'total_count': 0, 'wins': 0, 'losses': 0}
+    
+    def calculate_risk_parameters(self, df: pd.DataFrame, analysis_result: Dict = None) -> Tuple[float, float, float]:
+        """
+        Tính toán SL, TP và Lot size dựa trên Adaptive ATR và Risk Management
+        
+        Args:
+            df: DataFrame với OHLC data
+            analysis_result: Kết quả từ analyze_market() (chứa ADX, trend info)
         
         Returns:
             (sl_points, tp_points, lot_size)
@@ -1660,13 +1731,15 @@ class GoldAutoTrader:
         symbol_info = mt5.symbol_info(self.symbol)
         point = symbol_info.point
         tick_value = symbol_info.trade_tick_value
+        current_price = df['close'].iloc[-1]
         
         # Kiểm tra Risk:Reward Ratio (đã được load từ config trong __init__)
         use_rr_ratio = getattr(self, 'use_risk_reward_ratio', False)
         rr_ratio = getattr(self, 'risk_reward_ratio', 1.5)
         
         if self.use_atr_sl_tp:
-            # Tính SL/TP từ ATR
+            # ⚠️ ADAPTIVE ATR-BASED SL/TP LOGIC
+            # Tính ATR
             atr = self.analyzer.calculate_atr(df)
             atr_current = atr.iloc[-1]
             
@@ -1678,90 +1751,83 @@ class GoldAutoTrader:
                 else:
                     tp_points = self.fixed_tp_points if self.fixed_tp_points else self.min_tp_points
             else:
-                # R2: Sử dụng ATR để tính SL/TP rõ ràng
-                # ⚠️ QUAN TRỌNG: ATR đã ở đơn vị giá (USD), cần chuyển sang points trước
-                # Công thức đúng: ATR_points = ATR_USD / point, sau đó nhân với multiplier
-                atr_points = atr_current / point  # Chuyển ATR từ USD sang points
-                sl_points_from_atr = int(atr_points * self.atr_sl_multiplier)
+                # Chuyển ATR từ USD sang points
+                atr_points = atr_current / point
                 
-                if use_rr_ratio:
-                    # Tính TP từ SL theo Risk:Reward ratio
-                    tp_points_from_atr = int(sl_points_from_atr * rr_ratio)
+                # 1. Xác định Trend Strength từ ADX (nếu có trong analysis_result)
+                trend_strength = 'WEAK'  # Mặc định
+                if analysis_result and analysis_result.get('adx'):
+                    adx_value = analysis_result['adx'].get('value')
+                    if adx_value is not None and not np.isnan(adx_value):
+                        trend_strength = self._determine_trend_strength(adx_value)
+                
+                # 2. Chọn multiplier theo trend strength
+                if trend_strength == 'STRONG':
+                    base_sl_multiplier = 1.0
+                    base_tp_multiplier = 3.0
+                elif trend_strength == 'MEDIUM':
+                    base_sl_multiplier = 1.5
+                    base_tp_multiplier = 2.5
+                else:  # WEAK / SIDEWAYS
+                    base_sl_multiplier = 2.0
+                    base_tp_multiplier = 2.0
+                
+                # 3. Adaptive logic: Điều chỉnh multiplier dựa trên ATR
+                # Tính ATR trung bình để so sánh
+                atr_ma = atr.rolling(window=20).mean().iloc[-1] if len(atr) >= 20 else atr_current
+                atr_ratio = atr_current / atr_ma if atr_ma > 0 else 1.0
+                
+                # ATR thấp (biến động yếu) → tăng multiplier để tránh nhiễu
+                # ATR cao (biến động mạnh) → giảm multiplier để tránh SL quá xa
+                if atr_ratio < 0.8:  # ATR thấp hơn 20% so với trung bình
+                    atr_adjustment = 1.2  # Tăng 20%
+                elif atr_ratio > 1.2:  # ATR cao hơn 20% so với trung bình
+                    atr_adjustment = 0.85  # Giảm 15%
                 else:
-                    # Tính TP từ ATR
-                    tp_points_from_atr = int(atr_points * self.atr_tp_multiplier)
+                    atr_adjustment = 1.0  # Không điều chỉnh
                 
-                # ⚠️ QUAN TRỌNG: Kiểm tra SL tối thiểu dựa trên % giá (để tránh SL quá gần)
-                current_price = df['close'].iloc[-1]
-                min_sl_from_price = int((current_price * self.min_sl_percent) / point)
+                sl_multiplier = base_sl_multiplier * atr_adjustment
+                tp_multiplier = base_tp_multiplier * atr_adjustment
                 
-                # Log thông tin tính SL/TP trước khi điều chỉnh
-                logger.info(f"📊 Tính SL/TP từ ATR:")
-                logger.info(f"   Point value: {point:.5f}")
-                logger.info(f"   ATR hiện tại: {atr_current:.2f} USD (≈ {atr_points:.0f} points)")
-                logger.info(f"   SL từ ATR: {atr_points:.0f} × {self.atr_sl_multiplier} = {sl_points_from_atr} points")
-                logger.info(f"   TP từ ATR: {atr_points:.0f} × {self.atr_tp_multiplier} = {tp_points_from_atr} points")
-                logger.info(f"   Giá hiện tại: ${current_price:.2f}")
-                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points (≈ ${min_sl_from_price * point:.2f})")
-                logger.info(f"   Giới hạn: SL = [{self.min_sl_points}, {self.max_sl_points}] points, TP = [{self.min_tp_points}, {self.max_tp_points}] points")
+                # 4. Kiểm tra 3 lệnh gần nhất: Nếu tất cả hòa/thua → tăng TP multiplier
+                recent_performance = self._get_recent_trades_performance(3)
+                if recent_performance.get('all_break_even_or_loss', False):
+                    tp_multiplier += 0.5
+                    logger.info(f"📊 3 lệnh gần nhất đều hòa/thua → Tăng TP multiplier: {base_tp_multiplier} → {tp_multiplier}")
                 
-                # Giới hạn min/max - Đảm bảo SL không nhỏ hơn cả MIN_SL_POINTS và MIN_SL_PERCENT × giá
-                # Đảm bảo Risk:Reward ratio không bị phá vỡ
-                sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points_from_atr, self.max_sl_points))
+                # 5. Tính SL/TP từ ATR với multiplier đã điều chỉnh
+                sl_points_from_atr = int(atr_points * sl_multiplier)
+                tp_points_from_atr = int(atr_points * tp_multiplier)
                 
-                # Tính lại TP để giữ Risk:Reward ratio sau khi điều chỉnh SL
-                if use_rr_ratio:
-                    tp_points = int(sl_points * rr_ratio)
-                else:
-                    # Tính lại TP từ ATR để giữ tỷ lệ với SL
-                    tp_points = int(sl_points * (self.atr_tp_multiplier / self.atr_sl_multiplier))
+                # 6. Giới hạn SL/TP theo % giá
+                min_sl_from_price = int((current_price * 0.003) / point)  # 0.3% giá (min SL)
+                max_sl_from_price = int((current_price * 0.015) / point)  # 1.5% giá (max SL)
+                min_tp_from_sl = sl_points_from_atr  # Min TP = 1×SL
+                max_tp_from_sl = int(sl_points_from_atr * 3)  # Max TP = 3×SL
                 
-                # ⚠️ QUAN TRỌNG: Nếu TP bị giới hạn bởi MAX_TP_POINTS, điều chỉnh lại SL để giữ Risk:Reward hợp lý
-                tp_points_original = tp_points
-                tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
+                # 7. Áp dụng giới hạn
+                sl_points = max(min_sl_from_price, min(sl_points_from_atr, max_sl_from_price))
+                tp_points = max(min_tp_from_sl, min(tp_points_from_atr, max_tp_from_sl))
                 
-                # Nếu TP bị giới hạn, điều chỉnh SL để giữ Risk:Reward ratio tối thiểu 1.0:1
-                if tp_points < tp_points_original:
-                    # TP bị giới hạn, tính lại SL để Risk:Reward >= 1.0:1
-                    if use_rr_ratio:
-                        # Tính SL từ TP để giữ RR ratio
-                        sl_from_tp = int(tp_points / rr_ratio)
-                    else:
-                        # Tính SL từ TP để giữ tỷ lệ ATR (tối thiểu 1.0:1)
-                        sl_from_tp = int(tp_points / (self.atr_tp_multiplier / self.atr_sl_multiplier))
-                        # Đảm bảo Risk:Reward >= 1.0:1 (tức là TP >= SL)
-                        if sl_from_tp > tp_points:
-                            sl_from_tp = tp_points  # Risk:Reward = 1.0:1
-                    
-                    # ⚠️ QUAN TRỌNG: Khi TP bị giới hạn, ưu tiên Risk:Reward hợp lý hơn MIN_SL_PERCENT
-                    # SL mới phải >= min_sl_points nhưng có thể bỏ qua min_sl_from_price nếu cần
-                    # Giới hạn: SL <= max_sl_points và SL <= TP (để Risk:Reward >= 1.0:1)
-                    sl_points_new = max(self.min_sl_points, min(sl_from_tp, self.max_sl_points, tp_points))
-                    
-                    # Nếu SL mới hợp lý hơn (Risk:Reward tốt hơn), dùng SL mới
-                    if sl_points_new < sl_points:
-                        logger.warning(f"⚠️ TP bị giới hạn ({tp_points} points), điều chỉnh SL từ {sl_points} → {sl_points_new} points để giữ Risk:Reward hợp lý")
-                        sl_points = sl_points_new
-                    
-                    # Tính lại TP từ SL mới để đảm bảo chính xác
-                    if use_rr_ratio:
-                        tp_points = int(sl_points * rr_ratio)
-                    else:
-                        tp_points = int(sl_points * (self.atr_tp_multiplier / self.atr_sl_multiplier))
-                    
-                    # Giới hạn TP lại
-                    tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
-                    
-                    # Đảm bảo Risk:Reward >= 1.0:1 (TP >= SL)
-                    if tp_points < sl_points:
-                        tp_points = sl_points  # Risk:Reward = 1.0:1 (tối thiểu)
-                        logger.warning(f"⚠️ Đã điều chỉnh TP = SL để đảm bảo Risk:Reward >= 1.0:1")
+                # 8. Kiểm tra chênh lệch giá > 1.5×ATR (thị trường quá biến động)
+                price_range = df['high'].iloc[-5:].max() - df['low'].iloc[-5:].min() if len(df) >= 5 else 0
+                price_range_points = price_range / point if point > 0 else 0
                 
-                # Log sau khi điều chỉnh
-                logger.info(f"📊 SL/TP sau điều chỉnh:")
-                logger.info(f"   SL: {sl_points_from_atr} → {sl_points} points (≈ ${sl_points * point:.2f}, {sl_points * point / current_price * 100:.2f}% giá)")
-                logger.info(f"   TP: {tp_points_from_atr} → {tp_points} points (≈ ${tp_points * point:.2f}, {tp_points * point / current_price * 100:.2f}% giá)")
+                if price_range_points > (atr_points * 1.5):
+                    logger.warning(f"⚠️ Chênh lệch giá quá lớn ({price_range_points:.0f} points > {atr_points * 1.5:.0f} points) - Thị trường quá biến động")
+                    # Vẫn tính SL/TP nhưng log cảnh báo
+                
+                # Log thông tin adaptive SL/TP
+                logger.info(f"📊 Adaptive SL/TP từ ATR:")
+                logger.info(f"   ATR: {atr_current:.2f} USD (≈ {atr_points:.0f} points)")
+                logger.info(f"   Trend Strength: {trend_strength} (ADX-based)")
+                logger.info(f"   Base Multipliers: SL={base_sl_multiplier:.2f}, TP={base_tp_multiplier:.2f}")
+                logger.info(f"   ATR Adjustment: {atr_adjustment:.2f} (ATR ratio: {atr_ratio:.2f})")
+                logger.info(f"   Final Multipliers: SL={sl_multiplier:.2f}, TP={tp_multiplier:.2f}")
+                logger.info(f"   SL: {sl_points_from_atr} → {sl_points} points (≈ ${sl_points * point:.2f}, {sl_points * point / current_price * 100:.3f}% giá)")
+                logger.info(f"   TP: {tp_points_from_atr} → {tp_points} points (≈ ${tp_points * point:.2f}, {tp_points * point / current_price * 100:.3f}% giá)")
                 logger.info(f"   Risk:Reward Ratio: {tp_points/sl_points:.2f}:1")
+                logger.info(f"   Giới hạn: SL=[{min_sl_from_price}, {max_sl_from_price}] points, TP=[{min_tp_from_sl}, {max_tp_from_sl}] points")
         else:
             # Sử dụng giá trị cố định
             sl_points = self.fixed_sl_points
@@ -1810,6 +1876,161 @@ class GoldAutoTrader:
         lot_size = max(self.min_lot, min(lot_size, self.max_lot))
         
         return sl_points, tp_points, lot_size
+    
+    def _manage_trailing_stops(self):
+        """
+        Quản lý Trailing Stop theo adaptive logic:
+        - Kích hoạt khi profit ≥ 1×ATR
+        - Mỗi khi giá tăng thêm 0.5×ATR → dời SL lên thêm 0.5×ATR
+        """
+        positions = self.get_open_positions()
+        if not positions:
+            return
+        
+        df = self.get_historical_data()
+        if df is None:
+            return
+        
+        atr = self.analyzer.calculate_atr(df)
+        atr_current = atr.iloc[-1] if not atr.empty else 0
+        
+        if atr_current == 0 or np.isnan(atr_current):
+            return
+        
+        symbol_info = mt5.symbol_info(self.symbol)
+        point = symbol_info.point
+        atr_points = atr_current / point
+        
+        for pos in positions:
+            ticket = pos.ticket
+            entry_price = pos.price_open
+            current_sl = pos.sl
+            
+            # Tính profit hiện tại (points)
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                current_price = mt5.symbol_info_tick(self.symbol).bid
+                profit_points = (current_price - entry_price) / point
+            else:  # SELL
+                current_price = mt5.symbol_info_tick(self.symbol).ask
+                profit_points = (entry_price - current_price) / point
+            
+            # Tính profit theo ATR
+            profit_atr = profit_points / atr_points if atr_points > 0 else 0
+            
+            # Kích hoạt trailing stop khi profit ≥ 1×ATR
+            if profit_atr >= 1.0:
+                if ticket not in self.trailing_stop_activated:
+                    self.trailing_stop_activated.add(ticket)
+                    logger.info(f"📈 Trailing Stop kích hoạt: Ticket {ticket}, Profit: {profit_atr:.2f}×ATR")
+                
+                # Tính số lần đã tăng 0.5×ATR
+                increments = int((profit_atr - 1.0) / 0.5)  # Số lần tăng 0.5×ATR từ 1.0×ATR
+                
+                # SL mới = entry + (1.0×ATR + increments×0.5×ATR)
+                new_sl_distance_points = atr_points * (1.0 + increments * 0.5)
+                
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    new_sl = entry_price + (new_sl_distance_points * point)
+                    # SL mới phải cao hơn SL hiện tại
+                    if new_sl > current_sl:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "symbol": self.symbol,
+                            "position": ticket,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                        result = mt5.order_send(request)
+                        if result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logger.info(f"📈 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_atr:.2f}×ATR)")
+                else:  # SELL
+                    new_sl = entry_price - (new_sl_distance_points * point)
+                    # SL mới phải thấp hơn SL hiện tại
+                    if new_sl < current_sl or current_sl == 0:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "symbol": self.symbol,
+                            "position": ticket,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                        result = mt5.order_send(request)
+                        if result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logger.info(f"📉 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_atr:.2f}×ATR)")
+    
+    def _manage_breakeven(self):
+        """
+        Quản lý Auto Breakeven theo adaptive logic:
+        - Khi TP gần (≤ 0.3×ATR) → dời SL về entry (Break Even)
+        """
+        positions = self.get_open_positions()
+        if not positions:
+            return
+        
+        df = self.get_historical_data()
+        if df is None:
+            return
+        
+        atr = self.analyzer.calculate_atr(df)
+        atr_current = atr.iloc[-1] if not atr.empty else 0
+        
+        if atr_current == 0 or np.isnan(atr_current):
+            return
+        
+        symbol_info = mt5.symbol_info(self.symbol)
+        point = symbol_info.point
+        atr_points = atr_current / point
+        
+        for pos in positions:
+            ticket = pos.ticket
+            
+            # Đã kích hoạt breakeven rồi
+            if ticket in self.breakeven_activated:
+                continue
+            
+            entry_price = pos.price_open
+            current_sl = pos.sl
+            current_tp = pos.tp
+            
+            if current_tp == 0:
+                continue
+            
+            # Tính khoảng cách đến TP (points)
+            tick = mt5.symbol_info_tick(self.symbol)
+            if tick is None:
+                continue
+            
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                current_price = tick.bid
+                tp_distance_points = (current_tp - current_price) / point
+            else:  # SELL
+                current_price = tick.ask
+                tp_distance_points = (current_price - current_tp) / point
+            
+            # Tính khoảng cách đến TP theo ATR
+            tp_distance_atr = tp_distance_points / atr_points if atr_points > 0 else float('inf')
+            
+            # Khi TP gần (≤ 0.3×ATR) → dời SL về entry
+            if tp_distance_atr <= 0.3:
+                # Chỉ set breakeven nếu SL hiện tại chưa ở entry
+                if abs(current_sl - entry_price) > (point * 10):  # Cho phép sai số nhỏ
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "symbol": self.symbol,
+                        "position": ticket,
+                        "sl": entry_price,  # Break Even
+                        "tp": pos.tp
+                    }
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        self.breakeven_activated.add(ticket)
+                        logger.info(f"✅ Break Even: Ticket {ticket}, SL về entry {entry_price:.2f} (TP cách {tp_distance_atr:.2f}×ATR)")
+                    elif result.retcode != mt5.TRADE_RETCODE_DONE:
+                        logger.debug(f"⚠️ Không thể set breakeven cho ticket {ticket}: {result.comment}")
+        
+        # Cleanup: Xóa các ticket đã đóng khỏi breakeven_activated
+        open_tickets = {pos.ticket for pos in positions}
+        self.breakeven_activated = {t for t in self.breakeven_activated if t in open_tickets}
     
     def get_open_positions(self) -> list:
         """Lấy danh sách vị thế mở"""
@@ -2116,11 +2337,13 @@ class GoldAutoTrader:
         
         price = tick.ask
         
-        # R1 & R2: Tính SL/TP và Lot size từ Risk Management
+        # R1 & R2: Tính SL/TP và Lot size từ Risk Management (Adaptive)
         if sl_points is None or tp_points is None or lot is None:
             df = self.get_historical_data(timeframe=mt5.TIMEFRAME_M15)
             if df is not None:
-                sl_points, tp_points, lot = self.calculate_risk_parameters(df)
+                # Tính analysis để truyền vào calculate_risk_parameters (cho adaptive SL/TP)
+                analysis = self.analyze_market(df)
+                sl_points, tp_points, lot = self.calculate_risk_parameters(df, analysis)
             else:
                 logger.error("Không thể tính risk parameters")
                 return None
@@ -2367,6 +2590,10 @@ class GoldAutoTrader:
                     logger.info("⏸️  Bot sẽ tạm dừng. Chờ Equity cải thiện...")
                     time.sleep(interval_seconds * 5)  # Chờ lâu hơn nếu equity không an toàn
                     continue
+                
+                # ⚠️ MỚI: Quản lý Trailing Stop và Breakeven cho các position đang mở
+                self._manage_trailing_stops()
+                self._manage_breakeven()
                 
                 # Kiểm tra lệnh thua gần đây (để cập nhật cooldown)
                 #self._check_recent_losses()
