@@ -502,6 +502,7 @@ class XAUUSD_Bot:
         last_logged_account_info = None  # Lưu thông tin tài khoản lần log cuối để tránh log trùng
         last_logged_price = None  # Lưu giá lần log cuối
         last_logged_positions = None  # Lưu số positions lần log cuối
+        pending_delay_info = None  # Lưu thông tin delay nếu có tín hiệu hợp lệ nhưng bị chặn
         
         while True:
             try:
@@ -595,7 +596,11 @@ class XAUUSD_Bot:
                     action = signal.get('action', 'HOLD')
                     strength = signal.get('strength', 0)
                     
+                    # Reset delay info khi có tín hiệu mới (không phải HOLD)
                     if action != 'HOLD':
+                        # Nếu có tín hiệu mới khác với tín hiệu đang delay, reset delay info
+                        if pending_delay_info and pending_delay_info['action'] != action:
+                            pending_delay_info = None
                         # Tạo signature của tín hiệu để so sánh (làm tròn SL/TP để tránh thay đổi nhỏ do giá)
                         # Làm tròn SL/TP về 10 pips gần nhất để so sánh chính xác hơn
                         sl_pips_rounded = round(signal.get('sl_pips', 0) / 10) * 10
@@ -695,6 +700,17 @@ class XAUUSD_Bot:
                                 if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
                                     remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
                                     remaining_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60) % 60
+                                    remaining_total_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60)
+                                    
+                                    # Lưu thông tin delay để log sau
+                                    pending_delay_info = {
+                                        'action': action,
+                                        'strength': strength,
+                                        'remaining_minutes': remaining_minutes,
+                                        'remaining_seconds': remaining_seconds,
+                                        'remaining_total_seconds': remaining_total_seconds,
+                                        'next_check_time': datetime.now() + timedelta(seconds=remaining_total_seconds)
+                                    }
                                     
                                     # Log rõ ràng với format đẹp
                                     logging.info("=" * 60)
@@ -787,10 +803,29 @@ class XAUUSD_Bot:
                             self.risk_manager.record_trade(success=False)
                     else:
                         logging.debug(f"📊 Tín hiệu: HOLD (Strength: {strength})")
+                        # Reset delay info khi tín hiệu là HOLD
+                        pending_delay_info = None
                 else:
                     logging.debug("📊 Không có tín hiệu từ Technical Analyzer")
+                    # Reset delay info khi không có tín hiệu
+                    pending_delay_info = None
                 
                 # Chờ trước khi kiểm tra tiếp
+                if pending_delay_info:
+                    # Nếu có tín hiệu hợp lệ nhưng bị delay, log thông tin chi tiết
+                    delay_info = pending_delay_info
+                    logging.info("=" * 60)
+                    logging.info(f"⏸️ TÍN HIỆU HỢP LỆ ĐANG CHỜ ĐỦ ĐIỀU KIỆN THỜI GIAN")
+                    logging.info("=" * 60)
+                    logging.info(f"   📊 Tín hiệu đang chờ: {delay_info['action']} (Strength: {delay_info['strength']})")
+                    logging.info(f"   ⏱️ Cần đợi thêm: {delay_info['remaining_minutes']} phút {delay_info['remaining_seconds']} giây")
+                    logging.info(f"   ⏰ Thời gian check tiếp theo: {delay_info['next_check_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    logging.info(f"   📋 Sẽ kiểm tra lại sau {CHECK_INTERVAL} giây (mỗi {CHECK_INTERVAL}s)")
+                    logging.info("=" * 60)
+                    
+                    # Reset delay info sau khi đã log
+                    pending_delay_info = None
+                
                 logging.info(f"⏳ Chờ {CHECK_INTERVAL} giây trước lần kiểm tra tiếp theo...")
                 time.sleep(CHECK_INTERVAL)
                 
