@@ -50,6 +50,11 @@ MAX_DAILY_TRADES = 30
 # Tăng từ 1 lên 2 để tăng cơ hội giao dịch
 MAX_HOURLY_TRADES = 2
 
+# Lot size tối thiểu và tối đa cho phép (đơn vị: lots)
+# Bot sẽ tự động tính lot size dựa trên risk, nhưng sẽ giới hạn trong khoảng này
+MIN_LOT_SIZE = 0.01  # Lot size tối thiểu (0.01 = minimum lot)
+MAX_LOT_SIZE = 1.0   # Lot size tối đa cho phép mỗi lệnh
+
 # ============================================================================
 # STOP LOSS & TAKE PROFIT - Cấu hình SL/TP
 # ============================================================================
@@ -128,6 +133,11 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 # Spread tối đa cho phép (đơn vị: pips)
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
 MAX_SPREAD = 50  # Đơn vị: pips
+
+# Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
+# Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
+# Với Gold dao động mạnh: 100-200 points (cho phép trượt nhiều hơn)
+DEVIATION = 100  # Đơn vị: points
 
 # Thời gian buffer trước/sau tin tức quan trọng (đơn vị: phút)
 # Bot sẽ tránh giao dịch trong khoảng thời gian này quanh tin tức quan trọng

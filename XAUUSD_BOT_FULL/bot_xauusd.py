@@ -352,20 +352,46 @@ class XAUUSD_Bot:
             logging.error("❌ Không lấy được symbol info")
             return None
         
+        # Lấy tick mới nhất (giống gold.py)
+        tick = mt5.symbol_info_tick(self.symbol)
+        if tick is None:
+            logging.error(f"❌ Không thể lấy tick cho {self.symbol}")
+            return None
+        
         # Tính giá và kích thước lệnh
         if signal_type == "BUY":
             order_type = mt5.ORDER_TYPE_BUY
-            price = symbol_info.ask
+            price = tick.ask
             sl_price = price - (sl_pips * 0.01)
             tp_price = price + (tp_pips * 0.01)
         else:  # SELL
             order_type = mt5.ORDER_TYPE_SELL
-            price = symbol_info.bid
+            price = tick.bid
             sl_price = price + (sl_pips * 0.01)
             tp_price = price - (tp_pips * 0.01)
         
         # Tính lot size
         lot_size = self.calculate_position_size(sl_pips)
+        
+        # Validate lot size (giống eth.py)
+        lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
+        min_lot_config = MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01
+        max_lot_config = MAX_LOT_SIZE if 'MAX_LOT_SIZE' in globals() else 1.0
+        lot_min = symbol_info.volume_min if symbol_info.volume_min and symbol_info.volume_min > 0 else min_lot_config
+        lot_max = symbol_info.volume_max if symbol_info.volume_max and symbol_info.volume_max > 0 else max_lot_config
+        
+        # Đảm bảo lot_size đúng format
+        lot_size = round(lot_size, 2)
+        lot_size = max(lot_min, min(lot_size, lot_max))
+        
+        # Làm tròn theo lot_step
+        if lot_step > 0:
+            lot_size = round(lot_size / lot_step) * lot_step
+            lot_size = round(lot_size, 2)
+        
+        if lot_size < lot_min or lot_size > lot_max:
+            logging.error(f"❌ Lot size không hợp lệ: {lot_size} (min: {lot_min}, max: {lot_max})")
+            return None
         
         # Lấy thông tin tài khoản
         account_info = self.get_account_info()
@@ -376,17 +402,12 @@ class XAUUSD_Bot:
         logging.info(f"   - Giá vào: {price:.2f}")
         logging.info(f"   - SL: {sl_price:.2f} ({sl_pips} pips)")
         logging.info(f"   - TP: {tp_price:.2f} ({tp_pips} pips)")
-        logging.info(f"   - Lot size: {lot_size}")
+        logging.info(f"   - Lot size: {lot_size} (đã validate: min={lot_min}, max={lot_max}, step={lot_step})")
         logging.info(f"   - Risk: ${account_info['balance'] * (RISK_PER_TRADE / 100):.2f} ({RISK_PER_TRADE}%)")
         logging.info(f"   - Signal strength: {signal_strength}")
         
-        # Tự động detect filling mode phù hợp với broker
-        filling_mode = self.get_filling_mode(self.symbol)
-        filling_mode_name = "IOC" if filling_mode == mt5.ORDER_FILLING_IOC else "FOK" if filling_mode == mt5.ORDER_FILLING_FOK else "RETURN"
-        logging.info(f"📊 Filling mode: {filling_mode_name}")
-        
-        # Gửi lệnh
-        request = {
+        # Tạo request cơ bản
+        request_base = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.symbol,
             "volume": lot_size,
@@ -394,47 +415,69 @@ class XAUUSD_Bot:
             "price": price,
             "sl": sl_price,
             "tp": tp_price,
-            "deviation": 20,
+            "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
             "comment": f"XAUUSD_Bot_{signal_type}",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling_mode,
         }
         
-        logging.info("📤 Đang gửi lệnh đến MT5...")
-        result = mt5.order_send(request)
+        # Thử các filling mode theo thứ tự: IOC -> FOK -> RETURN -> None (không có type_filling)
+        filling_modes_to_try = [
+            (mt5.ORDER_FILLING_IOC, "IOC"),
+            (mt5.ORDER_FILLING_FOK, "FOK"),
+            (mt5.ORDER_FILLING_RETURN, "RETURN"),
+            (None, "AUTO")  # Không có type_filling, để MT5 tự chọn
+        ]
         
-        if result:
-            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                logging.info(f"✅ LỆNH {signal_type} THÀNH CÔNG!")
-                logging.info(f"   - Ticket: {result.order}")
-                logging.info(f"   - Volume: {lot_size} lots")
-                logging.info(f"   - Price: {price:.2f}")
-                logging.info(f"   - SL: {sl_price:.2f}, TP: {tp_price:.2f}")
+        for filling_mode, mode_name in filling_modes_to_try:
+            request = request_base.copy()
+            if filling_mode is not None:
+                request["type_filling"] = filling_mode
+            
+            logging.info(f"📤 Thử gửi lệnh với filling mode: {mode_name}...")
+            
+            # Validate request trước khi gửi (giống gold.py)
+            check_result = mt5.order_check(request)
+            if check_result is None:
+                error = mt5.last_error()
+                logging.warning(f"⚠️ order_check() trả về None: {error}")
+                # Vẫn thử gửi lệnh
+            elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
+                logging.warning(f"⚠️ order_check() không hợp lệ: {check_result.comment if hasattr(check_result, 'comment') else 'Unknown'}")
+                # Thử mode tiếp theo
+                continue
+            
+            # Gửi lệnh
+            result = mt5.order_send(request)
+            
+            if result:
+                if result.retcode == mt5.TRADE_RETCODE_DONE:
+                    logging.info(f"✅ LỆNH {signal_type} THÀNH CÔNG với filling mode: {mode_name}!")
+                    logging.info(f"   - Ticket: {result.order}")
+                    logging.info(f"   - Volume: {lot_size} lots")
+                    logging.info(f"   - Price: {price:.2f}")
+                    logging.info(f"   - SL: {sl_price:.2f}, TP: {tp_price:.2f}")
+                    return result
+                else:
+                    # Log lỗi nhưng thử mode tiếp theo
+                    error_code = result.retcode
+                    error_desc = result.comment if hasattr(result, 'comment') else 'Unknown error'
+                    logging.warning(f"⚠️ Filling mode {mode_name} thất bại: {error_desc} (Code: {error_code})")
+                    # Nếu không phải lỗi filling mode, không thử tiếp
+                    if error_code != 10015 and 'filling' not in error_desc.lower():
+                        logging.error(f"❌ LỆNH {signal_type} THẤT BẠI: {error_desc}")
+                        return result
+                    # Nếu là lỗi filling mode, thử mode tiếp theo
+                    continue
             else:
-                # Log chi tiết lỗi
-                error_code = result.retcode
-                error_desc = result.comment if hasattr(result, 'comment') else 'Unknown error'
-                logging.error(f"❌ LỆNH {signal_type} THẤT BẠI")
-                logging.error(f"   - Retcode: {error_code}")
-                logging.error(f"   - Lý do: {error_desc}")
-                
-                # Nếu lỗi do filling mode, thử lại với RETURN mode
-                if 'filling' in error_desc.lower() or error_code == 10015:
-                    logging.warning(f"⚠️ Lỗi filling mode, thử lại với ORDER_FILLING_RETURN...")
-                    request['type_filling'] = mt5.ORDER_FILLING_RETURN
-                    retry_result = mt5.order_send(request)
-                    if retry_result and retry_result.retcode == mt5.TRADE_RETCODE_DONE:
-                        logging.info(f"✅ LỆNH {signal_type} THÀNH CÔNG sau khi thử lại với RETURN mode!")
-                        logging.info(f"   - Ticket: {retry_result.order}")
-                        return retry_result
-                    else:
-                        logging.error(f"❌ Vẫn thất bại sau khi thử lại: {retry_result.comment if retry_result else 'No response'}")
-        else:
-            error = mt5.last_error()
-            logging.error(f"❌ Không nhận được response từ MT5: {error}")
+                error = mt5.last_error()
+                logging.warning(f"⚠️ Không nhận được response từ MT5 với {mode_name}: {error}")
+                # Thử mode tiếp theo
+                continue
         
-        return result
+        # Nếu tất cả filling modes đều thất bại
+        logging.error(f"❌ Tất cả filling modes đều thất bại cho lệnh {signal_type}")
+        return None
         
     def run_bot(self):
         """Vòng lặp chính của bot"""
