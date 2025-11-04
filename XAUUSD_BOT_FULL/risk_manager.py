@@ -10,6 +10,12 @@ from datetime import datetime, timedelta
 import MetaTrader5 as mt5
 import logging
 from config_xauusd import *
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+    logging.warning("⚠️ pytz không được cài đặt. Sử dụng timezone mặc định (local time). Cài đặt: pip install pytz")
 
 class XAUUSD_RiskManager:
     """
@@ -187,7 +193,7 @@ class XAUUSD_RiskManager:
         
     def check_trading_time(self):
         """
-        Kiểm tra thời gian giao dịch
+        Kiểm tra thời gian giao dịch (theo giờ US/Eastern)
         
         Kiểm tra:
         - Có đang trong các session cấm giao dịch không (NO_TRADE_SESSIONS)
@@ -197,26 +203,52 @@ class XAUUSD_RiskManager:
         Returns:
             Tuple (bool, str): (True/False, message)
         """
-        now = datetime.now()
-        current_time = now.strftime("%H:%M")  # Format: "HH:MM"
+        # Lấy thời gian hiện tại (local time)
+        now_local = datetime.now()
         
-        # Kiểm tra các session cấm giao dịch (từ config)
-        # Ví dụ: ("20:00", "22:00") → Không giao dịch từ 20:00 đến 22:00
+        # Chuyển đổi sang giờ US/Eastern (New York time)
+        if PYTZ_AVAILABLE:
+            try:
+                # Lấy timezone từ config hoặc dùng mặc định
+                us_timezone = pytz.timezone(TRADING_TIMEZONE if 'TRADING_TIMEZONE' in globals() else 'US/Eastern')
+                
+                # Cách 1: Giả định local time là UTC (nếu không có timezone info)
+                # Cách 2: Lấy UTC time trực tiếp rồi chuyển sang US/Eastern
+                # Cách tốt nhất: Lấy UTC time từ datetime.utcnow() rồi chuyển sang US/Eastern
+                now_utc = datetime.utcnow()
+                now_utc_tz = pytz.utc.localize(now_utc)
+                now_us = now_utc_tz.astimezone(us_timezone)
+            except Exception as e:
+                logging.warning(f"⚠️ Lỗi chuyển đổi timezone: {e}. Sử dụng local time.")
+                now_us = now_local
+        else:
+            # Nếu không có pytz, sử dụng local time (cảnh báo đã được log ở import)
+            now_us = now_local
+        
+        current_time = now_us.strftime("%H:%M")  # Format: "HH:MM" theo giờ US/Eastern
+        
+        # Log timezone để debug (chỉ log debug)
+        logging.debug(f"🕐 Thời gian hiện tại: Local={now_local.strftime('%Y-%m-%d %H:%M:%S')}, US/Eastern={now_us.strftime('%Y-%m-%d %H:%M:%S')} ({current_time})")
+        
+        # Kiểm tra các session cấm giao dịch (từ config, theo giờ US/Eastern)
+        # Ví dụ: ("08:00", "10:00") → Không giao dịch từ 8:00 AM đến 10:00 AM EST/EDT
         for start, end in NO_TRADE_SESSIONS:
             if start <= current_time <= end:
-                return False, f"Trong session cấm {start}-{end}"
+                return False, f"Trong session cấm {start}-{end} (US/Eastern)"
         
         # Kiểm tra thứ 6 (weekday() = 4)
-        # Sau giờ NO_TRADE_FRIDAY_AFTER (ví dụ: 20:00) → Không giao dịch (tránh rủi ro cuối tuần)
-        if now.weekday() == 4 and current_time >= NO_TRADE_FRIDAY_AFTER:
-            return False, "Cuối tuần (sau 20:00 thứ 6)"
+        # Sau giờ NO_TRADE_FRIDAY_AFTER (ví dụ: 17:00) → Không giao dịch (tránh rủi ro cuối tuần)
+        if now_us.weekday() == 4 and current_time >= NO_TRADE_FRIDAY_AFTER:
+            return False, f"Cuối tuần (sau {NO_TRADE_FRIDAY_AFTER} US/Eastern thứ 6)"
             
         # Kiểm tra thời gian nghỉ sau khi thua lệnh
         # Nếu vừa thua lệnh → Đợi BREAK_AFTER_LOSS_MINUTES phút trước khi tìm tín hiệu mới
+        # Lưu ý: Sử dụng local time để tính thời gian nghỉ (không phụ thuộc timezone)
         if self.consecutive_losses > 0 and self.daily_stats['last_trade_time']:
-            time_since_last = now - self.daily_stats['last_trade_time']
+            time_since_last = now_local - self.daily_stats['last_trade_time']
             if time_since_last < timedelta(minutes=BREAK_AFTER_LOSS_MINUTES):
-                return False, f"Đang nghỉ sau thua ({BREAK_AFTER_LOSS_MINUTES} phút)"
+                remaining_minutes = int((timedelta(minutes=BREAK_AFTER_LOSS_MINUTES) - time_since_last).total_seconds() / 60)
+                return False, f"Đang nghỉ sau thua ({remaining_minutes} phút còn lại)"
                 
         return True, "OK"
         
