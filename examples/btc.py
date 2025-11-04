@@ -1653,11 +1653,12 @@ class GoldAutoTrader:
                 
                 # Log thông tin tính SL/TP trước khi điều chỉnh
                 logger.info(f"📊 Tính SL/TP từ ATR:")
+                logger.info(f"   Point value: {point:.5f}")
                 logger.info(f"   ATR hiện tại: {atr_current:.2f} USD (≈ {atr_points:.0f} points)")
                 logger.info(f"   SL từ ATR: {atr_points:.0f} × {self.atr_sl_multiplier} = {sl_points_from_atr} points")
                 logger.info(f"   TP từ ATR: {atr_points:.0f} × {self.atr_tp_multiplier} = {tp_points_from_atr} points")
                 logger.info(f"   Giá hiện tại: ${current_price:.2f}")
-                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points")
+                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points (≈ ${min_sl_from_price * point:.2f})")
                 logger.info(f"   Giới hạn: SL = [{self.min_sl_points}, {self.max_sl_points}] points, TP = [{self.min_tp_points}, {self.max_tp_points}] points")
                 
                 # Giới hạn min/max - Đảm bảo SL không nhỏ hơn cả MIN_SL_POINTS và MIN_SL_PERCENT × giá
@@ -1671,8 +1672,46 @@ class GoldAutoTrader:
                     # Tính lại TP từ ATR để giữ tỷ lệ với SL
                     tp_points = int(sl_points * (self.atr_tp_multiplier / self.atr_sl_multiplier))
                 
-                # Giới hạn TP
+                # ⚠️ QUAN TRỌNG: Nếu TP bị giới hạn bởi MAX_TP_POINTS, điều chỉnh lại SL để giữ Risk:Reward hợp lý
+                tp_points_original = tp_points
                 tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
+                
+                # Nếu TP bị giới hạn, điều chỉnh SL để giữ Risk:Reward ratio tối thiểu 1.0:1
+                if tp_points < tp_points_original:
+                    # TP bị giới hạn, tính lại SL để Risk:Reward >= 1.0:1
+                    if use_rr_ratio:
+                        # Tính SL từ TP để giữ RR ratio
+                        sl_from_tp = int(tp_points / rr_ratio)
+                    else:
+                        # Tính SL từ TP để giữ tỷ lệ ATR (tối thiểu 1.0:1)
+                        sl_from_tp = int(tp_points / (self.atr_tp_multiplier / self.atr_sl_multiplier))
+                        # Đảm bảo Risk:Reward >= 1.0:1 (tức là TP >= SL)
+                        if sl_from_tp > tp_points:
+                            sl_from_tp = tp_points  # Risk:Reward = 1.0:1
+                    
+                    # ⚠️ QUAN TRỌNG: Khi TP bị giới hạn, ưu tiên Risk:Reward hợp lý hơn MIN_SL_PERCENT
+                    # SL mới phải >= min_sl_points nhưng có thể bỏ qua min_sl_from_price nếu cần
+                    # Giới hạn: SL <= max_sl_points và SL <= TP (để Risk:Reward >= 1.0:1)
+                    sl_points_new = max(self.min_sl_points, min(sl_from_tp, self.max_sl_points, tp_points))
+                    
+                    # Nếu SL mới hợp lý hơn (Risk:Reward tốt hơn), dùng SL mới
+                    if sl_points_new < sl_points:
+                        logger.warning(f"⚠️ TP bị giới hạn ({tp_points} points), điều chỉnh SL từ {sl_points} → {sl_points_new} points để giữ Risk:Reward hợp lý")
+                        sl_points = sl_points_new
+                    
+                    # Tính lại TP từ SL mới để đảm bảo chính xác
+                    if use_rr_ratio:
+                        tp_points = int(sl_points * rr_ratio)
+                    else:
+                        tp_points = int(sl_points * (self.atr_tp_multiplier / self.atr_sl_multiplier))
+                    
+                    # Giới hạn TP lại
+                    tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
+                    
+                    # Đảm bảo Risk:Reward >= 1.0:1 (TP >= SL)
+                    if tp_points < sl_points:
+                        tp_points = sl_points  # Risk:Reward = 1.0:1 (tối thiểu)
+                        logger.warning(f"⚠️ Đã điều chỉnh TP = SL để đảm bảo Risk:Reward >= 1.0:1")
                 
                 # Log sau khi điều chỉnh
                 logger.info(f"📊 SL/TP sau điều chỉnh:")
