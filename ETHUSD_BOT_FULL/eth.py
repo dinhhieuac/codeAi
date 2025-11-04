@@ -65,12 +65,12 @@ except ImportError:
     BUY_COMMENT = "Gold Auto Buy"
     SELL_COMMENT = "Gold Auto Sell"
     LOG_LEVEL = "INFO"
-    LOG_FILE = "logs/gold_trader.log"
-    CSV_LOG_FILE = "logs/trades_log.csv"
+    LOG_FILE = "ETHUSD_BOT_FULL/logs/gold_trader.log"
+    CSV_LOG_FILE = "ETHUSD_BOT_FULL/logs/trades_log.csv"
     DEVIATION = 10
 
 # Setup logging
-logs_dir = script_dir / 'logs'
+logs_dir = script_dir / 'ETHUSD_BOT_FULL/logs'
 logs_dir.mkdir(exist_ok=True)
 log_file = logs_dir / Path(LOG_FILE).name
 
