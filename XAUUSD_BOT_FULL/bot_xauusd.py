@@ -226,6 +226,44 @@ class XAUUSD_Bot:
             logging.error(f"❌ Lỗi khi gửi Telegram: {e}")
             return False
         
+    def get_filling_mode(self, symbol):
+        """
+        Tự động detect và trả về filling mode phù hợp với broker
+        
+        Args:
+            symbol: Symbol cần kiểm tra (ví dụ: "XAUUSD")
+            
+        Returns:
+            Filling mode constant từ MT5 (ORDER_FILLING_IOC, ORDER_FILLING_FOK, hoặc ORDER_FILLING_RETURN)
+        """
+        symbol_info = mt5.symbol_info(symbol)
+        if not symbol_info:
+            logging.warning(f"⚠️ Không lấy được symbol info cho {symbol}, dùng ORDER_FILLING_RETURN mặc định")
+            return mt5.ORDER_FILLING_RETURN
+        
+        # Kiểm tra filling modes được hỗ trợ
+        # filling_mode là một bitmask:
+        # - 1 = ORDER_FILLING_FOK (Fill or Kill)
+        # - 2 = ORDER_FILLING_IOC (Immediate or Cancel)
+        # - 4 = ORDER_FILLING_RETURN (Return)
+        
+        filling_mode = symbol_info.filling_mode
+        
+        # Ưu tiên: IOC > FOK > RETURN
+        if filling_mode & mt5.ORDER_FILLING_IOC:
+            logging.debug(f"✅ Broker hỗ trợ ORDER_FILLING_IOC cho {symbol}")
+            return mt5.ORDER_FILLING_IOC
+        elif filling_mode & mt5.ORDER_FILLING_FOK:
+            logging.debug(f"✅ Broker hỗ trợ ORDER_FILLING_FOK cho {symbol}")
+            return mt5.ORDER_FILLING_FOK
+        elif filling_mode & mt5.ORDER_FILLING_RETURN:
+            logging.debug(f"✅ Broker hỗ trợ ORDER_FILLING_RETURN cho {symbol}")
+            return mt5.ORDER_FILLING_RETURN
+        else:
+            # Fallback: dùng RETURN (thường được hỗ trợ rộng rãi)
+            logging.warning(f"⚠️ Không detect được filling mode phù hợp, dùng ORDER_FILLING_RETURN mặc định")
+            return mt5.ORDER_FILLING_RETURN
+    
     def calculate_position_size(self, stop_loss_pips):
         account_info = self.get_account_info()
         if not account_info:
@@ -342,6 +380,11 @@ class XAUUSD_Bot:
         logging.info(f"   - Risk: ${account_info['balance'] * (RISK_PER_TRADE / 100):.2f} ({RISK_PER_TRADE}%)")
         logging.info(f"   - Signal strength: {signal_strength}")
         
+        # Tự động detect filling mode phù hợp với broker
+        filling_mode = self.get_filling_mode(self.symbol)
+        filling_mode_name = "IOC" if filling_mode == mt5.ORDER_FILLING_IOC else "FOK" if filling_mode == mt5.ORDER_FILLING_FOK else "RETURN"
+        logging.info(f"📊 Filling mode: {filling_mode_name}")
+        
         # Gửi lệnh
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -355,14 +398,41 @@ class XAUUSD_Bot:
             "magic": 202411,
             "comment": f"XAUUSD_Bot_{signal_type}",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": filling_mode,
         }
         
         logging.info("📤 Đang gửi lệnh đến MT5...")
         result = mt5.order_send(request)
         
         if result:
-            logging.info(f"📥 Response từ MT5: retcode={result.retcode}, comment={result.comment}")
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                logging.info(f"✅ LỆNH {signal_type} THÀNH CÔNG!")
+                logging.info(f"   - Ticket: {result.order}")
+                logging.info(f"   - Volume: {lot_size} lots")
+                logging.info(f"   - Price: {price:.2f}")
+                logging.info(f"   - SL: {sl_price:.2f}, TP: {tp_price:.2f}")
+            else:
+                # Log chi tiết lỗi
+                error_code = result.retcode
+                error_desc = result.comment if hasattr(result, 'comment') else 'Unknown error'
+                logging.error(f"❌ LỆNH {signal_type} THẤT BẠI")
+                logging.error(f"   - Retcode: {error_code}")
+                logging.error(f"   - Lý do: {error_desc}")
+                
+                # Nếu lỗi do filling mode, thử lại với RETURN mode
+                if 'filling' in error_desc.lower() or error_code == 10015:
+                    logging.warning(f"⚠️ Lỗi filling mode, thử lại với ORDER_FILLING_RETURN...")
+                    request['type_filling'] = mt5.ORDER_FILLING_RETURN
+                    retry_result = mt5.order_send(request)
+                    if retry_result and retry_result.retcode == mt5.TRADE_RETCODE_DONE:
+                        logging.info(f"✅ LỆNH {signal_type} THÀNH CÔNG sau khi thử lại với RETURN mode!")
+                        logging.info(f"   - Ticket: {retry_result.order}")
+                        return retry_result
+                    else:
+                        logging.error(f"❌ Vẫn thất bại sau khi thử lại: {retry_result.comment if retry_result else 'No response'}")
+        else:
+            error = mt5.last_error()
+            logging.error(f"❌ Không nhận được response từ MT5: {error}")
         
         return result
         
