@@ -380,10 +380,10 @@ LOG_LEVEL = "INFO"             # Mức độ log: "DEBUG" (chi tiết nhất), "
                                 # DEBUG: Ghi mọi thứ, dùng khi debug lỗi
                                 # INFO: Ghi hoạt động bình thường (khuyến nghị)
 
-LOG_FILE = "logs/gold_trader.log"      # File log text (ghi mọi hoạt động, phân tích, lỗi)
+LOG_FILE = "GOLD_BOT/logs/gold_trader.log"      # File log text (ghi mọi hoạt động, phân tích, lỗi)
                                         # Xem bằng: tail -f logs/gold_trader.log
 
-CSV_LOG_FILE = "logs/trades_gold.csv"   # File log CSV (chỉ ghi lệnh đã mở/đóng)
+CSV_LOG_FILE = "GOLD_BOT/logs/trades_gold.csv"   # File log CSV (chỉ ghi lệnh đã mở/đóng)
                                         # Dùng để phân tích performance, backtest
                                         # Cột: Time, Type, Symbol, Volume, Price, SL, TP, Ticket, Equity, Balance, Profit
 
