@@ -130,7 +130,7 @@ NEWS_BUFFER_MINUTES = 30
 
 # Khoảng thời gian giữa các lần kiểm tra tín hiệu (đơn vị: giây)
 # Bot sẽ kiểm tra thị trường mỗi CHECK_INTERVAL giây
-CHECK_INTERVAL = 30  # Đơn vị: giây (seconds)
+CHECK_INTERVAL = 60  # Đơn vị: giây (seconds) - Đã tăng từ 30s lên 60s để giảm tải
 
 # Có ghi log các giao dịch hay không (True/False)
 # Nếu True, bot sẽ ghi lại chi tiết mỗi giao dịch vào file log

@@ -441,18 +441,11 @@ class XAUUSD_Bot:
                     strength = signal.get('strength', 0)
                     
                     if action != 'HOLD':
-                        logging.info("=" * 60)
-                        logging.info(f"🎯 TÍN HIỆU GIAO DỊCH PHÁT HIỆN!")
-                        logging.info("=" * 60)
-                        logging.info(f"   - Action: {action}")
-                        logging.info(f"   - Strength: {strength}")
-                        logging.info(f"   - SL: {signal.get('sl_pips', 0)} pips")
-                        logging.info(f"   - TP: {signal.get('tp_pips', 0)} pips")
-                        logging.info("=" * 60)
-                        
-                        # Gửi thông báo Telegram về tín hiệu (chỉ khi tín hiệu mới hoặc thay đổi)
-                        # Tạo signature của tín hiệu để so sánh
-                        signal_signature = (action, strength, signal.get('sl_pips', 0), signal.get('tp_pips', 0))
+                        # Tạo signature của tín hiệu để so sánh (làm tròn SL/TP để tránh thay đổi nhỏ do giá)
+                        # Làm tròn SL/TP về 10 pips gần nhất để so sánh chính xác hơn
+                        sl_pips_rounded = round(signal.get('sl_pips', 0) / 10) * 10
+                        tp_pips_rounded = round(signal.get('tp_pips', 0) / 10) * 10
+                        signal_signature = (action, strength, sl_pips_rounded, tp_pips_rounded)
                         now_time = datetime.now()
                         
                         # Kiểm tra xem tín hiệu có mới/khác không
@@ -461,6 +454,26 @@ class XAUUSD_Bot:
                                           (now_time - self.last_signal_time).total_seconds() >= self.telegram_signal_cooldown)
                         
                         should_send_signal = signal_changed and cooldown_passed
+                        
+                        # Chỉ log "TÍN HIỆU GIAO DỊCH PHÁT HIỆN" khi tín hiệu mới hoặc thay đổi (tránh spam log)
+                        if should_send_signal:
+                            logging.info("=" * 60)
+                            logging.info(f"🎯 TÍN HIỆU GIAO DỊCH PHÁT HIỆN!")
+                            logging.info("=" * 60)
+                            logging.info(f"   - Action: {action}")
+                            logging.info(f"   - Strength: {strength}")
+                            logging.info(f"   - SL: {signal.get('sl_pips', 0)} pips")
+                            logging.info(f"   - TP: {signal.get('tp_pips', 0)} pips")
+                            logging.info("=" * 60)
+                        else:
+                            # Log ngắn gọn khi tín hiệu giống (không spam)
+                            if not signal_changed:
+                                logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - giống tín hiệu trước (đã log)")
+                            else:
+                                remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
+                                logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - cooldown còn {remaining}s")
+                        
+                        # Gửi thông báo Telegram về tín hiệu (chỉ khi tín hiệu mới hoặc thay đổi)
                         
                         if self.use_telegram and should_send_signal:
                             signal_message = (
