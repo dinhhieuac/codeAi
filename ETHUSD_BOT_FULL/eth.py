@@ -1860,20 +1860,48 @@ class GoldAutoTrader:
         risk_amount = current_equity * self.risk_per_trade
         
         # Tính lot size: risk_amount / (sl_points * tick_value * lot_size_factor)
-        # Cho ETHUSD: 1 lot = 100 oz, tick_value thường là $1 per point per lot
+        # Cho ETHUSD: 1 lot = 1 ETH, tick_value thường là $1 per point per lot
         if tick_value > 0 and sl_points > 0:
             # Tính lot size từ risk amount
             lot_size = risk_amount / (sl_points * tick_value)
         else:
             # Fallback: sử dụng lot size nhỏ
             lot_size = self.min_lot
+            logger.warning(f"⚠️  Không thể tính lot size từ risk (tick_value={tick_value}, sl_points={sl_points}) → Dùng min_lot: {lot_size}")
         
         # Làm tròn theo bước lot size của broker
         lot_step = symbol_info.volume_step
-        lot_size = round(lot_size / lot_step) * lot_step
+        if lot_step is None or lot_step <= 0:
+            # Fallback: dùng lot_step mặc định (0.01 cho hầu hết broker)
+            lot_step = 0.01
+            logger.warning(f"⚠️  lot_step không hợp lệ ({symbol_info.volume_step}) → Dùng mặc định: {lot_step}")
         
-        # Giới hạn min/max
+        # Làm tròn lot size theo lot_step
+        if lot_size > 0:
+            lot_size = round(lot_size / lot_step) * lot_step
+        else:
+            lot_size = self.min_lot
+        
+        # Đảm bảo lot_size có đủ số chữ số thập phân (làm tròn đến 2 chữ số)
+        lot_size = round(lot_size, 2)
+        
+        # Giới hạn min/max (quan trọng: đảm bảo >= min_lot)
         lot_size = max(self.min_lot, min(lot_size, self.max_lot))
+        
+        # Kiểm tra lại sau khi giới hạn: đảm bảo lot_size >= min_lot
+        if lot_size < self.min_lot:
+            logger.warning(f"⚠️  Lot size quá nhỏ ({lot_size}) < min_lot ({self.min_lot}) → Dùng min_lot")
+            lot_size = self.min_lot
+        
+        # Log chi tiết để debug
+        logger.info(f"📊 Tính lot size:")
+        logger.info(f"   Equity: {current_equity:.2f}")
+        logger.info(f"   Risk amount: {risk_amount:.2f} ({self.risk_per_trade*100:.1f}%)")
+        logger.info(f"   SL points: {sl_points}")
+        logger.info(f"   Tick value: {tick_value}")
+        logger.info(f"   Lot step: {lot_step}")
+        logger.info(f"   Lot size (tính toán): {lot_size:.4f} → (làm tròn): {lot_size:.2f}")
+        logger.info(f"   Lot size (final): {lot_size:.2f} (min: {self.min_lot}, max: {self.max_lot})")
         
         return sl_points, tp_points, lot_size
     
@@ -2354,8 +2382,31 @@ class GoldAutoTrader:
         
         # Tính risk amount thực tế
         risk_amount = current_equity * self.risk_per_trade
+        
+        # ⚠️ VALIDATION: Kiểm tra lot size trước khi gửi order
+        lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
+        lot_min = symbol_info.volume_min if symbol_info.volume_min and symbol_info.volume_min > 0 else self.min_lot
+        lot_max = symbol_info.volume_max if symbol_info.volume_max and symbol_info.volume_max > 0 else self.max_lot
+        
+        # Đảm bảo lot_size đúng format
+        lot = round(lot, 2)  # Làm tròn đến 2 chữ số thập phân
+        lot = max(lot_min, min(lot, lot_max))  # Giới hạn min/max
+        
+        # Làm tròn theo lot_step
+        if lot_step > 0:
+            lot = round(lot / lot_step) * lot_step
+            lot = round(lot, 2)  # Làm tròn lại sau khi nhân với lot_step
+        
+        # Kiểm tra lại lần cuối
+        if lot < lot_min:
+            logger.error(f"❌ Lot size quá nhỏ: {lot} < {lot_min} (min lot của broker)")
+            return None
+        if lot > lot_max:
+            logger.error(f"❌ Lot size quá lớn: {lot} > {lot_max} (max lot của broker)")
+            return None
+        
         logger.info(f"💰 Risk per trade: {risk_amount:.2f} ({self.risk_per_trade*100:.1f}% Equity)")
-        logger.info(f"📊 Lot size: {lot:.2f} (tự động tính từ risk)")
+        logger.info(f"📊 Lot size: {lot:.2f} (đã validate: min={lot_min}, max={lot_max}, step={lot_step})")
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -2464,7 +2515,9 @@ class GoldAutoTrader:
         if sl_points is None or tp_points is None or lot is None:
             df = self.get_historical_data(timeframe=mt5.TIMEFRAME_M15)
             if df is not None:
-                sl_points, tp_points, lot = self.calculate_risk_parameters(df)
+                # Tính analysis để truyền vào calculate_risk_parameters (cho adaptive SL/TP)
+                analysis = self.analyze_market(df)
+                sl_points, tp_points, lot = self.calculate_risk_parameters(df, analysis)
             else:
                 logger.error("Không thể tính risk parameters")
                 return None
@@ -2475,8 +2528,31 @@ class GoldAutoTrader:
         
         # Tính risk amount thực tế
         risk_amount = current_equity * self.risk_per_trade
+        
+        # ⚠️ VALIDATION: Kiểm tra lot size trước khi gửi order
+        lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
+        lot_min = symbol_info.volume_min if symbol_info.volume_min and symbol_info.volume_min > 0 else self.min_lot
+        lot_max = symbol_info.volume_max if symbol_info.volume_max and symbol_info.volume_max > 0 else self.max_lot
+        
+        # Đảm bảo lot_size đúng format
+        lot = round(lot, 2)  # Làm tròn đến 2 chữ số thập phân
+        lot = max(lot_min, min(lot, lot_max))  # Giới hạn min/max
+        
+        # Làm tròn theo lot_step
+        if lot_step > 0:
+            lot = round(lot / lot_step) * lot_step
+            lot = round(lot, 2)  # Làm tròn lại sau khi nhân với lot_step
+        
+        # Kiểm tra lại lần cuối
+        if lot < lot_min:
+            logger.error(f"❌ Lot size quá nhỏ: {lot} < {lot_min} (min lot của broker)")
+            return None
+        if lot > lot_max:
+            logger.error(f"❌ Lot size quá lớn: {lot} > {lot_max} (max lot của broker)")
+            return None
+        
         logger.info(f"💰 Risk per trade: {risk_amount:.2f} ({self.risk_per_trade*100:.1f}% Equity)")
-        logger.info(f"📊 Lot size: {lot:.2f} (tự động tính từ risk)")
+        logger.info(f"📊 Lot size: {lot:.2f} (đã validate: min={lot_min}, max={lot_max}, step={lot_step})")
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
