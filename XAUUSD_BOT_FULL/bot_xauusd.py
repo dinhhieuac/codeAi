@@ -91,6 +91,11 @@ class XAUUSD_Bot:
         self.telegram_bot_token = TELEGRAM_BOT_TOKEN if 'TELEGRAM_BOT_TOKEN' in globals() else ""
         self.telegram_chat_id = TELEGRAM_CHAT_ID if 'TELEGRAM_CHAT_ID' in globals() else ""
         
+        # Theo dõi tín hiệu đã gửi để tránh spam
+        self.last_signal_sent = None  # Lưu tín hiệu cuối cùng đã gửi Telegram
+        self.last_signal_time = None  # Thời gian gửi tín hiệu cuối cùng
+        self.telegram_signal_cooldown = 300  # Cooldown 5 phút giữa các lần gửi tín hiệu (giây)
+        
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
     def setup_directories(self):
@@ -445,8 +450,19 @@ class XAUUSD_Bot:
                         logging.info(f"   - TP: {signal.get('tp_pips', 0)} pips")
                         logging.info("=" * 60)
                         
-                        # Gửi thông báo Telegram về tín hiệu
-                        if self.use_telegram:
+                        # Gửi thông báo Telegram về tín hiệu (chỉ khi tín hiệu mới hoặc thay đổi)
+                        # Tạo signature của tín hiệu để so sánh
+                        signal_signature = (action, strength, signal.get('sl_pips', 0), signal.get('tp_pips', 0))
+                        now_time = datetime.now()
+                        
+                        # Kiểm tra xem tín hiệu có mới/khác không
+                        signal_changed = (self.last_signal_sent != signal_signature)
+                        cooldown_passed = (self.last_signal_time is None or 
+                                          (now_time - self.last_signal_time).total_seconds() >= self.telegram_signal_cooldown)
+                        
+                        should_send_signal = signal_changed and cooldown_passed
+                        
+                        if self.use_telegram and should_send_signal:
                             signal_message = (
                                 f"🎯 <b>TÍN HIỆU {action} {self.symbol}</b>\n\n"
                                 f"📊 <b>Thông tin tín hiệu:</b>\n"
@@ -458,9 +474,19 @@ class XAUUSD_Bot:
                                 f"   • Equity: <b>${account_info['equity']:.2f}</b>\n"
                                 f"   • Balance: <b>${account_info['balance']:.2f}</b>\n"
                                 f"   • Positions: <b>{num_positions}/{MAX_POSITIONS}</b>\n\n"
-                                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"⏰ {now_time.strftime('%Y-%m-%d %H:%M:%S')}"
                             )
-                            self.send_telegram_message(signal_message)
+                            if self.send_telegram_message(signal_message):
+                                # Chỉ cập nhật khi gửi thành công
+                                self.last_signal_sent = signal_signature
+                                self.last_signal_time = now_time
+                                logging.debug(f"📱 Đã gửi thông báo Telegram về tín hiệu {action}")
+                        elif self.use_telegram and not should_send_signal:
+                            if not signal_changed:
+                                logging.debug(f"📱 Tín hiệu {action} giống tín hiệu trước → Không gửi Telegram (tránh spam)")
+                            elif not cooldown_passed:
+                                remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
+                                logging.debug(f"📱 Cooldown Telegram còn {remaining}s → Không gửi tín hiệu (tránh spam)")
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
@@ -507,6 +533,10 @@ class XAUUSD_Bot:
                                 self.send_telegram_message(success_message)
                             
                             self.risk_manager.record_trade(success=True)
+                            
+                            # Reset signal tracking khi mở lệnh thành công (để có thể gửi tín hiệu mới sau đó)
+                            self.last_signal_sent = None
+                            self.last_signal_time = None
                         elif result is None:
                             # result = None nghĩa là execute_trade() return None (do risk manager chặn hoặc lỗi khác)
                             # Đã log warning trong execute_trade(), không cần log lại lỗi ở đây
