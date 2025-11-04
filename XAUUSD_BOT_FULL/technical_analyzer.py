@@ -6,6 +6,7 @@ Module này chứa các phương thức tính toán các chỉ báo kỹ thuật
 
 import pandas as pd
 import numpy as np
+import logging
 from config_xauusd import *
 
 class TechnicalAnalyzer:
@@ -251,65 +252,130 @@ class TechnicalAnalyzer:
         prev = df.iloc[-2]     # Nến trước đó (để so sánh)
         
         # ====================================================================
+        # LOG CHI TIẾT CÁC CHỈ BÁO KỸ THUẬT
+        # ====================================================================
+        logging.info("=" * 60)
+        logging.info("📊 CHI TIẾT CHỈ BÁO KỸ THUẬT:")
+        logging.info("=" * 60)
+        logging.info(f"   💰 Giá hiện tại: {current['close']:.2f}")
+        logging.info(f"   📈 RSI: {current['rsi']:.2f} (Trước: {prev['rsi']:.2f})")
+        logging.info(f"   📊 EMA20: {current['ema_20']:.2f} | EMA50: {current['ema_50']:.2f}")
+        logging.info(f"   📉 MACD: {current['macd']:.2f} | Signal: {current['macd_signal']:.2f} | Histogram: {current['macd_hist']:.2f}")
+        logging.info(f"   🎯 Bollinger Bands: Upper={current['upper_bb']:.2f} | Middle={current['middle_bb']:.2f} | Lower={current['lower_bb']:.2f}")
+        atr_value = current['atr'] / 0.01  # ATR tính bằng pips
+        logging.info(f"   📏 ATR: {current['atr']:.2f} ({atr_value:.1f} pips)")
+        logging.info("=" * 60)
+        
+        # ====================================================================
         # BƯỚC 3: ĐẾM SỐ LƯỢNG TÍN HIỆU MUA/BÁN
         # ====================================================================
         
         buy_signals = 0   # Số tín hiệu mua (cộng dồn)
         sell_signals = 0  # Số tín hiệu bán (cộng dồn)
+        buy_reasons = []  # Danh sách lý do tín hiệu mua
+        sell_reasons = []  # Danh sách lý do tín hiệu bán
         
         # --- Tín hiệu RSI (trọng số x2 = 2 điểm) ---
         # RSI cắt từ trên xuống dưới 30 → Quá bán → Tín hiệu mua mạnh (ưu tiên)
         if current['rsi'] < 30 and prev['rsi'] >= 30:
             buy_signals += 2  # RSI có trọng số cao hơn (2 điểm)
+            buy_reasons.append(f"RSI cắt xuống dưới 30 (Quá bán) - RSI: {current['rsi']:.2f} [2 điểm]")
         # RSI đang ở vùng quá bán (< 35) → Tín hiệu mua (chỉ khi chưa cắt)
         elif current['rsi'] < 35:
             buy_signals += 1  # RSI đang ở vùng quá bán (1 điểm)
+            buy_reasons.append(f"RSI đang ở vùng quá bán (< 35) - RSI: {current['rsi']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ RSI không có tín hiệu BUY: {current['rsi']:.2f} (cần < 35)")
         
         # RSI cắt từ dưới lên trên 70 → Quá mua → Tín hiệu bán mạnh (ưu tiên)
         if current['rsi'] > 70 and prev['rsi'] <= 70:
             sell_signals += 2  # RSI có trọng số cao hơn (2 điểm)
+            sell_reasons.append(f"RSI cắt lên trên 70 (Quá mua) - RSI: {current['rsi']:.2f} [2 điểm]")
         # RSI đang ở vùng quá mua (> 65) → Tín hiệu bán (chỉ khi chưa cắt)
         elif current['rsi'] > 65:
             sell_signals += 1  # RSI đang ở vùng quá mua (1 điểm)
+            sell_reasons.append(f"RSI đang ở vùng quá mua (> 65) - RSI: {current['rsi']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ RSI không có tín hiệu SELL: {current['rsi']:.2f} (cần > 65)")
         
         # --- Tín hiệu EMA (trọng số x1 = 1 điểm) ---
         # EMA20 cắt EMA50 từ dưới lên → Uptrend mới → Tín hiệu mua (ưu tiên)
         if current['ema_20'] > current['ema_50'] and prev['ema_20'] <= prev['ema_50']:
             buy_signals += 1
+            buy_reasons.append(f"EMA20 cắt EMA50 từ dưới lên (Uptrend mới) - EMA20: {current['ema_20']:.2f} > EMA50: {current['ema_50']:.2f} [1 điểm]")
         # EMA20 đang ở trên EMA50 → Uptrend đang diễn ra → Tín hiệu mua
         elif current['ema_20'] > current['ema_50']:
             buy_signals += 1
+            buy_reasons.append(f"EMA20 đang trên EMA50 (Uptrend) - EMA20: {current['ema_20']:.2f} > EMA50: {current['ema_50']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ EMA không có tín hiệu BUY: EMA20={current['ema_20']:.2f} <= EMA50={current['ema_50']:.2f}")
         
         # EMA20 cắt EMA50 từ trên xuống → Downtrend mới → Tín hiệu bán (ưu tiên)
         if current['ema_20'] < current['ema_50'] and prev['ema_20'] >= prev['ema_50']:
             sell_signals += 1
+            sell_reasons.append(f"EMA20 cắt EMA50 từ trên xuống (Downtrend mới) - EMA20: {current['ema_20']:.2f} < EMA50: {current['ema_50']:.2f} [1 điểm]")
         # EMA20 đang ở dưới EMA50 → Downtrend đang diễn ra → Tín hiệu bán
         elif current['ema_20'] < current['ema_50']:
             sell_signals += 1
+            sell_reasons.append(f"EMA20 đang dưới EMA50 (Downtrend) - EMA20: {current['ema_20']:.2f} < EMA50: {current['ema_50']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ EMA không có tín hiệu SELL: EMA20={current['ema_20']:.2f} >= EMA50={current['ema_50']:.2f}")
         
         # --- Tín hiệu MACD (trọng số x1 = 1 điểm) ---
         # MACD cắt Signal từ dưới lên → Momentum tăng → Tín hiệu mua (ưu tiên)
         if current['macd'] > current['macd_signal'] and prev['macd'] <= prev['macd_signal']:
             buy_signals += 1
+            buy_reasons.append(f"MACD cắt Signal từ dưới lên - MACD: {current['macd']:.2f} > Signal: {current['macd_signal']:.2f}, Histogram: {current['macd_hist']:.2f} [1 điểm]")
         # MACD đang ở trên Signal → Momentum tăng → Tín hiệu mua
         elif current['macd'] > current['macd_signal']:
             buy_signals += 1
+            buy_reasons.append(f"MACD đang trên Signal (Momentum tăng) - MACD: {current['macd']:.2f} > Signal: {current['macd_signal']:.2f}, Histogram: {current['macd_hist']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ MACD không có tín hiệu BUY: MACD={current['macd']:.2f} <= Signal={current['macd_signal']:.2f}")
         
         # MACD cắt Signal từ trên xuống → Momentum giảm → Tín hiệu bán (ưu tiên)
         if current['macd'] < current['macd_signal'] and prev['macd'] >= prev['macd_signal']:
             sell_signals += 1
+            sell_reasons.append(f"MACD cắt Signal từ trên xuống - MACD: {current['macd']:.2f} < Signal: {current['macd_signal']:.2f}, Histogram: {current['macd_hist']:.2f} [1 điểm]")
         # MACD đang ở dưới Signal → Momentum giảm → Tín hiệu bán
         elif current['macd'] < current['macd_signal']:
             sell_signals += 1
+            sell_reasons.append(f"MACD đang dưới Signal (Momentum giảm) - MACD: {current['macd']:.2f} < Signal: {current['macd_signal']:.2f}, Histogram: {current['macd_hist']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ MACD không có tín hiệu SELL: MACD={current['macd']:.2f} >= Signal={current['macd_signal']:.2f}")
         
         # --- Tín hiệu Bollinger Bands (trọng số x1 = 1 điểm) ---
         # Giá chạm Lower Band → Quá bán → Tín hiệu mua
         if current['close'] < current['lower_bb']:
             buy_signals += 1
-        
+            buy_reasons.append(f"Giá chạm Lower BB (Quá bán) - Giá: {current['close']:.2f} < Lower BB: {current['lower_bb']:.2f} [1 điểm]")
         # Giá chạm Upper Band → Quá mua → Tín hiệu bán
         elif current['close'] > current['upper_bb']:
             sell_signals += 1
+            sell_reasons.append(f"Giá chạm Upper BB (Quá mua) - Giá: {current['close']:.2f} > Upper BB: {current['upper_bb']:.2f} [1 điểm]")
+        else:
+            logging.debug(f"   ❌ BB không có tín hiệu: Giá={current['close']:.2f} nằm giữa Lower={current['lower_bb']:.2f} và Upper={current['upper_bb']:.2f}")
+        
+        # ====================================================================
+        # LOG KẾT QUẢ ĐẾM TÍN HIỆU
+        # ====================================================================
+        logging.info("=" * 60)
+        logging.info("📊 TỔNG HỢP TÍN HIỆU:")
+        logging.info("=" * 60)
+        logging.info(f"   ✅ Tín hiệu BUY: {buy_signals} điểm (cần >= {MIN_SIGNAL_STRENGTH})")
+        if buy_reasons:
+            for reason in buy_reasons:
+                logging.info(f"      • {reason}")
+        else:
+            logging.info(f"      ❌ Không có tín hiệu BUY nào")
+        
+        logging.info(f"   ❌ Tín hiệu SELL: {sell_signals} điểm (cần >= {MIN_SIGNAL_STRENGTH})")
+        if sell_reasons:
+            for reason in sell_reasons:
+                logging.info(f"      • {reason}")
+        else:
+            logging.info(f"      ❌ Không có tín hiệu SELL nào")
+        logging.info("=" * 60)
         
         # ====================================================================
         # BƯỚC 4: XÁC ĐỊNH TÍN HIỆU CUỐI CÙNG VÀ TÍNH SL/TP
@@ -320,7 +386,7 @@ class TechnicalAnalyzer:
         
         # --- Tín hiệu BUY: Cần tối thiểu 2 tín hiệu mua và nhiều hơn tín hiệu bán ---
         # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
-        if buy_signals >= 2 and buy_signals > sell_signals:
+        if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals:
             # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
             sl_pips = max(self.min_sl_pips, atr_value * 1.5)
             
@@ -336,7 +402,7 @@ class TechnicalAnalyzer:
         
         # --- Tín hiệu SELL: Cần tối thiểu 2 tín hiệu bán và nhiều hơn tín hiệu mua ---
         # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
-        elif sell_signals >= 2 and sell_signals > buy_signals:
+        elif sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals:
             # Tính SL: Tối thiểu MIN_SL_PIPS hoặc ATR * 1.5 (lấy giá trị lớn hơn)
             sl_pips = max(self.min_sl_pips, atr_value * 1.5)
             
@@ -352,6 +418,34 @@ class TechnicalAnalyzer:
         
         # --- Không có tín hiệu rõ ràng → HOLD (giữ nguyên, không giao dịch) ---
         else:
+            # Log chi tiết lý do HOLD
+            logging.warning("=" * 60)
+            logging.warning("⚠️  HOLD - Không đủ điều kiện vào lệnh:")
+            logging.warning("=" * 60)
+            logging.warning(f"   - Buy signals: {buy_signals}/{MIN_SIGNAL_STRENGTH} (cần >= {MIN_SIGNAL_STRENGTH})")
+            logging.warning(f"   - Sell signals: {sell_signals}/{MIN_SIGNAL_STRENGTH} (cần >= {MIN_SIGNAL_STRENGTH})")
+            
+            if buy_signals >= MIN_SIGNAL_STRENGTH and sell_signals >= MIN_SIGNAL_STRENGTH:
+                logging.warning(f"   - Lý do: Cả BUY và SELL đều đủ điểm ({buy_signals} vs {sell_signals}) → Mâu thuẫn")
+            elif buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals <= sell_signals:
+                logging.warning(f"   - Lý do: BUY đủ điểm ({buy_signals}) nhưng không nhiều hơn SELL ({sell_signals})")
+            elif sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals <= buy_signals:
+                logging.warning(f"   - Lý do: SELL đủ điểm ({sell_signals}) nhưng không nhiều hơn BUY ({buy_signals})")
+            else:
+                logging.warning(f"   - Lý do: Không đủ tín hiệu (BUY: {buy_signals}/{MIN_SIGNAL_STRENGTH}, SELL: {sell_signals}/{MIN_SIGNAL_STRENGTH})")
+            
+            if buy_reasons:
+                logging.warning(f"   - Chi tiết BUY signals:")
+                for reason in buy_reasons:
+                    logging.warning(f"      • {reason}")
+            
+            if sell_reasons:
+                logging.warning(f"   - Chi tiết SELL signals:")
+                for reason in sell_reasons:
+                    logging.warning(f"      • {reason}")
+            
+            logging.warning("=" * 60)
+            
             return {
                 'action': 'HOLD',  # Hành động: Không giao dịch
                 'strength': 0,      # Không có tín hiệu (strength = 0)
