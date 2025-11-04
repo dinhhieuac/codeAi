@@ -504,6 +504,23 @@ class XAUUSD_Bot:
         last_logged_positions = None  # Lưu số positions lần log cuối
         pending_delay_info = None  # Lưu thông tin delay nếu có tín hiệu hợp lệ nhưng bị chặn
         
+        def log_delay_and_sleep():
+            """Helper function để log delay info và sleep trước khi continue"""
+            if pending_delay_info:
+                # Nếu có tín hiệu hợp lệ nhưng bị delay, log thông tin chi tiết
+                delay_info = pending_delay_info
+                logging.info("=" * 60)
+                logging.info(f"⏸️ TÍN HIỆU HỢP LỆ ĐANG CHỜ ĐỦ ĐIỀU KIỆN THỜI GIAN")
+                logging.info("=" * 60)
+                logging.info(f"   📊 Tín hiệu đang chờ: {delay_info['action']} (Strength: {delay_info['strength']})")
+                logging.info(f"   ⏱️ Cần đợi thêm: {delay_info['remaining_minutes']} phút {delay_info['remaining_seconds']} giây")
+                logging.info(f"   ⏰ Thời gian check tiếp theo: {delay_info['next_check_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                logging.info(f"   📋 Sẽ kiểm tra lại sau {CHECK_INTERVAL} giây (mỗi {CHECK_INTERVAL}s)")
+                logging.info("=" * 60)
+            
+            logging.info(f"⏳ Chờ {CHECK_INTERVAL} giây trước lần kiểm tra tiếp theo...")
+            time.sleep(CHECK_INTERVAL)
+        
         while True:
             try:
                 cycle_count += 1
@@ -670,6 +687,7 @@ class XAUUSD_Bot:
                         
                         if current_position_count >= MAX_POSITIONS:
                             logging.warning(f"❌ Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở")
+                            log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
@@ -725,11 +743,13 @@ class XAUUSD_Bot:
                                     logging.info(f"   🔄 Bỏ qua tín hiệu này, chờ cycle tiếp theo...")
                                     logging.info("=" * 60)
                                     
+                                    log_delay_and_sleep()
                                     continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
                             logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
+                            log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # Thực hiện giao dịch
@@ -810,24 +830,12 @@ class XAUUSD_Bot:
                     # Reset delay info khi không có tín hiệu
                     pending_delay_info = None
                 
-                # Chờ trước khi kiểm tra tiếp
-                if pending_delay_info:
-                    # Nếu có tín hiệu hợp lệ nhưng bị delay, log thông tin chi tiết
-                    delay_info = pending_delay_info
-                    logging.info("=" * 60)
-                    logging.info(f"⏸️ TÍN HIỆU HỢP LỆ ĐANG CHỜ ĐỦ ĐIỀU KIỆN THỜI GIAN")
-                    logging.info("=" * 60)
-                    logging.info(f"   📊 Tín hiệu đang chờ: {delay_info['action']} (Strength: {delay_info['strength']})")
-                    logging.info(f"   ⏱️ Cần đợi thêm: {delay_info['remaining_minutes']} phút {delay_info['remaining_seconds']} giây")
-                    logging.info(f"   ⏰ Thời gian check tiếp theo: {delay_info['next_check_time'].strftime('%Y-%m-%d %H:%M:%S')}")
-                    logging.info(f"   📋 Sẽ kiểm tra lại sau {CHECK_INTERVAL} giây (mỗi {CHECK_INTERVAL}s)")
-                    logging.info("=" * 60)
-                    
-                    # Reset delay info sau khi đã log
-                    pending_delay_info = None
+                # Chờ trước khi kiểm tra tiếp (chỉ khi không có continue nào được gọi)
+                log_delay_and_sleep()
                 
-                logging.info(f"⏳ Chờ {CHECK_INTERVAL} giây trước lần kiểm tra tiếp theo...")
-                time.sleep(CHECK_INTERVAL)
+                # Reset delay info sau khi đã log (nếu có)
+                if pending_delay_info:
+                    pending_delay_info = None
                 
             except KeyboardInterrupt:
                 logging.info("=" * 60)
