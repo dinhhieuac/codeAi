@@ -1123,7 +1123,7 @@ class XAUUSD_Bot:
             "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
             "comment": f"Smart_Exit_{reason}",
-            "type_time": mt5.TRADE_TIME_GTC,
+            "type_time": mt5.ORDER_TIME_GTC,
         }
         
         result = mt5.order_send(request)
