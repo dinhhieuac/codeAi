@@ -287,20 +287,22 @@ class XAUUSD_Bot:
     def execute_trade(self, signal_type, sl_pips, tp_pips, signal_strength=0):
         """Thực hiện giao dịch"""
         
-        logging.info("=" * 60)
-        logging.info(f"📈 CHUẨN BỊ MỞ LỆNH {signal_type}")
-        logging.info("=" * 60)
-        
         # Kiểm tra điều kiện thị trường
         market_ok, message = self.check_market_conditions()
         if not market_ok:
             logging.warning(f"❌ Không giao dịch: {message}")
             return None
         
-        # Kiểm tra risk manager
+        # ⚠️ LƯU Ý: Kiểm tra risk manager đã được thực hiện trong run_bot() trước khi gọi execute_trade()
+        # Kiểm tra lại ở đây để đảm bảo an toàn (phòng trường hợp được gọi từ nơi khác)
         if not self.risk_manager.can_open_trade(signal_type):
-            logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {signal_type}")
+            logging.warning(f"❌ Risk Manager chặn (trong execute_trade): Không thể mở lệnh {signal_type}")
             return None
+        
+        # Chỉ log "CHUẨN BỊ MỞ LỆNH" khi đã pass tất cả các kiểm tra
+        logging.info("=" * 60)
+        logging.info(f"📈 CHUẨN BỊ MỞ LỆNH {signal_type}")
+        logging.info("=" * 60)
         
         symbol_info = mt5.symbol_info(self.symbol)
         if not symbol_info:
@@ -460,6 +462,11 @@ class XAUUSD_Bot:
                             )
                             self.send_telegram_message(signal_message)
                         
+                        # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
+                        if not self.risk_manager.can_open_trade(action):
+                            logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
+                            continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        
                         # Thực hiện giao dịch
                         result = self.execute_trade(
                             action, 
@@ -500,13 +507,18 @@ class XAUUSD_Bot:
                                 self.send_telegram_message(success_message)
                             
                             self.risk_manager.record_trade(success=True)
+                        elif result is None:
+                            # result = None nghĩa là execute_trade() return None (do risk manager chặn hoặc lỗi khác)
+                            # Đã log warning trong execute_trade(), không cần log lại lỗi ở đây
+                            logging.debug(f"⚠️ execute_trade() trả về None - đã được xử lý trong execute_trade()")
                         else:
-                            error_msg = mt5.last_error() if result is None else result.comment
+                            # result có giá trị nhưng retcode != DONE → Lỗi thực sự từ MT5
+                            error_msg = result.comment if hasattr(result, 'comment') else str(mt5.last_error())
                             logging.error("=" * 60)
                             logging.error(f"❌ LỆNH {action} THẤT BẠI")
                             logging.error("=" * 60)
                             logging.error(f"   - Lỗi: {error_msg}")
-                            logging.error(f"   - Retcode: {result.retcode if result else 'None'}")
+                            logging.error(f"   - Retcode: {result.retcode if hasattr(result, 'retcode') else 'None'}")
                             logging.error("=" * 60)
                             
                             # Gửi thông báo Telegram về lỗi
