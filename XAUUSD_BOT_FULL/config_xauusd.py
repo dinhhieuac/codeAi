@@ -85,6 +85,74 @@ MIN_RR_RATIO = 1.5  # Khuyến nghị: 1.5 - 2.0
 MAX_SL_USD = 10.0  # Đơn vị: USD
 
 # ============================================================================
+# SL/TP ĐỘNG THEO ATR - Tự động điều chỉnh theo biến động thị trường
+# ============================================================================
+
+# Bật/tắt tính năng SL/TP động theo ATR
+USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công thức cố định
+
+# Hệ số nhân ATR để tính SL và TP
+# Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 1.5 → SL = 150 pips
+# Tự động điều chỉnh theo biến động (ATR càng lớn → SL/TP càng xa)
+ATR_MULTIPLIER_SL = 1.5  # Hệ số nhân ATR cho Stop Loss
+ATR_MULTIPLIER_TP = 2.5  # Hệ số nhân ATR cho Take Profit
+
+# Sử dụng ATR timeframe riêng (thường là M15 hoặc H1)
+# Nếu None, sẽ dùng cùng timeframe với phân tích kỹ thuật
+ATR_TIMEFRAME = "M15"  # Các giá trị: "M15", "M30", "H1", "H4", None (dùng TIMEFRAME)
+
+# Số chu kỳ để tính ATR (chuẩn: 14)
+ATR_PERIOD = 14
+
+# ============================================================================
+# TRAILING STOP THÔNG MINH - Bảo vệ lợi nhuận tự động
+# ============================================================================
+
+# Bật/tắt tính năng Smart Trailing Stop
+ENABLE_TRAILING_STOP = True  # True: Bật trailing stop, False: Tắt
+
+# Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu kéo SL
+TRAIL_START_PIPS = 150  # Đơn vị: pips (ví dụ: 150 pips = 1.5% với Gold)
+
+# Khoảng cách giữa giá hiện tại và SL khi trailing
+TRAIL_DISTANCE_PIPS = 100  # Đơn vị: pips (SL sẽ cách giá hiện tại 100 pips)
+
+# Nếu lợi nhuận > TRAIL_HARD_LOCK_PIPS thì chốt cứng (đảm bảo không mất lời)
+TRAIL_HARD_LOCK_PIPS = 250  # Đơn vị: pips (khi đạt >250 pips lời, SL sẽ được "khóa" ở mức an toàn)
+
+# ============================================================================
+# TP ĐỘNG THEO SỨC MẠNH XU HƯỚNG - Tăng TP khi trend mạnh
+# ============================================================================
+
+# Bật/tắt tính năng tăng TP khi trend mạnh
+ENABLE_TP_BOOST = True  # True: Tăng TP khi trend mạnh, False: Tắt
+
+# Nếu RSI vượt ngưỡng trend mạnh → tăng TP thêm %
+STRONG_TREND_TP_BOOST = 0.3  # +30% TP nếu trend mạnh (ví dụ: 0.3 = +30%)
+
+# Ngưỡng RSI để xác định trend mạnh
+RSI_TREND_THRESHOLD_UP = 65   # RSI > 65 = uptrend mạnh (BUY)
+RSI_TREND_THRESHOLD_DOWN = 35 # RSI < 35 = downtrend mạnh (SELL)
+
+# ============================================================================
+# THOÁT LỆNH THÔNG MINH - Đóng lệnh sớm khi tín hiệu đảo chiều
+# ============================================================================
+
+# Bật/tắt tính năng Smart Exit (thoát lệnh thông minh)
+ENABLE_SMART_EXIT = True  # True: Bật smart exit, False: Tắt
+
+# Nếu có bao nhiêu tín hiệu ngược chiều liên tiếp → đóng lệnh sớm
+OPPOSITE_SIGNAL_COUNT_TO_EXIT = 2  # Số tín hiệu ngược chiều cần để thoát lệnh
+
+# Nếu RSI quay đầu vượt vùng trung tính → đóng lệnh sớm
+ENABLE_RSI_EXIT = True  # Bật/tắt RSI exit
+RSI_EXIT_THRESHOLD = 50  # RSI vượt 50 (vùng trung tính) → thoát lệnh
+
+# Nếu lợi nhuận giảm quá nhanh (drawdown từ đỉnh > X%) → thoát lệnh bảo toàn
+ENABLE_PROFIT_DRAWDOWN_EXIT = True  # Bật/tắt profit drawdown exit
+PROFIT_DRAWDOWN_EXIT_PERCENT = 40   # Thoát nếu lợi nhuận giảm >40% so với đỉnh
+
+# ============================================================================
 # BẢO VỆ - Các quy tắc bảo vệ tài khoản
 # ============================================================================
 
