@@ -1635,39 +1635,49 @@ class GoldAutoTrader:
                     tp_points = self.fixed_tp_points if self.fixed_tp_points else self.min_tp_points
             else:
                 # R2: Sử dụng ATR để tính SL/TP rõ ràng
-                sl_points = int((self.atr_sl_multiplier * atr_current) / point)
+                # ⚠️ QUAN TRỌNG: ATR đã ở đơn vị giá (USD), cần chuyển sang points trước
+                # Công thức đúng: ATR_points = ATR_USD / point, sau đó nhân với multiplier
+                atr_points = atr_current / point  # Chuyển ATR từ USD sang points
+                sl_points_from_atr = int(atr_points * self.atr_sl_multiplier)
                 
                 if use_rr_ratio:
                     # Tính TP từ SL theo Risk:Reward ratio
-                    tp_points = int(sl_points * rr_ratio)
+                    tp_points_from_atr = int(sl_points_from_atr * rr_ratio)
                 else:
                     # Tính TP từ ATR
-                    tp_points = int((self.atr_tp_multiplier * atr_current) / point)
+                    tp_points_from_atr = int(atr_points * self.atr_tp_multiplier)
                 
                 # ⚠️ QUAN TRỌNG: Kiểm tra SL tối thiểu dựa trên % giá (để tránh SL quá gần)
                 current_price = df['close'].iloc[-1]
                 min_sl_from_price = int((current_price * self.min_sl_percent) / point)
                 
                 # Log thông tin tính SL/TP trước khi điều chỉnh
-                sl_from_atr = sl_points
-                tp_from_atr = tp_points
-                
                 logger.info(f"📊 Tính SL/TP từ ATR:")
-                logger.info(f"   ATR hiện tại: {atr_current:.2f} (≈ {int(atr_current/point)} points)")
-                logger.info(f"   SL từ ATR: {atr_current:.2f} × {self.atr_sl_multiplier} / {point:.5f} = {sl_from_atr} points (≈ ${sl_from_atr:.0f})")
-                logger.info(f"   TP từ ATR: {atr_current:.2f} × {self.atr_tp_multiplier} / {point:.5f} = {tp_from_atr} points (≈ ${tp_from_atr:.0f})")
+                logger.info(f"   ATR hiện tại: {atr_current:.2f} USD (≈ {atr_points:.0f} points)")
+                logger.info(f"   SL từ ATR: {atr_points:.0f} × {self.atr_sl_multiplier} = {sl_points_from_atr} points")
+                logger.info(f"   TP từ ATR: {atr_points:.0f} × {self.atr_tp_multiplier} = {tp_points_from_atr} points")
                 logger.info(f"   Giá hiện tại: ${current_price:.2f}")
-                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points (≈ ${min_sl_from_price:.0f})")
+                logger.info(f"   SL tối thiểu từ % giá ({self.min_sl_percent*100}%): {min_sl_from_price} points")
                 logger.info(f"   Giới hạn: SL = [{self.min_sl_points}, {self.max_sl_points}] points, TP = [{self.min_tp_points}, {self.max_tp_points}] points")
                 
                 # Giới hạn min/max - Đảm bảo SL không nhỏ hơn cả MIN_SL_POINTS và MIN_SL_PERCENT × giá
-                sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points, self.max_sl_points))
+                # Đảm bảo Risk:Reward ratio không bị phá vỡ
+                sl_points = max(self.min_sl_points, min_sl_from_price, min(sl_points_from_atr, self.max_sl_points))
+                
+                # Tính lại TP để giữ Risk:Reward ratio sau khi điều chỉnh SL
+                if use_rr_ratio:
+                    tp_points = int(sl_points * rr_ratio)
+                else:
+                    # Tính lại TP từ ATR để giữ tỷ lệ với SL
+                    tp_points = int(sl_points * (self.atr_tp_multiplier / self.atr_sl_multiplier))
+                
+                # Giới hạn TP
                 tp_points = max(self.min_tp_points, min(tp_points, self.max_tp_points))
                 
                 # Log sau khi điều chỉnh
                 logger.info(f"📊 SL/TP sau điều chỉnh:")
-                logger.info(f"   SL: {sl_from_atr} → {sl_points} points (≈ ${sl_points:.0f}, {sl_points/current_price*100:.2f}% giá)")
-                logger.info(f"   TP: {tp_from_atr} → {tp_points} points (≈ ${tp_points:.0f}, {tp_points/current_price*100:.2f}% giá)")
+                logger.info(f"   SL: {sl_points_from_atr} → {sl_points} points (≈ ${sl_points * point:.2f}, {sl_points * point / current_price * 100:.2f}% giá)")
+                logger.info(f"   TP: {tp_points_from_atr} → {tp_points} points (≈ ${tp_points * point:.2f}, {tp_points * point / current_price * 100:.2f}% giá)")
                 logger.info(f"   Risk:Reward Ratio: {tp_points/sl_points:.2f}:1")
         else:
             # Sử dụng giá trị cố định
