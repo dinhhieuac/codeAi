@@ -694,12 +694,21 @@ class XAUUSD_Bot:
                                 # Kiểm tra xem đã đủ MIN_TIME_BETWEEN_SAME_DIRECTION phút chưa
                                 if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
                                     remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
-                                    logging.warning(
-                                        f"❌ Không thể mở lệnh {action}: "
-                                        f"Lệnh {action} cuối cùng mở lúc {latest_open_time.strftime('%Y-%m-%d %H:%M:%S')}, "
-                                        f"chỉ mới {int(time_elapsed_minutes)} phút. "
-                                        f"Cần đợi thêm {remaining_minutes} phút nữa (tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút)"
-                                    )
+                                    remaining_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60) % 60
+                                    
+                                    # Log rõ ràng với format đẹp
+                                    logging.info("=" * 60)
+                                    logging.info(f"⏸️ TÍN HIỆU {action} {self.symbol} - KHÔNG ĐỦ ĐIỀU KIỆN THỜI GIAN")
+                                    logging.info("=" * 60)
+                                    logging.info(f"   📊 Tín hiệu: {action} (Strength: {strength})")
+                                    logging.info(f"   ⏰ Lệnh {action} cuối cùng mở lúc: {latest_open_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                                    logging.info(f"   ⏱️ Thời gian đã trôi qua: {int(time_elapsed_minutes)} phút {int(time_elapsed.total_seconds() % 60)} giây")
+                                    logging.info(f"   ⚠️ Cần đợi thêm: {remaining_minutes} phút {remaining_seconds} giây")
+                                    logging.info(f"   📋 Rule: Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
+                                    logging.info("=" * 60)
+                                    logging.info(f"   🔄 Bỏ qua tín hiệu này, chờ cycle tiếp theo...")
+                                    logging.info("=" * 60)
+                                    
                                     continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
