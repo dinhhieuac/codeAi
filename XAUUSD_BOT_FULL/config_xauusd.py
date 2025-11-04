@@ -99,21 +99,25 @@ MAX_DAILY_LOSS_PERCENT = 4  # Đơn vị: %
 MAX_LOSS_PER_TRADE = 2.0  # Đơn vị: %
 
 # ============================================================================
-# THỜI GIAN GIAO DỊCH - Các khung giờ không được giao dịch (GMT)
+# THỜI GIAN GIAO DỊCH - Các khung giờ không được giao dịch (US/Eastern Time)
 # ============================================================================
 
-# Danh sách các khung giờ không được giao dịch (format: "HH:MM")
-# Bot sẽ tự động bỏ qua các tín hiệu trong các khung giờ này
+# Timezone cho thị trường USA (New York)
+# Sử dụng US/Eastern để tự động xử lý EST/EDT (Daylight Saving Time)
+TRADING_TIMEZONE = "US/Eastern"  # EST/EDT (New York time)
+
+# Danh sách các khung giờ không được giao dịch (format: "HH:MM" theo giờ US/Eastern)
+# Bot sẽ tự động chuyển đổi sang giờ US/Eastern để so sánh
 # Giảm số session cấm để tăng cơ hội giao dịch (chỉ giữ lại session rủi ro cao nhất)
 NO_TRADE_SESSIONS = [
-    ("20:00", "22:00"),  # NY Open - Giờ mở cửa thị trường New York (thường biến động mạnh)
+    ("08:00", "10:00"),  # NY Open - Giờ mở cửa thị trường New York (8:00 AM - 10:00 AM EST/EDT)
     # ("14:30", "15:30"),  # US News - Tạm thời bỏ để tăng cơ hội giao dịch
     # ("00:00", "01:00")   # Asian session - Tạm thời bỏ để tăng cơ hội giao dịch
 ]
 
-# Thời gian sau khi không được giao dịch vào thứ 6 (format: "HH:MM")
+# Thời gian sau khi không được giao dịch vào thứ 6 (format: "HH:MM" theo giờ US/Eastern)
 # Bot sẽ dừng giao dịch sau thời điểm này vào thứ 6 để tránh rủi ro cuối tuần
-NO_TRADE_FRIDAY_AFTER = "20:00"
+NO_TRADE_FRIDAY_AFTER = "17:00"  # 5:00 PM EST/EDT (thường là 5:00 PM NY time)
 
 # Thời gian nghỉ sau khi thua 1 lệnh (đơn vị: phút)
 # Sau khi thua 1 lệnh, bot sẽ đợi BREAK_AFTER_LOSS_MINUTES phút trước khi tìm tín hiệu mới
