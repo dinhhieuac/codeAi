@@ -72,6 +72,11 @@ MIN_TP_PIPS = 200
 # Giá trị cao hơn = an toàn hơn nhưng khó đạt TP
 MIN_RR_RATIO = 1.5  # Khuyến nghị: 1.5 - 2.0
 
+# Giới hạn Stop Loss tối đa (đơn vị: USD)
+# Bot sẽ không đặt SL quá xa để tránh risk quá lớn (>10 USD)
+# Nếu SL tính toán vượt quá MAX_SL_USD, bot sẽ điều chỉnh lại SL và lot size
+MAX_SL_USD = 10.0  # Đơn vị: USD
+
 # ============================================================================
 # BẢO VỆ - Các quy tắc bảo vệ tài khoản
 # ============================================================================

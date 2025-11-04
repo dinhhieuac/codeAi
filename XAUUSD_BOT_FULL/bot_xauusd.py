@@ -96,6 +96,9 @@ class XAUUSD_Bot:
         self.last_signal_time = None  # Thời gian gửi tín hiệu cuối cùng
         self.telegram_signal_cooldown = 300  # Cooldown 5 phút giữa các lần gửi tín hiệu (giây)
         
+        # Trailing stop tracking
+        self.trailing_stop_activated = set()  # Set các ticket đã kích hoạt trailing stop
+        
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
     def setup_directories(self):
@@ -370,8 +373,36 @@ class XAUUSD_Bot:
             sl_price = price + (sl_pips * 0.01)
             tp_price = price - (tp_pips * 0.01)
         
-        # Tính lot size
+        # Tính lot size ban đầu dựa trên risk_per_trade
         lot_size = self.calculate_position_size(sl_pips)
+        
+        # ⚠️ QUAN TRỌNG: Kiểm tra giới hạn SL max theo USD
+        # Tính SL theo USD: 1 pip XAUUSD = $10 cho 1 lot
+        pip_value_per_lot = 10  # $10 cho 1 lot
+        sl_usd = sl_pips * pip_value_per_lot * lot_size
+        
+        max_sl_usd = MAX_SL_USD if 'MAX_SL_USD' in globals() else 10.0
+        
+        if sl_usd > max_sl_usd:
+            # Giảm lot size để SL USD không vượt quá MAX_SL_USD (giữ nguyên sl_pips)
+            lot_size_max = max_sl_usd / (sl_pips * pip_value_per_lot)
+            
+            # Đảm bảo lot_size_max không nhỏ hơn MIN_LOT_SIZE
+            min_lot_size = MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01
+            lot_size_max = max(min_lot_size, lot_size_max)
+            
+            # Lấy min giữa lot_size ban đầu và lot_size_max
+            lot_size_original = lot_size
+            lot_size = min(lot_size, lot_size_max)
+            
+            # Tính lại SL USD với lot_size mới
+            sl_usd_new = sl_pips * pip_value_per_lot * lot_size
+            
+            logging.warning(
+                f"⚠️ SL USD điều chỉnh: ${sl_usd:.2f} > ${max_sl_usd} "
+                f"→ Giảm lot size: {lot_size_original:.2f} → {lot_size:.2f} lots "
+                f"(SL USD: ${sl_usd_new:.2f})"
+            )
         
         # Validate lot size (giống eth.py)
         lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
@@ -563,6 +594,9 @@ class XAUUSD_Bot:
                         logging.debug(f"   - Tổng P&L: ${total_profit:.2f}")
                 else:
                     account_info = {'equity': 0, 'balance': 0, 'free_margin': 0}
+                
+                # Quản lý trailing stop cho các lệnh đang mở
+                self._manage_trailing_stops()
                 
                 # Lấy dữ liệu giá
                 df = self.get_price_data(100)
@@ -837,6 +871,123 @@ class XAUUSD_Bot:
         logging.info("=" * 60)
         logging.info("👋 Bot đã dừng hoàn toàn")
         logging.info("=" * 60)
+    
+    def _manage_trailing_stops(self):
+        """
+        Quản lý Trailing Stop: Dời SL khi đạt 1R (1×Risk) để bảo vệ lãi
+        
+        Logic:
+        - Kích hoạt khi profit ≥ 1R (1×SL)
+        - Khi đạt 1R, dời SL về entry (breakeven)
+        - Tiếp tục dời SL lên theo giá khi profit tăng
+        """
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions is None or len(positions) == 0:
+            return
+        
+        # Lấy ATR hiện tại để tính toán
+        df = self.get_price_data(100)
+        if df is None or len(df) < 14:
+            return
+        
+        # Tính ATR
+        atr = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
+        if len(atr) == 0:
+            return
+        
+        atr_current = atr.iloc[-1]
+        if atr_current == 0 or pd.isna(atr_current):
+            return
+        
+        symbol_info = mt5.symbol_info(self.symbol)
+        if not symbol_info:
+            return
+        
+        point = symbol_info.point
+        atr_points = atr_current / point
+        
+        tick = mt5.symbol_info_tick(self.symbol)
+        if not tick:
+            return
+        
+        for pos in positions:
+            ticket = pos.ticket
+            entry_price = pos.price_open
+            current_sl = pos.sl
+            initial_sl_distance = abs(entry_price - pos.sl) if pos.sl > 0 else 0
+            
+            # Tính SL ban đầu (pips) - 1R
+            initial_sl_pips = initial_sl_distance / 0.01 if initial_sl_distance > 0 else 0
+            
+            if initial_sl_pips == 0:
+                continue  # Bỏ qua nếu không có SL ban đầu
+            
+            # Tính profit hiện tại (pips)
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                current_price = tick.bid
+                profit_pips = (current_price - entry_price) / 0.01
+            else:  # SELL
+                current_price = tick.ask
+                profit_pips = (entry_price - current_price) / 0.01
+            
+            # Tính profit theo R (Risk)
+            profit_r = profit_pips / initial_sl_pips if initial_sl_pips > 0 else 0
+            
+            # Kích hoạt trailing stop khi profit ≥ 1R
+            if profit_r >= 1.0:
+                if ticket not in self.trailing_stop_activated:
+                    self.trailing_stop_activated.add(ticket)
+                    logging.info(f"✅ Trailing Stop kích hoạt: Ticket {ticket}, Profit: {profit_r:.2f}R ({profit_pips:.1f} pips)")
+                
+                # Tính SL mới: Bảo vệ lãi đã đạt được
+                # Khi profit = 1R → SL = Entry (breakeven)
+                # Khi profit = 2R → SL = Entry + 1R (bảo vệ 1R lãi)
+                # Khi profit = 3R → SL = Entry + 2R (bảo vệ 2R lãi)
+                # Công thức: SL mới = Entry + (Profit - 1R) để bảo vệ lãi
+                
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    # SL mới = Entry + (Profit - 1R) trong pips
+                    # Ví dụ: Entry = 2000, Profit = 300 pips, SL ban đầu = 150 pips (1R)
+                    # → SL mới = Entry + (300 - 150) = Entry + 150 pips = 2015
+                    protected_profit_pips = profit_pips - initial_sl_pips  # Lãi được bảo vệ
+                    new_sl = entry_price + (protected_profit_pips * 0.01)
+                    
+                    # SL mới phải cao hơn SL hiện tại và không thấp hơn Entry (breakeven)
+                    if new_sl > current_sl and new_sl >= entry_price:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "symbol": self.symbol,
+                            "position": ticket,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                        result = mt5.order_send(request)
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logging.info(f"📈 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_r:.2f}R, {profit_pips:.1f} pips, Bảo vệ: {protected_profit_pips:.1f} pips)")
+                        elif result:
+                            logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+                
+                else:  # SELL
+                    # SL mới = Entry - (Profit - 1R) trong pips
+                    # Ví dụ: Entry = 2000, Profit = 300 pips, SL ban đầu = 150 pips (1R)
+                    # → SL mới = Entry - (300 - 150) = Entry - 150 pips = 1985
+                    protected_profit_pips = profit_pips - initial_sl_pips  # Lãi được bảo vệ
+                    new_sl = entry_price - (protected_profit_pips * 0.01)
+                    
+                    # SL mới phải thấp hơn SL hiện tại và không cao hơn Entry (breakeven)
+                    if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "symbol": self.symbol,
+                            "position": ticket,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                        result = mt5.order_send(request)
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            logging.info(f"📉 Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_r:.2f}R, {profit_pips:.1f} pips, Bảo vệ: {protected_profit_pips:.1f} pips)")
+                        elif result:
+                            logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
 
 def main():
     logging.info("=" * 60)
