@@ -667,6 +667,41 @@ class XAUUSD_Bot:
                             logging.warning(f"❌ Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở")
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
+                        # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
+                        # Lấy lệnh cùng chiều mới nhất từ MT5 và check xem đã đủ 60 phút chưa
+                        if current_position_count > 0:
+                            # Xác định loại lệnh cần check (BUY = 0, SELL = 1 trong MT5)
+                            check_order_type = 0 if action == "BUY" else 1  # 0 = BUY, 1 = SELL
+                            
+                            # Lọc các lệnh cùng chiều
+                            same_direction_positions = [
+                                pos for pos in current_positions 
+                                if pos.type == check_order_type
+                            ]
+                            
+                            if same_direction_positions:
+                                # Lấy lệnh mới nhất cùng chiều (time lớn nhất)
+                                latest_same_direction = max(same_direction_positions, key=lambda x: x.time)
+                                
+                                # Chuyển đổi time từ timestamp (seconds) sang datetime
+                                latest_open_time = datetime.fromtimestamp(latest_same_direction.time)
+                                now_time = datetime.now()
+                                
+                                # Tính thời gian đã trôi qua (timedelta)
+                                time_elapsed = now_time - latest_open_time
+                                time_elapsed_minutes = time_elapsed.total_seconds() / 60
+                                
+                                # Kiểm tra xem đã đủ MIN_TIME_BETWEEN_SAME_DIRECTION phút chưa
+                                if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
+                                    remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
+                                    logging.warning(
+                                        f"❌ Không thể mở lệnh {action}: "
+                                        f"Lệnh {action} cuối cùng mở lúc {latest_open_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                                        f"chỉ mới {int(time_elapsed_minutes)} phút. "
+                                        f"Cần đợi thêm {remaining_minutes} phút nữa (tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút)"
+                                    )
+                                    continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
                             logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
