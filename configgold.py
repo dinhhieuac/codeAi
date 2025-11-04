@@ -7,9 +7,9 @@ Giảm nhiễu, tránh cắt lỗ sớm, tối ưu cho chạy 24/7
 # MT5 Connection Settings
 # ============================================
 # Thông tin đăng nhập vào tài khoản MetaTrader5
-MT5_LOGIN = 272736909  # Số tài khoản MT5 của bạn (số nguyên)
+MT5_LOGIN = 270358962  # Số tài khoản MT5 của bạn (số nguyên)
 MT5_PASSWORD = "@Dinhhieu273"  # Mật khẩu đăng nhập MT5 (chuỗi)
-MT5_SERVER = "Exness-MT5Trial14"  # Tên server MT5 (copy chính xác từ MT5: Tools → Options → Server)
+MT5_SERVER = "Exness-MT5Trial7"  # Tên server MT5 (copy chính xác từ MT5: Tools → Options → Server)
 
 # ============================================
 # Trading Symbol
