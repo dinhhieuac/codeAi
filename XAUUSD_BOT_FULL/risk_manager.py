@@ -137,9 +137,21 @@ class XAUUSD_RiskManager:
             return False, f"Equity {equity:.2f} < Safe {safe_equity:.2f}"
             
         # Kiểm tra free margin (margin còn lại)
-        # Free margin phải >= $100 để đảm bảo có đủ để mở lệnh và chịu được biến động
-        if account_info.margin_free < 100:
-            return False, "Free margin quá thấp"
+        # Free margin phải >= MIN_FREE_MARGIN (từ config)
+        min_free_margin_config = MIN_FREE_MARGIN if 'MIN_FREE_MARGIN' in globals() else 50.0
+        
+        # Tính MIN_FREE_MARGIN:
+        # - Nếu > 0: Số USD cố định (ví dụ: 50 = $50)
+        # - Nếu < 0: % của balance (ví dụ: -0.1 = 10% của balance)
+        if min_free_margin_config < 0:
+            # Tính theo % balance
+            min_free_margin = abs(min_free_margin_config) * balance
+        else:
+            # Tính theo USD cố định
+            min_free_margin = min_free_margin_config
+        
+        if account_info.margin_free < min_free_margin:
+            return False, f"Free margin quá thấp (${account_info.margin_free:.2f} < ${min_free_margin:.2f})"
             
         return True, "OK"
         
