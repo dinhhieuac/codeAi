@@ -2244,7 +2244,7 @@ class GoldAutoTrader:
                     continue
                 
                 # Kiểm tra lệnh thua gần đây (để cập nhật cooldown)
-                #self._check_recent_losses()
+                self._check_recent_losses()
                 
                 # Kiểm tra số lượng vị thế hiện tại
                 positions = self.get_open_positions()

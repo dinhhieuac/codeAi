@@ -191,7 +191,7 @@ STOCH_OVERSOLD = 20            # Ngưỡng Stochastic oversold → Xác nhận t
 STOCH_OVERBOUGHT = 80          # Ngưỡng Stochastic overbought → Xác nhận tín hiệu SELL
 
 # Logic quyết định tín hiệu - CÂN BẰNG GIỮA CHẤT LƯỢNG VÀ SỐ LƯỢNG
-MIN_SIGNAL_STRENGTH = 2        # ⚠️ ĐIỀU CHỈNH: Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (GIẢM xuống 3)
+MIN_SIGNAL_STRENGTH = 3        # ⚠️ ĐIỀU CHỈNH: Số lượng chỉ báo tối thiểu phải đồng thuận để mở lệnh (GIẢM xuống 3)
                                 # Ví dụ: 3 = cần ít nhất 3 chỉ báo cùng BUY mới mở lệnh BUY
                                 # Giá trị 3 = cân bằng giữa chất lượng và số lượng tín hiệu ✅
                                 # Giá trị cao hơn (4-5) = rất ít lệnh (có thể không có tín hiệu trong 2-3 giờ)
