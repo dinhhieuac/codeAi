@@ -401,10 +401,14 @@ class XAUUSD_Bot:
         sl_usd = sl_pips * pip_value_per_lot * lot_size
         
         # Kiểm tra mode ATR SL/TP
+        # Lấy từ config (đã được import từ config_xauusd.py)
         try:
             atr_sl_tp_mode = ATR_SL_TP_MODE
+            logging.debug(f"🔍 ATR_SL_TP_MODE từ config: {atr_sl_tp_mode}")
         except NameError:
+            # Fallback nếu không tìm thấy
             atr_sl_tp_mode = "ATR_FREE"
+            logging.error(f"❌ ATR_SL_TP_MODE không tìm thấy trong config! Dùng mặc định: {atr_sl_tp_mode}")
         
         logging.info(f"🔧 ATR Mode: {atr_sl_tp_mode}, SL ban đầu: {sl_pips:.0f} pips, Lot: {lot_size:.2f}, SL USD: ${sl_usd:.2f}")
         
@@ -545,8 +549,12 @@ class XAUUSD_Bot:
             else:
                 logging.error(f"❌ ATR_BOUNDED: SL USD ${sl_usd_actual:.2f} KHÔNG trong khoảng ${atr_min_sl_usd}-${atr_max_sl_usd}!")
                 logging.error(f"   - SL pips: {sl_pips:.0f}, Lot: {lot_size:.2f}, Price: {price:.2f}, SL price: {sl_price:.2f}")
+                logging.error(f"   - SL pips ban đầu: {sl_pips_original:.0f}, SL pips sau điều chỉnh: {sl_pips:.0f}")
+                logging.error(f"   - Đã điều chỉnh: {adjusted}")
         
         else:
+            # Mode ATR_FREE hoặc không phải ATR_BOUNDED
+            logging.info(f"ℹ️ Không dùng ATR_BOUNDED mode (mode: {atr_sl_tp_mode}) - Tính SL price với SL pips ban đầu")
             # Mode ATR_FREE: SL/TP tự động điều chỉnh theo ATR (đã có trong technical_analyzer)
             # + Điều chỉnh mềm để tránh rủi ro quá lớn (nhưng không bắt buộc như BOUNDED)
             
@@ -601,24 +609,33 @@ class XAUUSD_Bot:
         # Lấy thông tin tài khoản
         account_info = self.get_account_info()
         
-        # Log thông tin lệnh
-        logging.info(f"📊 Thông tin lệnh:")
+        # Log thông tin lệnh (SAU khi điều chỉnh ATR_BOUNDED)
+        logging.info(f"📊 Thông tin lệnh CUỐI CÙNG:")
         logging.info(f"   - Loại: {signal_type}")
         logging.info(f"   - Giá vào: {price:.2f}")
-        logging.info(f"   - SL: {sl_price:.2f} ({sl_pips} pips)")
+        logging.info(f"   - SL price: {sl_price:.2f}")
+        logging.info(f"   - SL pips: {sl_pips:.2f} pips")
+        sl_usd_final = sl_pips * pip_value_per_lot * lot_size
+        logging.info(f"   - SL USD: ${sl_usd_final:.2f}")
         logging.info(f"   - TP: {tp_price:.2f} ({tp_pips} pips)")
         logging.info(f"   - Lot size: {lot_size} (đã validate: min={lot_min}, max={lot_max}, step={lot_step})")
         logging.info(f"   - Risk: ${account_info['balance'] * (RISK_PER_TRADE / 100):.2f} ({RISK_PER_TRADE}%)")
         logging.info(f"   - Signal strength: {signal_strength}")
+        logging.info(f"   - ATR Mode: {atr_sl_tp_mode}")
         
-        # Tạo request cơ bản
+        # Tạo request cơ bản (SAU khi điều chỉnh ATR_BOUNDED)
+        # ⚠️ QUAN TRỌNG: sl_price và sl_pips đã được điều chỉnh trong ATR_BOUNDED mode (nếu có)
+        logging.debug(f"🔍 Tạo request với: sl_price={sl_price:.2f}, sl_pips={sl_pips:.2f}, lot_size={lot_size:.2f}")
+        sl_usd_verify = sl_pips * pip_value_per_lot * lot_size
+        logging.debug(f"🔍 SL USD verify: ${sl_usd_verify:.2f}")
+        
         request_base = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.symbol,
             "volume": lot_size,
             "type": order_type,
             "price": price,
-            "sl": sl_price,
+            "sl": sl_price,  # Đã được tính từ sl_pips đã điều chỉnh (nếu ATR_BOUNDED)
             "tp": tp_price,
             "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
