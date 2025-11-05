@@ -85,7 +85,7 @@ MIN_RR_RATIO = 1.5  # Khuyến nghị: 1.5 - 2.0
 # Bot sẽ không đặt SL quá xa để tránh risk quá lớn
 # Điều chỉnh để giữ mức rủi ro $5-10 mỗi lệnh (phù hợp với vốn nhỏ)
 # Nếu SL tính toán vượt quá MAX_SL_USD, bot sẽ điều chỉnh lại SL và lot size
-MAX_SL_USD = 8.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $5-10)
+MAX_SL_USD = 10.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $5-10)
 
 # ============================================================================
 # SL/TP ĐỘNG THEO ATR - Tự động điều chỉnh theo biến động thị trường
