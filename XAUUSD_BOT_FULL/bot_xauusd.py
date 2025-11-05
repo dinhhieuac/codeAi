@@ -266,7 +266,7 @@ class XAUUSD_Bot:
             # Fallback: dùng RETURN (thường được hỗ trợ rộng rãi)
             logging.warning(f"⚠️ Không detect được filling mode phù hợp, dùng ORDER_FILLING_RETURN mặc định")
             return mt5.ORDER_FILLING_RETURN
-    
+        
     def calculate_position_size(self, stop_loss_pips):
         account_info = self.get_account_info()
         if not account_info:
@@ -350,7 +350,7 @@ class XAUUSD_Bot:
         logging.info("=" * 60)
         logging.info(f"📈 CHUẨN BỊ MỞ LỆNH {signal_type}")
         logging.info("=" * 60)
-        
+            
         symbol_info = mt5.symbol_info(self.symbol)
         if not symbol_info:
             logging.error("❌ Không lấy được symbol info")
@@ -565,8 +565,8 @@ class XAUUSD_Bot:
                 sl_price = price - (sl_pips * 0.01)
                 tp_price = price + (tp_pips * 0.01)
             else:  # SELL
-            sl_price = price + (sl_pips * 0.01)
-            tp_price = price - (tp_pips * 0.01)
+                sl_price = price + (sl_pips * 0.01)
+                tp_price = price - (tp_pips * 0.01)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
@@ -672,7 +672,7 @@ class XAUUSD_Bot:
                 continue
             
             # Gửi lệnh
-        result = mt5.order_send(request)
+            result = mt5.order_send(request)
             
             if result:
                 if result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -690,7 +690,7 @@ class XAUUSD_Bot:
                     # Nếu không phải lỗi filling mode, không thử tiếp
                     if error_code != 10015 and 'filling' not in error_desc.lower():
                         logging.error(f"❌ LỆNH {signal_type} THẤT BẠI: {error_desc}")
-        return result
+                        return result
                     # Nếu là lỗi filling mode, thử mode tiếp theo
                     continue
             else:
@@ -953,16 +953,16 @@ class XAUUSD_Bot:
                             logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
                             log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
-                    
-                    # Thực hiện giao dịch
-                    result = self.execute_trade(
-                            action, 
-                            signal.get('sl_pips', 0), 
-                            signal.get('tp_pips', 0),
-                            strength
-                    )
-                    
-                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        
+                        # Thực hiện giao dịch
+                        result = self.execute_trade(
+                                action, 
+                                signal.get('sl_pips', 0), 
+                                signal.get('tp_pips', 0),
+                                strength
+                        )
+                        
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             ticket = result.order
                             logging.info("=" * 60)
                             logging.info(f"✅ LỆNH  {action} XAUUSD THÀNH CÔNG!")
@@ -993,7 +993,7 @@ class XAUUSD_Bot:
                                 )
                                 self.send_telegram_message(success_message)
                             
-                        self.risk_manager.record_trade(success=True)
+                            self.risk_manager.record_trade(success=True)
                             
                             # Reset signal tracking khi mở lệnh thành công (để có thể gửi tín hiệu mới sau đó)
                             self.last_signal_sent = None
@@ -1024,6 +1024,7 @@ class XAUUSD_Bot:
                             
                             self.risk_manager.record_trade(success=False)
                     else:
+                        # action == 'HOLD'
                         logging.debug(f"📊 Tín hiệu: HOLD (Strength: {strength})")
                         # Reset delay info khi tín hiệu là HOLD
                         pending_delay_info = None
