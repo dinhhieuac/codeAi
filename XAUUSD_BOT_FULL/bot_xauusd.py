@@ -416,13 +416,44 @@ class XAUUSD_Bot:
             lot_size_original = lot_size
             adjusted = False
             
-            # Nếu SL USD < MIN: Tăng sl_pips để đạt MIN
+            # Nếu SL USD < MIN: Tăng sl_pips hoặc lot_size để đạt MIN
             if sl_usd < atr_min_sl_usd:
-                # Tính sl_pips để đạt MIN_SL_USD
+                # Thử tăng sl_pips trước (giữ nguyên lot_size)
                 sl_pips_needed = atr_min_sl_usd / (pip_value_per_lot * lot_size)
-                sl_pips = max(sl_pips, int(sl_pips_needed))
+                sl_pips_new = max(sl_pips, int(sl_pips_needed) + 1)  # +1 để đảm bảo >= MIN
+                
+                # Đảm bảo sl_pips_new >= MIN_SL_PIPS
+                min_sl_pips_config = MIN_SL_PIPS if 'MIN_SL_PIPS' in globals() else 200
+                sl_pips_new = max(min_sl_pips_config, sl_pips_new)
+                
+                # Tính lại SL USD với sl_pips mới
+                sl_usd_with_new_pips = sl_pips_new * pip_value_per_lot * lot_size
+                
+                # Nếu vẫn < MIN sau khi tăng sl_pips → Tăng lot_size
+                if sl_usd_with_new_pips < atr_min_sl_usd:
+                    # Tính lot_size cần thiết để đạt MIN với sl_pips hiện tại
+                    lot_size_needed = atr_min_sl_usd / (sl_pips * pip_value_per_lot)
+                    lot_size_needed = max(lot_min, lot_size_needed)
+                    
+                    # Làm tròn theo lot_step
+                    if lot_step > 0:
+                        lot_size_needed = round(lot_size_needed / lot_step) * lot_step
+                        lot_size_needed = round(lot_size_needed, 2)
+                    
+                    lot_size_needed = max(lot_min, lot_size_needed)
+                    lot_size = max(lot_size, lot_size_needed)  # Tăng lot_size nếu cần
+                    
+                    # Tính lại với lot_size mới
+                    sl_pips_needed = atr_min_sl_usd / (pip_value_per_lot * lot_size)
+                    sl_pips = max(sl_pips, int(sl_pips_needed) + 1)
+                    sl_pips = max(min_sl_pips_config, sl_pips)
+                    
+                    logging.info(f"📊 ATR_BOUNDED: SL USD ${sl_usd:.2f} < ${atr_min_sl_usd} → Tăng lot_size: {lot_size_original:.2f} → {lot_size:.2f} lots, SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips")
+                else:
+                    sl_pips = sl_pips_new
+                    logging.info(f"📊 ATR_BOUNDED: SL USD ${sl_usd:.2f} < ${atr_min_sl_usd} → Tăng SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips")
+                
                 adjusted = True
-                logging.info(f"📊 ATR_BOUNDED: SL USD ${sl_usd:.2f} < ${atr_min_sl_usd} → Tăng SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips")
             
             # Nếu SL USD > MAX: Giảm sl_pips hoặc lot_size để đạt MAX
             elif sl_usd > atr_max_sl_usd:
@@ -459,7 +490,42 @@ class XAUUSD_Bot:
                 else:  # SELL
                     sl_price = price + (sl_pips * 0.01)
                 sl_usd = sl_pips * pip_value_per_lot * lot_size
-                logging.info(f"✅ ATR_BOUNDED: SL cuối cùng = {sl_pips:.0f} pips (${sl_usd:.2f} USD, trong khoảng ${atr_min_sl_usd}-${atr_max_sl_usd})")
+                
+                # KIỂM TRA LẠI: Đảm bảo SL USD >= MIN sau khi điều chỉnh
+                if sl_usd < atr_min_sl_usd:
+                    # Nếu vẫn < MIN, tăng lot_size hoặc sl_pips để đạt MIN
+                    lot_size_needed = atr_min_sl_usd / (sl_pips * pip_value_per_lot)
+                    lot_size_needed = max(lot_min, lot_size_needed)
+                    
+                    if lot_step > 0:
+                        lot_size_needed = round(lot_size_needed / lot_step) * lot_step
+                        lot_size_needed = round(lot_size_needed, 2)
+                    
+                    lot_size_needed = max(lot_min, lot_size_needed)
+                    lot_size = max(lot_size, lot_size_needed)
+                    
+                    # Tính lại SL USD
+                    sl_usd = sl_pips * pip_value_per_lot * lot_size
+                    
+                    # Nếu vẫn < MIN → Tăng sl_pips
+                    if sl_usd < atr_min_sl_usd:
+                        sl_pips = int(atr_min_sl_usd / (pip_value_per_lot * lot_size)) + 1
+                        min_sl_pips_config = MIN_SL_PIPS if 'MIN_SL_PIPS' in globals() else 200
+                        sl_pips = max(min_sl_pips_config, sl_pips)
+                        
+                        # Tính lại SL price
+                        if signal_type == "BUY":
+                            sl_price = price - (sl_pips * 0.01)
+                        else:  # SELL
+                            sl_price = price + (sl_pips * 0.01)
+                        
+                        sl_usd = sl_pips * pip_value_per_lot * lot_size
+                
+                # Đảm bảo SL USD >= MIN và <= MAX
+                if sl_usd < atr_min_sl_usd or sl_usd > atr_max_sl_usd:
+                    logging.warning(f"⚠️ ATR_BOUNDED: SL USD ${sl_usd:.2f} không trong khoảng ${atr_min_sl_usd}-${atr_max_sl_usd}")
+                else:
+                    logging.info(f"✅ ATR_BOUNDED: SL cuối cùng = {sl_pips:.0f} pips (${sl_usd:.2f} USD, trong khoảng ${atr_min_sl_usd}-${atr_max_sl_usd})")
         
         else:
             # Mode ATR_FREE: SL/TP tự động điều chỉnh theo ATR (đã có trong technical_analyzer)
