@@ -554,13 +554,16 @@ class ETHUSD_Bot:
                     sl_pips_for_max = atr_max_sl_usd / (pip_value_per_lot * lot_size)
                     sl_pips_for_max = int(sl_pips_for_max)  # Làm tròn xuống để đảm bảo SL USD <= MAX
                     
-                    # Nếu sl_pips_for_max < MIN_SL_PIPS → Giảm xuống sl_pips_for_max để đạt MAX USD (ưu tiên giảm rủi ro)
-                    # Cảnh báo rõ ràng về vi phạm MIN_SL_PIPS
+                    # ⚠️ QUAN TRỌNG: KHÔNG BAO GIỜ cho phép sl_pips < MIN_SL_PIPS (broker sẽ từ chối "Invalid stops")
                     if sl_pips_for_max < min_sl_pips_config:
-                        sl_pips = sl_pips_for_max
+                        # Không thể đạt MAX USD mà vẫn giữ MIN_SL_PIPS
+                        # → Giữ MIN_SL_PIPS và chấp nhận SL USD > MAX USD (hoặc từ chối trade)
+                        sl_pips = min_sl_pips_config
                         sl_usd = sl_pips * pip_value_per_lot * lot_size
                         adjusted = True
-                        logging.error(f"❌ ATR_BOUNDED: SL USD ${sl_usd:.2f} > ${atr_max_sl_usd} → Giảm SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips (NHỎ HƠN MIN_SL_PIPS {min_sl_pips_config} để đạt MAX USD ${atr_max_sl_usd}, SL USD: ${sl_usd:.2f})")
+                        logging.warning(f"⚠️ ATR_BOUNDED: Không thể đạt MAX USD ${atr_max_sl_usd} mà vẫn giữ MIN_SL_PIPS {min_sl_pips_config}")
+                        logging.warning(f"   → Giữ MIN_SL_PIPS {min_sl_pips_config} pips, SL USD: ${sl_usd:.2f} (vượt MAX ${atr_max_sl_usd})")
+                        logging.warning(f"   → Có thể trade sẽ bị từ chối nếu SL USD quá lớn")
                     else:
                         # Có thể giảm sl_pips xuống sl_pips_for_max mà vẫn >= MIN_SL_PIPS
                         sl_pips = sl_pips_for_max
@@ -572,21 +575,34 @@ class ETHUSD_Bot:
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             logging.info(f"🔧 ATR_BOUNDED sau điều chỉnh: SL pips={sl_pips:.0f}, Lot={lot_size:.2f}, SL USD=${sl_usd:.2f}")
             
-            # KIỂM TRA CUỐI CÙNG: Verify và log cảnh báo (KHÔNG override nếu đã điều chỉnh)
-            # Chỉ cảnh báo, không override lại vì đã điều chỉnh ở các bước trên
+            # KIỂM TRA CUỐI CÙNG: Đảm bảo sl_pips >= MIN_SL_PIPS (KHÔNG BAO GIỜ vi phạm)
+            # Nếu sl_pips < MIN_SL_PIPS → Tăng lên MIN_SL_PIPS (override mọi điều chỉnh trước đó)
             if sl_pips < min_sl_pips_config:
-                logging.warning(f"⚠️ ATR_BOUNDED: SL pips {sl_pips:.0f} < MIN_SL_PIPS {min_sl_pips_config} (đã điều chỉnh để đạt MAX USD ${atr_max_sl_usd})")
+                logging.error(f"❌ ATR_BOUNDED: SL pips {sl_pips:.0f} < MIN_SL_PIPS {min_sl_pips_config} → BẮT BUỘC tăng lên {min_sl_pips_config} pips")
+                sl_pips = min_sl_pips_config
+                sl_usd = sl_pips * pip_value_per_lot * lot_size
+                adjusted = True
+            
+            # Kiểm tra broker's minimum stop level (nếu có)
+            broker_stops_level = getattr(symbol_info, 'stops_level', 0)
+            if broker_stops_level > 0:
+                broker_stops_level_pips = broker_stops_level / 0.01  # Convert points to pips
+                if sl_pips < broker_stops_level_pips:
+                    logging.warning(f"⚠️ SL pips {sl_pips:.0f} < Broker's stops_level {broker_stops_level_pips:.0f} pips → Tăng lên {broker_stops_level_pips:.0f} pips")
+                    sl_pips = max(sl_pips, broker_stops_level_pips)
+                    sl_usd = sl_pips * pip_value_per_lot * lot_size
+                    adjusted = True
             
             if sl_usd < atr_min_sl_usd:
                 logging.warning(f"⚠️ ATR_BOUNDED: SL USD ${sl_usd:.2f} < MIN ${atr_min_sl_usd} (SL pips: {sl_pips:.0f})")
             
             if sl_usd > atr_max_sl_usd:
-                logging.error(f"❌ ATR_BOUNDED: SL USD ${sl_usd:.2f} > MAX ${atr_max_sl_usd} (SL pips: {sl_pips:.0f}) - ĐIỀU CHỈNH THẤT BẠI!")
+                logging.warning(f"⚠️ ATR_BOUNDED: SL USD ${sl_usd:.2f} > MAX ${atr_max_sl_usd} (SL pips: {sl_pips:.0f}) - Có thể broker sẽ từ chối")
             
             # Tính lại SL USD cuối cùng (đảm bảo chính xác)
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             
-            # Tính SL price SAU khi điều chỉnh xong
+            # Tính SL price SAU khi điều chỉnh xong (đảm bảo sl_pips >= MIN_SL_PIPS)
             if signal_type == "BUY":
                 sl_price = price - (sl_pips * 0.01)
             else:  # SELL
