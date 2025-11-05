@@ -1029,7 +1029,7 @@ class XAUUSD_Bot:
                             # Gửi thông báo Telegram về lệnh thành công
                             if self.use_telegram:
                                 success_message = (
-                                    f"✅ <b>LỆNH {action} THÀNH CÔNG</b>\n\n"
+                                    f"✅ <b>LỆNH {action} XAUUSD THÀNH CÔNG</b>\n\n"
                                     f"📊 <b>Thông tin lệnh:</b>\n"
                                     f"   • Ticket: <code>{ticket}</code>\n"
                                     f"   • Volume: <b>{result.volume}</b> lots\n"
