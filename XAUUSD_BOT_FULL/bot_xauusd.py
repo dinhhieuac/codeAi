@@ -434,7 +434,9 @@ class XAUUSD_Bot:
                 # Tính lại sl_pips để SL USD = MAX_SL_USD
                 sl_pips_original = sl_pips
                 sl_pips = max_sl_usd / (pip_value_per_lot * lot_size)
-                sl_pips = max(50, int(sl_pips))  # SL tối thiểu 50 pips
+                # SL tối thiểu = MIN_SL_PIPS từ config (đảm bảo không quá nhỏ)
+                min_sl_pips_config = MIN_SL_PIPS if 'MIN_SL_PIPS' in globals() else 200
+                sl_pips = max(min_sl_pips_config, int(sl_pips))
                 
                 # Tính lại SL price
                 if signal_type == "BUY":

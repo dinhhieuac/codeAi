@@ -68,7 +68,8 @@ MAX_LOT_SIZE = 1.0   # Lot size tối đa cho phép mỗi lệnh
 
 # Stop Loss tối thiểu (đơn vị: pips)
 # SL sẽ không nhỏ hơn giá trị này để đảm bảo có đủ không gian cho biến động giá
-MIN_SL_PIPS = 150
+# Với XAUUSD (Gold), biến động lớn nên cần SL tối thiểu 200 pips để tránh stop loss sớm
+MIN_SL_PIPS = 200  # Tăng từ 150 lên 200 pips để an toàn hơn
 
 # Take Profit tối thiểu (đơn vị: pips)
 # TP sẽ không nhỏ hơn giá trị này
