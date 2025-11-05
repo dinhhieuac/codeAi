@@ -263,8 +263,10 @@ class TechnicalAnalyzer:
         logging.info(f"   📊 EMA20: {current['ema_20']:.2f} | EMA50: {current['ema_50']:.2f}")
         logging.info(f"   📉 MACD: {current['macd']:.2f} | Signal: {current['macd_signal']:.2f} | Histogram: {current['macd_hist']:.2f}")
         logging.info(f"   🎯 Bollinger Bands: Upper={current['upper_bb']:.2f} | Middle={current['middle_bb']:.2f} | Lower={current['lower_bb']:.2f}")
-        atr_value = current['atr'] / 0.01  # ATR tính bằng pips
-        logging.info(f"   📏 ATR: {current['atr']:.2f} ({atr_value:.1f} pips)")
+        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+        # Vậy ATR đã là pips rồi (ATR = 38.87 USD → 38.87 pips)
+        atr_value = current['atr']  # ATR tính bằng pips (1 USD = 1 pip cho ETHUSD)
+        logging.info(f"   📏 ATR: {current['atr']:.2f} USD ({atr_value:.1f} pips)")
         logging.info("=" * 60)
         
         # ====================================================================
@@ -382,8 +384,10 @@ class TechnicalAnalyzer:
         # BƯỚC 4: XÁC ĐỊNH TÍN HIỆU CUỐI CÙNG VÀ TÍNH SL/TP
         # ====================================================================
         
-        # Chuyển đổi ATR từ giá trị giá sang pips (1 pip XAUUSD = 0.01)
-        atr_value = current['atr'] / 0.01  # ATR tính bằng pips
+        # Chuyển đổi ATR từ giá trị giá sang pips
+        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+        # Vậy ATR đã là pips rồi (ATR = 38.87 USD → 38.87 pips)
+        atr_value = current['atr']  # ATR tính bằng pips (1 USD = 1 pip cho ETHUSD)
         
         # --- Tín hiệu BUY: Cần tối thiểu 2 tín hiệu mua và nhiều hơn tín hiệu bán ---
         # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
