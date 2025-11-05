@@ -95,8 +95,10 @@ MAX_SL_USD = 10.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk 
 USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công thức cố định
 
 # Chế độ tính SL/TP theo ATR:
-# - "ATR_FREE": SL/TP tự do theo ATR (không giới hạn theo USD)
-# - "ATR_BOUNDED": SL/TP theo ATR nhưng giới hạn MIN_SL_USD ≤ SL ≤ MAX_SL_USD
+# - "ATR_FREE": SL/TP tự do theo ATR, KHÔNG giới hạn theo USD (chỉ đảm bảo SL >= MIN_SL_PIPS)
+#              → SL có thể $20, $50, $100 tùy theo ATR và lot size
+# - "ATR_BOUNDED": SL/TP theo ATR nhưng ĐIỀU CHỈNH để giới hạn MIN_SL_USD ≤ SL ≤ MAX_SL_USD
+#                 → SL luôn nằm trong khoảng $5-$10 (điều chỉnh sl_pips hoặc lot_size)
 ATR_SL_TP_MODE = "ATR_FREE"  # Các giá trị: "ATR_FREE", "ATR_BOUNDED"
 
 # Giới hạn SL theo USD cho mode ATR_BOUNDED
