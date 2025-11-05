@@ -239,7 +239,9 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # Spread tối đa cho phép (đơn vị: pips)
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
-MAX_SPREAD = 35  # Đơn vị: pips
+# ⚠️ LƯU Ý: ETHUSD có spread cao hơn XAUUSD (thường 500-2000 pips)
+# Với giá ETH ~$100,000, spread 1000-2000 pips = $10-$20 USD là bình thường
+MAX_SPREAD = 1500  # Đơn vị: pips (tăng từ 35 lên 1500 cho ETHUSD)
 
 # Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
