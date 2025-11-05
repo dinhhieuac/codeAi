@@ -462,13 +462,48 @@ class XAUUSD_Bot:
                 logging.info(f"✅ ATR_BOUNDED: SL cuối cùng = {sl_pips:.0f} pips (${sl_usd:.2f} USD, trong khoảng ${atr_min_sl_usd}-${atr_max_sl_usd})")
         
         else:
-            # Mode ATR_FREE: SL/TP tự do theo ATR, KHÔNG giới hạn theo USD
-            # Chỉ đảm bảo SL >= MIN_SL_PIPS (để tránh bị quét)
-            # Log thông tin để theo dõi
-            logging.info(f"📊 ATR_FREE: SL = {sl_pips:.0f} pips (${sl_usd:.2f} USD) - Tự do theo ATR, không giới hạn USD")
+            # Mode ATR_FREE: SL/TP tự động điều chỉnh theo ATR (đã có trong technical_analyzer)
+            # + Điều chỉnh mềm để tránh rủi ro quá lớn (nhưng không bắt buộc như BOUNDED)
             
-            # Lưu ý: Mode ATR_FREE không điều chỉnh SL theo USD
-            # Nếu muốn giới hạn rủi ro, hãy dùng mode ATR_BOUNDED
+            # SL đã được tự động tính theo ATR trong technical_analyzer.py:
+            # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
+            # → ATR cao → SL xa, ATR thấp → SL gần (tự động điều chỉnh)
+            
+            # Điều chỉnh mềm: Nếu SL USD quá lớn (> MAX_SL_USD), có thể giảm lot_size
+            # nhưng không bắt buộc (khác với BOUNDED là bắt buộc)
+            max_sl_usd_soft = MAX_SL_USD if 'MAX_SL_USD' in globals() else 10.0
+            
+            if sl_usd > max_sl_usd_soft * 2:  # Nếu SL > 2x MAX_SL_USD (ví dụ: > $20)
+                # Cảnh báo và có thể điều chỉnh lot_size (nhưng không bắt buộc)
+                logging.warning(
+                    f"⚠️ ATR_FREE: SL USD ${sl_usd:.2f} khá cao (> ${max_sl_usd_soft * 2:.0f}) "
+                    f"→ Có thể giảm lot_size để giảm rủi ro (không bắt buộc)"
+                )
+                
+                # Điều chỉnh mềm: Giảm lot_size nếu cần (tùy chọn)
+                # Tính lot_size tối đa để SL ≈ MAX_SL_USD
+                lot_size_max_soft = max_sl_usd_soft / (sl_pips * pip_value_per_lot)
+                lot_size_max_soft = max(lot_min, lot_size_max_soft)
+                
+                # Làm tròn
+                if lot_step > 0:
+                    lot_size_max_soft = round(lot_size_max_soft / lot_step) * lot_step
+                    lot_size_max_soft = round(lot_size_max_soft, 2)
+                
+                lot_size_max_soft = max(lot_min, lot_size_max_soft)
+                
+                # Nếu lot_size_max_soft < lot_size hiện tại → Giảm để giảm rủi ro
+                if lot_size_max_soft < lot_size:
+                    lot_size_original = lot_size
+                    lot_size = lot_size_max_soft
+                    sl_usd_new = sl_pips * pip_value_per_lot * lot_size
+                    logging.info(
+                        f"📊 ATR_FREE: Điều chỉnh mềm lot_size: {lot_size_original:.2f} → {lot_size:.2f} lots "
+                        f"(SL USD: ${sl_usd:.2f} → ${sl_usd_new:.2f})"
+                    )
+                    sl_usd = sl_usd_new
+            
+            logging.info(f"📊 ATR_FREE: SL = {sl_pips:.0f} pips (${sl_usd:.2f} USD) - Tự động theo ATR")
         
         # Lấy thông tin tài khoản
         account_info = self.get_account_info()
