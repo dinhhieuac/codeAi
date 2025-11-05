@@ -361,17 +361,13 @@ class XAUUSD_Bot:
             logging.error(f"❌ Không thể lấy tick cho {self.symbol}")
             return None
         
-        # Tính giá và kích thước lệnh
+        # Tính giá (SL price sẽ được tính SAU khi điều chỉnh SL pips)
         if signal_type == "BUY":
             order_type = mt5.ORDER_TYPE_BUY
             price = tick.ask
-            sl_price = price - (sl_pips * 0.01)
-            tp_price = price + (tp_pips * 0.01)
         else:  # SELL
             order_type = mt5.ORDER_TYPE_SELL
             price = tick.bid
-            sl_price = price + (sl_pips * 0.01)
-            tp_price = price - (tp_pips * 0.01)
         
         # Tính lot size ban đầu dựa trên risk_per_trade
         lot_size = self.calculate_position_size(sl_pips)
@@ -406,6 +402,7 @@ class XAUUSD_Bot:
         
         # Kiểm tra mode ATR SL/TP
         atr_sl_tp_mode = ATR_SL_TP_MODE if 'ATR_SL_TP_MODE' in globals() else "ATR_FREE"
+        logging.info(f"🔧 ATR Mode: {atr_sl_tp_mode}, SL ban đầu: {sl_pips:.0f} pips, Lot: {lot_size:.2f}, SL USD: ${sl_usd:.2f}")
         
         if atr_sl_tp_mode == "ATR_BOUNDED":
             # Mode ATR_BOUNDED: Điều chỉnh SL để nằm trong khoảng $5-$10
@@ -483,14 +480,10 @@ class XAUUSD_Bot:
                     adjusted = True
                     logging.info(f"📊 ATR_BOUNDED: SL USD ${sl_usd:.2f} > ${atr_max_sl_usd} → Giảm lot size: {lot_size_original:.2f} → {lot_size:.2f} lots")
             
-            # Tính lại SL price và SL USD (luôn kiểm tra, không chỉ khi adjusted)
-            if signal_type == "BUY":
-                sl_price = price - (sl_pips * 0.01)
-            else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
+            # Tính lại SL USD sau khi điều chỉnh (nếu có)
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             
-            # KIỂM TRA LẠI: Đảm bảo SL USD >= MIN và <= MAX (luôn kiểm tra, không chỉ khi adjusted)
+            # KIỂM TRA LẠI: Đảm bảo SL USD >= MIN và <= MAX (luôn kiểm tra)
             if sl_usd < atr_min_sl_usd:
                 # Nếu vẫn < MIN, tăng lot_size hoặc sl_pips để đạt MIN
                 logging.warning(f"⚠️ ATR_BOUNDED: SL USD ${sl_usd:.2f} < ${atr_min_sl_usd} → Đang điều chỉnh...")
@@ -514,18 +507,24 @@ class XAUUSD_Bot:
                     min_sl_pips_config = MIN_SL_PIPS if 'MIN_SL_PIPS' in globals() else 200
                     sl_pips = max(min_sl_pips_config, sl_pips)
                     
-                    # Tính lại SL price
-                    if signal_type == "BUY":
-                        sl_price = price - (sl_pips * 0.01)
-                    else:  # SELL
-                        sl_price = price + (sl_pips * 0.01)
-                    
                     sl_usd = sl_pips * pip_value_per_lot * lot_size
                     logging.info(f"📊 ATR_BOUNDED: Đã tăng SL pips lên {sl_pips:.0f} để đạt MIN ${atr_min_sl_usd}")
             
             # Kiểm tra MAX
             if sl_usd > atr_max_sl_usd:
                 logging.warning(f"⚠️ ATR_BOUNDED: SL USD ${sl_usd:.2f} > ${atr_max_sl_usd} (vượt MAX)")
+            
+            # Tính SL price SAU khi điều chỉnh xong
+            if signal_type == "BUY":
+                sl_price = price - (sl_pips * 0.01)
+            else:  # SELL
+                sl_price = price + (sl_pips * 0.01)
+            
+            # Tính TP price
+            if signal_type == "BUY":
+                tp_price = price + (tp_pips * 0.01)
+            else:  # SELL
+                tp_price = price - (tp_pips * 0.01)
             
             # Log kết quả cuối cùng
             if atr_min_sl_usd <= sl_usd <= atr_max_sl_usd:
@@ -536,6 +535,14 @@ class XAUUSD_Bot:
         else:
             # Mode ATR_FREE: SL/TP tự động điều chỉnh theo ATR (đã có trong technical_analyzer)
             # + Điều chỉnh mềm để tránh rủi ro quá lớn (nhưng không bắt buộc như BOUNDED)
+            
+            # Tính SL price và TP price
+            if signal_type == "BUY":
+                sl_price = price - (sl_pips * 0.01)
+                tp_price = price + (tp_pips * 0.01)
+            else:  # SELL
+                sl_price = price + (sl_pips * 0.01)
+                tp_price = price - (tp_pips * 0.01)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
