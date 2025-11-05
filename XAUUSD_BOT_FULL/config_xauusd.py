@@ -30,7 +30,8 @@ TIMEFRAME_MT5 = {
 
 # Phần trăm rủi ro cho mỗi lệnh (0.5 = 0.5% của balance)
 # Ví dụ: Balance $1000, RISK_PER_TRADE = 0.5 → Risk $5 mỗi lệnh
-RISK_PER_TRADE = 0.5  # Đơn vị: phần trăm (%)
+# Điều chỉnh để giữ mức rủi ro $5-10 mỗi lệnh (phù hợp với vốn nhỏ)
+RISK_PER_TRADE = 0.5  # Đơn vị: phần trăm (%) (Balance $1000 → Risk $5, Balance $2000 → Risk $10)
 
 # Tỷ lệ equity an toàn tối thiểu so với balance (0.92 = 92%)
 # Nếu equity < balance * SAFE_EQUITY_RATIO → Bot sẽ không mở lệnh mới
@@ -68,8 +69,8 @@ MAX_LOT_SIZE = 1.0   # Lot size tối đa cho phép mỗi lệnh
 
 # Stop Loss tối thiểu (đơn vị: pips)
 # SL sẽ không nhỏ hơn giá trị này để đảm bảo có đủ không gian cho biến động giá
-# Với XAUUSD (Gold), biến động lớn nên cần SL tối thiểu 200 pips để tránh stop loss sớm
-MIN_SL_PIPS = 200  # Tăng từ 150 lên 200 pips để an toàn hơn
+# Với XAUUSD (Gold), biến động lớn nên cần SL tối thiểu 250 pips để tránh bị "quét" bởi biến động ngẫu nhiên
+MIN_SL_PIPS = 250  # Tăng lên 250 pips để đủ xa, tránh bị quét bởi noise
 
 # Take Profit tối thiểu (đơn vị: pips)
 # TP sẽ không nhỏ hơn giá trị này
@@ -81,9 +82,10 @@ MIN_TP_PIPS = 200
 MIN_RR_RATIO = 1.5  # Khuyến nghị: 1.5 - 2.0
 
 # Giới hạn Stop Loss tối đa (đơn vị: USD)
-# Bot sẽ không đặt SL quá xa để tránh risk quá lớn (>10 USD)
+# Bot sẽ không đặt SL quá xa để tránh risk quá lớn
+# Điều chỉnh để giữ mức rủi ro $5-10 mỗi lệnh (phù hợp với vốn nhỏ)
 # Nếu SL tính toán vượt quá MAX_SL_USD, bot sẽ điều chỉnh lại SL và lot size
-MAX_SL_USD = 10.0  # Đơn vị: USD
+MAX_SL_USD = 8.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $5-10)
 
 # ============================================================================
 # SL/TP ĐỘNG THEO ATR - Tự động điều chỉnh theo biến động thị trường
@@ -93,10 +95,11 @@ MAX_SL_USD = 10.0  # Đơn vị: USD
 USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công thức cố định
 
 # Hệ số nhân ATR để tính SL và TP
-# Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 1.5 → SL = 150 pips
+# Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 2.0 → SL = 200 pips
 # Tự động điều chỉnh theo biến động (ATR càng lớn → SL/TP càng xa)
-ATR_MULTIPLIER_SL = 1.5  # Hệ số nhân ATR cho Stop Loss
-ATR_MULTIPLIER_TP = 2.5  # Hệ số nhân ATR cho Take Profit
+# Tăng ATR_MULTIPLIER_SL lên 2.0-2.5 để SL đủ xa, tránh bị "quét" bởi biến động ngẫu nhiên
+ATR_MULTIPLIER_SL = 2.0  # Hệ số nhân ATR cho Stop Loss (tăng từ 1.5 lên 2.0 để đủ xa)
+ATR_MULTIPLIER_TP = 3.0  # Hệ số nhân ATR cho Take Profit (tăng từ 2.5 lên 3.0 để tăng RR ratio)
 
 # Sử dụng ATR timeframe riêng (thường là M15 hoặc H1)
 # Nếu None, sẽ dùng cùng timeframe với phân tích kỹ thuật
