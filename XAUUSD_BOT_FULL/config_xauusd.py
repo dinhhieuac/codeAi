@@ -85,7 +85,7 @@ MIN_RR_RATIO = 1.5  # Khuyến nghị: 1.5 - 2.0
 # Bot sẽ không đặt SL quá xa để tránh risk quá lớn
 # Điều chỉnh để giữ mức rủi ro $5-10 mỗi lệnh (phù hợp với vốn nhỏ)
 # Nếu SL tính toán vượt quá MAX_SL_USD, bot sẽ điều chỉnh lại SL và lot size
-MAX_SL_USD = 10.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $5-10)
+MAX_SL_USD = 5.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $5-10)
 
 # ============================================================================
 # SL/TP ĐỘNG THEO ATR - Tự động điều chỉnh theo biến động thị trường
@@ -103,8 +103,8 @@ ATR_SL_TP_MODE = "ATR_BOUNDED"  # Các giá trị: "ATR_FREE", "ATR_BOUNDED"
 
 # Giới hạn SL theo USD cho mode ATR_BOUNDED
 # Bot sẽ điều chỉnh SL để nằm trong khoảng MIN_SL_USD ≤ SL ≤ MAX_SL_USD
-ATR_MIN_SL_USD = 5.0   # SL tối thiểu: $5 (cho mode ATR_BOUNDED)
-ATR_MAX_SL_USD = 10.0  # SL tối đa: $10 (cho mode ATR_BOUNDED)
+ATR_MIN_SL_USD = 4.0   # SL tối thiểu: $5 (cho mode ATR_BOUNDED)
+ATR_MAX_SL_USD = 5.0  # SL tối đa: $10 (cho mode ATR_BOUNDED)
 
 # Hệ số nhân ATR để tính SL và TP
 # Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 2.0 → SL = 200 pips
