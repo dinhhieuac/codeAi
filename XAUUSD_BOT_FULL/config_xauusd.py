@@ -94,6 +94,16 @@ MAX_SL_USD = 8.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $
 # Bật/tắt tính năng SL/TP động theo ATR
 USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công thức cố định
 
+# Chế độ tính SL/TP theo ATR:
+# - "ATR_FREE": SL/TP tự do theo ATR (không giới hạn theo USD)
+# - "ATR_BOUNDED": SL/TP theo ATR nhưng giới hạn MIN_SL_USD ≤ SL ≤ MAX_SL_USD
+ATR_SL_TP_MODE = "ATR_FREE"  # Các giá trị: "ATR_FREE", "ATR_BOUNDED"
+
+# Giới hạn SL theo USD cho mode ATR_BOUNDED
+# Bot sẽ điều chỉnh SL để nằm trong khoảng MIN_SL_USD ≤ SL ≤ MAX_SL_USD
+ATR_MIN_SL_USD = 5.0   # SL tối thiểu: $5 (cho mode ATR_BOUNDED)
+ATR_MAX_SL_USD = 10.0  # SL tối đa: $10 (cho mode ATR_BOUNDED)
+
 # Hệ số nhân ATR để tính SL và TP
 # Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 2.0 → SL = 200 pips
 # Tự động điều chỉnh theo biến động (ATR càng lớn → SL/TP càng xa)
