@@ -238,9 +238,9 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # Spread tối đa cho phép (đơn vị: pips)
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
-# ⚠️ LƯU Ý: BTCUSD có spread cao hơn nhiều so với ETH/XAUUSD (thường 50-150 pips)
-# Tăng lên 100-150 pips để phù hợp với BTCUSD
-MAX_SPREAD = 100  # Đơn vị: pips (tăng từ 50 lên 100 cho BTCUSD)
+# ⚠️ LƯU Ý: BTCUSD có spread cao hơn XAUUSD (thường 500-2000 pips)
+# Với giá BTC ~$100,000, spread 1000-2000 pips = $10-$20 USD là bình thường
+MAX_SPREAD = 1500  # Đơn vị: pips (tăng từ 100 lên 1500 cho BTCUSD)
 
 # Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
