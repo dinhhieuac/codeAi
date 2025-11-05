@@ -214,7 +214,7 @@ MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
 # Bot sẽ chỉ mở lệnh khi có ít nhất MIN_SIGNAL_STRENGTH tín hiệu đồng thuận
 # Giá trị cao hơn = ít lệnh nhưng chính xác hơn
 # Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
-MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
+MIN_SIGNAL_STRENGTH = 10  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức
@@ -240,7 +240,7 @@ NEWS_BUFFER_MINUTES = 30
 
 # Khoảng thời gian giữa các lần kiểm tra tín hiệu (đơn vị: giây)
 # Bot sẽ kiểm tra thị trường mỗi CHECK_INTERVAL giây
-CHECK_INTERVAL = 60  # Đơn vị: giây (seconds) - Đã tăng từ 30s lên 60s để giảm tải
+CHECK_INTERVAL = 30  # Đơn vị: giây (seconds) - Đã tăng từ 30s lên 60s để giảm tải
 
 # Có ghi log các giao dịch hay không (True/False)
 # Nếu True, bot sẽ ghi lại chi tiết mỗi giao dịch vào file log
