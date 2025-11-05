@@ -56,7 +56,7 @@ MAX_DAILY_TRADES = 10
 # Số lượng lệnh tối đa có thể mở trong 1 giờ
 # Mục đích: Tránh mở quá nhiều lệnh trong thời gian ngắn
 # Tăng từ 1 lên 2 để tăng cơ hội giao dịch
-MAX_HOURLY_TRADES = 20
+MAX_HOURLY_TRADES = 2
 
 # Lot size tối thiểu và tối đa cho phép (đơn vị: lots)
 # Bot sẽ tự động tính lot size dựa trên risk, nhưng sẽ giới hạn trong khoảng này
@@ -220,7 +220,7 @@ BREAK_AFTER_LOSS_MINUTES = 30
 # Bot sẽ không mở lệnh BUY nếu đã có lệnh BUY mở trong vòng MIN_TIME_BETWEEN_SAME_DIRECTION phút
 # Tương tự với SELL
 # Mục đích: Tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
-MIN_TIME_BETWEEN_SAME_DIRECTION = 10  # Đơn vị: phút
+MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
 
 # ============================================================================
 # PHÂN TÍCH KỸ THUẬT - Cấu hình các chỉ báo và điều kiện tín hiệu
@@ -230,7 +230,7 @@ MIN_TIME_BETWEEN_SAME_DIRECTION = 10  # Đơn vị: phút
 # Bot sẽ chỉ mở lệnh khi có ít nhất MIN_SIGNAL_STRENGTH tín hiệu đồng thuận
 # Giá trị cao hơn = ít lệnh nhưng chính xác hơn
 # Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
-MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
+MIN_SIGNAL_STRENGTH = 3  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức

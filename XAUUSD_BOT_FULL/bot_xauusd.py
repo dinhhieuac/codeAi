@@ -116,6 +116,58 @@ class XAUUSD_Bot:
         logging.info(f"📅 Max daily trades: {MAX_DAILY_TRADES}")
         logging.info(f"⏰ Check interval: {CHECK_INTERVAL} giây")
         
+        # Log các rule thời gian
+        logging.info("-" * 60)
+        logging.info("⏰ QUY TẮC THỜI GIAN")
+        logging.info("-" * 60)
+        try:
+            timezone = TRADING_TIMEZONE
+        except NameError:
+            timezone = "Local time"
+        
+        logging.info(f"   🌍 Timezone: {timezone}")
+        logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+        
+        # Log NO_TRADE_SESSIONS
+        try:
+            if NO_TRADE_SESSIONS:
+                logging.info(f"   🚫 Không giao dịch trong các session:")
+                for start, end in NO_TRADE_SESSIONS:
+                    logging.info(f"      • {start} - {end} ({timezone})")
+            else:
+                logging.info(f"   ✅ Không có session cấm giao dịch")
+        except NameError:
+            logging.info(f"   ✅ Không có session cấm giao dịch")
+        
+        # Log NO_TRADE_FRIDAY_AFTER
+        try:
+            if NO_TRADE_FRIDAY_AFTER:
+                logging.info(f"   🚫 Không giao dịch sau {NO_TRADE_FRIDAY_AFTER} vào thứ 6 ({timezone})")
+            else:
+                logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
+        except NameError:
+            logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
+        
+        # Log BREAK_AFTER_LOSS_MINUTES
+        try:
+            logging.info(f"   ⏸️  Nghỉ {BREAK_AFTER_LOSS_MINUTES} phút sau khi thua lệnh")
+        except NameError:
+            logging.info(f"   ⏸️  Không có thời gian nghỉ sau khi thua")
+        
+        # Log MIN_TIME_BETWEEN_SAME_DIRECTION
+        try:
+            logging.info(f"   ⏳ Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
+        except NameError:
+            logging.info(f"   ⏳ Không có giới hạn thời gian giữa 2 lệnh cùng chiều")
+        
+        # Log MAX_HOURLY_TRADES
+        try:
+            logging.info(f"   📊 Tối đa {MAX_HOURLY_TRADES} lệnh trong 1 giờ")
+        except NameError:
+            logging.info(f"   📊 Không có giới hạn số lệnh trong 1 giờ")
+        
+        logging.info("-" * 60)
+        
         if not mt5.initialize():
             logging.error("❌ Không thể khởi tạo MT5")
             return False
