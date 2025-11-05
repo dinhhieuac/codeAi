@@ -603,20 +603,22 @@ class ETHUSD_Bot:
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             
             # Tính SL price SAU khi điều chỉnh xong (đảm bảo sl_pips >= MIN_SL_PIPS)
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # Vậy sl_pips đã là USD rồi, không cần nhân 0.01
             if signal_type == "BUY":
-                sl_price = price - (sl_pips * 0.01)
+                sl_price = price - sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
             else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
+                sl_price = price + sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
             
             # Tính TP price
             if signal_type == "BUY":
-                tp_price = price + (tp_pips * 0.01)
+                tp_price = price + tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
             else:  # SELL
-                tp_price = price - (tp_pips * 0.01)
+                tp_price = price - tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
             
             # Tính lại SL USD từ SL price thực tế để verify
-            sl_pips_actual = abs(price - sl_price) / 0.01
-            sl_usd_actual = sl_pips_actual * pip_value_per_lot * lot_size
+            # Với ETHUSD: 1 USD distance = 1 pip = 1 USD cho 1 lot
+            sl_usd_actual = abs(price - sl_price) * pip_value_per_lot * lot_size
             
             # Log kết quả cuối cùng
             if atr_min_sl_usd <= sl_usd_actual <= atr_max_sl_usd:
@@ -634,12 +636,14 @@ class ETHUSD_Bot:
             # + Điều chỉnh mềm để tránh rủi ro quá lớn (nhưng không bắt buộc như BOUNDED)
             
             # Tính SL price và TP price
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # Vậy sl_pips đã là USD rồi, không cần nhân 0.01
             if signal_type == "BUY":
-                sl_price = price - (sl_pips * 0.01)
-                tp_price = price + (tp_pips * 0.01)
+                sl_price = price - sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
+                tp_price = price + tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
             else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
-                tp_price = price - (tp_pips * 0.01)
+                sl_price = price + sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
+                tp_price = price - tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
