@@ -56,7 +56,7 @@ MAX_DAILY_TRADES = 10
 # Số lượng lệnh tối đa có thể mở trong 1 giờ
 # Mục đích: Tránh mở quá nhiều lệnh trong thời gian ngắn
 # Tăng từ 1 lên 2 để tăng cơ hội giao dịch
-MAX_HOURLY_TRADES = 2
+MAX_HOURLY_TRADES = 20
 
 # Lot size tối thiểu và tối đa cho phép (đơn vị: lots)
 # Bot sẽ tự động tính lot size dựa trên risk, nhưng sẽ giới hạn trong khoảng này
@@ -99,7 +99,7 @@ USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công th�
 #              → SL có thể $20, $50, $100 tùy theo ATR và lot size
 # - "ATR_BOUNDED": SL/TP theo ATR nhưng ĐIỀU CHỈNH để giới hạn MIN_SL_USD ≤ SL ≤ MAX_SL_USD
 #                 → SL luôn nằm trong khoảng $5-$10 (điều chỉnh sl_pips hoặc lot_size)
-ATR_SL_TP_MODE = "ATR_FREE"  # Các giá trị: "ATR_FREE", "ATR_BOUNDED"
+ATR_SL_TP_MODE = "ATR_BOUNDED"  # Các giá trị: "ATR_FREE", "ATR_BOUNDED"
 
 # Giới hạn SL theo USD cho mode ATR_BOUNDED
 # Bot sẽ điều chỉnh SL để nằm trong khoảng MIN_SL_USD ≤ SL ≤ MAX_SL_USD
