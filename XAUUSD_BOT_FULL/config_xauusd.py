@@ -108,8 +108,8 @@ ATR_MAX_SL_USD = 10.0  # SL tối đa: $10 (cho mode ATR_BOUNDED)
 # Ví dụ: ATR = 100 pips, ATR_MULTIPLIER_SL = 2.0 → SL = 200 pips
 # Tự động điều chỉnh theo biến động (ATR càng lớn → SL/TP càng xa)
 # Tăng ATR_MULTIPLIER_SL lên 2.0-2.5 để SL đủ xa, tránh bị "quét" bởi biến động ngẫu nhiên
-ATR_MULTIPLIER_SL = 2.0  # Hệ số nhân ATR cho Stop Loss (tăng từ 1.5 lên 2.0 để đủ xa)
-ATR_MULTIPLIER_TP = 3.0  # Hệ số nhân ATR cho Take Profit (tăng từ 2.5 lên 3.0 để tăng RR ratio)
+ATR_MULTIPLIER_SL = 2.5  # Hệ số nhân ATR cho Stop Loss (tăng từ 1.5 lên 2.0 để đủ xa)
+ATR_MULTIPLIER_TP = 3.5  # Hệ số nhân ATR cho Take Profit (tăng từ 2.5 lên 3.0 để tăng RR ratio)
 
 # Sử dụng ATR timeframe riêng (thường là M15 hoặc H1)
 # Nếu None, sẽ dùng cùng timeframe với phân tích kỹ thuật
