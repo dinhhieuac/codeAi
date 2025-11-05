@@ -230,7 +230,7 @@ MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
 # Bot sẽ chỉ mở lệnh khi có ít nhất MIN_SIGNAL_STRENGTH tín hiệu đồng thuận
 # Giá trị cao hơn = ít lệnh nhưng chính xác hơn
 # Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
-MIN_SIGNAL_STRENGTH = 3  # Khuyến nghị: 2-3 cho M15 timeframe
+MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức
