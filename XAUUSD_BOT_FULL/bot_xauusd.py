@@ -128,7 +128,7 @@ class XAUUSD_Bot:
             logging.error(f"❌ Không thể đăng nhập MT5: {error}")
             mt5.shutdown()
             return False
-        
+            
         logging.info(f"✅ Đã đăng nhập MT5: Account {ACCOUNT_NUMBER}, Server: {SERVER}")
         
         # Kiểm tra symbol
@@ -136,7 +136,7 @@ class XAUUSD_Bot:
             logging.error(f"❌ Không thể chọn symbol {self.symbol}")
             mt5.shutdown()
             return False
-        
+            
         symbol_info = mt5.symbol_info(self.symbol)
         if symbol_info:
             logging.info(f"✅ Symbol {self.symbol} đã sẵn sàng")
@@ -170,7 +170,7 @@ class XAUUSD_Bot:
                 'free_margin': account_info.margin_free
             }
         return None
-    
+        
     def send_telegram_message(self, message: str) -> bool:
         """
         Gửi thông báo qua Telegram
@@ -275,8 +275,9 @@ class XAUUSD_Bot:
         balance = account_info['balance']
         risk_amount = balance * (RISK_PER_TRADE / 100)
         
-        # 1 pip XAUUSD = $10 cho 1 lot
-        pip_value = 10
+        # 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
+        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
+        pip_value = 1  # $1 cho 1 lot
         position_size = risk_amount / (stop_loss_pips * pip_value)
         
         # Làm tròn và giới hạn kích thước
@@ -291,7 +292,7 @@ class XAUUSD_Bot:
         if rates is None:
             logging.error(f"❌ Không thể lấy dữ liệu giá cho {self.symbol}")
             return None
-        
+            
         df = pd.DataFrame(rates)
         df['time'] = pd.to_datetime(df['time'], unit='s')
         
@@ -307,20 +308,20 @@ class XAUUSD_Bot:
         if not symbol_info:
             logging.warning("⚠️ Không lấy được symbol info")
             return False, "Không lấy được symbol info"
-        
+            
         # Kiểm tra spread
         spread = (symbol_info.ask - symbol_info.bid) / 0.01
         logging.debug(f"📊 Spread hiện tại: {spread:.1f} pips (Max: {MAX_SPREAD} pips)")
         if spread > MAX_SPREAD:
             logging.warning(f"⚠️ Spread quá cao: {spread:.1f} pips > {MAX_SPREAD} pips")
             return False, f"Spread quá cao: {spread:.1f}pips"
-        
+            
         # Kiểm tra thời gian giao dịch
         trading_time_ok, time_msg = self.risk_manager.check_trading_time()
         if not trading_time_ok:
             logging.debug(f"⏸️ {time_msg}")
             return False, time_msg
-        
+            
         # Kiểm tra điều kiện tài khoản
         account_ok, account_msg = self.risk_manager.check_account_conditions()
         if not account_ok:
@@ -338,7 +339,7 @@ class XAUUSD_Bot:
         if not market_ok:
             logging.warning(f"❌ Không giao dịch: {message}")
             return None
-        
+            
         # ⚠️ LƯU Ý: Kiểm tra risk manager đã được thực hiện trong run_bot() trước khi gọi execute_trade()
         # Kiểm tra lại ở đây để đảm bảo an toàn (phòng trường hợp được gọi từ nơi khác)
         if not self.risk_manager.can_open_trade(signal_type):
@@ -360,7 +361,7 @@ class XAUUSD_Bot:
         if tick is None:
             logging.error(f"❌ Không thể lấy tick cho {self.symbol}")
             return None
-        
+            
         # Tính giá (SL price sẽ được tính SAU khi điều chỉnh SL pips)
         if signal_type == "BUY":
             order_type = mt5.ORDER_TYPE_BUY
@@ -396,8 +397,9 @@ class XAUUSD_Bot:
             return None
         
         # ⚠️ QUAN TRỌNG: Kiểm tra giới hạn SL theo USD (SAU KHI validate lot_size)
-        # Tính SL theo USD: 1 pip XAUUSD = $10 cho 1 lot
-        pip_value_per_lot = 10  # $10 cho 1 lot
+        # Tính SL theo USD: 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
+        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
+        pip_value_per_lot = 1  # $1 cho 1 lot (SAI: đã sửa từ 10 xuống 1)
         sl_usd = sl_pips * pip_value_per_lot * lot_size
         
         # Kiểm tra mode ATR SL/TP
@@ -563,8 +565,8 @@ class XAUUSD_Bot:
                 sl_price = price - (sl_pips * 0.01)
                 tp_price = price + (tp_pips * 0.01)
             else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
-                tp_price = price - (tp_pips * 0.01)
+            sl_price = price + (sl_pips * 0.01)
+            tp_price = price - (tp_pips * 0.01)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
@@ -670,7 +672,7 @@ class XAUUSD_Bot:
                 continue
             
             # Gửi lệnh
-            result = mt5.order_send(request)
+        result = mt5.order_send(request)
             
             if result:
                 if result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -688,7 +690,7 @@ class XAUUSD_Bot:
                     # Nếu không phải lỗi filling mode, không thử tiếp
                     if error_code != 10015 and 'filling' not in error_desc.lower():
                         logging.error(f"❌ LỆNH {signal_type} THẤT BẠI: {error_desc}")
-                        return result
+        return result
                     # Nếu là lỗi filling mode, thử mode tiếp theo
                     continue
             else:
@@ -951,16 +953,16 @@ class XAUUSD_Bot:
                             logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
                             log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
-                        
-                        # Thực hiện giao dịch
-                        result = self.execute_trade(
+                    
+                    # Thực hiện giao dịch
+                    result = self.execute_trade(
                             action, 
                             signal.get('sl_pips', 0), 
                             signal.get('tp_pips', 0),
                             strength
-                        )
-                        
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    )
+                    
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             ticket = result.order
                             logging.info("=" * 60)
                             logging.info(f"✅ LỆNH  {action} XAUUSD THÀNH CÔNG!")
@@ -991,7 +993,7 @@ class XAUUSD_Bot:
                                 )
                                 self.send_telegram_message(success_message)
                             
-                            self.risk_manager.record_trade(success=True)
+                        self.risk_manager.record_trade(success=True)
                             
                             # Reset signal tracking khi mở lệnh thành công (để có thể gửi tín hiệu mới sau đó)
                             self.last_signal_sent = None
@@ -1341,7 +1343,7 @@ def main():
     if not bot.setup_mt5():
         logging.error("❌ Không thể khởi tạo MT5. Thoát chương trình.")
         return
-    
+        
     try:
         bot.run_bot()
     except KeyboardInterrupt:
