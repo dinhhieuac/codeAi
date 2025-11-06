@@ -51,7 +51,7 @@ MAX_POSITIONS = 2
 
 # Số lượng lệnh tối đa có thể mở trong 1 ngày
 # Mục đích: Tránh over-trading
-MAX_DAILY_TRADES = 10
+MAX_DAILY_TRADES = 50
 
 # Số lượng lệnh tối đa có thể mở trong 1 giờ
 # Mục đích: Tránh mở quá nhiều lệnh trong thời gian ngắn
@@ -268,15 +268,43 @@ LOG_TRADES = True
 # TÀI KHOẢN MT5 - Thông tin đăng nhập MetaTrader 5
 # ============================================================================
 
-# Số tài khoản MT5
-ACCOUNT_NUMBER = 270358962
+# Đọc thông tin tài khoản từ file md5_account.json (nếu có)
+# Nếu file không tồn tại, sẽ dùng giá trị mặc định bên dưới
+import json
+import os
+from pathlib import Path
 
-# Tên server MT5 (tên broker)
-SERVER = "Exness-MT5Trial17"
+# Tìm file md5_account.json (tìm trong thư mục gốc của project)
+project_root = Path(__file__).parent.parent
+account_json_path = project_root / "md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
 
-# Mật khẩu đăng nhập MT5
-# Lưu ý: Nếu để trống, MT5 sẽ sử dụng mật khẩu đã lưu trong terminal
-PASSWORD = "@Dinhhieu273"
+# Giá trị mặc định (fallback)
+DEFAULT_ACCOUNT_NUMBER = 270358962
+DEFAULT_SERVER = "Exness-MT5Trial17"
+DEFAULT_PASSWORD = "@Dinhhieu273"
+
+# Đọc từ file JSON nếu tồn tại
+try:
+    if account_json_path.exists():
+        with open(account_json_path, 'r', encoding='utf-8') as f:
+            account_data = json.load(f)
+            ACCOUNT_NUMBER = account_data.get('ACCOUNT_NUMBER', DEFAULT_ACCOUNT_NUMBER)
+            SERVER = account_data.get('SERVER', DEFAULT_SERVER)
+            PASSWORD = account_data.get('PASSWORD', DEFAULT_PASSWORD)
+            print(f"✅ Đã đọc thông tin tài khoản từ {account_json_path}")
+    else:
+        # File không tồn tại → dùng giá trị mặc định
+        ACCOUNT_NUMBER = DEFAULT_ACCOUNT_NUMBER
+        SERVER = DEFAULT_SERVER
+        PASSWORD = DEFAULT_PASSWORD
+        print(f"⚠️ File {account_json_path} không tồn tại, sử dụng giá trị mặc định")
+except Exception as e:
+    # Lỗi khi đọc file → dùng giá trị mặc định
+    print(f"⚠️ Lỗi khi đọc file {account_json_path}: {e}")
+    print(f"   → Sử dụng giá trị mặc định")
+    ACCOUNT_NUMBER = DEFAULT_ACCOUNT_NUMBER
+    SERVER = DEFAULT_SERVER
+    PASSWORD = DEFAULT_PASSWORD
 
 # ============================================================================
 # TELEGRAM NOTIFICATIONS - Cấu hình thông báo Telegram

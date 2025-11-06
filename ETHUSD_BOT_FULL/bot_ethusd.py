@@ -554,16 +554,17 @@ class ETHUSD_Bot:
                     sl_pips_for_max = atr_max_sl_usd / (pip_value_per_lot * lot_size)
                     sl_pips_for_max = int(sl_pips_for_max)  # Làm tròn xuống để đảm bảo SL USD <= MAX
                     
-                    # ⚠️ QUAN TRỌNG: KHÔNG BAO GIỜ cho phép sl_pips < MIN_SL_PIPS (broker sẽ từ chối "Invalid stops")
+                    # ⚠️ QUAN TRỌNG: Nếu sl_pips_for_max < MIN_SL_PIPS
+                    # → Phải chọn: giữ MIN_SL_PIPS (SL USD > MAX) HOẶC giảm sl_pips để đạt MAX USD
+                    # Vì MAX_SL_USD là ràng buộc cứng (risk management), ưu tiên đạt MAX USD
                     if sl_pips_for_max < min_sl_pips_config:
-                        # Không thể đạt MAX USD mà vẫn giữ MIN_SL_PIPS
-                        # → Giữ MIN_SL_PIPS và chấp nhận SL USD > MAX USD (hoặc từ chối trade)
-                        sl_pips = min_sl_pips_config
+                        # Giảm sl_pips xuống để đạt MAX USD (vi phạm MIN_SL_PIPS nhưng đảm bảo MAX USD)
+                        sl_pips = sl_pips_for_max
                         sl_usd = sl_pips * pip_value_per_lot * lot_size
                         adjusted = True
-                        logging.warning(f"⚠️ ATR_BOUNDED: Không thể đạt MAX USD ${atr_max_sl_usd} mà vẫn giữ MIN_SL_PIPS {min_sl_pips_config}")
-                        logging.warning(f"   → Giữ MIN_SL_PIPS {min_sl_pips_config} pips, SL USD: ${sl_usd:.2f} (vượt MAX ${atr_max_sl_usd})")
-                        logging.warning(f"   → Có thể trade sẽ bị từ chối nếu SL USD quá lớn")
+                        logging.warning(f"⚠️ ATR_BOUNDED: Giảm SL pips xuống {sl_pips:.0f} pips (NHỎ HƠN MIN_SL_PIPS {min_sl_pips_config}) để đạt MAX USD ${atr_max_sl_usd}")
+                        logging.warning(f"   → SL USD: ${sl_usd:.2f} (đạt MAX ${atr_max_sl_usd}, nhưng vi phạm MIN_SL_PIPS {min_sl_pips_config})")
+                        logging.warning(f"   → Broker có thể từ chối nếu SL quá gần (nhưng ưu tiên MAX USD)")
                     else:
                         # Có thể giảm sl_pips xuống sl_pips_for_max mà vẫn >= MIN_SL_PIPS
                         sl_pips = sl_pips_for_max
@@ -575,18 +576,27 @@ class ETHUSD_Bot:
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             logging.info(f"🔧 ATR_BOUNDED sau điều chỉnh: SL pips={sl_pips:.0f}, Lot={lot_size:.2f}, SL USD=${sl_usd:.2f}")
             
-            # KIỂM TRA CUỐI CÙNG: Đảm bảo sl_pips >= MIN_SL_PIPS (KHÔNG BAO GIỜ vi phạm)
-            # Nếu sl_pips < MIN_SL_PIPS → Tăng lên MIN_SL_PIPS (override mọi điều chỉnh trước đó)
-            if sl_pips < min_sl_pips_config:
+            # KIỂM TRA CUỐI CÙNG: 
+            # Nếu sl_pips < MIN_SL_PIPS nhưng đã cố gắng giảm để đạt MAX USD → Giữ nguyên (ưu tiên MAX USD)
+            # Nếu sl_pips < MIN_SL_PIPS và chưa điều chỉnh → Tăng lên MIN_SL_PIPS
+            if sl_pips < min_sl_pips_config and sl_usd <= atr_max_sl_usd:
+                # Đã giảm sl_pips để đạt MAX USD → Giữ nguyên (không override)
+                logging.warning(f"⚠️ ATR_BOUNDED: SL pips {sl_pips:.0f} < MIN_SL_PIPS {min_sl_pips_config} nhưng đã đạt MAX USD ${atr_max_sl_usd} → Giữ nguyên")
+            elif sl_pips < min_sl_pips_config:
+                # Chưa điều chỉnh hoặc vẫn > MAX → Tăng lên MIN_SL_PIPS
                 logging.error(f"❌ ATR_BOUNDED: SL pips {sl_pips:.0f} < MIN_SL_PIPS {min_sl_pips_config} → BẮT BUỘC tăng lên {min_sl_pips_config} pips")
                 sl_pips = min_sl_pips_config
                 sl_usd = sl_pips * pip_value_per_lot * lot_size
                 adjusted = True
             
             # Kiểm tra broker's minimum stop level (nếu có)
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD, broker_stops_level thường là points (0.01)
+            # Nếu broker_stops_level = 100 points → 1 USD = 100 points → 1 pip
             broker_stops_level = getattr(symbol_info, 'stops_level', 0)
             if broker_stops_level > 0:
-                broker_stops_level_pips = broker_stops_level / 0.01  # Convert points to pips
+                # Convert points to pips: Với ETHUSD, 1 pip = 1 USD = 100 points (nếu point = 0.01)
+                # Hoặc broker_stops_level đã là USD → 1 pip = 1 USD
+                broker_stops_level_pips = broker_stops_level / 0.01 if broker_stops_level < 10 else broker_stops_level
                 if sl_pips < broker_stops_level_pips:
                     logging.warning(f"⚠️ SL pips {sl_pips:.0f} < Broker's stops_level {broker_stops_level_pips:.0f} pips → Tăng lên {broker_stops_level_pips:.0f} pips")
                     sl_pips = max(sl_pips, broker_stops_level_pips)
