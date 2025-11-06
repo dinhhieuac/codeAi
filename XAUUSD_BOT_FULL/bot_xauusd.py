@@ -944,6 +944,29 @@ class XAUUSD_Bot:
                             log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
+                        # ⚠️ QUAN TRỌNG: Không được mở thêm lệnh cùng chiều khi MT5 đang có lệnh cùng chiều
+                        # Kiểm tra xem đã có lệnh cùng chiều đang mở chưa
+                        if current_position_count > 0:
+                            # Xác định loại lệnh cần check (BUY = 0, SELL = 1 trong MT5)
+                            check_order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+                            
+                            # Kiểm tra xem có lệnh cùng chiều nào đang mở không
+                            same_direction_exists = any(
+                                pos.type == check_order_type 
+                                for pos in current_positions
+                            )
+                            
+                            if same_direction_exists:
+                                # Đếm số lệnh cùng chiều
+                                same_direction_count = sum(
+                                    1 for pos in current_positions 
+                                    if pos.type == check_order_type
+                                )
+                                direction_name = "BUY" if check_order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                                logging.warning(f"❌ Không thể mở lệnh {action}: Đang có {same_direction_count} lệnh {direction_name} cùng chiều đang mở trên MT5")
+                                log_delay_and_sleep()
+                                continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        
                         # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
                         # Lấy lệnh cùng chiều mới nhất từ MT5 và check xem đã đủ 60 phút chưa
                         if current_position_count > 0:
