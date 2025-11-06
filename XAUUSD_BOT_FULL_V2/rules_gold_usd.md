@@ -7,9 +7,9 @@
 | Khung thời gian chính | M15 / H1 |
 | Risk mỗi lệnh | 0.5–1% balance |
 | Max lệnh cùng lúc | 2 |
-| Max lệnh/ngày | 10 |
-| Khoảng cách tối thiểu giữa 2 lệnh cùng chiều | 45 phút |
-| Khoảng cách ngược chiều | 20 phút |
+| Max lệnh/ngày | 50 |
+| Khoảng cách tối thiểu giữa 2 lệnh cùng chiều | 60 phút |
+| Khoảng cách ngược chiều | 15 phút (nếu tín hiệu đảo mạnh) |
 
 ---
 
@@ -35,14 +35,20 @@
 ### 1. Theo ATR (biến động thật):
 ```python
 ATR = average_true_range(14)
-TP = 1.5 * ATR
-SL = 1.0 * ATR
+SL = ATR × 2.5  # ATR_MULTIPLIER_SL
+TP = ATR × 3.5  # ATR_MULTIPLIER_TP
 ```
-→ RR ≈ **1.5 : 1**, tự động điều chỉnh theo biến động thực tế.
+→ RR ≈ **1.4 : 1**, tự động điều chỉnh theo biến động thực tế.
 
-### 2. Quy tắc linh hoạt:
+### 2. Giới hạn SL/TP:
+- **SL tối thiểu:** 250 pips (MIN_SL_PIPS)
+- **SL giới hạn USD:** 5-10 USD (ATR_MIN_SL_USD = $4, ATR_MAX_SL_USD = $5)
+- **TP tối thiểu:** 200 pips (MIN_TP_PIPS)
+- **Risk/Reward tối thiểu:** 1.5:1 (MIN_RR_RATIO)
+
+### 3. Quy tắc linh hoạt:
 - Nếu giá đang ở **vùng kháng cự/ hỗ trợ mạnh**, giảm TP còn **1.0×ATR**, SL **0.8×ATR**
-- Nếu **xác nhận trend mạnh (MA20 > MA50 > MA200)**, cho phép kéo TP lên **2×ATR**, giữ SL **1×ATR**
+- Nếu **xác nhận trend mạnh (MA20 > MA50, RSI > 65)**, cho phép tăng TP thêm **30%** (TP Boost)
 
 ---
 
@@ -74,18 +80,129 @@ SL = 1.0 * ATR
 
 ---
 
-## 🧠 VI. RULE THÔNG MINH (BẢO VỆ LỢI NHUẬN)
+## 🧠 VI. CHIẾN LƯỢC DỜI SL BẢO TOÀN LỢI NHUẬN CHUYÊN NGHIỆP
 
-1. **Trailing Stop động:**
-   - Kích hoạt khi lợi nhuận > 1×ATR
-   - Theo sau 50% lợi nhuận hiện tại
+### MỤC TIÊU CHIẾN LƯỢC
+Bảo toàn lợi nhuận khi lệnh đang chạy có lời, nhưng vẫn duy trì cơ hội ăn trọn xu hướng. Giúp bot:
+- Không bị cắt lỗ ngược khi giá đảo chiều mạnh
+- Không bị quét SL sớm trong vùng nhiễu
+- Giữ được lệnh chạy khi trend tiếp tục
 
-2. **Auto Breakeven:**
-   - Khi lợi nhuận đạt 1.2×SL → dời SL về điểm hòa vốn
+---
 
-3. **Không mở thêm lệnh khi có vị thế âm > 2%**
+### 1. GIAI ĐOẠN TRƯỚC KHI CÓ LỜI
+**Khi lệnh mới vào:**
+- Bot thiết lập SL ban đầu (initial stop-loss) trong khoảng **5–10 USD** tùy theo lot size và độ biến động
+- SL này đảm bảo rủi ro ≤ **0.5–1%** tài khoản, phù hợp với nguyên tắc quản lý vốn
+- Trước khi đặt SL, bot kiểm tra:
+  - `symbol_info.trade_stops_level`: khoảng cách tối thiểu broker cho phép
+  - `spread`: không được quá **50 pips** (nếu spread quá cao → không vào lệnh)
 
-4. **Sau chuỗi thắng > 5 lệnh**, nghỉ 30 phút (tránh overconfidence).
+---
+
+### 2. GIAI ĐOẠN BREAK-EVEN STEP (KHI LỆNH BẮT ĐẦU CÓ LỜI)
+**💡 Mục tiêu:** Bảo vệ vốn, chuyển lệnh từ trạng thái rủi ro sang an toàn.
+
+**🔧 Cách hoạt động:**
+- Khi lợi nhuận đạt ngưỡng pip cố định (**Break-even Start**) — **600 pips** (≈ $6 với 0.01 lot)
+- Bot dời SL từ vị trí ban đầu lên giá hòa vốn (entry) + buffer nhỏ (**50 pips**)
+- Buffer giúp tránh bị quét do nhiễu
+  - **BUY:** SL = entry + 50 pips
+  - **SELL:** SL = entry - 50 pips
+- Sau khi SL đã dời về hòa vốn, rủi ro chính thức = **0**
+
+**🧠 Lợi ích:**
+- Không bị âm khi thị trường đảo chiều
+- Tâm lý giao dịch ổn định hơn vì lệnh đã "miễn rủi ro"
+
+---
+
+### 3. GIAI ĐOẠN ATR-BASED TRAILING (DỜI SL THEO BIẾN ĐỘNG)
+**💡 Mục tiêu:** Theo kịp xu hướng thật, tránh đặt SL quá chặt hay quá xa.
+
+**🔧 Công thức tính:**
+- Bot lấy ATR (Average True Range) của khung **M15**
+- `trail_distance = ATR × hệ_số`
+  - ATR: đo mức dao động trung bình trong **14 nến** gần nhất
+  - Hệ số (ATR_K): **1.5** cho XAUUSD (phù hợp với độ nhiễu)
+
+**🧩 Quy tắc dời SL:**
+- Với lệnh **BUY:**
+  - `new_SL = current_bid - (ATR × 1.5)`
+- Với lệnh **SELL:**
+  - `new_SL = current_ask + (ATR × 1.5)`
+- Chỉ cập nhật nếu:
+  - SL mới "tốt hơn" SL cũ (tức là lợi nhuận bảo toàn cao hơn)
+  - Và khoảng cách ≥ `minimal_stop_level` do broker quy định
+  - Khoảng cách tối thiểu: **100 pips** (tránh nhiễu)
+
+---
+
+### 4. GIAI ĐOẠN PARTIAL CLOSE (CHỐT 1 PHẦN LỢI NHUẬN)
+**💡 Mục tiêu:** Khóa lợi nhuận từng phần, giảm rủi ro khi thị trường đảo chiều mạnh.
+
+**🔧 Quy tắc:**
+- **TP1 (1000 pips ≈ $10):**
+  - Bot đóng **40%** khối lượng hiện tại
+  - Đồng thời, dời SL phần còn lại về Break-even + buffer lớn hơn (**100 pips**)
+  
+- **TP2 (2000 pips ≈ $20):**
+  - Bot đóng thêm **30%** volume còn lại
+  - Dời SL về Break-even + buffer (**100 pips**)
+  
+- **TP3 (3000 pips ≈ $30):**
+  - Bot đóng thêm **30%** volume còn lại
+  - Dời SL về Break-even + buffer (**100 pips**)
+
+**🧠 Kết quả:**
+- Vẫn còn lệnh chạy khi giá tiếp tục trend
+- Nhưng vốn gốc và một phần lợi nhuận đã được khóa chắc chắn
+- Sau khi partial close: Trailing với ATR_K = **1.0** (chặt hơn) để bảo vệ lợi nhuận đã khóa
+
+---
+
+### 5. QUẢN LÝ GIỚI HẠN SL (5–10 USD)
+Để đảm bảo SL tối thiểu luôn nằm trong vùng này, bot thực hiện quy đổi ngược giữa pips ↔ USD theo khối lượng:
+```
+SL_pips = round( (target_usd / pip_value_per_lot) / lot_size )
+```
+**Ví dụ XAUUSD:**
+- 1 lot = $1/pip
+- Lot 0.01 → $0.01/pip
+- Muốn SL = $5 → cần **500 pips** (vì 500 × 0.01 = $5)
+- Bot đảm bảo SL không nhỏ hơn **500 pips** và không lớn hơn **1000 pips**, ngay cả khi ATR nhỏ
+
+---
+
+### 6. CƠ CHẾ BẢO VỆ & AN TOÀN
+
+| Điều kiện | Hành động |
+|-----------|-----------|
+| **Spread < 50 pips** | Tránh giờ nhiễu hoặc tin tức |
+| **symbol_info.trade_stops_level** | Tránh lỗi modify do SL quá gần |
+| **new_SL > old_SL (BUY)** hoặc **new_SL < old_SL (SELL)** | Chỉ nâng, không hạ SL |
+| **profit_pips > BREAK_EVEN_START_PIPS (600)** | Chỉ trailing khi có lời đủ lớn |
+| **trailing_interval > 10s** | Tránh modify liên tục |
+| **lot_size >= 0.01** | Đảm bảo partial close không lỗi volume nhỏ |
+
+---
+
+### 7. TÓM TẮT FLOW HOẠT ĐỘNG
+
+1. **Lệnh mới vào** → SL ban đầu (5-10 USD)
+2. **Profit ≥ 600 pips** → Break-even: SL = entry ± 50 pips ✅
+3. **Sau break-even** → ATR trailing: SL = price ± (ATR × 1.5)
+4. **Profit ≥ 1000 pips** → Partial close TP1: Đóng 40%, SL = entry ± 100 pips
+5. **Profit ≥ 2000 pips** → Partial close TP2: Đóng 30% còn lại, SL = entry ± 100 pips
+6. **Profit ≥ 3000 pips** → Partial close TP3: Đóng 30% còn lại, SL = entry ± 100 pips
+7. **Sau partial close** → ATR trailing với ATR_K = 1.0 (chặt hơn) để bảo vệ lợi nhuận đã khóa
+
+---
+
+### 8. CÁC RULE KHÁC
+
+- **Không mở thêm lệnh khi có vị thế âm > 2%**
+- **Sau chuỗi thắng > 5 lệnh**, nghỉ 30 phút (tránh overconfidence)
 
 ---
 
