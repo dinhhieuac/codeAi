@@ -102,6 +102,9 @@ class XAUUSD_Bot:
         self.partial_close_done = {}  # Dict {ticket: [TP1_done, TP2_done, TP3_done]} để theo dõi partial close
         self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
         
+        # Tracking để phát hiện TP/SL hit
+        self.previous_positions = {}  # Dict {ticket: position_info} để theo dõi positions từ cycle trước
+        
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
     def setup_directories(self):
@@ -1256,7 +1259,20 @@ class XAUUSD_Bot:
                             logging.info(f"📉 ATR Trailing: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, ATR: {atr_value:.1f} pips, Distance: {trail_distance_pips:.1f} pips)")
     
     def _update_sl(self, ticket, new_sl, tp, reason=""):
-        """Helper function để update SL với error handling"""
+        """
+        Helper function để update SL với error handling
+        Gửi Telegram notification khi thành công
+        """
+        # Lấy thông tin position trước khi update
+        pos = mt5.positions_get(ticket=ticket)
+        old_sl = None
+        pos_type = None
+        entry_price = None
+        if pos and len(pos) > 0:
+            old_sl = pos[0].sl
+            pos_type = pos[0].type
+            entry_price = pos[0].price_open
+        
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "symbol": self.symbol,
@@ -1266,6 +1282,44 @@ class XAUUSD_Bot:
         }
         result = mt5.order_send(request)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            # Gửi Telegram notification
+            if self.use_telegram and old_sl is not None:
+                # Tính profit protected
+                tick = mt5.symbol_info_tick(self.symbol)
+                if tick:
+                    if pos_type == mt5.ORDER_TYPE_BUY:
+                        current_price = tick.bid
+                        profit_pips = (current_price - entry_price) / 0.01
+                        protected_pips = (new_sl - entry_price) / 0.01
+                    else:  # SELL
+                        current_price = tick.ask
+                        profit_pips = (entry_price - current_price) / 0.01
+                        protected_pips = (entry_price - new_sl) / 0.01
+                    
+                    # Tính SL USD
+                    position = mt5.positions_get(ticket=ticket)
+                    if position and len(position) > 0:
+                        lot_size = position[0].volume
+                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                        sl_usd = abs(new_sl - entry_price) / 0.01 * pip_value_per_lot * lot_size
+                        
+                        direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
+                        message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
+                        message += f"<b>Thông tin lệnh:</b>\n"
+                        message += f"• Ticket: <code>{ticket}</code>\n"
+                        message += f"• Loại: <b>{direction}</b>\n"
+                        message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                        message += f"• SL cũ: <b>{old_sl:.2f}</b>\n"
+                        message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                        message += f"• SL USD: <b>${sl_usd:.2f}</b>\n"
+                        message += f"• Lý do: <b>{reason}</b>\n\n"
+                        message += f"<b>Trạng thái:</b>\n"
+                        message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                        message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
+                        message += f"• Protected: <b>{protected_pips:.1f} pips</b>\n"
+                        
+                        self.send_telegram_message(message)
+            
             return True
         else:
             if result:
@@ -1399,6 +1453,37 @@ class XAUUSD_Bot:
         
         result = mt5.order_send(request)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            # Gửi Telegram notification
+            if self.use_telegram:
+                # Tính profit và lợi nhuận
+                profit_usd = 0
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    profit_pips = (close_price - pos.price_open) / 0.01
+                else:  # SELL
+                    profit_pips = (pos.price_open - close_price) / 0.01
+                
+                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                profit_usd = profit_pips * pip_value_per_lot * close_volume
+                
+                direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                remaining_volume = pos.volume - close_volume
+                
+                message = f"<b>💰 PARTIAL CLOSE THÀNH CÔNG - {self.symbol}</b>\n\n"
+                message += f"<b>Thông tin lệnh:</b>\n"
+                message += f"• Ticket: <code>{ticket}</code>\n"
+                message += f"• Loại: <b>{direction}</b>\n"
+                message += f"• Entry: <b>{pos.price_open:.2f}</b>\n"
+                message += f"• Close Price: <b>{close_price:.2f}</b>\n\n"
+                message += f"<b>Partial Close:</b>\n"
+                message += f"• Mốc: <b>{reason}</b>\n"
+                message += f"• Volume đóng: <b>{close_volume:.2f} lots</b>\n"
+                message += f"• Volume còn lại: <b>{remaining_volume:.2f} lots</b>\n\n"
+                message += f"<b>Lợi nhuận:</b>\n"
+                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
+                message += f"• Profit USD: <b>${profit_usd:.2f}</b>\n"
+                
+                self.send_telegram_message(message)
+            
             return True
         else:
             if result:
