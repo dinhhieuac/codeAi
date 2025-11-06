@@ -432,7 +432,7 @@ CONFIGS = [
         "MIN_TP_PIPS": 200,
         "MIN_RR_RATIO": 1.5,
         "MAX_SL_USD": 5.0,
-        "MAX_POSITIONS": 2,
+        "MAX_POSITIONS": 1,
         "MAX_DAILY_TRADES": 50,
         "MAX_HOURLY_TRADES": 2,
         
