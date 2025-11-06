@@ -372,3 +372,355 @@ TELEGRAM_BOT_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
 # Chat ID để nhận thông báo (ID của user hoặc group trên Telegram)
 # Để lấy Chat ID: Gửi tin nhắn cho bot @userinfobot hoặc tìm trong bot logs
 TELEGRAM_CHAT_ID = "1887610382"
+
+# Chọn config để sử dụng (0 = CONSERVATIVE, 1 = MODERATE, 2 = AGGRESSIVE, 3 = ULTRA_CONSERVATIVE, 4 = SCALPING, 5 = SWING_TRADING, 6 = LOW_LOSS)
+# Hoặc dùng tên config: "CONSERVATIVE", "MODERATE", "AGGRESSIVE", "ULTRA_CONSERVATIVE", "SCALPING", "SWING_TRADING", "LOW_LOSS"
+CONFIG_INDEX = 1  # 1 = MODERATE (config mặc định hiện tại)
+# CONFIG_INDEX = "MODERATE"  # Hoặc dùng tên config
+
+# ============================================================================
+# ARRAY CÁC CẤU HÌNH
+# ============================================================================
+
+CONFIGS = [
+    # ========================================================================
+    # CONFIG 0: CONSERVATIVE (Bảo thủ - Tỉ lệ thua thấp)
+    # ========================================================================
+    {
+        "name": "CONSERVATIVE",
+        "description": "Cấu hình bảo thủ - Tỉ lệ thua thấp, ít lệnh nhưng an toàn",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.3,  # Giảm risk xuống 0.3%
+        "MIN_SL_PIPS": 300,  # SL xa hơn để tránh bị quét
+        "MIN_TP_PIPS": 300,
+        "MIN_RR_RATIO": 2.0,  # Risk:Reward cao hơn (1:2)
+        "MAX_SL_USD": 3.0,  # Giảm max SL xuống $3
+        "MAX_POSITIONS": 1,  # Chỉ 1 lệnh cùng lúc
+        "MAX_DAILY_TRADES": 10,  # Giảm số lệnh/ngày
+        "MAX_HOURLY_TRADES": 1,
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 3,  # Yêu cầu 3 tín hiệu (cao hơn)
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 3.0,  # SL xa hơn
+        "ATR_MULTIPLIER_TP": 4.0,  # TP xa hơn
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 3.0,
+        "ATR_MAX_SL_USD": 4.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 120,  # 2 giờ giữa 2 lệnh cùng chiều
+        "BREAK_AFTER_LOSS_MINUTES": 60,  # Nghỉ 1 giờ sau khi thua
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 800,  # Break-even muộn hơn
+        "ATR_TRAILING_K": 2.0,  # Trailing xa hơn
+    },
+    
+    # ========================================================================
+    # CONFIG 1: MODERATE (Cân bằng - Mặc định hiện tại)
+    # ========================================================================
+    {
+        "name": "MODERATE",
+        "description": "Cấu hình cân bằng - Cân bằng giữa số lệnh và tỉ lệ thắng",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.5,
+        "MIN_SL_PIPS": 250,
+        "MIN_TP_PIPS": 200,
+        "MIN_RR_RATIO": 1.5,
+        "MAX_SL_USD": 5.0,
+        "MAX_POSITIONS": 2,
+        "MAX_DAILY_TRADES": 50,
+        "MAX_HOURLY_TRADES": 2,
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 2,
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 2.5,
+        "ATR_MULTIPLIER_TP": 3.5,
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 4.0,
+        "ATR_MAX_SL_USD": 5.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 60,
+        "BREAK_AFTER_LOSS_MINUTES": 30,
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 600,
+        "ATR_TRAILING_K": 1.5,
+    },
+    
+    # ========================================================================
+    # CONFIG 2: AGGRESSIVE (Tích cực - Nhiều lệnh, tỉ lệ thua cao hơn)
+    # ========================================================================
+    {
+        "name": "AGGRESSIVE",
+        "description": "Cấu hình tích cực - Nhiều lệnh hơn, chấp nhận tỉ lệ thua cao hơn",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.5,
+        "MIN_SL_PIPS": 200,  # SL gần hơn
+        "MIN_TP_PIPS": 150,
+        "MIN_RR_RATIO": 1.2,  # Risk:Reward thấp hơn
+        "MAX_SL_USD": 5.0,
+        "MAX_POSITIONS": 2,
+        "MAX_DAILY_TRADES": 50,
+        "MAX_HOURLY_TRADES": 3,  # Tăng lên 3
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 2,  # Giữ nguyên
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 2.0,  # SL gần hơn
+        "ATR_MULTIPLIER_TP": 3.0,  # TP gần hơn
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 4.0,
+        "ATR_MAX_SL_USD": 5.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 45,  # Giảm xuống 45 phút
+        "BREAK_AFTER_LOSS_MINUTES": 20,  # Nghỉ ít hơn
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 500,  # Break-even sớm hơn
+        "ATR_TRAILING_K": 1.2,  # Trailing gần hơn
+    },
+    
+    # ========================================================================
+    # CONFIG 3: ULTRA CONSERVATIVE (Cực bảo thủ - Rất ít lệnh, rất an toàn)
+    # ========================================================================
+    {
+        "name": "ULTRA_CONSERVATIVE",
+        "description": "Cấu hình cực bảo thủ - Rất ít lệnh, tỉ lệ thắng cao",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.2,  # Risk rất thấp
+        "MIN_SL_PIPS": 400,  # SL rất xa
+        "MIN_TP_PIPS": 400,
+        "MIN_RR_RATIO": 2.5,  # Risk:Reward rất cao (1:2.5)
+        "MAX_SL_USD": 2.0,  # Max SL rất thấp
+        "MAX_POSITIONS": 1,
+        "MAX_DAILY_TRADES": 5,  # Rất ít lệnh
+        "MAX_HOURLY_TRADES": 1,
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 4,  # Yêu cầu 4 tín hiệu
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 3.5,  # SL rất xa
+        "ATR_MULTIPLIER_TP": 5.0,  # TP rất xa
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 2.0,
+        "ATR_MAX_SL_USD": 3.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 180,  # 3 giờ
+        "BREAK_AFTER_LOSS_MINUTES": 120,  # Nghỉ 2 giờ
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 1000,  # Break-even rất muộn
+        "ATR_TRAILING_K": 2.5,  # Trailing rất xa
+    },
+    
+    # ========================================================================
+    # CONFIG 4: SCALPING (Scalping - Nhiều lệnh nhỏ, SL/TP gần)
+    # ========================================================================
+    {
+        "name": "SCALPING",
+        "description": "Cấu hình scalping - Nhiều lệnh nhỏ, SL/TP gần, chốt lời nhanh",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.3,  # Risk thấp cho mỗi lệnh
+        "MIN_SL_PIPS": 150,  # SL gần
+        "MIN_TP_PIPS": 100,
+        "MIN_RR_RATIO": 1.0,  # Risk:Reward 1:1
+        "MAX_SL_USD": 3.0,
+        "MAX_POSITIONS": 2,
+        "MAX_DAILY_TRADES": 50,
+        "MAX_HOURLY_TRADES": 4,  # Nhiều lệnh hơn
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 2,
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 1.5,  # SL gần
+        "ATR_MULTIPLIER_TP": 2.0,  # TP gần
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 2.0,
+        "ATR_MAX_SL_USD": 3.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 30,  # 30 phút
+        "BREAK_AFTER_LOSS_MINUTES": 15,  # Nghỉ ít
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 300,  # Break-even sớm
+        "ATR_TRAILING_K": 1.0,  # Trailing gần
+    },
+    
+    # ========================================================================
+    # CONFIG 5: SWING TRADING (Swing - Ít lệnh, SL/TP xa, giữ lâu)
+    # ========================================================================
+    {
+        "name": "SWING_TRADING",
+        "description": "Cấu hình swing trading - Ít lệnh, SL/TP xa, giữ lâu",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.5,
+        "MIN_SL_PIPS": 500,  # SL rất xa
+        "MIN_TP_PIPS": 500,
+        "MIN_RR_RATIO": 2.0,
+        "MAX_SL_USD": 8.0,  # Cho phép SL lớn hơn
+        "MAX_POSITIONS": 1,
+        "MAX_DAILY_TRADES": 5,
+        "MAX_HOURLY_TRADES": 1,
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 3,
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 4.0,  # SL rất xa
+        "ATR_MULTIPLIER_TP": 6.0,  # TP rất xa
+        "ATR_SL_TP_MODE": "ATR_FREE",  # Không giới hạn USD
+        "ATR_MIN_SL_USD": 5.0,
+        "ATR_MAX_SL_USD": 10.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 240,  # 4 giờ
+        "BREAK_AFTER_LOSS_MINUTES": 90,  # Nghỉ 1.5 giờ
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 1200,  # Break-even rất muộn
+        "ATR_TRAILING_K": 2.0,
+    },
+    
+    # ========================================================================
+    # CONFIG 6: OPTIMIZED FOR LOW LOSS (Tối ưu để giảm tỉ lệ thua)
+    # ========================================================================
+    {
+        "name": "LOW_LOSS",
+        "description": "Tối ưu để giảm tỉ lệ thua - SL xa, signal mạnh, ít lệnh",
+        
+        # Risk Management
+        "RISK_PER_TRADE": 0.4,
+        "MIN_SL_PIPS": 350,  # SL rất xa để tránh bị quét
+        "MIN_TP_PIPS": 350,
+        "MIN_RR_RATIO": 1.8,  # Risk:Reward tốt
+        "MAX_SL_USD": 4.0,
+        "MAX_POSITIONS": 1,
+        "MAX_DAILY_TRADES": 20,
+        "MAX_HOURLY_TRADES": 1,
+        
+        # Signal Strength
+        "MIN_SIGNAL_STRENGTH": 3,  # Yêu cầu 3 tín hiệu
+        
+        # ATR Settings
+        "ATR_MULTIPLIER_SL": 3.0,  # SL xa
+        "ATR_MULTIPLIER_TP": 4.5,  # TP xa
+        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_MIN_SL_USD": 3.0,
+        "ATR_MAX_SL_USD": 4.0,
+        
+        # Time Rules
+        "MIN_TIME_BETWEEN_SAME_DIRECTION": 90,  # 1.5 giờ
+        "BREAK_AFTER_LOSS_MINUTES": 45,  # Nghỉ 45 phút
+        
+        # Trailing Stop
+        "BREAK_EVEN_START_PIPS": 700,  # Break-even muộn
+        "ATR_TRAILING_K": 1.8,  # Trailing xa
+    },
+]
+
+# ============================================================================
+# CONFIG MẶC ĐỊNH (Index trong array)
+# ============================================================================
+
+# Config mặc định sẽ được sử dụng (index trong array CONFIGS)
+# Có thể thay đổi bằng cách set biến môi trường CONFIG_INDEX hoặc command line argument
+DEFAULT_CONFIG_INDEX = 1  # MODERATE (config hiện tại)
+
+# ============================================================================
+# HÀM HELPER ĐỂ LẤY CONFIG
+# ============================================================================
+
+def get_config(index=None):
+    """
+    Lấy config từ array CONFIGS
+    
+    Args:
+        index: Index của config trong array (số) hoặc tên config (string)
+               None = dùng CONFIG_INDEX hoặc DEFAULT_CONFIG_INDEX
+               
+    Returns:
+        dict: Config được chọn
+    """
+    if index is None:
+        # Thử lấy từ biến CONFIG_INDEX (có thể là số hoặc string)
+        try:
+            index = CONFIG_INDEX
+        except NameError:
+            index = DEFAULT_CONFIG_INDEX
+    
+    # Nếu index là string (tên config), tìm index tương ứng
+    if isinstance(index, str):
+        for i, config in enumerate(CONFIGS):
+            if config["name"].upper() == index.upper():
+                index = i
+                break
+        else:
+            print(f"⚠️ Không tìm thấy config với tên '{index}', dùng config mặc định (index {DEFAULT_CONFIG_INDEX})")
+            index = DEFAULT_CONFIG_INDEX
+    
+    # Validate index
+    if not isinstance(index, int) or index < 0 or index >= len(CONFIGS):
+        print(f"⚠️ Config index {index} không hợp lệ, dùng config mặc định (index {DEFAULT_CONFIG_INDEX})")
+        index = DEFAULT_CONFIG_INDEX
+    
+    config = CONFIGS[index]
+    print(f"✅ Đã chọn config: {config['name']} (index {index}) - {config['description']}")
+    return config
+
+def list_configs():
+    """
+    Liệt kê tất cả các config có sẵn
+    
+    Returns:
+        list: Danh sách các config với index và mô tả
+    """
+    result = []
+    for i, config in enumerate(CONFIGS):
+        result.append({
+            "index": i,
+            "name": config["name"],
+            "description": config["description"]
+        })
+    return result
+
+# ============================================================================
+# TỰ ĐỘNG LOAD CONFIG VÀ OVERRIDE CÁC BIẾN GLOBAL
+# ============================================================================
+
+# Lấy config được chọn (sử dụng CONFIG_INDEX nếu đã được định nghĩa, nếu không dùng DEFAULT_CONFIG_INDEX)
+try:
+    config_index_to_use = CONFIG_INDEX
+except NameError:
+    config_index_to_use = DEFAULT_CONFIG_INDEX
+
+selected_config = get_config(config_index_to_use)
+
+# Override tất cả các biến từ config được chọn
+# Chỉ override các biến có trong config, giữ nguyên các biến khác (như SYMBOL, TIMEFRAME, etc.)
+print(f"\n📋 Đang load config '{selected_config['name']}':")
+for key, value in selected_config.items():
+    if key not in ["name", "description"]:  # Bỏ qua các key metadata
+        globals()[key] = value
+        print(f"   • {key} = {value}")
+
+print("=" * 60)
+print(f"✅ Đã load config '{selected_config['name']}' thành công!")
+print("=" * 60)
