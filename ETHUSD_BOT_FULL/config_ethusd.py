@@ -129,18 +129,21 @@ ATR_PERIOD = 14
 ENABLE_TRAILING_STOP = True  # True: Bật trailing stop, False: Tắt
 
 # Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu kéo SL
-# ⚠️ Tăng từ 150 lên 400 pips để cho lệnh có thời gian phát triển trước khi bắt đầu trailing
-# Với ETHUSD, cần thời gian để lệnh phát triển, tránh trailing quá sớm
-TRAIL_START_PIPS = 400  # Đơn vị: pips (tăng từ 150 lên 400 để tránh trailing quá sớm)
+# ⚠️ Tăng từ 400 lên 500 pips để cho lệnh có thời gian phát triển trước khi bắt đầu trailing
+# Với ETHUSD (1 pip = 1 USD), 500 pips = $50 với 0.1 lot (MIN_LOT_SIZE)
+# Cần thời gian để lệnh phát triển, tránh trailing quá sớm
+TRAIL_START_PIPS = 500  # Đơn vị: pips (tăng từ 400 lên 500 để tránh trailing quá sớm)
 
 # Khoảng cách giữa giá hiện tại và SL khi trailing
-# ⚠️ Tăng từ 100 lên 300 pips để tránh bị quét bởi biến động ngẫu nhiên
-# Với ETHUSD, biến động lớn nên cần khoảng cách xa hơn để tránh bị "quét" bởi noise
-TRAIL_DISTANCE_PIPS = 300  # Đơn vị: pips (tăng từ 100 lên 300 để tránh bị quét)
+# ⚠️ Tăng từ 300 lên 400 pips để tránh bị quét bởi biến động ngẫu nhiên
+# Với ETHUSD (1 pip = 1 USD), 400 pips = $40 với 0.1 lot
+# ETHUSD biến động lớn nên cần khoảng cách xa hơn để tránh bị "quét" bởi noise
+TRAIL_DISTANCE_PIPS = 400  # Đơn vị: pips (tăng từ 300 lên 400 để tránh bị quét)
 
 # Nếu lợi nhuận > TRAIL_HARD_LOCK_PIPS thì chốt cứng (đảm bảo không mất lời)
-# ⚠️ Tăng từ 250 lên 600 pips để hard lock muộn hơn, cho phép lệnh phát triển
-TRAIL_HARD_LOCK_PIPS = 600  # Đơn vị: pips (tăng từ 250 lên 600 để hard lock muộn hơn)
+# ⚠️ Tăng từ 600 lên 800 pips để hard lock muộn hơn, cho phép lệnh phát triển
+# Với ETHUSD (1 pip = 1 USD), 800 pips = $80 với 0.1 lot
+TRAIL_HARD_LOCK_PIPS = 800  # Đơn vị: pips (tăng từ 600 lên 800 để hard lock muộn hơn)
 
 # ============================================================================
 # TP ĐỘNG THEO SỨC MẠNH XU HƯỚNG - Tăng TP khi trend mạnh
