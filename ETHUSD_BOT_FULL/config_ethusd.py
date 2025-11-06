@@ -47,7 +47,7 @@ MIN_FREE_MARGIN = 50.0  # Đơn vị: USD (hoặc % nếu < 0, ví dụ: -0.1 = 
 
 # Số lượng vị thế tối đa có thể mở cùng lúc
 # Nếu đã có MAX_POSITIONS lệnh mở → Bot sẽ không mở lệnh mới
-MAX_POSITIONS = 2
+MAX_POSITIONS = 1
 
 # Số lượng lệnh tối đa có thể mở trong 1 ngày
 # Mục đích: Tránh over-trading
