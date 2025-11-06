@@ -101,6 +101,7 @@ class XAUUSD_Bot:
         self.breakeven_activated = set()  # Set các ticket đã kích hoạt break-even
         self.partial_close_done = {}  # Dict {ticket: [TP1_done, TP2_done, TP3_done]} để theo dõi partial close
         self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
+        self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
         
         # Tracking để phát hiện TP/SL hit
         self.previous_positions = {}  # Dict {ticket: position_info} để theo dõi positions từ cycle trước
@@ -1193,6 +1194,7 @@ class XAUUSD_Bot:
             
             # ====================================================================
             # BƯỚC 1: BREAK-EVEN STEP
+            # Kích hoạt khi: profit_pips >= BREAK_EVEN_START_PIPS (600 pips)
             # ====================================================================
             if profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
                 # Dời SL về entry + buffer
@@ -1203,6 +1205,26 @@ class XAUUSD_Bot:
                         if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
                             self.breakeven_activated.add(ticket)
                             logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
+                            
+                            # Gửi Telegram notification
+                            if self.use_telegram:
+                                direction = "BUY"
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
+                                message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b> (Entry + {break_even_buffer_pips} pips)\n\n"
+                                message += f"<b>Trạng thái:</b>\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {break_even_start_pips} pips)\n"
+                                message += f"• Protected: <b>${protected_usd:.2f}</b>\n"
+                                message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
+                                message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
+                                self.send_telegram_message(message)
                 else:  # SELL
                     new_sl = entry_price - (break_even_buffer_pips * 0.01)
                     # Đảm bảo SL mới thấp hơn SL hiện tại hoặc SL hiện tại > entry
@@ -1210,6 +1232,26 @@ class XAUUSD_Bot:
                         if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
                             self.breakeven_activated.add(ticket)
                             logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
+                            
+                            # Gửi Telegram notification
+                            if self.use_telegram:
+                                direction = "SELL"
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
+                                message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b> (Entry - {break_even_buffer_pips} pips)\n\n"
+                                message += f"<b>Trạng thái:</b>\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {break_even_start_pips} pips)\n"
+                                message += f"• Protected: <b>${protected_usd:.2f}</b>\n"
+                                message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
+                                message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
+                                self.send_telegram_message(message)
             
             # ====================================================================
             # BƯỚC 2: PARTIAL CLOSE (nếu bật)
@@ -1219,7 +1261,9 @@ class XAUUSD_Bot:
                 self._manage_partial_close(pos, profit_pips, ticket)
             
             # ====================================================================
-            # BƯỚC 3: ATR-BASED TRAILING (chỉ sau khi đã break-even)
+            # BƯỚC 3: ATR-BASED TRAILING
+            # Kích hoạt khi: Đã break-even (profit >= 600 pips) VÀ ATR có giá trị
+            # Khoảng cách trailing: ATR × ATR_TRAILING_K (1.5) hoặc tối thiểu 100 pips
             # ====================================================================
             if ticket in self.breakeven_activated and atr_value is not None:
                 # Tính khoảng cách trailing dựa trên ATR
@@ -1243,6 +1287,26 @@ class XAUUSD_Bot:
                         if self._update_sl(ticket, new_sl, pos.tp, "ATR Trailing"):
                             self.last_trailing_check[ticket] = current_time
                             logging.info(f"📈 ATR Trailing: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, ATR: {atr_value:.1f} pips, Distance: {trail_distance_pips:.1f} pips)")
+                            
+                            # Gửi Telegram notification lần đầu tiên ATR Trailing kích hoạt
+                            if self.use_telegram and ticket not in self.atr_trailing_first_activation:
+                                self.atr_trailing_first_activation.add(ticket)
+                                direction = "BUY"
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                message = f"<b>📈 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                                message += f"• TP: <b>{pos.tp:.2f}</b>\n\n"
+                                message += f"<b>Thông số Trailing:</b>\n"
+                                message += f"• ATR: <b>{atr_value:.1f} pips</b>\n"
+                                message += f"• Khoảng cách: <b>{trail_distance_pips:.1f} pips</b> (ATR × {atr_trailing_k})\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n\n"
+                                message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
+                                self.send_telegram_message(message)
                 
                 else:  # SELL
                     new_sl = current_price + (trail_distance_pips * 0.01)
@@ -1257,6 +1321,26 @@ class XAUUSD_Bot:
                         if self._update_sl(ticket, new_sl, pos.tp, "ATR Trailing"):
                             self.last_trailing_check[ticket] = current_time
                             logging.info(f"📉 ATR Trailing: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, ATR: {atr_value:.1f} pips, Distance: {trail_distance_pips:.1f} pips)")
+                            
+                            # Gửi Telegram notification lần đầu tiên ATR Trailing kích hoạt
+                            if self.use_telegram and ticket not in self.atr_trailing_first_activation:
+                                self.atr_trailing_first_activation.add(ticket)
+                                direction = "SELL"
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                message = f"<b>📉 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                                message += f"• TP: <b>{pos.tp:.2f}</b>\n\n"
+                                message += f"<b>Thông số Trailing:</b>\n"
+                                message += f"• ATR: <b>{atr_value:.1f} pips</b>\n"
+                                message += f"• Khoảng cách: <b>{trail_distance_pips:.1f} pips</b> (ATR × {atr_trailing_k})\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n\n"
+                                message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
+                                self.send_telegram_message(message)
     
     def _update_sl(self, ticket, new_sl, tp, reason=""):
         """
@@ -1656,6 +1740,8 @@ class XAUUSD_Bot:
                 del self.partial_close_done[ticket]
             if ticket in self.last_trailing_check:
                 del self.last_trailing_check[ticket]
+            if ticket in self.atr_trailing_first_activation:
+                self.atr_trailing_first_activation.remove(ticket)
         elif result:
             logging.warning(f"⚠️ Smart Exit thất bại: Ticket {ticket}, {result.comment if hasattr(result, 'comment') else 'Unknown'}")
 
