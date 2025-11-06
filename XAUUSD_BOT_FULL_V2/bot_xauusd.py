@@ -1370,15 +1370,17 @@ class XAUUSD_Bot:
         Helper function để update SL với error handling
         Gửi Telegram notification khi thành công
         """
-        # Lấy thông tin position trước khi update
-        pos = mt5.positions_get(ticket=ticket)
+        # Lấy thông tin position TRƯỚC khi update để có old_sl
+        pos_before = mt5.positions_get(ticket=ticket)
         old_sl = None
         pos_type = None
         entry_price = None
-        if pos and len(pos) > 0:
-            old_sl = pos[0].sl
-            pos_type = pos[0].type
-            entry_price = pos[0].price_open
+        lot_size = None
+        if pos_before and len(pos_before) > 0:
+            old_sl = pos_before[0].sl
+            pos_type = pos_before[0].type
+            entry_price = pos_before[0].price_open
+            lot_size = pos_before[0].volume
         
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
@@ -1389,11 +1391,24 @@ class XAUUSD_Bot:
         }
         result = mt5.order_send(request)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            # Gửi Telegram notification
-            if self.use_telegram and old_sl is not None:
+            # Gửi Telegram notification - LUÔN gửi khi thành công
+            if self.use_telegram:
+                # Lấy lại position SAU khi update để có thông tin mới nhất
+                pos_after = mt5.positions_get(ticket=ticket)
+                if pos_after and len(pos_after) > 0:
+                    # Nếu không có old_sl từ trước, dùng SL hiện tại (có thể khác new_sl do broker adjust)
+                    if old_sl is None:
+                        old_sl = pos_after[0].sl
+                    if pos_type is None:
+                        pos_type = pos_after[0].type
+                    if entry_price is None:
+                        entry_price = pos_after[0].price_open
+                    if lot_size is None:
+                        lot_size = pos_after[0].volume
+                
                 # Tính profit protected
                 tick = mt5.symbol_info_tick(self.symbol)
-                if tick:
+                if tick and entry_price is not None:
                     if pos_type == mt5.ORDER_TYPE_BUY:
                         current_price = tick.bid
                         profit_pips = (current_price - entry_price) / 0.01
@@ -1404,9 +1419,7 @@ class XAUUSD_Bot:
                         protected_pips = (entry_price - new_sl) / 0.01
                     
                     # Tính SL USD
-                    position = mt5.positions_get(ticket=ticket)
-                    if position and len(position) > 0:
-                        lot_size = position[0].volume
+                    if lot_size is not None:
                         pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                         sl_usd = abs(new_sl - entry_price) / 0.01 * pip_value_per_lot * lot_size
                         
@@ -1416,7 +1429,8 @@ class XAUUSD_Bot:
                         message += f"• Ticket: <code>{ticket}</code>\n"
                         message += f"• Loại: <b>{direction}</b>\n"
                         message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                        message += f"• SL cũ: <b>{old_sl:.2f}</b>\n"
+                        if old_sl is not None:
+                            message += f"• SL cũ: <b>{old_sl:.2f}</b>\n"
                         message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
                         message += f"• SL USD: <b>${sl_usd:.2f}</b>\n"
                         message += f"• Lý do: <b>{reason}</b>\n\n"
@@ -1426,6 +1440,7 @@ class XAUUSD_Bot:
                         message += f"• Protected: <b>{protected_pips:.1f} pips</b>\n"
                         
                         self.send_telegram_message(message)
+                        logging.debug(f"✅ Đã gửi Telegram notification cho SL update: Ticket {ticket}, Reason: {reason}")
             
             return True
         else:
