@@ -926,6 +926,49 @@ class XAUUSD_Bot:
                                 remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
                                 logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - cooldown còn {remaining}s")
                         
+                        # Kiểm tra TP Boost và gửi Telegram nếu có
+                        if action != 'HOLD' and len(df) > 0:
+                            enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
+                            if enable_tp_boost and 'rsi' in df.columns:
+                                rsi_current = df.iloc[-1]['rsi']
+                                rsi_threshold_up = RSI_TREND_THRESHOLD_UP if 'RSI_TREND_THRESHOLD_UP' in globals() else 65
+                                rsi_threshold_down = RSI_TREND_THRESHOLD_DOWN if 'RSI_TREND_THRESHOLD_DOWN' in globals() else 35
+                                strong_trend_boost = STRONG_TREND_TP_BOOST if 'STRONG_TREND_TP_BOOST' in globals() else 0.3
+                                
+                                tp_pips = signal.get('tp_pips', 0)
+                                
+                                # Kiểm tra nếu TP Boost đã được áp dụng
+                                tp_boosted = False
+                                if action == "BUY" and rsi_current > rsi_threshold_up:
+                                    tp_boosted = True
+                                    if self.use_telegram and should_send_signal:
+                                        message = f"<b>📈 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                        message += f"<b>Thông tin tín hiệu:</b>\n"
+                                        message += f"• Loại: <b>{action}</b>\n"
+                                        message += f"• Strength: <b>{strength}</b> điểm\n"
+                                        message += f"• RSI: <b>{rsi_current:.2f}</b> (>{rsi_threshold_up})\n"
+                                        message += f"• TP gốc: <b>{int(tp_pips / (1 + strong_trend_boost))} pips</b>\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{signal.get('sl_pips', 0)} pips</b>\n\n"
+                                        message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
+                                        self.send_telegram_message(message)
+                                        logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
+                                
+                                elif action == "SELL" and rsi_current < rsi_threshold_down:
+                                    tp_boosted = True
+                                    if self.use_telegram and should_send_signal:
+                                        message = f"<b>📉 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                        message += f"<b>Thông tin tín hiệu:</b>\n"
+                                        message += f"• Loại: <b>{action}</b>\n"
+                                        message += f"• Strength: <b>{strength}</b> điểm\n"
+                                        message += f"• RSI: <b>{rsi_current:.2f}</b> (<{rsi_threshold_down})\n"
+                                        message += f"• TP gốc: <b>{int(tp_pips / (1 + strong_trend_boost))} pips</b>\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{signal.get('sl_pips', 0)} pips</b>\n\n"
+                                        message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
+                                        self.send_telegram_message(message)
+                                        logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
+                        
                         # Không gửi Telegram khi có tín hiệu (chỉ gửi khi có kết quả lệnh)
                         # Cập nhật tracking để tránh spam log
                         if should_send_signal:
