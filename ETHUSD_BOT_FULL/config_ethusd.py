@@ -129,13 +129,18 @@ ATR_PERIOD = 14
 ENABLE_TRAILING_STOP = True  # True: Bật trailing stop, False: Tắt
 
 # Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu kéo SL
-TRAIL_START_PIPS = 150  # Đơn vị: pips (ví dụ: 150 pips = 1.5% với ETH)
+# ⚠️ Tăng từ 150 lên 400 pips để cho lệnh có thời gian phát triển trước khi bắt đầu trailing
+# Với ETHUSD, cần thời gian để lệnh phát triển, tránh trailing quá sớm
+TRAIL_START_PIPS = 400  # Đơn vị: pips (tăng từ 150 lên 400 để tránh trailing quá sớm)
 
 # Khoảng cách giữa giá hiện tại và SL khi trailing
-TRAIL_DISTANCE_PIPS = 100  # Đơn vị: pips (SL sẽ cách giá hiện tại 100 pips)
+# ⚠️ Tăng từ 100 lên 300 pips để tránh bị quét bởi biến động ngẫu nhiên
+# Với ETHUSD, biến động lớn nên cần khoảng cách xa hơn để tránh bị "quét" bởi noise
+TRAIL_DISTANCE_PIPS = 300  # Đơn vị: pips (tăng từ 100 lên 300 để tránh bị quét)
 
 # Nếu lợi nhuận > TRAIL_HARD_LOCK_PIPS thì chốt cứng (đảm bảo không mất lời)
-TRAIL_HARD_LOCK_PIPS = 250  # Đơn vị: pips (khi đạt >250 pips lời, SL sẽ được "khóa" ở mức an toàn)
+# ⚠️ Tăng từ 250 lên 600 pips để hard lock muộn hơn, cho phép lệnh phát triển
+TRAIL_HARD_LOCK_PIPS = 600  # Đơn vị: pips (tăng từ 250 lên 600 để hard lock muộn hơn)
 
 # ============================================================================
 # TP ĐỘNG THEO SỨC MẠNH XU HƯỚNG - Tăng TP khi trend mạnh
