@@ -51,7 +51,7 @@ MAX_POSITIONS = 2
 
 # Số lượng lệnh tối đa có thể mở trong 1 ngày
 # Mục đích: Tránh over-trading
-MAX_DAILY_TRADES = 10
+MAX_DAILY_TRADES = 50
 
 # Số lượng lệnh tối đa có thể mở trong 1 giờ
 # Mục đích: Tránh mở quá nhiều lệnh trong thời gian ngắn
