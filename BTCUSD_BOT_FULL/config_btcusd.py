@@ -10,7 +10,7 @@ Tất cả các giá trị có thể được điều chỉnh tùy theo chiến 
 # ============================================================================
 
 # Symbol để giao dịch (BTCUSD = Bitcoin/USD)
-SYMBOL = "BTCUSD"
+SYMBOL = "BTCUSDc"
 
 # Khung thời gian để phân tích (M15 = 15 phút, M30 = 30 phút, H1 = 1 giờ, H4 = 4 giờ)
 # Khuyến nghị: M15 cho scalping, H1/H4 cho swing trading
@@ -250,7 +250,7 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
 # ⚠️ LƯU Ý: BTCUSD có spread cao hơn XAUUSD (thường 500-2000 pips)
 # Với giá BTC ~$100,000, spread 1000-2000 pips = $10-$20 USD là bình thường
-MAX_SPREAD = 1500  # Đơn vị: pips (tăng từ 100 lên 1500 cho BTCUSD)
+MAX_SPREAD = 2000  # Đơn vị: pips (tăng từ 100 lên 1500 cho BTCUSD)
 
 # Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
