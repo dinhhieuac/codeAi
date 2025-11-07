@@ -149,10 +149,9 @@ TRAIL_HARD_LOCK_PIPS = 800  # Đơn vị: pips (tăng từ 250 lên 800 để ha
 # ============================================================================
 
 # Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu break-even (dời SL về entry + buffer)
-# ⚠️ BTCUSD biến động lớn, cần để lệnh phát triển nhiều hơn trước khi bảo vệ
-# Tăng từ 600 lên 1500 pips để đảm bảo có đủ lợi nhuận trước khi dời SL về break-even
-# Với BTCUSD: 1500 pips = $15 với 0.01 lot (đủ để bù đắp rủi ro ban đầu)
-BREAK_EVEN_START_PIPS = 1500  # Đơn vị: pips (Với BTCUSD: 1500 pips = $15 với 0.01 lot, tăng từ 600)
+# ⚠️ Giảm từ 1500 xuống 500 pips để break-even sớm hơn, bảo vệ lợi nhuận khi đạt ~$5
+# Với BTCUSD: 500 pips = $5 với 0.01 lot (đủ để bảo vệ lợi nhuận sớm)
+BREAK_EVEN_START_PIPS = 500  # Đơn vị: pips (Với BTCUSD: 500 pips = $5 với 0.01 lot, giảm từ 1500)
 
 # Buffer khi dời SL về break-even (đơn vị: pips)
 # SL sẽ được dời về entry + buffer để tránh bị quét bởi noise
