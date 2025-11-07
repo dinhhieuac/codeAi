@@ -1395,7 +1395,9 @@ class BTCUSD_Bot:
         # Lấy tham số từ config
         opposite_signal_count = OPPOSITE_SIGNAL_COUNT_TO_EXIT if 'OPPOSITE_SIGNAL_COUNT_TO_EXIT' in globals() else 2
         enable_rsi_exit = ENABLE_RSI_EXIT if 'ENABLE_RSI_EXIT' in globals() else True
-        rsi_exit_threshold = RSI_EXIT_THRESHOLD if 'RSI_EXIT_THRESHOLD' in globals() else 50
+        rsi_exit_threshold_buy = RSI_EXIT_THRESHOLD_BUY if 'RSI_EXIT_THRESHOLD_BUY' in globals() else 35
+        rsi_exit_threshold_sell = RSI_EXIT_THRESHOLD_SELL if 'RSI_EXIT_THRESHOLD_SELL' in globals() else 65
+        rsi_exit_min_profit_pips = RSI_EXIT_MIN_PROFIT_PIPS if 'RSI_EXIT_MIN_PROFIT_PIPS' in globals() else 200
         enable_profit_dd_exit = ENABLE_PROFIT_DRAWDOWN_EXIT if 'ENABLE_PROFIT_DRAWDOWN_EXIT' in globals() else True
         profit_dd_exit_percent = PROFIT_DRAWDOWN_EXIT_PERCENT if 'PROFIT_DRAWDOWN_EXIT_PERCENT' in globals() else 40
         
@@ -1444,16 +1446,17 @@ class BTCUSD_Bot:
                         self.opposite_signal_count[ticket] = 0
             
             # Kiểm tra 2: RSI quay đầu vượt vùng trung tính
-            if enable_rsi_exit and profit_pips > 0:  # Chỉ exit khi đang lời
-                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold:
-                    # BUY nhưng RSI < 50 → Momentum giảm
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold})")
-                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+            # ⚠️ CHỈ EXIT KHI: profit > min_profit VÀ RSI vượt threshold mạnh (tránh exit quá sớm)
+            if enable_rsi_exit and profit_pips > rsi_exit_min_profit_pips:  # Chỉ exit khi đang lời và đạt profit tối thiểu
+                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold_buy:
+                    # BUY nhưng RSI < 35 (oversold mạnh) → Momentum giảm mạnh
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} < {rsi_exit_threshold_buy}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
+                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold_buy})")
                     continue
-                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold:
-                    # SELL nhưng RSI > 50 → Momentum giảm
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold})")
-                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold_sell:
+                    # SELL nhưng RSI > 65 (overbought mạnh) → Momentum giảm mạnh
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} > {rsi_exit_threshold_sell}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
+                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold_sell})")
                     continue
             
             # Kiểm tra 3: Profit drawdown (lợi nhuận giảm quá nhanh)

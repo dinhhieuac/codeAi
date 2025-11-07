@@ -1447,8 +1447,7 @@ class XAUUSD_Bot:
     def _update_sl(self, ticket, new_sl, tp, reason=""):
         """
         Helper function để update SL với error handling
-        Gửi Telegram notification khi thành công
-        """
+        Gửi Telegram notification khi thành công        """
         # Lấy thông tin position TRƯỚC khi update để có old_sl
         pos_before = mt5.positions_get(ticket=ticket)
         old_sl = None

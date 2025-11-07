@@ -170,7 +170,9 @@ OPPOSITE_SIGNAL_COUNT_TO_EXIT = 2  # Số tín hiệu ngược chiều cần đ�
 
 # Nếu RSI quay đầu vượt vùng trung tính → đóng lệnh sớm
 ENABLE_RSI_EXIT = True  # Bật/tắt RSI exit
-RSI_EXIT_THRESHOLD = 50  # RSI vượt 50 (vùng trung tính) → thoát lệnh
+RSI_EXIT_THRESHOLD_BUY = 35  # BUY: RSI < 35 (oversold mạnh) → thoát lệnh (tăng từ 50 để tránh exit quá sớm)
+RSI_EXIT_THRESHOLD_SELL = 65  # SELL: RSI > 65 (overbought mạnh) → thoát lệnh (tăng từ 50 để tránh exit quá sớm)
+RSI_EXIT_MIN_PROFIT_PIPS = 200  # Profit tối thiểu (pips) trước khi exit theo RSI (tránh exit quá sớm khi chưa có lời)
 
 # Nếu lợi nhuận giảm quá nhanh (drawdown từ đỉnh > X%) → thoát lệnh bảo toàn
 ENABLE_PROFIT_DRAWDOWN_EXIT = True  # Bật/tắt profit drawdown exit
