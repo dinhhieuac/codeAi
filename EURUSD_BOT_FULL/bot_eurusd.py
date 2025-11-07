@@ -6,8 +6,8 @@ import sys
 import re
 import requests
 from datetime import datetime, timedelta
-from config_xauusd import *
-from risk_manager import XAUUSD_RiskManager
+from config_eurusd import *
+from risk_manager import EURUSD_RiskManager
 from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
@@ -65,9 +65,9 @@ if sys.platform == 'win32':
         pass  # Không hỗ trợ hoặc không thể cấu hình
 
 # Setup logging
-log_file = os.path.join('logs', 'xauusd_bot.log') if os.path.exists('logs') else 'xauusd_bot.log'
+log_file = os.path.join('logs', 'eurusd_bot.log') if os.path.exists('logs') else 'xauusd_bot.log'
 os.makedirs('logs', exist_ok=True)
-log_file = os.path.join('logs', 'xauusd_bot.log')
+log_file = os.path.join('logs', 'eurusd_bot.log')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,11 +78,11 @@ logging.basicConfig(
     ]
 )
 
-class XAUUSD_Bot:
+class EURUSD_Bot:
     def __init__(self):
         self.symbol = SYMBOL
         self.timeframe = TIMEFRAME_MT5[TIMEFRAME]
-        self.risk_manager = XAUUSD_RiskManager()
+        self.risk_manager = EURUSD_RiskManager()
         self.technical_analyzer = TechnicalAnalyzer()
         self.setup_directories()
         
@@ -114,12 +114,12 @@ class XAUUSD_Bot:
         
     def setup_mt5(self):
         logging.info("=" * 60)
-        logging.info("🚀 KHỞI TẠO BOT XAUUSD")
+        logging.info("🚀 KHỞI TẠO BOT EURUSD")
         logging.info("=" * 60)
         
         # Log config đang sử dụng
         try:
-            from config_xauusd import selected_config, CONFIG_INDEX
+            from config_eurusd import selected_config, CONFIG_INDEX
             config_name = selected_config.get('name', 'UNKNOWN')
             config_desc = selected_config.get('description', '')
             logging.info(f"⚙️  Config: <b>{config_name}</b> (Index: {CONFIG_INDEX})")
@@ -712,7 +712,7 @@ class XAUUSD_Bot:
             "tp": tp_price,
             "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
-            "comment": f"XAUUSD_Bot_{signal_type}",
+            "comment": f"EURUSD_Bot_{signal_type}",
             "type_time": mt5.ORDER_TIME_GTC,
         }
         
@@ -777,7 +777,7 @@ class XAUUSD_Bot:
     def run_bot(self):
         """Vòng lặp chính của bot"""
         logging.info("=" * 60)
-        logging.info("🚀 BOT XAUUSD BẮT ĐẦU CHẠY")
+        logging.info("🚀 BOT EURUSD BẮT ĐẦU CHẠY")
         logging.info("=" * 60)
         
         # Không gửi Telegram khi bot khởi động (chỉ gửi khi có kết quả lệnh)
@@ -1126,7 +1126,7 @@ class XAUUSD_Bot:
                         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             ticket = result.order
                             logging.info("=" * 60)
-                            logging.info(f"✅ LỆNH  {action} XAUUSD THÀNH CÔNG!")
+                            logging.info(f"✅ LỆNH  {action} EURUSD THÀNH CÔNG!")
                             logging.info("=" * 60)
                             logging.info(f"   - Ticket: {ticket}")
                             logging.info(f"   - Volume: {result.volume} lots")
@@ -1138,7 +1138,7 @@ class XAUUSD_Bot:
                             # Gửi thông báo Telegram về lệnh thành công
                             if self.use_telegram:
                                 success_message = (
-                                    f"✅ <b>LỆNH {action} XAUUSD THÀNH CÔNG</b>\n\n"
+                                    f"✅ <b>LỆNH {action} EURUSD THÀNH CÔNG</b>\n\n"
                                     f"📊 <b>Thông tin lệnh:</b>\n"
                                     f"   • Ticket: <code>{ticket}</code>\n"
                                     f"   • Volume: <b>{result.volume}</b> lots\n"
@@ -1863,10 +1863,10 @@ class XAUUSD_Bot:
 
 def main():
     logging.info("=" * 60)
-    logging.info("🚀 KHỞI ĐỘNG BOT XAUUSD")
+    logging.info("🚀 KHỞI ĐỘNG BOT EURUSD")
     logging.info("=" * 60)
     
-    bot = XAUUSD_Bot()
+    bot = EURUSD_Bot()
     
     if not bot.setup_mt5():
         logging.error("❌ Không thể khởi tạo MT5. Thoát chương trình.")

@@ -1,7 +1,7 @@
 """
-CẤU HÌNH BOT XAUUSD
+CẤU HÌNH BOT EURUSD
 ===================
-File này chứa tất cả các tham số cấu hình cho bot giao dịch vàng tự động.
+File này chứa tất cả các tham số cấu hình cho bot giao dịch EUR/USD tự động.
 Tất cả các giá trị có thể được điều chỉnh tùy theo chiến lược và điều kiện thị trường.
 """
 
@@ -9,7 +9,7 @@ Tất cả các giá trị có thể được điều chỉnh tùy theo chiến 
 # SYMBOL VÀ TIMEFRAME - Cấu hình cặp tiền tệ và khung thời gian
 # ============================================================================
 
-# Symbol để giao dịch (XAUUSD = Vàng/USD)
+# Symbol để giao dịch (EURUSD = Euro/USD)
 SYMBOL = "EURUSDc"
 
 # Khung thời gian để phân tích (M15 = 15 phút, M30 = 30 phút, H1 = 1 giờ, H4 = 4 giờ)
@@ -69,12 +69,12 @@ MAX_LOT_SIZE = 1.0   # Lot size tối đa cho phép mỗi lệnh
 
 # Stop Loss tối thiểu (đơn vị: pips)
 # SL sẽ không nhỏ hơn giá trị này để đảm bảo có đủ không gian cho biến động giá
-# Với XAUUSD (Gold), biến động lớn nên cần SL tối thiểu 250 pips để tránh bị "quét" bởi biến động ngẫu nhiên
-MIN_SL_PIPS = 250  # Tăng lên 250 pips để đủ xa, tránh bị quét bởi noise
+# Với EURUSD (Forex), biến động nhỏ hơn XAUUSD nên cần SL tối thiểu 20-30 pips
+MIN_SL_PIPS = 30  # 30 pips cho EURUSD (1 pip = 0.0001)
 
 # Take Profit tối thiểu (đơn vị: pips)
 # TP sẽ không nhỏ hơn giá trị này
-MIN_TP_PIPS = 200
+MIN_TP_PIPS = 25  # 25 pips cho EURUSD
 
 # Tỷ lệ Risk/Reward tối thiểu (Risk:Reward)
 # Ví dụ: MIN_RR_RATIO = 1.5 → Nếu risk $10, reward tối thiểu $15
@@ -133,11 +133,11 @@ ENABLE_TRAILING_STOP = True  # True: Bật trailing stop, False: Tắt
 
 # Khi lợi nhuận đạt ngưỡng này → Dời SL về entry + buffer (Break-even)
 # XAUUSD: 600 pips (≈ $6 với 0.01 lot)
-BREAK_EVEN_START_PIPS = 600  # Đơn vị: pips
+BREAK_EVEN_START_PIPS = 60  # Đơn vị: pips (EURUSD: 60 pips ≈ $6 với 0.01 lot, tương đương 600 pips XAUUSD)
 
 # Buffer khi dời SL về break-even (tránh bị quét do nhiễu)
 # BUY: SL = entry + buffer, SELL: SL = entry - buffer
-BREAK_EVEN_BUFFER_PIPS = 50  # Đơn vị: pips
+BREAK_EVEN_BUFFER_PIPS = 5  # Đơn vị: pips (EURUSD: 5 pips buffer)
 
 # ============================================================================
 # ATR-BASED TRAILING - Dời SL theo biến động thị trường
@@ -150,7 +150,7 @@ ATR_TRAILING_K = 1.5  # Hệ số nhân ATR (1.2-1.8)
 
 # Khoảng cách tối thiểu giữa SL và giá (tính bằng pips)
 # Đảm bảo SL không quá gần giá do nhiễu
-ATR_TRAILING_MIN_DISTANCE_PIPS = 100  # Đơn vị: pips
+ATR_TRAILING_MIN_DISTANCE_PIPS = 10  # Đơn vị: pips (EURUSD: 10 pips minimum distance)
 
 # ============================================================================
 # PARTIAL CLOSE - Chốt một phần lợi nhuận
@@ -160,19 +160,19 @@ ATR_TRAILING_MIN_DISTANCE_PIPS = 100  # Đơn vị: pips
 ENABLE_PARTIAL_CLOSE = True  # True: Bật partial close, False: Tắt
 
 # Mốc TP1: Khi đạt mức lợi nhuận này → Đóng 30-50% volume
-PARTIAL_CLOSE_TP1_PIPS = 1000  # Đơn vị: pips (≈ $10 với 0.01 lot)
+PARTIAL_CLOSE_TP1_PIPS = 100  # Đơn vị: pips (EURUSD: 100 pips ≈ $10 với 0.01 lot)
 PARTIAL_CLOSE_TP1_PERCENT = 40  # Đóng bao nhiêu % volume (30-50%)
 
 # Mốc TP2: Khi đạt mức lợi nhuận này → Đóng thêm 25-30% volume
-PARTIAL_CLOSE_TP2_PIPS = 2000  # Đơn vị: pips (≈ $20 với 0.01 lot)
+PARTIAL_CLOSE_TP2_PIPS = 200  # Đơn vị: pips (EURUSD: 200 pips ≈ $20 với 0.01 lot)
 PARTIAL_CLOSE_TP2_PERCENT = 30  # Đóng bao nhiêu % volume còn lại
 
 # Mốc TP3: Khi đạt mức lợi nhuận này → Đóng thêm 25-30% volume
-PARTIAL_CLOSE_TP3_PIPS = 3000  # Đơn vị: pips (≈ $30 với 0.01 lot)
+PARTIAL_CLOSE_TP3_PIPS = 300  # Đơn vị: pips (EURUSD: 300 pips ≈ $30 với 0.01 lot)
 PARTIAL_CLOSE_TP3_PERCENT = 30  # Đóng bao nhiêu % volume còn lại
 
 # Buffer cho SL sau khi partial close (lớn hơn break-even buffer)
-PARTIAL_CLOSE_SL_BUFFER_PIPS = 100  # Đơn vị: pips
+PARTIAL_CLOSE_SL_BUFFER_PIPS = 10  # Đơn vị: pips (EURUSD: 10 pips buffer)
 
 # Hệ số ATR cho SL sau partial close (chặt hơn khi đã chốt lời)
 PARTIAL_CLOSE_ATR_K = 1.0  # Hệ số ATR (1.0 = chặt hơn, 1.5 = lỏng hơn)
@@ -292,7 +292,7 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # Spread tối đa cho phép (đơn vị: pips)
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
-MAX_SPREAD = 50  # Đơn vị: pips
+MAX_SPREAD = 3  # Đơn vị: pips (EURUSD thường có spread 0.5-2 pips, cho phép đến 3 pips)
 
 # Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này

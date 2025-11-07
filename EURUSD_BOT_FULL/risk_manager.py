@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import MetaTrader5 as mt5
 import logging
-from config_xauusd import *
+from config_eurusd import *
 try:
     import pytz
     PYTZ_AVAILABLE = True
@@ -17,9 +17,9 @@ except ImportError:
     PYTZ_AVAILABLE = False
     logging.warning("⚠️ pytz không được cài đặt. Sử dụng timezone mặc định (local time). Cài đặt: pip install pytz")
 
-class XAUUSD_RiskManager:
+class EURUSD_RiskManager:
     """
-    Lớp quản lý rủi ro cho bot giao dịch XAUUSD
+    Lớp quản lý rủi ro cho bot giao dịch EURUSD
     
     Chức năng:
     - Kiểm tra điều kiện tài khoản (equity, margin)

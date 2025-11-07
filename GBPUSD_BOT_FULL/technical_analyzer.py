@@ -7,7 +7,7 @@ Module này chứa các phương thức tính toán các chỉ báo kỹ thuật
 import pandas as pd
 import numpy as np
 import logging
-from config_xauusd import *
+from config_gbpusd import *
 
 class TechnicalAnalyzer:
     """
