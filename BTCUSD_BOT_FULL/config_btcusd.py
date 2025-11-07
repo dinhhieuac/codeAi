@@ -145,6 +145,51 @@ TRAIL_DISTANCE_PIPS = 400  # Đơn vị: pips (tăng từ 100 lên 400 để tr�
 TRAIL_HARD_LOCK_PIPS = 800  # Đơn vị: pips (tăng từ 250 lên 800 để hard lock muộn hơn)
 
 # ============================================================================
+# BREAK-EVEN & ATR TRAILING - Cấu hình dời SL thông minh
+# ============================================================================
+
+# Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu break-even (dời SL về entry + buffer)
+BREAK_EVEN_START_PIPS = 600  # Đơn vị: pips (Với BTCUSD: 600 pips = $6 với 0.01 lot)
+
+# Buffer khi dời SL về break-even (đơn vị: pips)
+# SL sẽ được dời về entry + buffer để tránh bị quét bởi noise
+BREAK_EVEN_BUFFER_PIPS = 50  # Đơn vị: pips (Với BTCUSD: 50 pips = $0.50 với 0.01 lot)
+
+# Hệ số nhân ATR cho trailing stop (sau khi break-even)
+# Khoảng cách trailing = ATR × ATR_TRAILING_K hoặc tối thiểu ATR_TRAILING_MIN_DISTANCE_PIPS
+ATR_TRAILING_K = 1.5  # Hệ số nhân ATR (ví dụ: ATR = 200 pips → Distance = 300 pips)
+
+# Khoảng cách trailing tối thiểu (đơn vị: pips)
+# Đảm bảo trailing không quá gần, tránh bị quét bởi noise
+ATR_TRAILING_MIN_DISTANCE_PIPS = 100  # Đơn vị: pips (Với BTCUSD: 100 pips = $1 với 0.01 lot)
+
+# ============================================================================
+# PARTIAL CLOSE - Chốt một phần lợi nhuận
+# ============================================================================
+
+# Bật/tắt tính năng Partial Close
+ENABLE_PARTIAL_CLOSE = True  # True: Bật partial close, False: Tắt
+
+# Mốc TP1: Khi đạt mức lợi nhuận này → Đóng 30-50% volume
+PARTIAL_CLOSE_TP1_PIPS = 1000  # Đơn vị: pips (≈ $10 với 0.01 lot)
+PARTIAL_CLOSE_TP1_PERCENT = 40  # Đóng bao nhiêu % volume (30-50%)
+
+# Mốc TP2: Khi đạt mức lợi nhuận này → Đóng thêm 25-30% volume còn lại
+PARTIAL_CLOSE_TP2_PIPS = 2000  # Đơn vị: pips (≈ $20 với 0.01 lot)
+PARTIAL_CLOSE_TP2_PERCENT = 30  # Đóng bao nhiêu % volume còn lại
+
+# Mốc TP3: Khi đạt mức lợi nhuận này → Đóng thêm 25-30% volume còn lại
+PARTIAL_CLOSE_TP3_PIPS = 3000  # Đơn vị: pips (≈ $30 với 0.01 lot)
+PARTIAL_CLOSE_TP3_PERCENT = 30  # Đóng bao nhiêu % volume còn lại
+
+# Buffer khi dời SL sau partial close (đơn vị: pips)
+# Sau mỗi lần partial close, SL sẽ được dời về entry + buffer lớn hơn
+PARTIAL_CLOSE_SL_BUFFER_PIPS = 100  # Đơn vị: pips (Với BTCUSD: 100 pips = $1 với 0.01 lot)
+
+# Hệ số nhân ATR cho trailing sau khi partial close (chặt hơn để bảo vệ lợi nhuận đã khóa)
+PARTIAL_CLOSE_ATR_K = 1.0  # Hệ số nhân ATR (nhỏ hơn ATR_TRAILING_K để trailing chặt hơn)
+
+# ============================================================================
 # TP ĐỘNG THEO SỨC MẠNH XU HƯỚNG - Tăng TP khi trend mạnh
 # ============================================================================
 
