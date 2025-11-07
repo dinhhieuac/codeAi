@@ -1229,7 +1229,8 @@ class BTCUSD_Bot:
                     new_sl = entry_price + (break_even_buffer_pips * 0.01)
                     # Đảm bảo SL mới cao hơn SL hiện tại hoặc SL hiện tại < entry
                     if new_sl > current_sl or current_sl < entry_price:
-                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
+                        # Không gửi Telegram trong _update_sl() vì sẽ gửi riêng sau
+                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even", send_telegram=False):
                             self.breakeven_activated.add(ticket)
                             logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
                             
@@ -1256,7 +1257,8 @@ class BTCUSD_Bot:
                     new_sl = entry_price - (break_even_buffer_pips * 0.01)
                     # Đảm bảo SL mới thấp hơn SL hiện tại hoặc SL hiện tại > entry
                     if new_sl < current_sl or current_sl == 0 or current_sl > entry_price:
-                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
+                        # Không gửi Telegram trong _update_sl() vì sẽ gửi riêng sau
+                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even", send_telegram=False):
                             self.breakeven_activated.add(ticket)
                             logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
                             
@@ -1369,10 +1371,17 @@ class BTCUSD_Bot:
                                 message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
                                 self.send_telegram_message(message)
     
-    def _update_sl(self, ticket, new_sl, tp, reason=""):
+    def _update_sl(self, ticket, new_sl, tp, reason="", send_telegram=True):
         """
         Helper function để update SL với error handling
-        Gửi Telegram notification khi thành công
+        Gửi Telegram notification khi thành công (trừ khi send_telegram=False)
+        
+        Args:
+            ticket: Ticket của position
+            new_sl: SL mới
+            tp: TP (giữ nguyên)
+            reason: Lý do update SL
+            send_telegram: Có gửi Telegram notification không (mặc định True)
         """
         # Lấy thông tin position TRƯỚC khi update để có old_sl
         pos_before = mt5.positions_get(ticket=ticket)
@@ -1395,8 +1404,9 @@ class BTCUSD_Bot:
         }
         result = mt5.order_send(request)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            # Gửi Telegram notification - LUÔN gửi khi thành công
-            if self.use_telegram:
+            # Gửi Telegram notification - Chỉ gửi nếu send_telegram=True
+            # Break-Even sẽ được gửi riêng trong _manage_trailing_stops() để tránh duplicate
+            if self.use_telegram and send_telegram:
                 # Lấy lại position SAU khi update để có thông tin mới nhất
                 pos_after = mt5.positions_get(ticket=ticket)
                 if pos_after and len(pos_after) > 0:
