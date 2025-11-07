@@ -198,7 +198,9 @@ class BTCUSD_Bot:
         if symbol_info:
             logging.info(f"✅ Symbol {self.symbol} đã sẵn sàng")
             logging.info(f"   - Bid: {symbol_info.bid:.2f}, Ask: {symbol_info.ask:.2f}")
-            logging.info(f"   - Spread: {(symbol_info.ask - symbol_info.bid) / 0.01:.1f} pips")
+            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            spread_pips = (symbol_info.ask - symbol_info.bid)  # BTCUSD: 1 USD = 1 pip
+            logging.info(f"   - Spread: {spread_pips:.1f} pips")
             logging.info(f"   - Point: {symbol_info.point}, Digits: {symbol_info.digits}")
         
         # Lấy thông tin tài khoản
@@ -367,7 +369,8 @@ class BTCUSD_Bot:
             return False, "Không lấy được symbol info"
             
         # Kiểm tra spread
-        spread = (symbol_info.ask - symbol_info.bid) / 0.01
+        # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+        spread = (symbol_info.ask - symbol_info.bid)  # BTCUSD: 1 USD = 1 pip
         logging.debug(f"📊 Spread hiện tại: {spread:.1f} pips (Max: {MAX_SPREAD} pips)")
         if spread > MAX_SPREAD:
             logging.warning(f"⚠️ Spread quá cao: {spread:.1f} pips > {MAX_SPREAD} pips")
@@ -1192,11 +1195,14 @@ class BTCUSD_Bot:
             atr_series = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
             atr_value = atr_series.iloc[-1] if not atr_series.empty else None
             if atr_value is not None:
-                atr_value = atr_value / 0.01  # Convert to pips (BTCUSD: 1 pip = 0.01)
+                # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                # ATR đã là pips rồi (không cần chia cho 0.01)
+                # atr_value = atr_value  # BTCUSD: 1 USD = 1 pip
         
         # Kiểm tra broker's stops_level
+        # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
         stops_level = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') else 0
-        stops_level_pips = stops_level / 0.01 if stops_level > 0 else 0
+        stops_level_pips = stops_level if stops_level > 0 else 0  # BTCUSD: stops_level đã là pips
         
         current_time = time.time()
         
@@ -1212,12 +1218,14 @@ class BTCUSD_Bot:
                     continue
             
             # Tính profit hiện tại (pips)
+            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # Vậy profit_pips = profit USD (không cần chia cho 0.01)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price)  # BTCUSD: 1 USD = 1 pip
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price)  # BTCUSD: 1 USD = 1 pip
             
             # ====================================================================
             # BƯỚC 1: BREAK-EVEN STEP
@@ -1423,19 +1431,20 @@ class BTCUSD_Bot:
                 # Tính profit protected
                 tick = mt5.symbol_info_tick(self.symbol)
                 if tick and entry_price is not None:
+                    # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
                     if pos_type == mt5.ORDER_TYPE_BUY:
                         current_price = tick.bid
-                        profit_pips = (current_price - entry_price) / 0.01
-                        protected_pips = (new_sl - entry_price) / 0.01
+                        profit_pips = (current_price - entry_price)  # BTCUSD: 1 USD = 1 pip
+                        protected_pips = (new_sl - entry_price)  # BTCUSD: 1 USD = 1 pip
                     else:  # SELL
                         current_price = tick.ask
-                        profit_pips = (entry_price - current_price) / 0.01
-                        protected_pips = (entry_price - new_sl) / 0.01
+                        profit_pips = (entry_price - current_price)  # BTCUSD: 1 USD = 1 pip
+                        protected_pips = (entry_price - new_sl)  # BTCUSD: 1 USD = 1 pip
                     
                     # Tính SL USD
                     if lot_size is not None:
                         pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
-                        sl_usd = abs(new_sl - entry_price) / 0.01 * pip_value_per_lot * lot_size
+                        sl_usd = abs(new_sl - entry_price) * pip_value_per_lot * lot_size
                         
                         direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
                         message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
@@ -1593,10 +1602,11 @@ class BTCUSD_Bot:
             if self.use_telegram:
                 # Tính profit và lợi nhuận
                 profit_usd = 0
+                # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    profit_pips = (close_price - pos.price_open) / 0.01
+                    profit_pips = (close_price - pos.price_open)  # BTCUSD: 1 USD = 1 pip
                 else:  # SELL
-                    profit_pips = (pos.price_open - close_price) / 0.01
+                    profit_pips = (pos.price_open - close_price)  # BTCUSD: 1 USD = 1 pip
                 
                 pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
                 profit_usd = profit_pips * pip_value_per_lot * close_volume
@@ -1679,12 +1689,13 @@ class BTCUSD_Bot:
             entry_price = pos.price_open
             
             # Tính profit hiện tại (pips)
+            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price)  # BTCUSD: 1 USD = 1 pip
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price)  # BTCUSD: 1 USD = 1 pip
             
             # Cập nhật đỉnh profit
             if ticket not in self.position_peak_profit or profit_pips > self.position_peak_profit[ticket]:
