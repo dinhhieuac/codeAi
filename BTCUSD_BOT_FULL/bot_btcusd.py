@@ -1194,10 +1194,9 @@ class BTCUSD_Bot:
         else:
             atr_series = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
             atr_value = atr_series.iloc[-1] if not atr_series.empty else None
-            if atr_value is not None:
-                # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
-                # ATR đã là pips rồi (không cần chia cho 0.01)
-                # atr_value = atr_value  # BTCUSD: 1 USD = 1 pip
+            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # ATR đã là pips rồi (không cần chia cho 0.01)
+            # atr_value giữ nguyên giá trị (đã là pips)
         
         # Kiểm tra broker's stops_level
         # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
