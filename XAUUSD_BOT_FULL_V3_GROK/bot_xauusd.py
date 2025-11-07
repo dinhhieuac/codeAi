@@ -6,8 +6,8 @@ import sys
 import re
 import requests
 from datetime import datetime, timedelta
-from config_btcusd import *
-from risk_manager import BTCUSD_RiskManager
+from config_xauusd import *
+from risk_manager import XAUUSD_RiskManager
 from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
@@ -65,9 +65,9 @@ if sys.platform == 'win32':
         pass  # Không hỗ trợ hoặc không thể cấu hình
 
 # Setup logging
-log_file = os.path.join('logs', 'btcusd_bot.log') if os.path.exists('logs') else 'btcusd_bot.log'
+log_file = os.path.join('logs', 'xauusd_bot.log') if os.path.exists('logs') else 'xauusd_bot.log'
 os.makedirs('logs', exist_ok=True)
-log_file = os.path.join('logs', 'btcusd_bot.log')
+log_file = os.path.join('logs', 'xauusd_bot.log')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,11 +78,11 @@ logging.basicConfig(
     ]
 )
 
-class BTCUSD_Bot:
+class XAUUSD_Bot:
     def __init__(self):
         self.symbol = SYMBOL
         self.timeframe = TIMEFRAME_MT5[TIMEFRAME]
-        self.risk_manager = BTCUSD_RiskManager()
+        self.risk_manager = XAUUSD_RiskManager()
         self.technical_analyzer = TechnicalAnalyzer()
         self.setup_directories()
         
@@ -102,7 +102,9 @@ class BTCUSD_Bot:
         self.partial_close_done = {}  # Dict {ticket: [TP1_done, TP2_done, TP3_done]} để theo dõi partial close
         self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
         self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
-        self.hard_lock_notified = set()  # Set các ticket đã gửi thông báo Hard Lock
+        
+        # Tracking để phát hiện TP/SL hit
+        self.previous_positions = {}  # Dict {ticket: position_info} để theo dõi positions từ cycle trước
         
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
@@ -112,8 +114,20 @@ class BTCUSD_Bot:
         
     def setup_mt5(self):
         logging.info("=" * 60)
-        logging.info("🚀 KHỞI TẠO BOT BTCUSD")
+        logging.info("🚀 KHỞI TẠO BOT XAUUSD")
         logging.info("=" * 60)
+        
+        # Log config đang sử dụng
+        try:
+            from config_xauusd import selected_config, CONFIG_INDEX
+            config_name = selected_config.get('name', 'UNKNOWN')
+            config_desc = selected_config.get('description', '')
+            logging.info(f"⚙️  Config: <b>{config_name}</b> (Index: {CONFIG_INDEX})")
+            logging.info(f"   📝 {config_desc}")
+        except (ImportError, NameError, AttributeError):
+            logging.info(f"⚙️  Config: Mặc định (không dùng config array)")
+        
+        logging.info("-" * 60)
         logging.info(f"📊 Symbol: {self.symbol}")
         logging.info(f"⏱️  Timeframe: {TIMEFRAME}")
         logging.info(f"💰 Risk per trade: {RISK_PER_TRADE}%")
@@ -291,7 +305,7 @@ class BTCUSD_Bot:
         Tự động detect và trả về filling mode phù hợp với broker
         
         Args:
-            symbol: Symbol cần kiểm tra (ví dụ: "BTCUSD")
+            symbol: Symbol cần kiểm tra (ví dụ: "XAUUSD")
             
         Returns:
             Filling mode constant từ MT5 (ORDER_FILLING_IOC, ORDER_FILLING_FOK, hoặc ORDER_FILLING_RETURN)
@@ -332,8 +346,8 @@ class BTCUSD_Bot:
         balance = account_info['balance']
         risk_amount = balance * (RISK_PER_TRADE / 100)
         
-        # 1 pip BTCUSD = $1 cho 1 lot (1 lot = 1 BTC, 1 pip = 1 USD)
-        # Ví dụ: Giá tăng từ 100000 → 100001 (1 pip) với 1 lot → Profit = 1 BTC × $1 = $1.00
+        # 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
+        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
         pip_value = 1  # $1 cho 1 lot
         position_size = risk_amount / (stop_loss_pips * pip_value)
         
@@ -454,13 +468,13 @@ class BTCUSD_Bot:
             return None
         
         # ⚠️ QUAN TRỌNG: Kiểm tra giới hạn SL theo USD (SAU KHI validate lot_size)
-        # Tính SL theo USD: 1 pip BTCUSD = $1 cho 1 lot (1 lot = 1 BTC, 1 pip = 1 USD)
-        # Ví dụ: Giá tăng từ 100000 → 100001 (1 pip) với 1 lot → Profit = 1 BTC × $1 = $1.00
-        pip_value_per_lot = 1  # $1 cho 1 lot
+        # Tính SL theo USD: 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
+        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
+        pip_value_per_lot = 1  # $1 cho 1 lot (SAI: đã sửa từ 10 xuống 1)
         sl_usd = sl_pips * pip_value_per_lot * lot_size
         
         # Kiểm tra mode ATR SL/TP
-        # Lấy từ config (đã được import từ config_btcusd.py)
+        # Lấy từ config (đã được import từ config_xauusd.py)
         try:
             atr_sl_tp_mode = ATR_SL_TP_MODE
             logging.debug(f"🔍 ATR_SL_TP_MODE từ config: {atr_sl_tp_mode}")
@@ -587,24 +601,20 @@ class BTCUSD_Bot:
             sl_usd = sl_pips * pip_value_per_lot * lot_size
             
             # Tính SL price SAU khi điều chỉnh xong
-            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
-            # Vậy sl_pips đã là USD rồi, không cần nhân 0.01
             if signal_type == "BUY":
-                sl_price = price - sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
+                sl_price = price - (sl_pips * 0.01)
             else:  # SELL
-                sl_price = price + sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
+                sl_price = price + (sl_pips * 0.01)
             
             # Tính TP price
-            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
-            # Vậy tp_pips đã là USD rồi, không cần nhân 0.01
             if signal_type == "BUY":
-                tp_price = price + tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
+                tp_price = price + (tp_pips * 0.01)
             else:  # SELL
-                tp_price = price - tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
+                tp_price = price - (tp_pips * 0.01)
             
             # Tính lại SL USD từ SL price thực tế để verify
-            # Với BTCUSD: 1 USD distance = 1 pip = 1 USD cho 1 lot
-            sl_usd_actual = abs(price - sl_price) * pip_value_per_lot * lot_size
+            sl_pips_actual = abs(price - sl_price) / 0.01
+            sl_usd_actual = sl_pips_actual * pip_value_per_lot * lot_size
             
             # Log kết quả cuối cùng
             if atr_min_sl_usd <= sl_usd_actual <= atr_max_sl_usd:
@@ -622,14 +632,12 @@ class BTCUSD_Bot:
             # + Điều chỉnh mềm để tránh rủi ro quá lớn (nhưng không bắt buộc như BOUNDED)
             
             # Tính SL price và TP price
-            # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
-            # Vậy sl_pips đã là USD rồi, không cần nhân 0.01
             if signal_type == "BUY":
-                sl_price = price - sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
-                tp_price = price + tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
+                sl_price = price - (sl_pips * 0.01)
+                tp_price = price + (tp_pips * 0.01)
             else:  # SELL
-                sl_price = price + sl_pips  # sl_pips đã là USD (1 pip = 1 USD)
-                tp_price = price - tp_pips  # tp_pips đã là USD (1 pip = 1 USD)
+                sl_price = price + (sl_pips * 0.01)
+                tp_price = price - (tp_pips * 0.01)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
@@ -704,7 +712,7 @@ class BTCUSD_Bot:
             "tp": tp_price,
             "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
-            "comment": f"BTCUSD_Bot_{signal_type}",
+            "comment": f"XAUUSD_Bot_{signal_type}",
             "type_time": mt5.ORDER_TIME_GTC,
         }
         
@@ -769,7 +777,7 @@ class BTCUSD_Bot:
     def run_bot(self):
         """Vòng lặp chính của bot"""
         logging.info("=" * 60)
-        logging.info("🚀 BOT BTCUSD BẮT ĐẦU CHẠY")
+        logging.info("🚀 BOT XAUUSD BẮT ĐẦU CHẠY")
         logging.info("=" * 60)
         
         # Không gửi Telegram khi bot khởi động (chỉ gửi khi có kết quả lệnh)
@@ -887,7 +895,8 @@ class BTCUSD_Bot:
                 
                 # Phân tích kỹ thuật (chuyển sang debug để giảm log)
                 logging.debug("🔍 Đang phân tích kỹ thuật...")
-                signal = self.technical_analyzer.analyze(df)
+                # Truyền symbol để lấy multi-timeframe bias (theo grok.md: D1/H4 cho bias)
+                signal = self.technical_analyzer.analyze(df, symbol=self.symbol, use_multi_timeframe=True)
                 
                 if signal:
                     action = signal.get('action', 'HOLD')
@@ -929,6 +938,73 @@ class BTCUSD_Bot:
                             else:
                                 remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
                                 logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - cooldown còn {remaining}s")
+                        
+                        # Kiểm tra TP Boost và gửi Telegram nếu có
+                        if action != 'HOLD' and len(df) > 0:
+                            enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
+                            if enable_tp_boost and 'rsi' in df.columns:
+                                rsi_current = df.iloc[-1]['rsi']
+                                rsi_threshold_up = RSI_TREND_THRESHOLD_UP if 'RSI_TREND_THRESHOLD_UP' in globals() else 65
+                                rsi_threshold_down = RSI_TREND_THRESHOLD_DOWN if 'RSI_TREND_THRESHOLD_DOWN' in globals() else 35
+                                strong_trend_boost = STRONG_TREND_TP_BOOST if 'STRONG_TREND_TP_BOOST' in globals() else 0.3
+                                
+                                tp_pips = signal.get('tp_pips', 0)
+                                
+                                # Kiểm tra nếu TP Boost đã được áp dụng
+                                tp_boosted = False
+                                if action == "BUY" and rsi_current > rsi_threshold_up:
+                                    tp_boosted = True
+                                    if self.use_telegram and should_send_signal:
+                                        # Tính lot size dựa trên SL pips để tính USD chính xác
+                                        sl_pips = signal.get('sl_pips', 0)
+                                        estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
+                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        
+                                        tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
+                                        tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
+                                        tp_boosted_usd = tp_pips * pip_value_per_lot * estimated_lot_size
+                                        sl_usd = sl_pips * pip_value_per_lot * estimated_lot_size
+                                        
+                                        message = f"<b>📈 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                        message += f"<b>Thông tin tín hiệu:</b>\n"
+                                        message += f"• Loại: <b>{action}</b>\n"
+                                        message += f"• Strength: <b>{strength}</b> điểm\n"
+                                        message += f"• RSI: <b>{rsi_current:.2f}</b> (>{rsi_threshold_up})\n"
+                                        message += f"• TP gốc: <b>{tp_original_pips} pips</b> (${tp_original_usd:.2f})\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (${tp_boosted_usd:.2f}) (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{sl_pips:.0f} pips</b> (${sl_usd:.2f})\n"
+                                        message += f"• Lot size (ước tính): <b>{estimated_lot_size:.2f}</b>\n\n"
+                                        message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
+                                        self.send_telegram_message(message)
+                                        logging.info(f"📈 TP BOOST KÍCH HOẠT - {self.symbol} {action}: TP gốc {tp_original_pips} pips (${tp_original_usd:.2f}) → TP sau boost {tp_pips} pips (${tp_boosted_usd:.2f}), SL {sl_pips:.0f} pips (${sl_usd:.2f}), Lot size: {estimated_lot_size:.2f}")
+                                        logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
+                                
+                                elif action == "SELL" and rsi_current < rsi_threshold_down:
+                                    tp_boosted = True
+                                    if self.use_telegram and should_send_signal:
+                                        # Tính lot size dựa trên SL pips để tính USD chính xác
+                                        sl_pips = signal.get('sl_pips', 0)
+                                        estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
+                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        
+                                        tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
+                                        tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
+                                        tp_boosted_usd = tp_pips * pip_value_per_lot * estimated_lot_size
+                                        sl_usd = sl_pips * pip_value_per_lot * estimated_lot_size
+                                        
+                                        message = f"<b>📉 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                        message += f"<b>Thông tin tín hiệu:</b>\n"
+                                        message += f"• Loại: <b>{action}</b>\n"
+                                        message += f"• Strength: <b>{strength}</b> điểm\n"
+                                        message += f"• RSI: <b>{rsi_current:.2f}</b> (<{rsi_threshold_down})\n"
+                                        message += f"• TP gốc: <b>{tp_original_pips} pips</b> (${tp_original_usd:.2f})\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (${tp_boosted_usd:.2f}) (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{sl_pips:.0f} pips</b> (${sl_usd:.2f})\n"
+                                        message += f"• Lot size (ước tính): <b>{estimated_lot_size:.2f}</b>\n\n"
+                                        message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
+                                        self.send_telegram_message(message)
+                                        logging.info(f"📉 TP BOOST KÍCH HOẠT - {self.symbol} {action}: TP gốc {tp_original_pips} pips (${tp_original_usd:.2f}) → TP sau boost {tp_pips} pips (${tp_boosted_usd:.2f}), SL {sl_pips:.0f} pips (${sl_usd:.2f}), Lot size: {estimated_lot_size:.2f}")
+                                        logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
                         
                         # Không gửi Telegram khi có tín hiệu (chỉ gửi khi có kết quả lệnh)
                         # Cập nhật tracking để tránh spam log
@@ -975,8 +1051,8 @@ class BTCUSD_Bot:
                                 )
                                 direction_name = "BUY" if check_order_type == mt5.ORDER_TYPE_BUY else "SELL"
                                 logging.warning(f"❌ Không thể mở lệnh {action}: Đang có {same_direction_count} lệnh {direction_name} cùng chiều đang mở trên MT5")
-                                log_delay_and_sleep()
-                                continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                            log_delay_and_sleep()
+                            continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
                         # Lấy lệnh cùng chiều mới nhất từ MT5 và check xem đã đủ 60 phút chưa
@@ -1051,7 +1127,7 @@ class BTCUSD_Bot:
                         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             ticket = result.order
                             logging.info("=" * 60)
-                            logging.info(f"✅ LỆNH  {action} BTCUSD THÀNH CÔNG!")
+                            logging.info(f"✅ LỆNH  {action} XAUUSD THÀNH CÔNG!")
                             logging.info("=" * 60)
                             logging.info(f"   - Ticket: {ticket}")
                             logging.info(f"   - Volume: {result.volume} lots")
@@ -1063,7 +1139,7 @@ class BTCUSD_Bot:
                             # Gửi thông báo Telegram về lệnh thành công
                             if self.use_telegram:
                                 success_message = (
-                                    f"✅ <b>LỆNH {action} BTCUSD THÀNH CÔNG</b>\n\n"
+                                    f"✅ <b>LỆNH {action} XAUUSD THÀNH CÔNG</b>\n\n"
                                     f"📊 <b>Thông tin lệnh:</b>\n"
                                     f"   • Ticket: <code>{ticket}</code>\n"
                                     f"   • Volume: <b>{result.volume}</b> lots\n"
@@ -1192,7 +1268,7 @@ class BTCUSD_Bot:
             atr_series = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
             atr_value = atr_series.iloc[-1] if not atr_series.empty else None
             if atr_value is not None:
-                atr_value = atr_value / 0.01  # Convert to pips (BTCUSD: 1 pip = 0.01)
+                atr_value = atr_value / 0.01  # Convert to pips (XAUUSD: 1 pip = 0.01)
         
         # Kiểm tra broker's stops_level
         stops_level = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') else 0
@@ -1236,7 +1312,7 @@ class BTCUSD_Bot:
                             # Gửi Telegram notification
                             if self.use_telegram:
                                 direction = "BUY"
-                                pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                                 protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
                                 message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
@@ -1263,7 +1339,7 @@ class BTCUSD_Bot:
                             # Gửi Telegram notification
                             if self.use_telegram:
                                 direction = "SELL"
-                                pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                                 protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
                                 message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
@@ -1319,7 +1395,7 @@ class BTCUSD_Bot:
                             if self.use_telegram and ticket not in self.atr_trailing_first_activation:
                                 self.atr_trailing_first_activation.add(ticket)
                                 direction = "BUY"
-                                pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                                 message = f"<b>📈 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
                                 message += f"• Ticket: <code>{ticket}</code>\n"
@@ -1353,7 +1429,7 @@ class BTCUSD_Bot:
                             if self.use_telegram and ticket not in self.atr_trailing_first_activation:
                                 self.atr_trailing_first_activation.add(ticket)
                                 direction = "SELL"
-                                pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                                 message = f"<b>📉 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
                                 message += f"• Ticket: <code>{ticket}</code>\n"
@@ -1372,8 +1448,7 @@ class BTCUSD_Bot:
     def _update_sl(self, ticket, new_sl, tp, reason=""):
         """
         Helper function để update SL với error handling
-        Gửi Telegram notification khi thành công
-        """
+        Gửi Telegram notification khi thành công        """
         # Lấy thông tin position TRƯỚC khi update để có old_sl
         pos_before = mt5.positions_get(ticket=ticket)
         old_sl = None
@@ -1424,7 +1499,7 @@ class BTCUSD_Bot:
                     
                     # Tính SL USD
                     if lot_size is not None:
-                        pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                         sl_usd = abs(new_sl - entry_price) / 0.01 * pip_value_per_lot * lot_size
                         
                         direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
@@ -1588,7 +1663,7 @@ class BTCUSD_Bot:
                 else:  # SELL
                     profit_pips = (pos.price_open - close_price) / 0.01
                 
-                pip_value_per_lot = 1  # BTCUSD: 1 pip = $1 cho 1 lot
+                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
                 profit_usd = profit_pips * pip_value_per_lot * close_volume
                 
                 direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
@@ -1654,9 +1729,7 @@ class BTCUSD_Bot:
         # Lấy tham số từ config
         opposite_signal_count = OPPOSITE_SIGNAL_COUNT_TO_EXIT if 'OPPOSITE_SIGNAL_COUNT_TO_EXIT' in globals() else 2
         enable_rsi_exit = ENABLE_RSI_EXIT if 'ENABLE_RSI_EXIT' in globals() else True
-        rsi_exit_threshold_buy = RSI_EXIT_THRESHOLD_BUY if 'RSI_EXIT_THRESHOLD_BUY' in globals() else 35
-        rsi_exit_threshold_sell = RSI_EXIT_THRESHOLD_SELL if 'RSI_EXIT_THRESHOLD_SELL' in globals() else 65
-        rsi_exit_min_profit_pips = RSI_EXIT_MIN_PROFIT_PIPS if 'RSI_EXIT_MIN_PROFIT_PIPS' in globals() else 200
+        rsi_exit_threshold = RSI_EXIT_THRESHOLD if 'RSI_EXIT_THRESHOLD' in globals() else 50
         enable_profit_dd_exit = ENABLE_PROFIT_DRAWDOWN_EXIT if 'ENABLE_PROFIT_DRAWDOWN_EXIT' in globals() else True
         profit_dd_exit_percent = PROFIT_DRAWDOWN_EXIT_PERCENT if 'PROFIT_DRAWDOWN_EXIT_PERCENT' in globals() else 40
         
@@ -1705,17 +1778,16 @@ class BTCUSD_Bot:
                         self.opposite_signal_count[ticket] = 0
             
             # Kiểm tra 2: RSI quay đầu vượt vùng trung tính
-            # ⚠️ CHỈ EXIT KHI: profit > min_profit VÀ RSI vượt threshold mạnh (tránh exit quá sớm)
-            if enable_rsi_exit and profit_pips > rsi_exit_min_profit_pips:  # Chỉ exit khi đang lời và đạt profit tối thiểu
-                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold_buy:
-                    # BUY nhưng RSI < 35 (oversold mạnh) → Momentum giảm mạnh
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} < {rsi_exit_threshold_buy}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
-                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold_buy})")
+            if enable_rsi_exit and profit_pips > 0:  # Chỉ exit khi đang lời
+                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold:
+                    # BUY nhưng RSI < 50 → Momentum giảm
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold})")
+                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
                     continue
-                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold_sell:
-                    # SELL nhưng RSI > 65 (overbought mạnh) → Momentum giảm mạnh
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} > {rsi_exit_threshold_sell}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
-                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold_sell})")
+                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold:
+                    # SELL nhưng RSI > 50 → Momentum giảm
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold})")
+                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
                     continue
             
             # Kiểm tra 3: Profit drawdown (lợi nhuận giảm quá nhanh)
@@ -1787,17 +1859,15 @@ class BTCUSD_Bot:
                 del self.last_trailing_check[ticket]
             if ticket in self.atr_trailing_first_activation:
                 self.atr_trailing_first_activation.remove(ticket)
-            if ticket in self.hard_lock_notified:
-                self.hard_lock_notified.remove(ticket)
         elif result:
             logging.warning(f"⚠️ Smart Exit thất bại: Ticket {ticket}, {result.comment if hasattr(result, 'comment') else 'Unknown'}")
 
 def main():
     logging.info("=" * 60)
-    logging.info("🚀 KHỞI ĐỘNG BOT BTCUSD")
+    logging.info("🚀 KHỞI ĐỘNG BOT XAUUSD")
     logging.info("=" * 60)
     
-    bot = BTCUSD_Bot()
+    bot = XAUUSD_Bot()
     
     if not bot.setup_mt5():
         logging.error("❌ Không thể khởi tạo MT5. Thoát chương trình.")
