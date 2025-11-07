@@ -212,7 +212,7 @@ class EURUSD_Bot:
         if symbol_info:
             logging.info(f"✅ Symbol {self.symbol} đã sẵn sàng")
             logging.info(f"   - Bid: {symbol_info.bid:.2f}, Ask: {symbol_info.ask:.2f}")
-            logging.info(f"   - Spread: {(symbol_info.ask - symbol_info.bid) / 0.01:.1f} pips")
+            logging.info(f"   - Spread: {(symbol_info.ask - symbol_info.bid) / 0.0001:.1f} pips")
             logging.info(f"   - Point: {symbol_info.point}, Digits: {symbol_info.digits}")
         
         # Lấy thông tin tài khoản
@@ -346,9 +346,9 @@ class EURUSD_Bot:
         balance = account_info['balance']
         risk_amount = balance * (RISK_PER_TRADE / 100)
         
-        # 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
-        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
-        pip_value = 1  # $1 cho 1 lot
+        # 1 pip EURUSD = $10 cho 1 lot (1 lot = 100,000 units, 1 pip = 0.0001)
+        # Ví dụ: Giá tăng từ 1.1000 → 1.1001 (1 pip) với 1 lot → Profit = 100,000 × 0.0001 = $10.00
+        pip_value = 10  # $10 cho 1 lot
         position_size = risk_amount / (stop_loss_pips * pip_value)
         
         # Làm tròn và giới hạn kích thước
@@ -381,7 +381,7 @@ class EURUSD_Bot:
             return False, "Không lấy được symbol info"
             
         # Kiểm tra spread
-        spread = (symbol_info.ask - symbol_info.bid) / 0.01
+        spread = (symbol_info.ask - symbol_info.bid) / 0.0001
         logging.debug(f"📊 Spread hiện tại: {spread:.1f} pips (Max: {MAX_SPREAD} pips)")
         if spread > MAX_SPREAD:
             logging.warning(f"⚠️ Spread quá cao: {spread:.1f} pips > {MAX_SPREAD} pips")
@@ -468,9 +468,9 @@ class EURUSD_Bot:
             return None
         
         # ⚠️ QUAN TRỌNG: Kiểm tra giới hạn SL theo USD (SAU KHI validate lot_size)
-        # Tính SL theo USD: 1 pip XAUUSD = $1 cho 1 lot (1 lot = 100 oz, 1 pip = 0.01 USD)
-        # Ví dụ: Giá tăng từ 3985.00 → 3985.01 (1 pip) với 1 lot → Profit = 100 oz × 0.01 = $1.00
-        pip_value_per_lot = 1  # $1 cho 1 lot (SAI: đã sửa từ 10 xuống 1)
+        # Tính SL theo USD: 1 pip EURUSD = $10 cho 1 lot (1 lot = 100,000 units, 1 pip = 0.0001)
+        # Ví dụ: Giá tăng từ 1.1000 → 1.1001 (1 pip) với 1 lot → Profit = 100,000 × 0.0001 = $10.00
+        pip_value_per_lot = 10  # $10 cho 1 lot
         sl_usd = sl_pips * pip_value_per_lot * lot_size
         
         # Kiểm tra mode ATR SL/TP
@@ -602,18 +602,18 @@ class EURUSD_Bot:
             
             # Tính SL price SAU khi điều chỉnh xong
             if signal_type == "BUY":
-                sl_price = price - (sl_pips * 0.01)
+                sl_price = price - (sl_pips * 0.0001)
             else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
+                sl_price = price + (sl_pips * 0.0001)
             
             # Tính TP price
             if signal_type == "BUY":
-                tp_price = price + (tp_pips * 0.01)
+                tp_price = price + (tp_pips * 0.0001)
             else:  # SELL
-                tp_price = price - (tp_pips * 0.01)
+                tp_price = price - (tp_pips * 0.0001)
             
             # Tính lại SL USD từ SL price thực tế để verify
-            sl_pips_actual = abs(price - sl_price) / 0.01
+            sl_pips_actual = abs(price - sl_price) / 0.0001
             sl_usd_actual = sl_pips_actual * pip_value_per_lot * lot_size
             
             # Log kết quả cuối cùng
@@ -633,11 +633,11 @@ class EURUSD_Bot:
             
             # Tính SL price và TP price
             if signal_type == "BUY":
-                sl_price = price - (sl_pips * 0.01)
-                tp_price = price + (tp_pips * 0.01)
+                sl_price = price - (sl_pips * 0.0001)
+                tp_price = price + (tp_pips * 0.0001)
             else:  # SELL
-                sl_price = price + (sl_pips * 0.01)
-                tp_price = price - (tp_pips * 0.01)
+                sl_price = price + (sl_pips * 0.0001)
+                tp_price = price - (tp_pips * 0.0001)
             
             # SL đã được tự động tính theo ATR trong technical_analyzer.py:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
@@ -957,7 +957,7 @@ class EURUSD_Bot:
                                         # Tính lot size dựa trên SL pips để tính USD chính xác
                                         sl_pips = signal.get('sl_pips', 0)
                                         estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
-                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                         
                                         tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
                                         tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
@@ -984,7 +984,7 @@ class EURUSD_Bot:
                                         # Tính lot size dựa trên SL pips để tính USD chính xác
                                         sl_pips = signal.get('sl_pips', 0)
                                         estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
-                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                         
                                         tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
                                         tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
@@ -1267,11 +1267,11 @@ class EURUSD_Bot:
             atr_series = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
             atr_value = atr_series.iloc[-1] if not atr_series.empty else None
             if atr_value is not None:
-                atr_value = atr_value / 0.01  # Convert to pips (XAUUSD: 1 pip = 0.01)
+                atr_value = atr_value / 0.0001  # Convert to pips (EURUSD: 1 pip = 0.0001)
         
         # Kiểm tra broker's stops_level
         stops_level = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') else 0
-        stops_level_pips = stops_level / 0.01 if stops_level > 0 else 0
+        stops_level_pips = stops_level / 0.0001 if stops_level > 0 else 0
         
         current_time = time.time()
         
@@ -1289,10 +1289,10 @@ class EURUSD_Bot:
             # Tính profit hiện tại (pips)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price) / 0.0001
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price) / 0.0001
             
             # ====================================================================
             # BƯỚC 1: BREAK-EVEN STEP
@@ -1301,7 +1301,7 @@ class EURUSD_Bot:
             if profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
                 # Dời SL về entry + buffer
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    new_sl = entry_price + (break_even_buffer_pips * 0.01)
+                    new_sl = entry_price + (break_even_buffer_pips * 0.0001)
                     # Đảm bảo SL mới cao hơn SL hiện tại hoặc SL hiện tại < entry
                     if new_sl > current_sl or current_sl < entry_price:
                         if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
@@ -1311,7 +1311,7 @@ class EURUSD_Bot:
                             # Gửi Telegram notification
                             if self.use_telegram:
                                 direction = "BUY"
-                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                 protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
                                 message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
@@ -1328,7 +1328,7 @@ class EURUSD_Bot:
                                 message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
                                 self.send_telegram_message(message)
                 else:  # SELL
-                    new_sl = entry_price - (break_even_buffer_pips * 0.01)
+                    new_sl = entry_price - (break_even_buffer_pips * 0.0001)
                     # Đảm bảo SL mới thấp hơn SL hiện tại hoặc SL hiện tại > entry
                     if new_sl < current_sl or current_sl == 0 or current_sl > entry_price:
                         if self._update_sl(ticket, new_sl, pos.tp, "Break-Even"):
@@ -1338,7 +1338,7 @@ class EURUSD_Bot:
                             # Gửi Telegram notification
                             if self.use_telegram:
                                 direction = "SELL"
-                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                 protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
                                 message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
@@ -1377,12 +1377,12 @@ class EURUSD_Bot:
                     trail_distance_pips = max(atr_value * partial_atr_k, atr_min_distance_pips)
                 
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    new_sl = current_price - (trail_distance_pips * 0.01)
+                    new_sl = current_price - (trail_distance_pips * 0.0001)
                     # SL mới phải cao hơn SL hiện tại và >= entry (breakeven)
                     if new_sl > current_sl and new_sl >= entry_price:
                         # Kiểm tra stops_level
                         if stops_level_pips > 0:
-                            min_sl = current_price - (stops_level_pips * 0.01)
+                            min_sl = current_price - (stops_level_pips * 0.0001)
                             if new_sl < min_sl:
                                 new_sl = min_sl
                         
@@ -1394,7 +1394,7 @@ class EURUSD_Bot:
                             if self.use_telegram and ticket not in self.atr_trailing_first_activation:
                                 self.atr_trailing_first_activation.add(ticket)
                                 direction = "BUY"
-                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                 message = f"<b>📈 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
                                 message += f"• Ticket: <code>{ticket}</code>\n"
@@ -1411,12 +1411,12 @@ class EURUSD_Bot:
                                 self.send_telegram_message(message)
                 
                 else:  # SELL
-                    new_sl = current_price + (trail_distance_pips * 0.01)
+                    new_sl = current_price + (trail_distance_pips * 0.0001)
                     # SL mới phải thấp hơn SL hiện tại và <= entry (breakeven)
                     if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
                         # Kiểm tra stops_level
                         if stops_level_pips > 0:
-                            max_sl = current_price + (stops_level_pips * 0.01)
+                            max_sl = current_price + (stops_level_pips * 0.0001)
                             if new_sl > max_sl:
                                 new_sl = max_sl
                         
@@ -1428,7 +1428,7 @@ class EURUSD_Bot:
                             if self.use_telegram and ticket not in self.atr_trailing_first_activation:
                                 self.atr_trailing_first_activation.add(ticket)
                                 direction = "SELL"
-                                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                                 message = f"<b>📉 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
                                 message += f"<b>Thông tin lệnh:</b>\n"
                                 message += f"• Ticket: <code>{ticket}</code>\n"
@@ -1489,17 +1489,17 @@ class EURUSD_Bot:
                 if tick and entry_price is not None:
                     if pos_type == mt5.ORDER_TYPE_BUY:
                         current_price = tick.bid
-                        profit_pips = (current_price - entry_price) / 0.01
-                        protected_pips = (new_sl - entry_price) / 0.01
+                        profit_pips = (current_price - entry_price) / 0.0001
+                        protected_pips = (new_sl - entry_price) / 0.0001
                     else:  # SELL
                         current_price = tick.ask
-                        profit_pips = (entry_price - current_price) / 0.01
-                        protected_pips = (entry_price - new_sl) / 0.01
+                        profit_pips = (entry_price - current_price) / 0.0001
+                        protected_pips = (entry_price - new_sl) / 0.0001
                     
                     # Tính SL USD
                     if lot_size is not None:
-                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
-                        sl_usd = abs(new_sl - entry_price) / 0.01 * pip_value_per_lot * lot_size
+                        pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
+                        sl_usd = abs(new_sl - entry_price) / 0.0001 * pip_value_per_lot * lot_size
                         
                         direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
                         message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
@@ -1570,7 +1570,7 @@ class EURUSD_Bot:
                 if self._close_partial_position(pos, close_volume, "TP1"):
                     self.partial_close_done[ticket][0] = True
                     # Dời SL về break-even + buffer lớn hơn
-                    new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                    new_sl = entry_price + (partial_buffer_pips * 0.0001) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.0001)
                     self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP1")
                     logging.info(f"💰 Partial Close TP1: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp1_percent}%), Dời SL về {new_sl:.2f}")
         
@@ -1586,7 +1586,7 @@ class EURUSD_Bot:
                 if close_volume < remaining_volume:
                     if self._close_partial_position(current_pos[0], close_volume, "TP2"):
                         self.partial_close_done[ticket][1] = True
-                        new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                        new_sl = entry_price + (partial_buffer_pips * 0.0001) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.0001)
                         self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP2")
                         logging.info(f"💰 Partial Close TP2: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp2_percent}%), Dời SL về {new_sl:.2f}")
         
@@ -1601,7 +1601,7 @@ class EURUSD_Bot:
                 if close_volume < remaining_volume:
                     if self._close_partial_position(current_pos[0], close_volume, "TP3"):
                         self.partial_close_done[ticket][2] = True
-                        new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                        new_sl = entry_price + (partial_buffer_pips * 0.0001) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.0001)
                         self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP3")
                         logging.info(f"💰 Partial Close TP3: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp3_percent}%), Dời SL về {new_sl:.2f}")
     
@@ -1658,11 +1658,11 @@ class EURUSD_Bot:
                 # Tính profit và lợi nhuận
                 profit_usd = 0
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    profit_pips = (close_price - pos.price_open) / 0.01
+                    profit_pips = (close_price - pos.price_open) / 0.0001
                 else:  # SELL
-                    profit_pips = (pos.price_open - close_price) / 0.01
+                    profit_pips = (pos.price_open - close_price) / 0.0001
                 
-                pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                pip_value_per_lot = 10  # EURUSD: 1 pip = $10 cho 1 lot
                 profit_usd = profit_pips * pip_value_per_lot * close_volume
                 
                 direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
@@ -1743,10 +1743,10 @@ class EURUSD_Bot:
             # Tính profit hiện tại (pips)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price) / 0.0001
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price) / 0.0001
             
             # Cập nhật đỉnh profit
             if ticket not in self.position_peak_profit or profit_pips > self.position_peak_profit[ticket]:
