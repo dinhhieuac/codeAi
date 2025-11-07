@@ -954,31 +954,55 @@ class XAUUSD_Bot:
                                 if action == "BUY" and rsi_current > rsi_threshold_up:
                                     tp_boosted = True
                                     if self.use_telegram and should_send_signal:
+                                        # Tính lot size dựa trên SL pips để tính USD chính xác
+                                        sl_pips = signal.get('sl_pips', 0)
+                                        estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
+                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        
+                                        tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
+                                        tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
+                                        tp_boosted_usd = tp_pips * pip_value_per_lot * estimated_lot_size
+                                        sl_usd = sl_pips * pip_value_per_lot * estimated_lot_size
+                                        
                                         message = f"<b>📈 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
                                         message += f"<b>Thông tin tín hiệu:</b>\n"
                                         message += f"• Loại: <b>{action}</b>\n"
                                         message += f"• Strength: <b>{strength}</b> điểm\n"
                                         message += f"• RSI: <b>{rsi_current:.2f}</b> (>{rsi_threshold_up})\n"
-                                        message += f"• TP gốc: <b>{int(tp_pips / (1 + strong_trend_boost))} pips</b>\n"
-                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (+{strong_trend_boost*100}%)\n"
-                                        message += f"• SL: <b>{signal.get('sl_pips', 0)} pips</b>\n\n"
+                                        message += f"• TP gốc: <b>{tp_original_pips} pips</b> (${tp_original_usd:.2f})\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (${tp_boosted_usd:.2f}) (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{sl_pips:.0f} pips</b> (${sl_usd:.2f})\n"
+                                        message += f"• Lot size (ước tính): <b>{estimated_lot_size:.2f}</b>\n\n"
                                         message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
                                         self.send_telegram_message(message)
+                                        logging.info(f"📈 TP BOOST KÍCH HOẠT - {self.symbol} {action}: TP gốc {tp_original_pips} pips (${tp_original_usd:.2f}) → TP sau boost {tp_pips} pips (${tp_boosted_usd:.2f}), SL {sl_pips:.0f} pips (${sl_usd:.2f}), Lot size: {estimated_lot_size:.2f}")
                                         logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
                                 
                                 elif action == "SELL" and rsi_current < rsi_threshold_down:
                                     tp_boosted = True
                                     if self.use_telegram and should_send_signal:
+                                        # Tính lot size dựa trên SL pips để tính USD chính xác
+                                        sl_pips = signal.get('sl_pips', 0)
+                                        estimated_lot_size = self.calculate_position_size(sl_pips) if sl_pips > 0 else (MIN_LOT_SIZE if 'MIN_LOT_SIZE' in globals() else 0.01)
+                                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                                        
+                                        tp_original_pips = int(tp_pips / (1 + strong_trend_boost))
+                                        tp_original_usd = tp_original_pips * pip_value_per_lot * estimated_lot_size
+                                        tp_boosted_usd = tp_pips * pip_value_per_lot * estimated_lot_size
+                                        sl_usd = sl_pips * pip_value_per_lot * estimated_lot_size
+                                        
                                         message = f"<b>📉 TP BOOST KÍCH HOẠT - {self.symbol}</b>\n\n"
                                         message += f"<b>Thông tin tín hiệu:</b>\n"
                                         message += f"• Loại: <b>{action}</b>\n"
                                         message += f"• Strength: <b>{strength}</b> điểm\n"
                                         message += f"• RSI: <b>{rsi_current:.2f}</b> (<{rsi_threshold_down})\n"
-                                        message += f"• TP gốc: <b>{int(tp_pips / (1 + strong_trend_boost))} pips</b>\n"
-                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (+{strong_trend_boost*100}%)\n"
-                                        message += f"• SL: <b>{signal.get('sl_pips', 0)} pips</b>\n\n"
+                                        message += f"• TP gốc: <b>{tp_original_pips} pips</b> (${tp_original_usd:.2f})\n"
+                                        message += f"• TP sau boost: <b>{tp_pips} pips</b> (${tp_boosted_usd:.2f}) (+{strong_trend_boost*100}%)\n"
+                                        message += f"• SL: <b>{sl_pips:.0f} pips</b> (${sl_usd:.2f})\n"
+                                        message += f"• Lot size (ước tính): <b>{estimated_lot_size:.2f}</b>\n\n"
                                         message += f"✅ Trend mạnh → TP tăng {strong_trend_boost*100}% để tối ưu lợi nhuận!"
                                         self.send_telegram_message(message)
+                                        logging.info(f"📉 TP BOOST KÍCH HOẠT - {self.symbol} {action}: TP gốc {tp_original_pips} pips (${tp_original_usd:.2f}) → TP sau boost {tp_pips} pips (${tp_boosted_usd:.2f}), SL {sl_pips:.0f} pips (${sl_usd:.2f}), Lot size: {estimated_lot_size:.2f}")
                                         logging.debug(f"✅ Đã gửi Telegram notification cho TP Boost: RSI={rsi_current:.2f}, TP={tp_pips} pips")
                         
                         # Không gửi Telegram khi có tín hiệu (chỉ gửi khi có kết quả lệnh)
