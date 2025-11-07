@@ -153,7 +153,9 @@ BREAK_EVEN_START_PIPS = 600  # Đơn vị: pips (Với BTCUSD: 600 pips = $6 v�
 
 # Buffer khi dời SL về break-even (đơn vị: pips)
 # SL sẽ được dời về entry + buffer để tránh bị quét bởi noise
-BREAK_EVEN_BUFFER_PIPS = 50  # Đơn vị: pips (Với BTCUSD: 50 pips = $0.50 với 0.01 lot)
+# ⚠️ BTCUSD biến động rất lớn trên M15, cần buffer lớn hơn XAUUSD
+# Tăng từ 50 lên 200 pips để đủ xa, tránh bị quét bởi biến động ngẫu nhiên
+BREAK_EVEN_BUFFER_PIPS = 200  # Đơn vị: pips (Với BTCUSD: 200 pips = $2 với 0.01 lot, tăng từ 50)
 
 # Hệ số nhân ATR cho trailing stop (sau khi break-even)
 # Khoảng cách trailing = ATR × ATR_TRAILING_K hoặc tối thiểu ATR_TRAILING_MIN_DISTANCE_PIPS
@@ -184,7 +186,8 @@ PARTIAL_CLOSE_TP3_PERCENT = 30  # Đóng bao nhiêu % volume còn lại
 
 # Buffer khi dời SL sau partial close (đơn vị: pips)
 # Sau mỗi lần partial close, SL sẽ được dời về entry + buffer lớn hơn
-PARTIAL_CLOSE_SL_BUFFER_PIPS = 100  # Đơn vị: pips (Với BTCUSD: 100 pips = $1 với 0.01 lot)
+# ⚠️ BTCUSD biến động lớn, cần buffer lớn hơn để bảo vệ lợi nhuận đã khóa
+PARTIAL_CLOSE_SL_BUFFER_PIPS = 300  # Đơn vị: pips (Với BTCUSD: 300 pips = $3 với 0.01 lot, tăng từ 100)
 
 # Hệ số nhân ATR cho trailing sau khi partial close (chặt hơn để bảo vệ lợi nhuận đã khóa)
 PARTIAL_CLOSE_ATR_K = 1.0  # Hệ số nhân ATR (nhỏ hơn ATR_TRAILING_K để trailing chặt hơn)
