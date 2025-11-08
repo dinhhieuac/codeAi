@@ -279,8 +279,9 @@ BREAK_AFTER_LOSS_MINUTES = 30
 # Thời gian tối thiểu giữa 2 lệnh cùng chiều (đơn vị: phút)
 # Bot sẽ không mở lệnh BUY nếu đã có lệnh BUY mở trong vòng MIN_TIME_BETWEEN_SAME_DIRECTION phút
 # Tương tự với SELL
+# ⚠️ Tăng từ 60 lên 90 phút để tránh vào lệnh quá sớm, chờ tín hiệu rõ ràng hơn
 # Mục đích: Tránh mở quá nhiều lệnh cùng chiều trong thời gian ngắn
-MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
+MIN_TIME_BETWEEN_SAME_DIRECTION = 90  # Đơn vị: phút (tăng từ 60 lên 90 để tăng chất lượng)
 
 # ============================================================================
 # PHÂN TÍCH KỸ THUẬT - Cấu hình các chỉ báo và điều kiện tín hiệu
@@ -288,9 +289,21 @@ MIN_TIME_BETWEEN_SAME_DIRECTION = 60  # Đơn vị: phút
 
 # Số lượng tín hiệu tối thiểu cần có để mở lệnh
 # Bot sẽ chỉ mở lệnh khi có ít nhất MIN_SIGNAL_STRENGTH tín hiệu đồng thuận
+# ⚠️ Tăng từ 2 lên 3 để tăng chất lượng tín hiệu, giảm tỷ lệ thua (cân bằng giữa chất lượng và số lượng)
+# Với REQUIRE_STRONG_SIGNAL = True, đã yêu cầu ít nhất 1 tín hiệu mạnh → 3 điểm là hợp lý
 # Giá trị cao hơn = ít lệnh nhưng chính xác hơn
 # Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
-MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
+MIN_SIGNAL_STRENGTH = 3  # Tăng từ 2 lên 3 để tăng chất lượng tín hiệu (khuyến nghị: 3 cho M15 timeframe)
+
+# Yêu cầu ít nhất 1 tín hiệu mạnh (RSI cắt hoặc EMA cắt) để vào lệnh
+# Tín hiệu mạnh = RSI cắt (từ trên xuống dưới 30 hoặc từ dưới lên trên 70) HOẶC EMA cắt (EMA20 cắt EMA50)
+# Mục đích: Tránh vào lệnh khi chỉ có tín hiệu yếu (RSI đang ở vùng quá bán/mua nhưng chưa cắt)
+REQUIRE_STRONG_SIGNAL = True  # True: Yêu cầu ít nhất 1 tín hiệu mạnh, False: Không yêu cầu
+
+# ATR tối đa cho phép (đơn vị: pips)
+# Nếu ATR > MAX_ATR → Bot sẽ không mở lệnh (volatility quá cao = rủi ro cao)
+# Mục đích: Tránh vào lệnh khi thị trường quá biến động (tin tức, sự kiện lớn)
+MAX_ATR = 2000  # Đơn vị: pips (≈ $2000 với 1 lot, tránh volatility cực đại)
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức
@@ -298,9 +311,9 @@ MIN_SIGNAL_STRENGTH = 2  # Khuyến nghị: 2-3 cho M15 timeframe
 
 # Spread tối đa cho phép (đơn vị: pips)
 # Nếu spread > MAX_SPREAD → Bot sẽ không mở lệnh (spread quá cao = chi phí cao)
-# ⚠️ LƯU Ý: BTCUSD có spread cao hơn XAUUSD (thường 500-2000 pips)
-# Với giá BTC ~$100,000, spread 1000-2000 pips = $10-$20 USD là bình thường
-MAX_SPREAD = 2000  # Đơn vị: pips (tăng từ 100 lên 1500 cho BTCUSD)
+# ⚠️ Giảm từ 2000 xuống 1000 pips để tránh vào lệnh khi spread quá cao (chi phí cao)
+# Với giá BTC ~$100,000, spread 1000 pips = $10 USD là hợp lý
+MAX_SPREAD = 1000  # Đơn vị: pips (giảm từ 2000 xuống 1000 để tăng chất lượng entry)
 
 # Độ lệch giá cho phép khi đặt lệnh (đơn vị: points)
 # Khi giá thay đổi nhanh, MT5 cho phép trượt giá trong phạm vi này
