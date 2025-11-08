@@ -250,9 +250,10 @@ class BTCUSD_RiskManager:
                 if start <= current_time <= end:
                     return False, f"Trong session cấm {start}-{end} (US/Eastern)"
         
+        isSkipWeekend = False
         # Kiểm tra thứ 6 (weekday() = 4)
         # Sau giờ NO_TRADE_FRIDAY_AFTER (ví dụ: 17:00) → Không giao dịch (tránh rủi ro cuối tuần)
-        if now_us.weekday() == 4 and current_time >= NO_TRADE_FRIDAY_AFTER:
+        if isSkipWeekend and now_us.weekday() == 4 and current_time >= NO_TRADE_FRIDAY_AFTER:
             return False, f"Cuối tuần (sau {NO_TRADE_FRIDAY_AFTER} US/Eastern thứ 6)"
             
         # Kiểm tra thời gian nghỉ sau khi thua lệnh
