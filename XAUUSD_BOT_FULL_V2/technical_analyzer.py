@@ -385,9 +385,38 @@ class TechnicalAnalyzer:
         # Chuyển đổi ATR từ giá trị giá sang pips (1 pip XAUUSD = 0.01)
         atr_value = current['atr'] / 0.01  # ATR tính bằng pips
         
-        # --- Tín hiệu BUY: Cần tối thiểu 2 tín hiệu mua và nhiều hơn tín hiệu bán ---
-        # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
+        # Kiểm tra ATR filter: Tránh vào lệnh khi volatility quá cao
+        max_atr = MAX_ATR if 'MAX_ATR' in globals() else 500
+        if atr_value > max_atr:
+            logging.warning(f"⚠️ ATR quá cao: {atr_value:.1f} pips > {max_atr} pips → Bỏ qua tín hiệu (volatility cực đại)")
+            return {
+                'action': 'HOLD',
+                'strength': 0,
+                'reason': f'ATR quá cao: {atr_value:.1f} > {max_atr}'
+            }
+        
+        # Kiểm tra tín hiệu mạnh: RSI cắt hoặc EMA cắt
+        require_strong_signal = REQUIRE_STRONG_SIGNAL if 'REQUIRE_STRONG_SIGNAL' in globals() else True
+        if require_strong_signal:
+            # Tín hiệu mạnh BUY: RSI cắt xuống dưới 30 HOẶC EMA20 cắt EMA50 từ dưới lên
+            buy_strong_signal = (current['rsi'] < 30 and prev['rsi'] >= 30) or \
+                                (current['ema_20'] > current['ema_50'] and prev['ema_20'] <= prev['ema_50'])
+            # Tín hiệu mạnh SELL: RSI cắt lên trên 70 HOẶC EMA20 cắt EMA50 từ trên xuống
+            sell_strong_signal = (current['rsi'] > 70 and prev['rsi'] <= 70) or \
+                                 (current['ema_20'] < current['ema_50'] and prev['ema_20'] >= prev['ema_50'])
+        else:
+            buy_strong_signal = True
+            sell_strong_signal = True
+        
+        # --- Tín hiệu BUY: Cần tối thiểu MIN_SIGNAL_STRENGTH tín hiệu mua, nhiều hơn tín hiệu bán, và có tín hiệu mạnh ---
         if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals:
+            if require_strong_signal and not buy_strong_signal:
+                logging.warning(f"⚠️ BUY signals đủ ({buy_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt) → Bỏ qua")
+                return {
+                    'action': 'HOLD',
+                    'strength': buy_signals,
+                    'reason': 'Thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt)'
+                }
             # Tính SL/TP theo ATR động hoặc công thức cố định
             use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
             atr_multiplier_sl = ATR_MULTIPLIER_SL if 'ATR_MULTIPLIER_SL' in globals() else 1.5
@@ -421,9 +450,15 @@ class TechnicalAnalyzer:
                 'tp_pips': tp_pips        # Take Profit (pips)
             }
         
-        # --- Tín hiệu SELL: Cần tối thiểu 2 tín hiệu bán và nhiều hơn tín hiệu mua ---
-        # Giảm từ 3 xuống 2 để tăng cơ hội mở lệnh
+        # --- Tín hiệu SELL: Cần tối thiểu MIN_SIGNAL_STRENGTH tín hiệu bán, nhiều hơn tín hiệu mua, và có tín hiệu mạnh ---
         elif sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals:
+            if require_strong_signal and not sell_strong_signal:
+                logging.warning(f"⚠️ SELL signals đủ ({sell_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt) → Bỏ qua")
+                return {
+                    'action': 'HOLD',
+                    'strength': sell_signals,
+                    'reason': 'Thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt)'
+                }
             # Tính SL/TP theo ATR động hoặc công thức cố định
             use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
             atr_multiplier_sl = ATR_MULTIPLIER_SL if 'ATR_MULTIPLIER_SL' in globals() else 1.5
