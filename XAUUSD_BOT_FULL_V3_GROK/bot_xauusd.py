@@ -1299,7 +1299,9 @@ class XAUUSD_Bot:
             # BƯỚC 1: BREAK-EVEN STEP
             # Kích hoạt khi: profit_pips >= BREAK_EVEN_START_PIPS (600 pips)
             # ====================================================================
-            if profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
+            # Kiểm tra xem có bật break-even không
+            enable_break_even = ENABLE_BREAK_EVEN if 'ENABLE_BREAK_EVEN' in globals() else True
+            if enable_break_even and profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
                 # Dời SL về entry + buffer
                 if pos.type == mt5.ORDER_TYPE_BUY:
                     new_sl = entry_price + (break_even_buffer_pips * 0.01)
@@ -1365,10 +1367,20 @@ class XAUUSD_Bot:
             
             # ====================================================================
             # BƯỚC 3: ATR-BASED TRAILING
-            # Kích hoạt khi: Đã break-even (profit >= 600 pips) VÀ ATR có giá trị
+            # Kích hoạt khi: (Đã break-even HOẶC tắt break-even) VÀ profit >= BREAK_EVEN_START_PIPS VÀ ATR có giá trị
             # Khoảng cách trailing: ATR × ATR_TRAILING_K (1.5) hoặc tối thiểu 100 pips
             # ====================================================================
-            if ticket in self.breakeven_activated and atr_value is not None:
+            # Nếu tắt break-even, vẫn cho phép ATR trailing khi đạt ngưỡng profit
+            enable_break_even = ENABLE_BREAK_EVEN if 'ENABLE_BREAK_EVEN' in globals() else True
+            can_trail = False
+            if enable_break_even:
+                # Nếu bật break-even: Chỉ trailing sau khi break-even
+                can_trail = (ticket in self.breakeven_activated and atr_value is not None)
+            else:
+                # Nếu tắt break-even: Trailing khi đạt ngưỡng profit (không cần break-even)
+                can_trail = (profit_pips >= break_even_start_pips and atr_value is not None)
+            
+            if can_trail:
                 # Tính khoảng cách trailing dựa trên ATR
                 trail_distance_pips = max(atr_value * atr_trailing_k, atr_min_distance_pips)
                 
