@@ -249,6 +249,15 @@ MAX_LOSS_PER_TRADE = 2.0  # Đơn vị: %
 # Sử dụng US/Eastern để tự động xử lý EST/EDT (Daylight Saving Time)
 TRADING_TIMEZONE = "US/Eastern"  # EST/EDT (New York time)
 
+# ============================================================================
+# KIỂM TRA THỜI GIAN GIAO DỊCH - Bật/tắt rule kiểm tra thời gian
+# ============================================================================
+
+# Bật/tắt tính năng kiểm tra thời gian giao dịch
+# True: Bật kiểm tra thời gian (sẽ chặn giao dịch trong các session cấm)
+# False: Tắt kiểm tra thời gian (cho phép giao dịch mọi lúc)
+ENABLE_TIME_CHECK = False  # True: Bật, False: Tắt
+
 # Danh sách các khung giờ không được giao dịch (format: "HH:MM" theo giờ US/Eastern)
 # Bot sẽ tự động chuyển đổi sang giờ US/Eastern để so sánh
 # Theo grok.md: Focus London/US sessions (15:00-02:00 +07), tránh Asian session (thấp volume)
