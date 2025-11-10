@@ -205,6 +205,37 @@ RSI_TREND_THRESHOLD_UP = 65   # RSI > 65 = uptrend mạnh (BUY)
 RSI_TREND_THRESHOLD_DOWN = 35 # RSI < 35 = downtrend mạnh (SELL)
 
 # ============================================================================
+# TỰ ĐỘNG DỜI TP KHI CÓ TÍN HIỆU TỐT - Tăng lợi nhuận tối đa
+# ============================================================================
+
+# Bật/tắt tính năng tự động dời TP khi có tín hiệu tốt
+ENABLE_DYNAMIC_TP = True  # True: Bật tự động dời TP, False: Tắt
+
+# Khi lợi nhuận đạt bao nhiêu pips thì bắt đầu kiểm tra tín hiệu để dời TP
+# Mục đích: Chỉ dời TP khi đã có lợi nhuận đáng kể
+DYNAMIC_TP_START_PIPS = 500  # Đơn vị: pips (≈ $3 với 0.01 lot)
+
+# % tăng TP khi có tín hiệu tốt (mỗi lần dời)
+# Ví dụ: TP_BOOST_PERCENT = 0.2 → Tăng TP thêm 20% mỗi lần
+DYNAMIC_TP_BOOST_PERCENT = 0.2  # 20% mỗi lần dời TP
+
+# Giới hạn tối đa số lần dời TP (tránh TP quá xa)
+DYNAMIC_TP_MAX_BOOST_COUNT = 100  # Tối đa 3 lần dời TP
+
+# Khoảng cách tối thiểu giữa các lần dời TP (đơn vị: pips)
+# Mục đích: Tránh dời TP quá thường xuyên
+DYNAMIC_TP_MIN_DISTANCE_PIPS = 200  # pips (≈ $2 với 0.01 lot)
+
+# Điều kiện tín hiệu tốt để dời TP:
+# 1. RSI trend mạnh (RSI > 65 cho BUY, RSI < 35 cho SELL)
+# 2. EMA alignment tốt (EMA20 xa EMA50 > EMA_DISTANCE_THRESHOLD pips)
+# 3. MACD momentum mạnh (MACD histogram tăng cho BUY, giảm cho SELL)
+DYNAMIC_TP_RSI_THRESHOLD_UP = 65   # RSI > 65 = tín hiệu tốt cho BUY
+DYNAMIC_TP_RSI_THRESHOLD_DOWN = 35 # RSI < 35 = tín hiệu tốt cho SELL
+DYNAMIC_TP_EMA_DISTANCE_PIPS = 50  # EMA20 phải xa EMA50 ít nhất 50 pips
+DYNAMIC_TP_MACD_MOMENTUM_THRESHOLD = 0.5  # MACD histogram phải > 0.5 cho BUY, < -0.5 cho SELL
+
+# ============================================================================
 # THOÁT LỆNH THÔNG MINH - Đóng lệnh sớm khi tín hiệu đảo chiều
 # ============================================================================
 
