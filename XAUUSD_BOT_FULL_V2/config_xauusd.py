@@ -483,7 +483,7 @@ CONFIGS = [
         "MAX_HOURLY_TRADES": 2,
         
         # Signal Strength
-        "MIN_SIGNAL_STRENGTH": 2,
+        "MIN_SIGNAL_STRENGTH": 3,
         
         # ATR Settings
         "ATR_MULTIPLIER_SL": 2.5,
