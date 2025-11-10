@@ -329,7 +329,7 @@ REQUIRE_STRONG_SIGNAL = True  # True: Yêu cầu ít nhất 1 tín hiệu mạnh
 # Nếu ATR > MAX_ATR → Bot sẽ không mở lệnh (volatility quá cao = rủi ro cao)
 # Mục đích: Tránh vào lệnh khi thị trường quá biến động (tin tức, sự kiện lớn)
 # ⚠️ LƯU Ý: XAUUSD là vàng, ATR thường lớn hơn forex nhưng nhỏ hơn crypto (khoảng 200-500 pips)
-MAX_ATR = 500  # Đơn vị: pips (≈ $50 với 1 lot, tránh volatility cực đại cho vàng)
+MAX_ATR = 600  # Đơn vị: pips (≈ $50 với 1 lot, tránh volatility cực đại cho vàng)
 
 # ============================================================================
 # ĐIỀU KIỆN THỊ TRƯỜNG - Các điều kiện về spread và tin tức
