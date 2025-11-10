@@ -453,7 +453,7 @@ CONFIGS = [
         # ATR Settings
         "ATR_MULTIPLIER_SL": 2.5,
         "ATR_MULTIPLIER_TP": 3.5,
-        "ATR_SL_TP_MODE": "ATR_BOUNDED",
+        "ATR_SL_TP_MODE": "ATR_FREE",
         "ATR_MIN_SL_USD": 4.0,
         "ATR_MAX_SL_USD": 5.0,
         
