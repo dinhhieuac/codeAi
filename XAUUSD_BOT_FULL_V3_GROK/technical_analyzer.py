@@ -377,10 +377,27 @@ class TechnicalAnalyzer:
         logging.info(f"   📏 ATR: {current['atr']:.2f} ({atr_value:.1f} pips)")
         # Volume confirmation (nếu có dữ liệu volume)
         if 'tick_volume' in df.columns:
-            volume_current = current['tick_volume']
-            volume_prev = prev['tick_volume']
-            volume_change = ((volume_current - volume_prev) / volume_prev * 100) if volume_prev > 0 else 0
-            logging.info(f"   📊 Volume: {volume_current:.0f} (Thay đổi: {volume_change:+.1f}%)")
+            try:
+                volume_current = float(current['tick_volume'])
+                volume_prev = float(prev['tick_volume'])
+                
+                # Kiểm tra giá trị hợp lệ (không phải NaN, inf, hoặc quá lớn)
+                if (not np.isnan(volume_current) and not np.isnan(volume_prev) and 
+                    not np.isinf(volume_current) and not np.isinf(volume_prev) and
+                    volume_prev > 0 and volume_current >= 0):
+                    # Sử dụng safe division để tránh overflow
+                    volume_diff = volume_current - volume_prev
+                    if abs(volume_diff) < 1e10:  # Tránh overflow
+                        volume_change = (volume_diff / volume_prev) * 100
+                    else:
+                        volume_change = 0  # Quá lớn, không tính được
+                else:
+                    volume_change = 0
+                logging.info(f"   📊 Volume: {volume_current:.0f} (Thay đổi: {volume_change:+.1f}%)")
+            except (ValueError, TypeError, OverflowError) as e:
+                logging.warning(f"   ⚠️ Lỗi tính volume_change: {e}")
+                volume_change = 0
+                logging.info(f"   📊 Volume: {current['tick_volume']:.0f} (Không thể tính thay đổi)")
         logging.info("=" * 60)
         
         # ====================================================================
@@ -509,12 +526,24 @@ class TechnicalAnalyzer:
         # Kiểm tra volume confirmation (theo grok.md: volume tăng khi breakout)
         volume_confirmed = True  # Mặc định True nếu không có dữ liệu volume
         if 'tick_volume' in df.columns:
-            volume_current = current['tick_volume']
-            volume_prev = prev['tick_volume']
-            # Volume tăng khi breakout (theo grok.md)
-            volume_confirmed = volume_current >= volume_prev * 0.9  # Cho phép giảm nhẹ 10%
-            if not volume_confirmed:
-                logging.debug(f"   ⚠️ Volume không xác nhận: {volume_current:.0f} < {volume_prev * 0.9:.0f}")
+            try:
+                volume_current = float(current['tick_volume'])
+                volume_prev = float(prev['tick_volume'])
+                
+                # Kiểm tra giá trị hợp lệ (không phải NaN, inf, hoặc quá lớn)
+                if (not np.isnan(volume_current) and not np.isnan(volume_prev) and 
+                    not np.isinf(volume_current) and not np.isinf(volume_prev) and
+                    volume_prev > 0 and volume_current >= 0):
+                    # Volume tăng khi breakout (theo grok.md)
+                    volume_confirmed = volume_current >= volume_prev * 0.9  # Cho phép giảm nhẹ 10%
+                    if not volume_confirmed:
+                        logging.debug(f"   ⚠️ Volume không xác nhận: {volume_current:.0f} < {volume_prev * 0.9:.0f}")
+                else:
+                    # Giá trị không hợp lệ, giữ mặc định True
+                    logging.debug(f"   ⚠️ Volume không hợp lệ: current={volume_current}, prev={volume_prev}")
+            except (ValueError, TypeError, OverflowError) as e:
+                logging.warning(f"   ⚠️ Lỗi kiểm tra volume confirmation: {e}")
+                # Giữ mặc định True khi có lỗi
         
         # --- Tín hiệu BUY: Theo grok.md - Giá breakout trên EMA 9, RSI >30, ATR >12 pips, Volume tăng ---
         # Điều kiện đầy đủ: buy_signals >= MIN_SIGNAL_STRENGTH, buy_signals > sell_signals, ATR > 12 pips, Volume confirmed
