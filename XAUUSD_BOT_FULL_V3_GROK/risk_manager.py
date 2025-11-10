@@ -97,7 +97,7 @@ class XAUUSD_RiskManager:
             self.check_account_conditions(),    # Kiểm tra equity, margin
             self.check_daily_limits(),          # Kiểm tra số lệnh/ngày, số lệnh/giờ
             self.check_consecutive_losses(),    # Kiểm tra số lệnh thua liên tiếp
-            self.check_trading_time(),          # Kiểm tra thời gian giao dịch
+            #self.check_trading_time(),          # Kiểm tra thời gian giao dịch
             self.check_positions_count(),       # Kiểm tra số vị thế đang mở
             self.check_drawdown()               # Kiểm tra drawdown
         ]
