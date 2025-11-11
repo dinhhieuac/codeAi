@@ -1141,6 +1141,10 @@ class XAUUSD_Bot:
                             logging.info(f"   - TP: {result.request.tp:.2f}")
                             logging.info("=" * 60)
                             
+                            # Khởi tạo dynamic TP tracking
+                            if hasattr(self, 'last_tp_price'):
+                                self.last_tp_price[result.order] = result.request.tp
+                            
                             # Gửi thông báo Telegram về lệnh thành công
                             if self.use_telegram:
                                 success_message = (
