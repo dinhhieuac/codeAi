@@ -103,6 +103,11 @@ class XAUUSD_Bot:
         self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
         self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
         
+        # Dynamic TP tracking
+        self.tp_boost_count = {}  # Dict {ticket: count} - Số lần đã dời TP
+        self.last_tp_update = {}  # Dict {ticket: timestamp} - Thời gian dời TP lần cuối
+        self.last_tp_price = {}  # Dict {ticket: tp_price} - TP price lần cuối để tính khoảng cách
+        
         # Tracking để phát hiện TP/SL hit
         self.previous_positions = {}  # Dict {ticket: position_info} để theo dõi positions từ cycle trước
         
@@ -1366,21 +1371,18 @@ class XAUUSD_Bot:
                 self._manage_partial_close(pos, profit_pips, ticket)
             
             # ====================================================================
-            # BƯỚC 3: ATR-BASED TRAILING
-            # Kích hoạt khi: (Đã break-even HOẶC tắt break-even) VÀ profit >= BREAK_EVEN_START_PIPS VÀ ATR có giá trị
+            # BƯỚC 3: DYNAMIC TP - Tự động dời TP khi có tín hiệu tốt
+            # ====================================================================
+            enable_dynamic_tp = ENABLE_DYNAMIC_TP if 'ENABLE_DYNAMIC_TP' in globals() else True
+            if enable_dynamic_tp:
+                self._manage_dynamic_tp(pos, profit_pips, ticket, df)
+            
+            # ====================================================================
+            # BƯỚC 4: ATR-BASED TRAILING
+            # Kích hoạt khi: Đã break-even (profit >= 600 pips) VÀ ATR có giá trị
             # Khoảng cách trailing: ATR × ATR_TRAILING_K (1.5) hoặc tối thiểu 100 pips
             # ====================================================================
-            # Nếu tắt break-even, vẫn cho phép ATR trailing khi đạt ngưỡng profit
-            enable_break_even = ENABLE_BREAK_EVEN if 'ENABLE_BREAK_EVEN' in globals() else True
-            can_trail = False
-            if enable_break_even:
-                # Nếu bật break-even: Chỉ trailing sau khi break-even
-                can_trail = (ticket in self.breakeven_activated and atr_value is not None)
-            else:
-                # Nếu tắt break-even: Trailing khi đạt ngưỡng profit (không cần break-even)
-                can_trail = (profit_pips >= break_even_start_pips and atr_value is not None)
-            
-            if can_trail:
+            if ticket in self.breakeven_activated and atr_value is not None:
                 # Tính khoảng cách trailing dựa trên ATR
                 trail_distance_pips = max(atr_value * atr_trailing_k, atr_min_distance_pips)
                 
@@ -1618,6 +1620,196 @@ class XAUUSD_Bot:
                         self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP3")
                         logging.info(f"💰 Partial Close TP3: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp3_percent}%), Dời SL về {new_sl:.2f}")
     
+    def _check_good_signal(self, pos, df):
+        """
+        Kiểm tra xem có tín hiệu tốt để dời TP không
+        
+        Args:
+            pos: MT5 position object
+            df: DataFrame với technical indicators
+            
+        Returns:
+            True nếu có tín hiệu tốt, False nếu không
+        """
+        if df is None or len(df) < 2:
+            return False
+        
+        current = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # Lấy config
+        rsi_threshold_up = DYNAMIC_TP_RSI_THRESHOLD_UP if 'DYNAMIC_TP_RSI_THRESHOLD_UP' in globals() else 65
+        rsi_threshold_down = DYNAMIC_TP_RSI_THRESHOLD_DOWN if 'DYNAMIC_TP_RSI_THRESHOLD_DOWN' in globals() else 35
+        ema_distance_pips = DYNAMIC_TP_EMA_DISTANCE_PIPS if 'DYNAMIC_TP_EMA_DISTANCE_PIPS' in globals() else 50
+        macd_threshold = DYNAMIC_TP_MACD_MOMENTUM_THRESHOLD if 'DYNAMIC_TP_MACD_MOMENTUM_THRESHOLD' in globals() else 0.5
+        
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            # Tín hiệu tốt cho BUY:
+            # 1. RSI > threshold (uptrend mạnh)
+            rsi_good = current['rsi'] > rsi_threshold_up
+            # 2. EMA20 xa EMA50 (trend mạnh)
+            ema_distance = (current['ema_20'] - current['ema_50']) / 0.01  # Convert to pips
+            ema_good = ema_distance > ema_distance_pips
+            # 3. MACD histogram tăng (momentum mạnh)
+            macd_good = current['macd_hist'] > macd_threshold
+            
+            return rsi_good and ema_good and macd_good
+        else:  # SELL
+            # Tín hiệu tốt cho SELL:
+            # 1. RSI < threshold (downtrend mạnh)
+            rsi_good = current['rsi'] < rsi_threshold_down
+            # 2. EMA20 xa EMA50 (trend mạnh)
+            ema_distance = (current['ema_50'] - current['ema_20']) / 0.01  # Convert to pips
+            ema_good = ema_distance > ema_distance_pips
+            # 3. MACD histogram giảm (momentum mạnh)
+            macd_good = current['macd_hist'] < -macd_threshold
+            
+            return rsi_good and ema_good and macd_good
+    
+    def _update_tp(self, ticket, sl, new_tp, reason=""):
+        """
+        Helper function để update TP với error handling
+        Gửi Telegram notification khi thành công
+        
+        Args:
+            ticket: Ticket của position
+            sl: SL (giữ nguyên)
+            new_tp: TP mới
+            reason: Lý do update TP
+        """
+        # Lấy thông tin position TRƯỚC khi update
+        pos_before = mt5.positions_get(ticket=ticket)
+        old_tp = None
+        pos_type = None
+        entry_price = None
+        lot_size = None
+        if pos_before and len(pos_before) > 0:
+            old_tp = pos_before[0].tp
+            pos_type = pos_before[0].type
+            entry_price = pos_before[0].price_open
+            lot_size = pos_before[0].volume
+        
+        request = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": self.symbol,
+            "position": ticket,
+            "sl": sl,
+            "tp": new_tp
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            # Gửi Telegram notification
+            if self.use_telegram:
+                tick = mt5.symbol_info_tick(self.symbol)
+                if tick and entry_price is not None:
+                    if pos_type == mt5.ORDER_TYPE_BUY:
+                        current_price = tick.bid
+                        profit_pips = (current_price - entry_price) / 0.01
+                        tp_pips = (new_tp - entry_price) / 0.01
+                    else:  # SELL
+                        current_price = tick.ask
+                        profit_pips = (entry_price - current_price) / 0.01
+                        tp_pips = (entry_price - new_tp) / 0.01
+                    
+                    if lot_size is not None:
+                        pip_value_per_lot = 1  # XAUUSD: 1 pip = $1 cho 1 lot
+                        tp_usd = tp_pips * pip_value_per_lot * lot_size
+                        
+                        direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
+                        message = f"<b>🎯 DỜI TP THÀNH CÔNG - {self.symbol}</b>\n\n"
+                        message += f"<b>Thông tin lệnh:</b>\n"
+                        message += f"• Ticket: <code>{ticket}</code>\n"
+                        message += f"• Loại: <b>{direction}</b>\n"
+                        message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                        if old_tp is not None:
+                            message += f"• TP cũ: <b>{old_tp:.2f}</b>\n"
+                        message += f"• TP mới: <b>{new_tp:.2f}</b>\n"
+                        message += f"• TP USD: <b>${tp_usd:.2f}</b>\n"
+                        message += f"• Lý do: <b>{reason}</b>\n\n"
+                        message += f"<b>Trạng thái:</b>\n"
+                        message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                        message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
+                        message += f"• TP mới: <b>{tp_pips:.1f} pips</b>\n\n"
+                        message += f"📈 TP đã được tăng để tối đa hóa lợi nhuận!"
+                        self.send_telegram_message(message)
+                        logging.debug(f"✅ Đã gửi Telegram notification cho TP update: Ticket {ticket}, Reason: {reason}")
+            
+            return True
+        else:
+            if result:
+                logging.debug(f"⚠️ Update TP thất bại ({reason}): {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+            return False
+    
+    def _manage_dynamic_tp(self, pos, profit_pips, ticket, df):
+        """
+        Quản lý Dynamic TP: Tự động dời TP khi có tín hiệu tốt
+        
+        Logic:
+        - Kiểm tra tín hiệu tốt (RSI, EMA, MACD)
+        - Nếu có tín hiệu tốt và đạt điều kiện → Tăng TP thêm %
+        - Giới hạn số lần dời TP để tránh TP quá xa
+        """
+        # Lấy config
+        dynamic_tp_start_pips = DYNAMIC_TP_START_PIPS if 'DYNAMIC_TP_START_PIPS' in globals() else 300
+        tp_boost_percent = DYNAMIC_TP_BOOST_PERCENT if 'DYNAMIC_TP_BOOST_PERCENT' in globals() else 0.2
+        max_boost_count = DYNAMIC_TP_MAX_BOOST_COUNT if 'DYNAMIC_TP_MAX_BOOST_COUNT' in globals() else 3
+        min_distance_pips = DYNAMIC_TP_MIN_DISTANCE_PIPS if 'DYNAMIC_TP_MIN_DISTANCE_PIPS' in globals() else 200
+        
+        # Kiểm tra điều kiện cơ bản
+        if profit_pips < dynamic_tp_start_pips:
+            return  # Chưa đạt ngưỡng để dời TP
+        
+        # Kiểm tra số lần đã dời TP
+        if ticket not in self.tp_boost_count:
+            self.tp_boost_count[ticket] = 0
+        
+        if self.tp_boost_count[ticket] >= max_boost_count:
+            return  # Đã đạt giới hạn số lần dời TP
+        
+        # Kiểm tra khoảng cách từ lần dời TP trước
+        if ticket in self.last_tp_update:
+            time_since_last = time.time() - self.last_tp_update[ticket]
+            if time_since_last < 60:  # Ít nhất 60 giây giữa các lần dời TP
+                return
+        
+        # Kiểm tra khoảng cách TP (pips) từ lần dời trước
+        current_tp = pos.tp
+        entry_price = pos.price_open
+        
+        # Khởi tạo last_tp_price nếu chưa có (lần đầu tiên)
+        if ticket not in self.last_tp_price:
+            self.last_tp_price[ticket] = current_tp
+        
+        last_tp = self.last_tp_price[ticket]
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            tp_distance = (current_tp - last_tp) / 0.01
+        else:  # SELL
+            tp_distance = (last_tp - current_tp) / 0.01
+        
+        if tp_distance < min_distance_pips:
+            return  # Chưa đủ khoảng cách từ lần dời trước
+        
+        # Kiểm tra tín hiệu tốt
+        if not self._check_good_signal(pos, df):
+            return  # Không có tín hiệu tốt
+        
+        # Tính TP mới: Tăng TP thêm % so với khoảng cách từ entry
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            # BUY: TP mới = Entry + (TP cũ - Entry) × (1 + boost_percent)
+            tp_distance = current_tp - entry_price
+            new_tp = entry_price + tp_distance * (1 + tp_boost_percent)
+        else:  # SELL
+            # SELL: TP mới = Entry - (Entry - TP cũ) × (1 + boost_percent)
+            tp_distance = entry_price - current_tp
+            new_tp = entry_price - tp_distance * (1 + tp_boost_percent)
+        
+        # Update TP
+        if self._update_tp(ticket, pos.sl, new_tp, f"Dynamic TP (Tín hiệu tốt - Lần {self.tp_boost_count[ticket] + 1})"):
+            self.tp_boost_count[ticket] += 1
+            self.last_tp_update[ticket] = time.time()
+            self.last_tp_price[ticket] = new_tp
+            logging.info(f"🎯 Dynamic TP: Ticket {ticket}, TP: {current_tp:.2f} → {new_tp:.2f} (Tăng {tp_boost_percent*100}%, Lần {self.tp_boost_count[ticket]}/{max_boost_count})")
+    
     def _close_partial_position(self, pos, close_volume, reason=""):
         """
         Đóng một phần position
@@ -1812,7 +2004,7 @@ class XAUUSD_Bot:
     
     def _close_position(self, ticket, reason):
         """
-        Đóng lệnh với lý do cụ thể
+        Đóng lệnh với lý do cụ thể và cleanup tất cả tracking variables
         
         Args:
             ticket: Ticket của lệnh cần đóng
@@ -1860,6 +2052,15 @@ class XAUUSD_Bot:
                 del self.position_peak_profit[ticket]
             if hasattr(self, 'opposite_signal_count') and ticket in self.opposite_signal_count:
                 del self.opposite_signal_count[ticket]
+            
+            # Cleanup dynamic TP tracking
+            if hasattr(self, 'tp_boost_count') and ticket in self.tp_boost_count:
+                del self.tp_boost_count[ticket]
+            if hasattr(self, 'last_tp_update') and ticket in self.last_tp_update:
+                del self.last_tp_update[ticket]
+            if hasattr(self, 'last_tp_price') and ticket in self.last_tp_price:
+                del self.last_tp_price[ticket]
+            
             # Cleanup tracking variables khi position đóng
             if ticket in self.trailing_stop_activated:
                 self.trailing_stop_activated.remove(ticket)
