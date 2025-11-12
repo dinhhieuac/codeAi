@@ -169,14 +169,14 @@ class ETHUSD_Bot:
         
         logging.info("-" * 60)
         
-        if not mt5.initialize():
+        if not mt5.initialize(path=PATH,login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
             logging.error("❌ Không thể khởi tạo MT5")
             return False
         
         logging.info("✅ MT5 library đã khởi tạo")
         
         # Đăng nhập MT5
-        if not mt5.login(login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
+        if not mt5.login(path=PATH,login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
             error = mt5.last_error()
             logging.error(f"❌ Không thể đăng nhập MT5: {error}")
             mt5.shutdown()

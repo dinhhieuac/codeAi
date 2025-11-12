@@ -298,7 +298,7 @@ from pathlib import Path
 
 # Tìm file md5_account.json (tìm trong thư mục gốc của project)
 project_root = Path(__file__).parent.parent
-account_json_path = project_root / "md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
+account_json_path = project_root / "ETHUSD_BOT_FULL/md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
 
 # Giá trị mặc định (fallback)
 DEFAULT_ACCOUNT_NUMBER=0
@@ -313,6 +313,7 @@ try:
             ACCOUNT_NUMBER = account_data.get('ACCOUNT_NUMBER', DEFAULT_ACCOUNT_NUMBER)
             SERVER = account_data.get('SERVER', DEFAULT_SERVER)
             PASSWORD = account_data.get('PASSWORD', DEFAULT_PASSWORD)
+            PATH= account_data.get('PATH', "")
             print(f"✅ Đã đọc thông tin tài khoản từ {account_json_path}")
     else:
         # File không tồn tại → dùng giá trị mặc định
