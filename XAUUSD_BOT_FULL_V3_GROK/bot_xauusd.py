@@ -192,7 +192,7 @@ class XAUUSD_Bot:
         
         logging.info("-" * 60)
         
-        if not mt5.initialize():
+        if not mt5.initialize(path=PATH,login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
             logging.error("❌ Không thể khởi tạo MT5")
             return False
         
