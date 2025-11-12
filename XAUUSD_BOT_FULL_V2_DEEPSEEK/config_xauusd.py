@@ -10,7 +10,7 @@ Tất cả các giá trị có thể được điều chỉnh tùy theo chiến 
 # ============================================================================
 
 # Symbol để giao dịch (XAUUSD = Vàng/USD)
-SYMBOL = "XAUUSDc"
+SYMBOL = "XAUUSD"
 
 # Khung thời gian để phân tích (M15 = 15 phút, M30 = 30 phút, H1 = 1 giờ, H4 = 4 giờ)
 # Khuyến nghị: M15 cho scalping, H1/H4 cho swing trading
@@ -439,6 +439,7 @@ try:
             ACCOUNT_NUMBER = account_data.get('ACCOUNT_NUMBER', DEFAULT_ACCOUNT_NUMBER)
             SERVER = account_data.get('SERVER', DEFAULT_SERVER)
             PASSWORD = account_data.get('PASSWORD', DEFAULT_PASSWORD)
+            SYMBOL = account_data.get('SYMBOL', DEFAULT_SYMBOL)
             print(f"✅ Đã đọc thông tin tài khoản từ {account_json_path}")
     else:
         # File không tồn tại → dùng giá trị mặc định
