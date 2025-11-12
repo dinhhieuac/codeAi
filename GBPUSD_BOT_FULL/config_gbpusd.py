@@ -343,7 +343,7 @@ from pathlib import Path
 
 # Tìm file md5_account.json (tìm trong thư mục gốc của project)
 project_root = Path(__file__).parent.parent
-account_json_path = project_root / "md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
+account_json_path = project_root / "GBPUSD_BOT_FULL/md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
 
 # Giá trị mặc định (fallback)
 DEFAULT_ACCOUNT_NUMBER = 270358962
