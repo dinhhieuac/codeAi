@@ -343,6 +343,7 @@ try:
             ACCOUNT_NUMBER = account_data.get('ACCOUNT_NUMBER', DEFAULT_ACCOUNT_NUMBER)
             SERVER = account_data.get('SERVER', DEFAULT_SERVER)
             PASSWORD = account_data.get('PASSWORD', DEFAULT_PASSWORD)
+            SYMBOL = account_data.get('SYMBOL', DEFAULT_SYMBOL)
             print(f"✅ Đã đọc thông tin tài khoản từ {account_json_path}")
     else:
         # File không tồn tại → dùng giá trị mặc định
