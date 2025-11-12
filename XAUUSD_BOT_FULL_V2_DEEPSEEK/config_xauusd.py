@@ -430,6 +430,7 @@ account_json_path = project_root / "XAUUSD_BOT_FULL_V2_DEEPSEEK/md5_accout.json"
 DEFAULT_ACCOUNT_NUMBER=0
 DEFAULT_SERVER = ""
 DEFAULT_PASSWORD = ""
+PATH="C:/Program Files/MetaTrader 5 EXNESS -1/terminal64.exe"
 
 # Đọc từ file JSON nếu tồn tại
 try:
