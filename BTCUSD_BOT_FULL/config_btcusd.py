@@ -352,9 +352,9 @@ project_root = Path(__file__).parent.parent
 account_json_path = project_root / "BTCUSD_BOT_FULL/md5_accout.json"  # Lưu ý: file có tên "accout" (không phải "account")
 
 # Giá trị mặc định (fallback)
-DEFAULT_ACCOUNT_NUMBER = 270358962
-DEFAULT_SERVER = "Exness-MT5Trial17"
-DEFAULT_PASSWORD = "@Dinhhieu273"
+DEFAULT_ACCOUNT_NUMBER=0
+DEFAULT_SERVER = ""
+DEFAULT_PASSWORD = ""
 
 # Đọc từ file JSON nếu tồn tại
 try:
@@ -368,17 +368,13 @@ try:
             print(f"✅ Đã đọc thông tin tài khoản từ {account_json_path}")
     else:
         # File không tồn tại → dùng giá trị mặc định
-        ACCOUNT_NUMBER = DEFAULT_ACCOUNT_NUMBER
-        SERVER = DEFAULT_SERVER
-        PASSWORD = DEFAULT_PASSWORD
+        
         print(f"⚠️ File {account_json_path} không tồn tại, sử dụng giá trị mặc định")
 except Exception as e:
     # Lỗi khi đọc file → dùng giá trị mặc định
     print(f"⚠️ Lỗi khi đọc file {account_json_path}: {e}")
     print(f"   → Sử dụng giá trị mặc định")
-    ACCOUNT_NUMBER = DEFAULT_ACCOUNT_NUMBER
-    SERVER = DEFAULT_SERVER
-    PASSWORD = DEFAULT_PASSWORD
+ 
 
 # ============================================================================
 # TELEGRAM NOTIFICATIONS - Cấu hình thông báo Telegram
