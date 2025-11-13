@@ -132,7 +132,7 @@ ENABLE_TRAILING_STOP = True  # True: Bật trailing stop, False: Tắt
 # Bật/tắt tính năng Break-Even
 # True: Bật break-even (sẽ dời SL về entry + buffer khi đạt ngưỡng)
 # False: Tắt break-even (không dời SL về entry, chỉ dùng ATR trailing)
-ENABLE_BREAK_EVEN = False  # True: Bật, False: Tắt
+ENABLE_BREAK_EVEN = True  # True: Bật, False: Tắt
 
 # Khi lợi nhuận đạt ngưỡng này → Dời SL về entry + buffer (Break-even)
 # XAUUSD: 600 pips (≈ $6 với 0.01 lot)
