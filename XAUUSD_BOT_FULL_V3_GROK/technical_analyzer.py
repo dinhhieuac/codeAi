@@ -596,9 +596,13 @@ class TechnicalAnalyzer:
         # Điều kiện đầy đủ: sell_signals >= MIN_SIGNAL_STRENGTH, sell_signals > buy_signals, ATR > 12 pips, Volume confirmed
         # Multi-timeframe filter: Chỉ SELL khi bias là BEARISH (theo grok.md)
         bias_allows_sell = True
-        if bias_info and bias_info['bias'] == 'BULLISH':
+        if bias_info and bias_info['bias'] == 'BULLISH' and sell_signals>=3:
+            logging.warning(f"⚠️ Multi-timeframe bias là BULLISH → Không cho phép SELL (theo grok.md) nhưng tín hiệu cực mạnh sell")
+            
+        if bias_info and bias_info['bias'] == 'BULLISH' and sell_signals<3:
             bias_allows_sell = False
             logging.warning(f"⚠️ Multi-timeframe bias là BULLISH → Không cho phép SELL (theo grok.md)")
+        
         elif bias_info and bias_info['bias'] == 'BEARISH':
             logging.info(f"✅ Multi-timeframe bias là BEARISH → Cho phép SELL (theo grok.md)")
         
