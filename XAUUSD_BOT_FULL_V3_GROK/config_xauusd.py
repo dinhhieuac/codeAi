@@ -286,6 +286,15 @@ NO_TRADE_FRIDAY_AFTER = "17:00"  # 5:00 PM EST/EDT (thường là 5:00 PM NY tim
 # Giảm từ 60 xuống 30 phút để tăng cơ hội giao dịch
 BREAK_AFTER_LOSS_MINUTES = 30
 
+# Bật/tắt tính năng dừng giao dịch sau 2 lệnh thua liên tiếp
+# True: Kiểm tra 2 lệnh đóng cuối cùng, nếu cả 2 đều thua → Dừng giao dịch 1 giờ
+# False: Tắt tính năng này
+ENABLE_TWO_LOSSES_COOLDOWN = True  # True: Bật, False: Tắt
+
+# Thời gian dừng giao dịch sau 2 lệnh thua liên tiếp (đơn vị: giờ)
+# Nếu 2 lệnh đóng cuối cùng đều thua → Bot sẽ dừng giao dịch trong TWO_LOSSES_COOLDOWN_HOURS giờ
+TWO_LOSSES_COOLDOWN_HOURS = 1  # Đơn vị: giờ (1 = 1 giờ)
+
 # Thời gian tối thiểu giữa 2 lệnh cùng chiều (đơn vị: phút)
 # Bot sẽ không mở lệnh BUY nếu đã có lệnh BUY mở trong vòng MIN_TIME_BETWEEN_SAME_DIRECTION phút
 # Tương tự với SELL

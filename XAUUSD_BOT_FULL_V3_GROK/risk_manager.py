@@ -54,6 +54,9 @@ class XAUUSD_RiskManager:
         # Lịch sử các giao dịch (list các dict chứa time, success, profit)
         self.trade_history = []
         
+        # Tracking cho 2 lệnh thua liên tiếp
+        self.two_losses_cooldown_until = None  # Thời điểm hết cooldown (None nếu không có cooldown)
+        
         # Tải thống kê ban đầu (lấy balance hiện tại)
         self.load_daily_stats()
         
@@ -97,6 +100,7 @@ class XAUUSD_RiskManager:
             self.check_account_conditions(),    # Kiểm tra equity, margin
             self.check_daily_limits(),          # Kiểm tra số lệnh/ngày, số lệnh/giờ
             self.check_consecutive_losses(),    # Kiểm tra số lệnh thua liên tiếp
+            self.check_two_losses_cooldown(),   # Kiểm tra 2 lệnh thua liên tiếp
             self.check_trading_time(),          # Kiểm tra thời gian giao dịch
             self.check_positions_count(),       # Kiểm tra số vị thế đang mở
             self.check_drawdown()               # Kiểm tra drawdown
@@ -201,6 +205,130 @@ class XAUUSD_RiskManager:
         if self.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             return False, f"Thua {self.consecutive_losses} lệnh liên tiếp"
         
+        return True, "OK"
+    
+    def check_last_two_closed_trades(self):
+        """
+        Kiểm tra 2 lệnh đóng cuối cùng từ MT5 history
+        
+        Lấy lịch sử deals từ MT5 và kiểm tra 2 lệnh đóng cuối cùng.
+        Chỉ kiểm tra các deals có magic number của bot và là lệnh đóng (DEAL_TYPE_BALANCE, DEAL_TYPE_CREDIT, DEAL_TYPE_CHARGE, DEAL_TYPE_CORRECTION không tính).
+        
+        Returns:
+            Tuple (list, bool): (last_two_trades, has_enough_trades)
+                - last_two_trades: List 2 dict chứa thông tin 2 lệnh cuối cùng [{'profit': float, 'time': datetime}, ...]
+                - has_enough_trades: True nếu có đủ 2 lệnh để kiểm tra
+        """
+        try:
+            # Lấy tất cả deals từ MT5 (lấy deals từ 30 ngày trước đến hiện tại)
+            date_from = datetime.now() - timedelta(days=30)
+            deals = mt5.history_deals_get(date_from, datetime.now())
+            if deals is None or len(deals) == 0:
+                return [], False
+            
+            # Lọc chỉ lấy deals của bot này (magic từ config)
+            bot_magic = MAGIC if 'MAGIC' in globals() else 202411
+            bot_deals = [d for d in deals if d.magic == bot_magic]
+            
+            if len(bot_deals) < 2:
+                return [], False
+            
+            # Sắp xếp deals theo thời gian (tăng dần) để đảm bảo lấy đúng 2 lệnh cuối cùng
+            bot_deals.sort(key=lambda d: d.time)
+            
+            # Lấy 2 deals đóng position cuối cùng
+            # DEAL_ENTRY_OUT = 1 nghĩa là deal đóng position (không phải mở)
+            closed_trades = []
+            seen_positions = set()  # Để tránh lấy trùng lệnh (một position có thể có nhiều deals)
+            
+            for deal in reversed(bot_deals):  # Duyệt từ cuối lên (lệnh mới nhất trước)
+                # Chỉ lấy deals đóng position (entry = 1) và có profit != 0
+                # Bỏ qua deals mở position (entry = 0) hoặc deals không có profit
+                if deal.entry == 1 and deal.profit != 0:
+                    # Kiểm tra xem đã lấy position này chưa (tránh trùng)
+                    if deal.position_id not in seen_positions:
+                        closed_trades.append({
+                            'profit': deal.profit,
+                            'time': datetime.fromtimestamp(deal.time),
+                            'ticket': deal.position_id
+                        })
+                        seen_positions.add(deal.position_id)
+                        if len(closed_trades) >= 2:
+                            break
+            
+            if len(closed_trades) < 2:
+                return [], False
+            
+            # Sắp xếp lại theo thời gian (tăng dần) để đảm bảo thứ tự đúng
+            closed_trades.sort(key=lambda t: t['time'])
+            
+            return closed_trades[:2], True
+            
+        except Exception as e:
+            logging.error(f"❌ Lỗi khi kiểm tra lệnh đóng cuối cùng: {e}")
+            return [], False
+    
+    def check_two_losses_cooldown(self):
+        """
+        Kiểm tra cooldown sau 2 lệnh thua liên tiếp
+        
+        Kiểm tra 2 lệnh đóng cuối cùng từ MT5:
+        - Nếu cả 2 đều thua (profit < 0) → Dừng giao dịch 1 giờ
+        - Nếu có ít nhất 1 lệnh thắng → Cho phép giao dịch
+        
+        Returns:
+            Tuple (bool, str): (True/False, message)
+        """
+        # Kiểm tra xem có bật tính năng không
+        enable_cooldown = ENABLE_TWO_LOSSES_COOLDOWN if 'ENABLE_TWO_LOSSES_COOLDOWN' in globals() else True
+        if not enable_cooldown:
+            return True, "OK"  # Nếu tắt → Luôn cho phép
+        
+        # Kiểm tra cooldown hiện tại
+        if self.two_losses_cooldown_until is not None:
+            now = datetime.now()
+            if now < self.two_losses_cooldown_until:
+                # Vẫn trong thời gian cooldown
+                remaining = self.two_losses_cooldown_until - now
+                remaining_minutes = int(remaining.total_seconds() / 60)
+                remaining_seconds = int(remaining.total_seconds() % 60)
+                return False, f"Dừng giao dịch sau 2 lệnh thua liên tiếp (còn {remaining_minutes} phút {remaining_seconds} giây)"
+            else:
+                # Hết cooldown → Reset
+                self.two_losses_cooldown_until = None
+                logging.info(f"✅ Hết cooldown sau 2 lệnh thua liên tiếp - Có thể giao dịch lại")
+        
+        # Kiểm tra 2 lệnh đóng cuối cùng
+        last_two_trades, has_enough = self.check_last_two_closed_trades()
+        
+        if not has_enough:
+            # Chưa có đủ 2 lệnh để kiểm tra → Cho phép giao dịch
+            return True, "OK"
+        
+        # Kiểm tra xem cả 2 lệnh có đều thua không
+        both_losses = all(trade['profit'] < 0 for trade in last_two_trades)
+        
+        if both_losses:
+            # Cả 2 lệnh đều thua → Kích hoạt cooldown
+            cooldown_hours = TWO_LOSSES_COOLDOWN_HOURS if 'TWO_LOSSES_COOLDOWN_HOURS' in globals() else 1
+            self.two_losses_cooldown_until = datetime.now() + timedelta(hours=cooldown_hours)
+            
+            trade1_profit = last_two_trades[0]['profit']
+            trade2_profit = last_two_trades[1]['profit']
+            trade1_time = last_two_trades[0]['time'].strftime('%Y-%m-%d %H:%M:%S')
+            trade2_time = last_two_trades[1]['time'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            logging.warning("=" * 60)
+            logging.warning(f"⚠️ PHÁT HIỆN 2 LỆNH THUA LIÊN TIẾP - DỪNG GIAO DỊCH {cooldown_hours} GIỜ")
+            logging.warning("=" * 60)
+            logging.warning(f"   📊 Lệnh 1: {trade1_time} - Profit: ${trade1_profit:.2f}")
+            logging.warning(f"   📊 Lệnh 2: {trade2_time} - Profit: ${trade2_profit:.2f}")
+            logging.warning(f"   ⏰ Dừng giao dịch đến: {self.two_losses_cooldown_until.strftime('%Y-%m-%d %H:%M:%S')}")
+            logging.warning("=" * 60)
+            
+            return False, f"2 lệnh thua liên tiếp (${trade1_profit:.2f}, ${trade2_profit:.2f}) - Dừng {cooldown_hours}h"
+        
+        # Có ít nhất 1 lệnh thắng → Cho phép giao dịch
         return True, "OK"
         
     def check_trading_time(self):
