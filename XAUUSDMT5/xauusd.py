@@ -24,6 +24,8 @@ EMA_MEDIUM = 21
 EMA_D1_H4_FAST = 50  # Lọc xu hướng nhanh trên D1/H4
 EMA_D1_H4_SLOW = 200 # Lọc xu hướng chậm trên D1/H4
 ATR_PERIOD = 14
+ADX_PERIOD = 14  # Chu kỳ tính ADX
+ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 SL_POINTS = 500                    # Cắt lỗ cố định (50 pips)
@@ -124,6 +126,59 @@ def get_rates(timeframe, bars_count=500):
 def calculate_ema(df, period):
     """Tính EMA cho DataFrame."""
     return df['close'].ewm(span=period, adjust=False).mean()
+
+def calculate_adx(df, period=14):
+    """
+    Tính ADX (Average Directional Index) - Chỉ báo đo lường sức mạnh xu hướng
+    
+    ADX không chỉ ra hướng xu hướng, chỉ đo lường sức mạnh:
+    - ADX > 25: Xu hướng mạnh (trending market) → Nên giao dịch
+    - ADX < 25: Thị trường đi ngang (sideways/choppy market) → Nên tránh giao dịch
+    
+    Args:
+        df: DataFrame chứa dữ liệu giá (columns: high, low, close)
+        period: Chu kỳ tính ADX (mặc định: 14)
+        
+    Returns:
+        Series ADX với giá trị từ 0-100
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    
+    # Tính True Range (TR)
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # Tính Directional Movement
+    # +DM: Nếu high tăng nhiều hơn low giảm
+    # -DM: Nếu low giảm nhiều hơn high tăng
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    
+    # Nếu +DM > -DM thì -DM = 0, và ngược lại
+    plus_dm[plus_dm < minus_dm] = 0
+    minus_dm[minus_dm < plus_dm] = 0
+    
+    # Tính trung bình TR, +DM, -DM (dùng Wilder's smoothing)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
+    minus_di = 100 * (minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
+    
+    # Tính DX (Directional Index)
+    # Tránh chia cho 0
+    di_sum = plus_di + minus_di
+    dx = 100 * abs(plus_di - minus_di) / di_sum.replace(0, 1)  # Thay 0 bằng 1 để tránh chia cho 0
+    
+    # Tính ADX (trung bình của DX)
+    adx = dx.ewm(alpha=1/period, adjust=False).mean()
+    
+    return adx
 
 def check_multi_timeframe_bias():
     """Kiểm tra xu hướng lớn trên D1 và H4."""
@@ -423,21 +478,41 @@ def run_bot():
             print(f"\n  ┌─ [BƯỚC 2] Kiểm tra xu hướng đa khung (D1 & H4)")
             multi_bias = check_multi_timeframe_bias()
             print(f"  └─ [BƯỚC 2] Kết quả: {multi_bias}")
+            
+            # 3. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang)
+            print(f"\n  ┌─ [BƯỚC 3] Kiểm tra ADX (Tránh thị trường đi ngang)")
+            adx_values = calculate_adx(df_m5, ADX_PERIOD)
+            adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
+            print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD})")
+            
+            if adx_current >= ADX_MIN_THRESHOLD:
+                adx_ok = True
+                print(f"    ✅ [ADX] XU HƯỚNG MẠNH (ADX={adx_current:.2f} ≥ {ADX_MIN_THRESHOLD}) - Có thể giao dịch")
+            else:
+                adx_ok = False
+                print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
+            print(f"  └─ [BƯỚC 3] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
 
-            # 3. Kiểm tra vị thế đang mở
+            # 4. Kiểm tra vị thế đang mở
             open_positions = mt5.positions_total()
             print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
             
-            print(f"\n  📊 [TÓM TẮT] EMA9={ema_short:.5f} | EMA21={ema_medium:.5f} | M5 Signal={m5_signal} | Multi-Bias={multi_bias}")
+            print(f"\n  📊 [TÓM TẮT] EMA9={ema_short:.5f} | EMA21={ema_medium:.5f} | M5 Signal={m5_signal} | Multi-Bias={multi_bias} | ADX={adx_current:.2f}")
 
             if open_positions == 0:
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
-                if m5_signal == 'BUY' and multi_bias == 'BUY':
+                # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
+                if not adx_ok:
+                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
+                    print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
+                    print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
+                elif m5_signal == 'BUY' and multi_bias == 'BUY':
                     print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
                     print(f"     - M5 Signal: {m5_signal} (EMA9 cắt lên EMA21)")
                     print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý MUA)")
+                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_BUY, VOLUME)
                     
@@ -445,6 +520,7 @@ def run_bot():
                     print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
                     print(f"     - M5 Signal: {m5_signal} (EMA9 cắt xuống EMA21)")
                     print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý BÁN)")
+                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_SELL, VOLUME)
                 
