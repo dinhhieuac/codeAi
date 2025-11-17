@@ -7,6 +7,7 @@ Module này chứa các phương thức tính toán các chỉ báo kỹ thuật
 import pandas as pd
 import numpy as np
 import logging
+import MetaTrader5 as mt5
 from config_btcusd import *
 
 class TechnicalAnalyzer:
@@ -181,6 +182,147 @@ class TechnicalAnalyzer:
         # ATR = Trung bình của True Range trong chu kỳ
         atr = tr.rolling(period).mean()
         return atr
+    
+    def check_multi_timeframe_bias(self, symbol):
+        """
+        Kiểm tra xu hướng đa khung thời gian (Multi-Timeframe Bias)
+        
+        Logic:
+        - D1: EMA50 > EMA200 → BULLISH
+        - H4: EMA50 > EMA200 → BULLISH
+        - H1: Giá trên EMA50 → Trend ngắn hạn cùng hướng
+        
+        Chỉ BUY nếu tất cả đều bullish
+        Chỉ SELL nếu tất cả đều bearish
+        
+        Args:
+            symbol: Symbol cần kiểm tra (ví dụ: "BTCUSDc")
+            
+        Returns:
+            'BUY': Tất cả khung thời gian đều bullish
+            'SELL': Tất cả khung thời gian đều bearish
+            'NEUTRAL': Không đồng thuận hoặc không đủ dữ liệu
+        """
+        try:
+            logging.info("=" * 60)
+            logging.info("📊 [MULTI-TIMEFRAME BIAS] Kiểm tra xu hướng đa khung thời gian...")
+            logging.info("=" * 60)
+            
+            bias_bullish = 0  # Số khung thời gian bullish
+            bias_bearish = 0  # Số khung thời gian bearish
+            bias_details = []  # Chi tiết từng khung thời gian
+            
+            # ====================================================================
+            # D1: EMA50 > EMA200 → BULLISH
+            # ====================================================================
+            try:
+                rates_d1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 300)
+                if rates_d1 is not None and len(rates_d1) >= 200:
+                    df_d1 = pd.DataFrame(rates_d1)
+                    close_d1 = df_d1['close']
+                    
+                    ema_50_d1 = self.calculate_ema(close_d1, 50).iloc[-1]
+                    ema_200_d1 = self.calculate_ema(close_d1, 200).iloc[-1]
+                    current_price_d1 = close_d1.iloc[-1]
+                    
+                    if ema_50_d1 > ema_200_d1:
+                        bias_bullish += 1
+                        bias_details.append(f"[D1] ✅ BULLISH: EMA50={ema_50_d1:.2f} > EMA200={ema_200_d1:.2f}, Giá={current_price_d1:.2f}")
+                        logging.info(f"   [D1] ✅ BULLISH: EMA50={ema_50_d1:.2f} > EMA200={ema_200_d1:.2f}, Giá={current_price_d1:.2f}")
+                    else:
+                        bias_bearish += 1
+                        bias_details.append(f"[D1] ❌ BEARISH: EMA50={ema_50_d1:.2f} <= EMA200={ema_200_d1:.2f}, Giá={current_price_d1:.2f}")
+                        logging.info(f"   [D1] ❌ BEARISH: EMA50={ema_50_d1:.2f} <= EMA200={ema_200_d1:.2f}, Giá={current_price_d1:.2f}")
+                else:
+                    logging.warning(f"   [D1] ⚠️ Không đủ dữ liệu (cần >= 200 nến, có {len(rates_d1) if rates_d1 is not None else 0})")
+                    bias_details.append(f"[D1] ⚠️ Không đủ dữ liệu")
+            except Exception as e:
+                logging.error(f"   [D1] ❌ Lỗi khi kiểm tra D1: {e}")
+                bias_details.append(f"[D1] ❌ Lỗi: {e}")
+            
+            # ====================================================================
+            # H4: EMA50 > EMA200 → BULLISH
+            # ====================================================================
+            try:
+                rates_h4 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H4, 0, 300)
+                if rates_h4 is not None and len(rates_h4) >= 200:
+                    df_h4 = pd.DataFrame(rates_h4)
+                    close_h4 = df_h4['close']
+                    
+                    ema_50_h4 = self.calculate_ema(close_h4, 50).iloc[-1]
+                    ema_200_h4 = self.calculate_ema(close_h4, 200).iloc[-1]
+                    current_price_h4 = close_h4.iloc[-1]
+                    
+                    if ema_50_h4 > ema_200_h4:
+                        bias_bullish += 1
+                        bias_details.append(f"[H4] ✅ BULLISH: EMA50={ema_50_h4:.2f} > EMA200={ema_200_h4:.2f}, Giá={current_price_h4:.2f}")
+                        logging.info(f"   [H4] ✅ BULLISH: EMA50={ema_50_h4:.2f} > EMA200={ema_200_h4:.2f}, Giá={current_price_h4:.2f}")
+                    else:
+                        bias_bearish += 1
+                        bias_details.append(f"[H4] ❌ BEARISH: EMA50={ema_50_h4:.2f} <= EMA200={ema_200_h4:.2f}, Giá={current_price_h4:.2f}")
+                        logging.info(f"   [H4] ❌ BEARISH: EMA50={ema_50_h4:.2f} <= EMA200={ema_200_h4:.2f}, Giá={current_price_h4:.2f}")
+                else:
+                    logging.warning(f"   [H4] ⚠️ Không đủ dữ liệu (cần >= 200 nến, có {len(rates_h4) if rates_h4 is not None else 0})")
+                    bias_details.append(f"[H4] ⚠️ Không đủ dữ liệu")
+            except Exception as e:
+                logging.error(f"   [H4] ❌ Lỗi khi kiểm tra H4: {e}")
+                bias_details.append(f"[H4] ❌ Lỗi: {e}")
+            
+            # ====================================================================
+            # H1: Giá trên EMA50 → Trend ngắn hạn cùng hướng
+            # ====================================================================
+            try:
+                rates_h1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 100)
+                if rates_h1 is not None and len(rates_h1) >= 50:
+                    df_h1 = pd.DataFrame(rates_h1)
+                    close_h1 = df_h1['close']
+                    
+                    ema_50_h1 = self.calculate_ema(close_h1, 50).iloc[-1]
+                    current_price_h1 = close_h1.iloc[-1]
+                    
+                    if current_price_h1 > ema_50_h1:
+                        bias_bullish += 1
+                        bias_details.append(f"[H1] ✅ BULLISH: Giá={current_price_h1:.2f} > EMA50={ema_50_h1:.2f}")
+                        logging.info(f"   [H1] ✅ BULLISH: Giá={current_price_h1:.2f} > EMA50={ema_50_h1:.2f}")
+                    else:
+                        bias_bearish += 1
+                        bias_details.append(f"[H1] ❌ BEARISH: Giá={current_price_h1:.2f} <= EMA50={ema_50_h1:.2f}")
+                        logging.info(f"   [H1] ❌ BEARISH: Giá={current_price_h1:.2f} <= EMA50={ema_50_h1:.2f}")
+                else:
+                    logging.warning(f"   [H1] ⚠️ Không đủ dữ liệu (cần >= 50 nến, có {len(rates_h1) if rates_h1 is not None else 0})")
+                    bias_details.append(f"[H1] ⚠️ Không đủ dữ liệu")
+            except Exception as e:
+                logging.error(f"   [H1] ❌ Lỗi khi kiểm tra H1: {e}")
+                bias_details.append(f"[H1] ❌ Lỗi: {e}")
+            
+            # ====================================================================
+            # KẾT QUẢ: Chỉ BUY nếu tất cả đều bullish, chỉ SELL nếu tất cả đều bearish
+            # ====================================================================
+            logging.info("=" * 60)
+            logging.info(f"📊 [MULTI-TIMEFRAME BIAS] Tổng kết:")
+            logging.info(f"   - Bullish: {bias_bullish}/3 khung thời gian")
+            logging.info(f"   - Bearish: {bias_bearish}/3 khung thời gian")
+            
+            # Chỉ BUY nếu tất cả 3 khung thời gian đều bullish
+            if bias_bullish == 3:
+                logging.info(f"   ✅ KẾT QUẢ: BUY (Tất cả 3 khung thời gian đều BULLISH)")
+                logging.info("=" * 60)
+                return 'BUY'
+            # Chỉ SELL nếu tất cả 3 khung thời gian đều bearish
+            elif bias_bearish == 3:
+                logging.info(f"   ✅ KẾT QUẢ: SELL (Tất cả 3 khung thời gian đều BEARISH)")
+                logging.info("=" * 60)
+                return 'SELL'
+            else:
+                # Không đồng thuận hoặc không đủ dữ liệu
+                logging.warning(f"   ⚠️ KẾT QUẢ: NEUTRAL (Không đồng thuận: Bullish={bias_bullish}/3, Bearish={bias_bearish}/3)")
+                logging.info("=" * 60)
+                return 'NEUTRAL'
+                
+        except Exception as e:
+            logging.error(f"❌ [MULTI-TIMEFRAME BIAS] Lỗi khi kiểm tra: {e}")
+            logging.info("=" * 60)
+            return 'NEUTRAL'
         
     def analyze(self, df):
         """
@@ -399,6 +541,13 @@ class TechnicalAnalyzer:
                 'reason': f'ATR quá cao: {atr_value:.1f} > {max_atr}'
             }
         
+        # ====================================================================
+        # BƯỚC 4.5: KIỂM TRA MULTI-TIMEFRAME BIAS (BỘ LỌC CỰC MẠNH)
+        # ====================================================================
+        # Chỉ cho phép BUY/SELL khi tất cả khung thời gian đều đồng thuận
+        symbol = SYMBOL if 'SYMBOL' in globals() else "BTCUSDc"
+        multi_bias = self.check_multi_timeframe_bias(symbol)
+        
         # Kiểm tra tín hiệu mạnh: RSI cắt hoặc EMA cắt
         require_strong_signal = REQUIRE_STRONG_SIGNAL if 'REQUIRE_STRONG_SIGNAL' in globals() else True
         if require_strong_signal:
@@ -414,6 +563,15 @@ class TechnicalAnalyzer:
         
         # --- Tín hiệu BUY: Cần tối thiểu MIN_SIGNAL_STRENGTH tín hiệu mua, nhiều hơn tín hiệu bán, và có tín hiệu mạnh ---
         if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals:
+            # ⚠️ QUAN TRỌNG: Kiểm tra Multi-Timeframe Bias - Chỉ BUY nếu tất cả đều bullish
+            if multi_bias != 'BUY':
+                logging.warning(f"⚠️ BUY signals đủ ({buy_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng Multi-Timeframe Bias không đồng thuận ({multi_bias}) → Bỏ qua")
+                return {
+                    'action': 'HOLD',
+                    'strength': buy_signals,
+                    'reason': f'Multi-Timeframe Bias không đồng thuận: {multi_bias} (cần BUY)'
+                }
+            
             if require_strong_signal and not buy_strong_signal:
                 logging.warning(f"⚠️ BUY signals đủ ({buy_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt) → Bỏ qua")
                 return {
@@ -456,6 +614,15 @@ class TechnicalAnalyzer:
         
         # --- Tín hiệu SELL: Cần tối thiểu MIN_SIGNAL_STRENGTH tín hiệu bán, nhiều hơn tín hiệu mua, và có tín hiệu mạnh ---
         elif sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals:
+            # ⚠️ QUAN TRỌNG: Kiểm tra Multi-Timeframe Bias - Chỉ SELL nếu tất cả đều bearish
+            if multi_bias != 'SELL':
+                logging.warning(f"⚠️ SELL signals đủ ({sell_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng Multi-Timeframe Bias không đồng thuận ({multi_bias}) → Bỏ qua")
+                return {
+                    'action': 'HOLD',
+                    'strength': sell_signals,
+                    'reason': f'Multi-Timeframe Bias không đồng thuận: {multi_bias} (cần SELL)'
+                }
+            
             if require_strong_signal and not sell_strong_signal:
                 logging.warning(f"⚠️ SELL signals đủ ({sell_signals} >= {MIN_SIGNAL_STRENGTH}) nhưng thiếu tín hiệu mạnh (RSI cắt hoặc EMA cắt) → Bỏ qua")
                 return {
