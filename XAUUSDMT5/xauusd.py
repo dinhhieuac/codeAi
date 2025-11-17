@@ -131,37 +131,71 @@ def check_multi_timeframe_bias():
     bias_up = 0
     bias_down = 0
     
+    print("  📊 [MULTI-TIMEFRAME] Kiểm tra xu hướng D1 & H4...")
+    
     # Lọc trên D1 (EMA 50 & 200)
     df_d1 = get_rates(mt5.TIMEFRAME_D1)
     if df_d1 is not None and len(df_d1) >= EMA_D1_H4_SLOW:
         ema_50_d1 = calculate_ema(df_d1, EMA_D1_H4_FAST).iloc[-1]
         ema_200_d1 = calculate_ema(df_d1, EMA_D1_H4_SLOW).iloc[-1]
+        close_d1 = df_d1['close'].iloc[-1]
         
-        if df_d1['close'].iloc[-1] > ema_50_d1 and ema_50_d1 > ema_200_d1:
+        print(f"    [D1] Giá: {close_d1:.5f} | EMA50: {ema_50_d1:.5f} | EMA200: {ema_200_d1:.5f}")
+        
+        if close_d1 > ema_50_d1 and ema_50_d1 > ema_200_d1:
             bias_up += 1
-        elif df_d1['close'].iloc[-1] < ema_50_d1 and ema_50_d1 < ema_200_d1:
+            print(f"    [D1] ✅ XU HƯỚNG MUA (Giá > EMA50 > EMA200)")
+        elif close_d1 < ema_50_d1 and ema_50_d1 < ema_200_d1:
             bias_down += 1
+            print(f"    [D1] ✅ XU HƯỚNG BÁN (Giá < EMA50 < EMA200)")
+        else:
+            print(f"    [D1] ⚠️ SIDEWAYS (Không rõ xu hướng)")
+    else:
+        print(f"    [D1] ❌ Không đủ dữ liệu để tính EMA")
             
     # Lọc trên H4 (EMA 50 & 200)
     df_h4 = get_rates(mt5.TIMEFRAME_H4)
     if df_h4 is not None and len(df_h4) >= EMA_D1_H4_SLOW:
         ema_50_h4 = calculate_ema(df_h4, EMA_D1_H4_FAST).iloc[-1]
         ema_200_h4 = calculate_ema(df_h4, EMA_D1_H4_SLOW).iloc[-1]
+        close_h4 = df_h4['close'].iloc[-1]
         
-        if df_h4['close'].iloc[-1] > ema_50_h4 and ema_50_h4 > ema_200_h4:
+        print(f"    [H4] Giá: {close_h4:.5f} | EMA50: {ema_50_h4:.5f} | EMA200: {ema_200_h4:.5f}")
+        
+        if close_h4 > ema_50_h4 and ema_50_h4 > ema_200_h4:
             bias_up += 1
-        elif df_h4['close'].iloc[-1] < ema_50_h4 and ema_50_h4 < ema_200_h4:
+            print(f"    [H4] ✅ XU HƯỚNG MUA (Giá > EMA50 > EMA200)")
+        elif close_h4 < ema_50_h4 and ema_50_h4 < ema_200_h4:
             bias_down += 1
+            print(f"    [H4] ✅ XU HƯỚNG BÁN (Giá < EMA50 < EMA200)")
+        else:
+            print(f"    [H4] ⚠️ SIDEWAYS (Không rõ xu hướng)")
+    else:
+        print(f"    [H4] ❌ Không đủ dữ liệu để tính EMA")
+    
+    print(f"  📊 [MULTI-TIMEFRAME] Tổng kết: bias_up={bias_up}, bias_down={bias_down}")
             
     if bias_up >= 2:
+        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: BUY (≥2 khung thời gian đồng ý MUA)")
         return 'BUY'
     elif bias_down >= 2:
+        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: SELL (≥2 khung thời gian đồng ý BÁN)")
         return 'SELL'
     else:
+        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: SIDEWAYS (Không đủ đồng thuận)")
         return 'SIDEWAYS'
 
 def check_m5_entry_signals(ema_short, ema_medium, prev_ema_short, prev_ema_medium):
     """Kiểm tra tín hiệu giao cắt EMA trên M5."""
+    
+    print("  📈 [M5 SIGNAL] Kiểm tra giao cắt EMA...")
+    print(f"    EMA9 (hiện tại): {ema_short:.5f} | EMA21 (hiện tại): {ema_medium:.5f}")
+    print(f"    EMA9 (trước đó): {prev_ema_short:.5f} | EMA21 (trước đó): {prev_ema_medium:.5f}")
+    
+    # Kiểm tra vị trí hiện tại
+    current_position = "EMA9 > EMA21" if ema_short > ema_medium else "EMA9 < EMA21"
+    prev_position = "EMA9 > EMA21" if prev_ema_short > prev_ema_medium else "EMA9 < EMA21"
+    print(f"    Vị trí trước: {prev_position} | Vị trí hiện tại: {current_position}")
     
     # Giao cắt Mua (EMA ngắn cắt lên EMA dài)
     is_buy_cross = (prev_ema_short < prev_ema_medium) and (ema_short > ema_medium)
@@ -170,10 +204,13 @@ def check_m5_entry_signals(ema_short, ema_medium, prev_ema_short, prev_ema_mediu
     is_sell_cross = (prev_ema_short > prev_ema_medium) and (ema_short < ema_medium)
     
     if is_buy_cross:
+        print(f"    ✅ [M5 SIGNAL] PHÁT HIỆN GIAO CẮT MUA! (EMA9 cắt lên EMA21)")
         return 'BUY'
     elif is_sell_cross:
+        print(f"    ✅ [M5 SIGNAL] PHÁT HIỆN GIAO CẮT BÁN! (EMA9 cắt xuống EMA21)")
         return 'SELL'
     else:
+        print(f"    ⚠️ [M5 SIGNAL] Chưa có giao cắt (NONE)")
         return 'NONE'
 
 # ==============================================================================
@@ -351,9 +388,18 @@ def run_bot():
         # 3. CHỈ XỬ LÝ TÍN HIỆU KHI CÓ NẾN MỚI ĐÓNG
         if current_candle_time > last_candle_time:
             last_candle_time = current_candle_time
-            print(f"\n[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] Xử lý nến mới M5: {current_candle_time}")
+            print(f"\n{'='*70}")
+            print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M5: {current_candle_time}")
+            print(f"{'='*70}")
+            
+            # Lấy giá hiện tại
+            tick = mt5.symbol_info_tick(SYMBOL)
+            current_price = tick.bid
+            current_ask = tick.ask
+            print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
             
             # --- TÍNH TOÁN CHỈ BÁO TRÊN M5 ---
+            print(f"\n  📊 [M5] Tính toán chỉ báo EMA...")
             ema_short_values = calculate_ema(df_m5, EMA_SHORT)
             ema_medium_values = calculate_ema(df_m5, EMA_MEDIUM)
             
@@ -361,33 +407,59 @@ def run_bot():
             ema_medium = ema_medium_values.iloc[-1]
             prev_ema_short = ema_short_values.iloc[-2]
             prev_ema_medium = ema_medium_values.iloc[-2]
+            
+            close_m5 = df_m5['close'].iloc[-1]
+            print(f"  📊 [M5] Giá đóng cửa nến cuối: {close_m5:.5f}")
 
             # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
+            print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
             
             # 1. Tín hiệu M5 (Giao cắt EMA)
+            print(f"\n  ┌─ [BƯỚC 1] Kiểm tra tín hiệu M5 (Giao cắt EMA)")
             m5_signal = check_m5_entry_signals(ema_short, ema_medium, prev_ema_short, prev_ema_medium)
+            print(f"  └─ [BƯỚC 1] Kết quả: {m5_signal}")
             
             # 2. Lọc Xu hướng Đa khung (H4/D1) - *Chiếm nhiều tài nguyên nhất*
+            print(f"\n  ┌─ [BƯỚC 2] Kiểm tra xu hướng đa khung (D1 & H4)")
             multi_bias = check_multi_timeframe_bias()
+            print(f"  └─ [BƯỚC 2] Kết quả: {multi_bias}")
 
             # 3. Kiểm tra vị thế đang mở
             open_positions = mt5.positions_total()
+            print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
             
-            print(f"EMA_S={ema_short:.5f}, EMA_M={ema_medium:.5f}. Xu hướng Lớn: {multi_bias}")
+            print(f"\n  📊 [TÓM TẮT] EMA9={ema_short:.5f} | EMA21={ema_medium:.5f} | M5 Signal={m5_signal} | Multi-Bias={multi_bias}")
 
             if open_positions == 0:
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
+                print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
                 if m5_signal == 'BUY' and multi_bias == 'BUY':
-                    print("🚀 Tín hiệu MUA mạnh: M5 Cross-Up + Multi-Bias MUA.")
+                    print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
+                    print(f"     - M5 Signal: {m5_signal} (EMA9 cắt lên EMA21)")
+                    print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý MUA)")
+                    print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_BUY, VOLUME)
                     
                 elif m5_signal == 'SELL' and multi_bias == 'SELL':
-                    print("🔻 Tín hiệu BÁN mạnh: M5 Cross-Down + Multi-Bias BÁN.")
+                    print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
+                    print(f"     - M5 Signal: {m5_signal} (EMA9 cắt xuống EMA21)")
+                    print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý BÁN)")
+                    print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_SELL, VOLUME)
                 
                 else:
-                    print("Chưa có tín hiệu hoặc tín hiệu ngược xu hướng lớn.")
+                    print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
+                    if m5_signal == 'NONE':
+                        print(f"     - M5 Signal: {m5_signal} (Chưa có giao cắt EMA)")
+                    elif m5_signal == 'BUY' and multi_bias != 'BUY':
+                        print(f"     - M5 Signal: {m5_signal} nhưng Multi-Bias: {multi_bias} (Không đồng ý)")
+                    elif m5_signal == 'SELL' and multi_bias != 'SELL':
+                        print(f"     - M5 Signal: {m5_signal} nhưng Multi-Bias: {multi_bias} (Không đồng ý)")
+            else:
+                print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
+            
+            print(f"{'='*70}\n")
             
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()
