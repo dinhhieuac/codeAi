@@ -648,11 +648,67 @@ class XAUUSD_Bot:
             # sl_pips = max(MIN_SL_PIPS, ATR * ATR_MULTIPLIER_SL)
             # → ATR cao → SL xa, ATR thấp → SL gần (tự động điều chỉnh)
             
+            # ⚠️ QUAN TRỌNG: Giới hạn SL tối đa = $15 cho ATR_FREE mode
+            max_sl_usd_atr_free = 15.0  # Giới hạn cứng: SL không được vượt quá $15
+            
+            if sl_usd > max_sl_usd_atr_free:
+                logging.info(f"📊 ATR_FREE: SL USD ${sl_usd:.2f} > ${max_sl_usd_atr_free} → Điều chỉnh để SL = ${max_sl_usd_atr_free}")
+                
+                # Ưu tiên giảm lot_size trước (giữ nguyên sl_pips >= MIN_SL_PIPS)
+                lot_size_max_for_15 = max_sl_usd_atr_free / (sl_pips * pip_value_per_lot)
+                lot_size_max_for_15 = max(lot_min, lot_size_max_for_15)
+                
+                # Làm tròn theo lot_step
+                if lot_step > 0:
+                    lot_size_max_for_15 = round(lot_size_max_for_15 / lot_step) * lot_step
+                    lot_size_max_for_15 = round(lot_size_max_for_15, 2)
+                
+                lot_size_max_for_15 = max(lot_min, lot_size_max_for_15)
+                
+                # Tính lại SL USD với lot_size mới
+                sl_usd_new = sl_pips * pip_value_per_lot * lot_size_max_for_15
+                
+                if sl_usd_new <= max_sl_usd_atr_free:
+                    # Giảm lot_size đủ để đạt $15
+                    lot_size_original = lot_size
+                    lot_size = lot_size_max_for_15
+                    sl_usd = sl_usd_new
+                    logging.info(
+                        f"📊 ATR_FREE: Giảm lot_size: {lot_size_original:.2f} → {lot_size:.2f} lots "
+                        f"để SL USD = ${sl_usd:.2f} (SL pips: {sl_pips:.0f})"
+                    )
+                else:
+                    # Nếu vẫn > $15 sau khi giảm lot_size → Giảm sl_pips để đạt $15
+                    # Tính sl_pips để đạt $15 với lot_size hiện tại
+                    sl_pips_for_15 = max_sl_usd_atr_free / (pip_value_per_lot * lot_size)
+                    sl_pips_for_15 = int(sl_pips_for_15)  # Làm tròn xuống
+                    
+                    # Đảm bảo vẫn >= MIN_SL_PIPS nếu có thể
+                    min_sl_pips_config = MIN_SL_PIPS if 'MIN_SL_PIPS' in globals() else 200
+                    if sl_pips_for_15 >= min_sl_pips_config:
+                        sl_pips_original = sl_pips
+                        sl_pips = sl_pips_for_15
+                        sl_usd = sl_pips * pip_value_per_lot * lot_size
+                        logging.info(
+                            f"📊 ATR_FREE: Giảm SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips "
+                            f"để SL USD = ${sl_usd:.2f} (lot_size: {lot_size:.2f})"
+                        )
+                    else:
+                        # Nếu sl_pips_for_15 < MIN_SL_PIPS → Vẫn giảm để đạt $15 (ưu tiên giảm rủi ro)
+                        sl_pips_original = sl_pips
+                        sl_pips = sl_pips_for_15
+                        sl_usd = sl_pips * pip_value_per_lot * lot_size
+                        logging.warning(
+                            f"⚠️ ATR_FREE: Giảm SL pips: {sl_pips_original:.0f} → {sl_pips:.0f} pips "
+                            f"(NHỎ HƠN MIN_SL_PIPS {min_sl_pips_config}) để đạt SL USD = ${sl_usd:.2f}"
+                        )
+            
             # Điều chỉnh mềm: Nếu SL USD quá lớn (> MAX_SL_USD), có thể giảm lot_size
             # nhưng không bắt buộc (khác với BOUNDED là bắt buộc)
+            # Lưu ý: Logic này chỉ chạy nếu SL chưa bị giới hạn ở $15 ở trên
             max_sl_usd_soft = MAX_SL_USD if 'MAX_SL_USD' in globals() else 10.0
             
-            if sl_usd > max_sl_usd_soft * 2:  # Nếu SL > 2x MAX_SL_USD (ví dụ: > $20)
+            if sl_usd > max_sl_usd_soft * 2 and sl_usd <= max_sl_usd_atr_free:  # Nếu SL > 2x MAX_SL_USD nhưng <= $15
                 # Cảnh báo và có thể điều chỉnh lot_size (nhưng không bắt buộc)
                 logging.warning(
                     f"⚠️ ATR_FREE: SL USD ${sl_usd:.2f} khá cao (> ${max_sl_usd_soft * 2:.0f}) "
@@ -682,7 +738,15 @@ class XAUUSD_Bot:
                     )
                     sl_usd = sl_usd_new
             
-            logging.info(f"📊 ATR_FREE: SL = {sl_pips:.0f} pips (${sl_usd:.2f} USD) - Tự động theo ATR")
+            # Tính lại SL price và TP price SAU khi điều chỉnh
+            if signal_type == "BUY":
+                sl_price = price - (sl_pips * 0.01)
+                tp_price = price + (tp_pips * 0.01)
+            else:  # SELL
+                sl_price = price + (sl_pips * 0.01)
+                tp_price = price - (tp_pips * 0.01)
+            
+            logging.info(f"📊 ATR_FREE: SL = {sl_pips:.0f} pips (${sl_usd:.2f} USD) - Tự động theo ATR (tối đa ${max_sl_usd_atr_free})")
         
         # Lấy thông tin tài khoản
         account_info = self.get_account_info()

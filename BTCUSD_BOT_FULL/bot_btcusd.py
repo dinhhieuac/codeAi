@@ -1228,12 +1228,13 @@ class BTCUSD_Bot:
             
             # ====================================================================
             # BƯỚC 1: BREAK-EVEN STEP
-            # Kích hoạt khi: profit_pips >= BREAK_EVEN_START_PIPS (600 pips)
+            # Kích hoạt khi: profit_pips >= BREAK_EVEN_START_PIPS (500 pips)
             # ====================================================================
             if profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
                 # Dời SL về entry + buffer
+                # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    new_sl = entry_price + (break_even_buffer_pips * 0.01)
+                    new_sl = entry_price + break_even_buffer_pips  # BTCUSD: buffer_pips đã là USD
                     # Đảm bảo SL mới cao hơn SL hiện tại hoặc SL hiện tại < entry
                     if new_sl > current_sl or current_sl < entry_price:
                         # Không gửi Telegram trong _update_sl() vì sẽ gửi riêng sau
@@ -1261,7 +1262,7 @@ class BTCUSD_Bot:
                                 message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
                                 self.send_telegram_message(message)
                 else:  # SELL
-                    new_sl = entry_price - (break_even_buffer_pips * 0.01)
+                    new_sl = entry_price - break_even_buffer_pips  # BTCUSD: buffer_pips đã là USD
                     # Đảm bảo SL mới thấp hơn SL hiện tại hoặc SL hiện tại > entry
                     if new_sl < current_sl or current_sl == 0 or current_sl > entry_price:
                         # Không gửi Telegram trong _update_sl() vì sẽ gửi riêng sau
@@ -1311,12 +1312,13 @@ class BTCUSD_Bot:
                     trail_distance_pips = max(atr_value * partial_atr_k, atr_min_distance_pips)
                 
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    new_sl = current_price - (trail_distance_pips * 0.01)
+                    # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = current_price - trail_distance_pips  # BTCUSD: trail_distance_pips đã là USD
                     # SL mới phải cao hơn SL hiện tại và >= entry (breakeven)
                     if new_sl > current_sl and new_sl >= entry_price:
                         # Kiểm tra stops_level
                         if stops_level_pips > 0:
-                            min_sl = current_price - (stops_level_pips * 0.01)
+                            min_sl = current_price - stops_level_pips  # BTCUSD: stops_level_pips đã là USD
                             if new_sl < min_sl:
                                 new_sl = min_sl
                         
@@ -1345,12 +1347,13 @@ class BTCUSD_Bot:
                                 self.send_telegram_message(message)
                 
                 else:  # SELL
-                    new_sl = current_price + (trail_distance_pips * 0.01)
+                    # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = current_price + trail_distance_pips  # BTCUSD: trail_distance_pips đã là USD
                     # SL mới phải thấp hơn SL hiện tại và <= entry (breakeven)
                     if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
                         # Kiểm tra stops_level
                         if stops_level_pips > 0:
-                            max_sl = current_price + (stops_level_pips * 0.01)
+                            max_sl = current_price + stops_level_pips  # BTCUSD: stops_level_pips đã là USD
                             if new_sl > max_sl:
                                 new_sl = max_sl
                         
@@ -1514,7 +1517,8 @@ class BTCUSD_Bot:
                 if self._close_partial_position(pos, close_volume, "TP1"):
                     self.partial_close_done[ticket][0] = True
                     # Dời SL về break-even + buffer lớn hơn
-                    new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                    # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
                     self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP1")
                     logging.info(f"💰 Partial Close TP1: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp1_percent}%), Dời SL về {new_sl:.2f}")
         
@@ -1530,7 +1534,8 @@ class BTCUSD_Bot:
                 if close_volume < remaining_volume:
                     if self._close_partial_position(current_pos[0], close_volume, "TP2"):
                         self.partial_close_done[ticket][1] = True
-                        new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                        # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                        new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
                         self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP2")
                         logging.info(f"💰 Partial Close TP2: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp2_percent}%), Dời SL về {new_sl:.2f}")
         
@@ -1545,7 +1550,8 @@ class BTCUSD_Bot:
                 if close_volume < remaining_volume:
                     if self._close_partial_position(current_pos[0], close_volume, "TP3"):
                         self.partial_close_done[ticket][2] = True
-                        new_sl = entry_price + (partial_buffer_pips * 0.01) if pos.type == mt5.ORDER_TYPE_BUY else entry_price - (partial_buffer_pips * 0.01)
+                        # ⚠️ VỚI BTCUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                        new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
                         self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP3")
                         logging.info(f"💰 Partial Close TP3: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp3_percent}%), Dời SL về {new_sl:.2f}")
     
