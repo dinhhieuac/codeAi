@@ -423,7 +423,7 @@ class TechnicalAnalyzer:
         # --- Tín hiệu RSI (trọng số x2 = 2 điểm) ---
         # RSI cắt từ trên xuống dưới 30 → Quá bán → Tín hiệu mua mạnh (ưu tiên)
         if current['rsi'] < 30 and prev['rsi'] >= 30:
-            buy_signals += 2  # RSI có trọng số cao hơn (2 điểm)
+            buy_signals += 1  # RSI có trọng số cao hơn (2 điểm)
             buy_reasons.append(f"RSI cắt xuống dưới 30 (Quá bán) - RSI: {current['rsi']:.2f} [2 điểm]")
         # RSI đang ở vùng quá bán (< 35) → Tín hiệu mua (chỉ khi chưa cắt)
         elif current['rsi'] < 35:
