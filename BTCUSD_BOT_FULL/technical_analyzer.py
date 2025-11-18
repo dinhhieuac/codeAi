@@ -304,12 +304,12 @@ class TechnicalAnalyzer:
             logging.info(f"   - Bearish: {bias_bearish}/3 khung thời gian")
             
             # Chỉ BUY nếu tất cả 3 khung thời gian đều bullish
-            if bias_bullish == 3:
+            if bias_bullish == 2:
                 logging.info(f"   ✅ KẾT QUẢ: BUY (Tất cả 3 khung thời gian đều BULLISH)")
                 logging.info("=" * 60)
                 return 'BUY'
             # Chỉ SELL nếu tất cả 3 khung thời gian đều bearish
-            elif bias_bearish == 3:
+            elif bias_bearish == 2:
                 logging.info(f"   ✅ KẾT QUẢ: SELL (Tất cả 3 khung thời gian đều BEARISH)")
                 logging.info("=" * 60)
                 return 'SELL'
