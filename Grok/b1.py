@@ -22,6 +22,7 @@ PATH="C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe"
 # Telegram config (tạo bot tại @BotFather)
 
 TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+CHAT_ID = None  # ← ĐỔI THÀNH CHAT_ID TELEGRAM CỦA BẠN (nếu muốn dùng Telegram)
 # gold_m15_quantum_2025.py
 # TỐI ƯU HIỆU SUẤT 100% - CPU <3%, RAM <80MB, Check 30s chính xác
 # Test Exness Real 01/11 → 18/11/2025: +68.4% | Max DD 4.2%
@@ -46,6 +47,8 @@ cache = Cache()
 
 # ========================== TELEGRAM NHANH ==========================
 def tg(msg: str, img: str = None):
+    if not CHAT_ID:
+        return  # Không có CHAT_ID → Bỏ qua Telegram
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                       data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=5)
@@ -172,19 +175,86 @@ def trading_signal():
     prev = df.iloc[-2]
     
     # Chỉ kiểm tra khi có nến mới đóng
-    if dt.datetime.now().second < 15:  # Chỉ chạy 15s đầu mỗi nến M15 → tránh spam
-        print("No valid signal")
+    current_second = dt.datetime.now().second
+    if current_second < 15:  # Chỉ chạy 15s đầu mỗi nến M15 → tránh spam
+        print(f"⏳ Nến M15 chưa đóng - Còn {15 - current_second} giây → Chờ nến đóng")
         return
     
+    # Tính toán các điều kiện
     crossover_up = prev.ema8 <= prev.ema21 and last.ema8 > last.ema21
     rsi_good = 50.5 < last.rsi < 77
-    volume_spike = last.tick_volume > df.tick_volume.rolling(20).mean().iloc[-1] * 2.2
+    avg_volume_20 = df.tick_volume.rolling(20).mean().iloc[-1]
+    volume_spike = last.tick_volume > avg_volume_20 * 2.2
     trend_up = last.close > last.ema55 > last.ema200
     atr_pips = last.atr * ATR_MUL
     
+    # Log chi tiết các chỉ báo hiện tại
+    current_time = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print("=" * 60)
+    print(f"🔍 KIỂM TRA TÍN HIỆU - {current_time}")
+    print("=" * 60)
+    print(f"📊 Giá hiện tại: {last.close:.2f}")
+    print(f"📈 EMA8: {last.ema8:.2f} | EMA21: {last.ema21:.2f} | EMA55: {last.ema55:.2f} | EMA200: {last.ema200:.2f}")
+    print(f"📉 RSI: {last.rsi:.2f}")
+    print(f"📊 Volume: {last.tick_volume:.0f} (Trung bình 20 nến: {avg_volume_20:.0f}, Cần: {avg_volume_20 * 2.2:.0f})")
+    print(f"📏 ATR: {last.atr:.2f} ({atr_pips:.1f} pips)")
+    print("-" * 60)
+    
+    # Kiểm tra từng điều kiện và log chi tiết
+    conditions_met = []
+    conditions_failed = []
+    
+    # 1. EMA Crossover
+    if crossover_up:
+        conditions_met.append(f"✅ EMA Crossover: EMA8 ({prev.ema8:.2f} → {last.ema8:.2f}) cắt lên EMA21 ({prev.ema21:.2f} → {last.ema21:.2f})")
+    else:
+        if prev.ema8 > prev.ema21:
+            conditions_failed.append(f"❌ EMA Crossover: EMA8 ({prev.ema8:.2f}) đã > EMA21 ({prev.ema21:.2f}) từ trước (chưa có crossover)")
+        else:
+            conditions_failed.append(f"❌ EMA Crossover: EMA8 ({last.ema8:.2f}) chưa > EMA21 ({last.ema21:.2f}) (cần: EMA8 > EMA21)")
+    
+    # 2. RSI
+    if rsi_good:
+        conditions_met.append(f"✅ RSI: {last.rsi:.2f} (trong khoảng 50.5-77)")
+    else:
+        if last.rsi <= 50.5:
+            conditions_failed.append(f"❌ RSI: {last.rsi:.2f} <= 50.5 (cần: 50.5 < RSI < 77)")
+        elif last.rsi >= 77:
+            conditions_failed.append(f"❌ RSI: {last.rsi:.2f} >= 77 (cần: 50.5 < RSI < 77)")
+    
+    # 3. Volume Spike
+    if volume_spike:
+        conditions_met.append(f"✅ Volume Spike: {last.tick_volume:.0f} > {avg_volume_20 * 2.2:.0f} (2.2x trung bình)")
+    else:
+        conditions_failed.append(f"❌ Volume Spike: {last.tick_volume:.0f} <= {avg_volume_20 * 2.2:.0f} (cần: > {avg_volume_20 * 2.2:.0f}, tức > 2.2x trung bình)")
+    
+    # 4. Trend Up
+    if trend_up:
+        conditions_met.append(f"✅ Trend Up: Giá ({last.close:.2f}) > EMA55 ({last.ema55:.2f}) > EMA200 ({last.ema200:.2f})")
+    else:
+        if last.close <= last.ema55:
+            conditions_failed.append(f"❌ Trend Up: Giá ({last.close:.2f}) <= EMA55 ({last.ema55:.2f})")
+        elif last.ema55 <= last.ema200:
+            conditions_failed.append(f"❌ Trend Up: EMA55 ({last.ema55:.2f}) <= EMA200 ({last.ema200:.2f})")
+    
+    # In kết quả
+    if conditions_met:
+        print("✅ ĐIỀU KIỆN ĐẠT:")
+        for condition in conditions_met:
+            print(f"   {condition}")
+    
+    if conditions_failed:
+        print("❌ ĐIỀU KIỆN KHÔNG ĐẠT:")
+        for condition in conditions_failed:
+            print(f"   {condition}")
+    
+    print("=" * 60)
+    
+    # Nếu không đủ điều kiện, return
     if not (crossover_up and rsi_good and volume_spike and trend_up):
-        print("No valid signal")
-
+        failed_count = len(conditions_failed)
+        print(f"⚠️ KHÔNG ĐỦ ĐIỀU KIỆN: {failed_count}/{4} điều kiện không đạt → Không vào lệnh")
+        print("=" * 60)
         return
     
 
@@ -212,11 +282,35 @@ def trading_signal():
     
     result = mt5.order_send(request)
     if result.retcode == mt5.TRADE_RETCODE_DONE:
+        print("=" * 60)
+        print(f"✅ LỆNH BUY THÀNH CÔNG!")
+        print("=" * 60)
+        print(f"   📊 Ticket: {result.order}")
+        print(f"   💰 Volume: {lot} lots")
+        print(f"   💵 Entry: {price:.2f}")
+        print(f"   🛑 SL: {sl:.2f} ({atr_pips:.1f} pips)")
+        print(f"   🎯 TP: {tp:.2f} ({atr_pips * 2.8:.1f} pips, RR 1:2.8)")
+        print("=" * 60)
+        
         chart_path = "signal.png"
         quick_chart(df, chart_path)
         tg(f" NEW BUY {lot} lot\nEntry: {price}\nSL: {atr_pips:.1f} pips | TP 2.8R\nTime: {dt.datetime.now().strftime('%H:%M')}", chart_path)
         os.remove(chart_path)
         cache.position_ticket = result.order
+    else:
+        # Log chi tiết lỗi khi gửi lệnh
+        error_code = result.retcode
+        error_desc = result.comment if hasattr(result, 'comment') else 'Unknown error'
+        print("=" * 60)
+        print(f"❌ LỆNH BUY THẤT BẠI!")
+        print("=" * 60)
+        print(f"   ⚠️ Lỗi: {error_desc}")
+        print(f"   📊 Error Code: {error_code}")
+        print(f"   💰 Volume: {lot} lots")
+        print(f"   💵 Entry: {price:.2f}")
+        print(f"   🛑 SL: {sl:.2f}")
+        print(f"   🎯 TP: {tp:.2f}")
+        print("=" * 60)
 
 def quick_chart(df, path):
     plt.figure(figsize=(10,6), facecolor='black')
