@@ -90,13 +90,13 @@ def get_data_fresh() -> pd.DataFrame:
     df['ema200'] = pd.Series(close).ewm(span=200, adjust=False).mean()
     
     # RSI siêu nhẹ
-    delta = np.diff(close)
-    up = np.maximum(delta, 0)
-    down = np.maximum(-delta, 0)
-    roll_up = pd.Series(up).ewm(alpha=1/14, adjust=False).mean()
-    roll_down = pd.Series(down).ewm(alpha=1/14, adjust=False).mean()
-    rs = roll_up / roll_down
-    df['rsi'] = 100 - (100 / (1 + rs))
+    # DÁN NGAY SAU KHI CÓ df
+    delta = df['close'].diff()
+    up, down = delta.clip(lower=0), -delta.clip(upper=0)
+    ma_up   = up.ewm(com=13, adjust=False, min_periods=14).mean()
+    ma_down = down.ewm(com=13, adjust=False, min_periods=14).mean()
+    rsi = 100 - 100 / (1 + ma_up / ma_down)
+    df['rsi'] = rsi.fillna(50)   # quan trọng!
     
     # ATR
     prev_close = np.roll(close, 1)
@@ -110,7 +110,28 @@ def get_data_fresh() -> pd.DataFrame:
     cache.df = df
     cache.last_bar_time = df.iloc[-1]['time']
     return df
-
+def calculate_rsi(data, period=14):
+    """
+    RSI chuẩn Wilder - không NaN, không lỗi index
+    data: pandas Series (df['close'])
+    """
+    delta = data.diff()                  # chênh lệch giá
+    
+    up = delta.clip(lower=0)             # chỉ lấy phần tăng
+    down = -delta.clip(upper=0)          # chỉ lấy phần giảm (dương)
+    
+    # Cách chuẩn Wilder: dùng EMA (Smoothed Moving Average) thay vì SMA
+    ma_up   = up.ewm(com=period - 1, adjust=False, min_periods=period).mean()
+    ma_down = down.ewm(com=period - 1, adjust=False, min_periods=period).mean()
+    
+    rs = ma_up / ma_down
+    rsi = 100 - (100 / (1 + rs))
+    
+    # Fix 14 nến đầu bị NaN (rất quan trọng!)
+    rsi[:period] = np.nan
+    rsi = rsi.fillna(50)      # hoặc để np.nan cũng được, tùy bạn
+    
+    return rsi
 # ========================== QUẢN LÝ LỆNH THÔNG MINH ==========================
 def manage_open_position():
     positions = mt5.positions_get(symbol=SYMBOL)
