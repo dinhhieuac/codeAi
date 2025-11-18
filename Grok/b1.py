@@ -173,6 +173,7 @@ def trading_signal():
     
     # Chỉ kiểm tra khi có nến mới đóng
     if dt.datetime.now().second < 15:  # Chỉ chạy 15s đầu mỗi nến M15 → tránh spam
+        print("No valid signal")
         return
     
     crossover_up = prev.ema8 <= prev.ema21 and last.ema8 > last.ema21
@@ -182,6 +183,8 @@ def trading_signal():
     atr_pips = last.atr * ATR_MUL
     
     if not (crossover_up and rsi_good and volume_spike and trend_up):
+        print("No valid signal")
+
         return
     
 
