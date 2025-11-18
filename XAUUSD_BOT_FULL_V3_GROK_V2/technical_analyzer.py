@@ -224,37 +224,127 @@ class TechnicalAnalyzer:
         
         return False, None
     
-    def check_sweep_low(self, df):
+    def check_liquidity_sweep(self, df):
         """
-        Kiểm tra sweep đáy/swing low (vùng xác nhận entry cho BUY)
+        Kiểm tra liquidity sweep (quét đáy/đỉnh) - Rule mới: Chiến lược M15 chuẩn
         
-        Sweep low: Giá phá vỡ swing low (đáy) trước đó, sau đó quay lại tăng
-        - Điều kiện: Giá tạo đáy mới thấp hơn đáy trước, sau đó đóng cửa trên đáy cũ
+        BUY: Giá quét đáy trước đó (sweep low)
+        SELL: Giá quét đỉnh trước đó (sweep high)
         
         Args:
             df: DataFrame với high, low, close
             
         Returns:
-            bool: True nếu có sweep low (tín hiệu BUY)
+            Tuple (bool, str, float): (has_sweep, direction, sweep_level)
+                - has_sweep: True nếu có liquidity sweep
+                - direction: 'BUY' hoặc 'SELL'
+                - sweep_level: Giá trị swing low (BUY) hoặc swing high (SELL)
         """
-        if len(df) < 10:
-            return False
+        if len(df) < 20:
+            return False, None, None
         
-        # Tìm swing low trong 10 nến gần nhất
-        recent_lows = df['low'].tail(10)
-        swing_low = recent_lows.min()
-        swing_low_idx = recent_lows.idxmin()
+        # Tìm swing low và swing high trong 20 nến gần nhất (để tìm đáy/đỉnh rõ ràng hơn)
+        recent_20 = df.tail(20)
+        recent_lows = recent_20['low']
+        recent_highs = recent_20['high']
         
-        # Kiểm tra xem giá có phá vỡ swing low và quay lại không
+        # Tìm swing low (đáy thấp nhất trong 20 nến, nhưng không phải nến cuối)
+        swing_low = recent_lows.iloc[:-1].min()  # Bỏ qua nến cuối
+        swing_low_idx = recent_lows.iloc[:-1].idxmin()
+        
+        # Tìm swing high (đỉnh cao nhất trong 20 nến, nhưng không phải nến cuối)
+        swing_high = recent_highs.iloc[:-1].max()  # Bỏ qua nến cuối
+        swing_high_idx = recent_highs.iloc[:-1].idxmax()
+        
         current = df.iloc[-1]
         prev = df.iloc[-2]
         
-        # Nếu giá phá vỡ swing low (low < swing_low) nhưng đóng cửa trên swing_low
+        # Kiểm tra sweep low (BUY): Giá phá vỡ swing low nhưng đóng cửa trên swing low
+        # Điều kiện: Nến hiện tại có low < swing_low nhưng close > swing_low
         if current['low'] < swing_low and current['close'] > swing_low:
-            # Có sweep low → Tín hiệu BUY
-            return True
+            logging.info(f"✅ Liquidity Sweep LOW phát hiện: Low={current['low']:.2f} < Swing Low={swing_low:.2f}, Close={current['close']:.2f} > Swing Low")
+            return True, 'BUY', swing_low
         
-        return False
+        # Kiểm tra sweep high (SELL): Giá phá vỡ swing high nhưng đóng cửa dưới swing high
+        # Điều kiện: Nến hiện tại có high > swing_high nhưng close < swing_high
+        if current['high'] > swing_high and current['close'] < swing_high:
+            logging.info(f"✅ Liquidity Sweep HIGH phát hiện: High={current['high']:.2f} > Swing High={swing_high:.2f}, Close={current['close']:.2f} < Swing High")
+            return True, 'SELL', swing_high
+        
+        return False, None, None
+    
+    def check_reversal_candle(self, df):
+        """
+        Kiểm tra nến đảo chiều M15 - Rule mới: Chiến lược M15 chuẩn
+        
+        BUY: Nến đảo chiều tăng (bullish reversal)
+        - Nến có lower wick dài (giá bị đẩy xuống nhưng quay lại)
+        - Close > Open (nến xanh)
+        - Close > (High + Low) / 2 (đóng cửa ở nửa trên của nến)
+        
+        SELL: Nến đảo chiều giảm (bearish reversal)
+        - Nến có upper wick dài (giá bị đẩy lên nhưng quay lại)
+        - Close < Open (nến đỏ)
+        - Close < (High + Low) / 2 (đóng cửa ở nửa dưới của nến)
+        
+        Args:
+            df: DataFrame với open, high, low, close
+            
+        Returns:
+            Tuple (bool, str): (has_reversal, direction) - 'BUY', 'SELL', hoặc None
+        """
+        if len(df) < 2:
+            return False, None
+        
+        current = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # Tính các thông số của nến hiện tại
+        body = abs(current['close'] - current['open'])
+        range_candle = current['high'] - current['low']
+        
+        if range_candle == 0:
+            return False, None
+        
+        # Tính wick
+        upper_wick = current['high'] - max(current['open'], current['close'])
+        lower_wick = min(current['open'], current['close']) - current['low']
+        
+        # Kiểm tra nến đảo chiều BUY (bullish reversal)
+        # Điều kiện:
+        # 1. Close > Open (nến xanh)
+        # 2. Lower wick > 40% range (wick dài, giá bị đẩy xuống nhưng quay lại)
+        # 3. Close > (High + Low) / 2 (đóng cửa ở nửa trên)
+        is_bullish = current['close'] > current['open']
+        has_long_lower_wick = lower_wick / range_candle > 0.4
+        close_in_upper_half = current['close'] > (current['high'] + current['low']) / 2
+        
+        if is_bullish and has_long_lower_wick and close_in_upper_half:
+            logging.info(f"✅ Nến đảo chiều BUY phát hiện: Lower wick={lower_wick:.2f} ({lower_wick/range_candle*100:.1f}%), Close={current['close']:.2f} > Open={current['open']:.2f}")
+            return True, 'BUY'
+        
+        # Kiểm tra nến đảo chiều SELL (bearish reversal)
+        # Điều kiện:
+        # 1. Close < Open (nến đỏ)
+        # 2. Upper wick > 40% range (wick dài, giá bị đẩy lên nhưng quay lại)
+        # 3. Close < (High + Low) / 2 (đóng cửa ở nửa dưới)
+        is_bearish = current['close'] < current['open']
+        has_long_upper_wick = upper_wick / range_candle > 0.4
+        close_in_lower_half = current['close'] < (current['high'] + current['low']) / 2
+        
+        if is_bearish and has_long_upper_wick and close_in_lower_half:
+            logging.info(f"✅ Nến đảo chiều SELL phát hiện: Upper wick={upper_wick:.2f} ({upper_wick/range_candle*100:.1f}%), Close={current['close']:.2f} < Open={current['open']:.2f}")
+            return True, 'SELL'
+        
+        return False, None
+    
+    def check_sweep_low(self, df):
+        """
+        Kiểm tra sweep đáy/swing low (vùng xác nhận entry cho BUY)
+        [DEPRECATED - Dùng check_liquidity_sweep() thay thế]
+        """
+        has_sweep, direction, _ = self.check_liquidity_sweep(df)
+        return has_sweep and direction == 'BUY'
     
     def check_break_retest(self, df):
         """
@@ -586,34 +676,81 @@ class TechnicalAnalyzer:
             logging.info(f"✅ M15 range hợp lệ: ${range_usd:.2f} >= $12 (không sideway)")
         
         # ====================================================================
-        # KIỂM TRA VÙNG XÁC NHẬN ENTRY
+        # KIỂM TRA VÙNG XÁC NHẬN ENTRY - Rule mới: Chiến lược M15 chuẩn
         # ====================================================================
         # 1. Pullback về EMA21
         has_pullback, pullback_direction = self.check_pullback_to_ema21(df)
         if has_pullback:
             logging.info(f"✅ Pullback về EMA21 phát hiện: {pullback_direction}")
         
-        # 2. Sweep đáy/swing low (cho BUY)
-        has_sweep_low = self.check_sweep_low(df)
-        if has_sweep_low:
-            logging.info(f"✅ Sweep low phát hiện → Tín hiệu BUY")
+        # 2. Liquidity Sweep (quét đáy/đỉnh) - Rule mới
+        has_liquidity_sweep, sweep_direction, sweep_level = self.check_liquidity_sweep(df)
+        if has_liquidity_sweep:
+            logging.info(f"✅ Liquidity Sweep phát hiện: {sweep_direction} (Level: {sweep_level:.2f})")
         
-        # 3. Break retest zone
+        # 3. Nến đảo chiều M15 - Rule mới (BẮT BUỘC cho setup chuẩn)
+        has_reversal, reversal_direction = self.check_reversal_candle(df)
+        if has_reversal:
+            logging.info(f"✅ Nến đảo chiều M15 phát hiện: {reversal_direction}")
+        
+        # 4. Break retest zone
         has_break_retest, break_retest_direction = self.check_break_retest(df)
         if has_break_retest:
             logging.info(f"✅ Break retest phát hiện: {break_retest_direction}")
         
-        # 4. OB/FVG rõ ràng
+        # 5. OB/FVG rõ ràng
         has_ob_fvg, ob_fvg_direction = self.check_ob_fvg(df)
         if has_ob_fvg:
             logging.info(f"✅ OB/FVG phát hiện: {ob_fvg_direction}")
         
-        # Tổng hợp vùng xác nhận entry
-        entry_confirmation_buy = (has_pullback and pullback_direction == 'BUY') or has_sweep_low or (has_break_retest and break_retest_direction == 'BUY') or (has_ob_fvg and ob_fvg_direction == 'BUY')
-        entry_confirmation_sell = (has_pullback and pullback_direction == 'SELL') or (has_break_retest and break_retest_direction == 'SELL') or (has_ob_fvg and ob_fvg_direction == 'SELL')
+        # ====================================================================
+        # SETUP CHUẨN M15: EMA9-EMA21 + Liquidity Sweep + Nến đảo chiều
+        # ====================================================================
+        current = df.iloc[-1]
+        ema9 = current['ema_9']
+        ema21 = current['ema_21']
+        
+        # BUY setup chuẩn:
+        # 1. EMA9 > EMA21
+        # 2. Có liquidity sweep low (quét đáy)
+        # 3. Có nến đảo chiều BUY
+        setup_buy_standard = (ema9 > ema21 and 
+                             has_liquidity_sweep and sweep_direction == 'BUY' and 
+                             has_reversal and reversal_direction == 'BUY')
+        
+        # SELL setup chuẩn:
+        # 1. EMA9 < EMA21
+        # 2. Có liquidity sweep high (quét đỉnh)
+        # 3. Có nến đảo chiều SELL
+        setup_sell_standard = (ema9 < ema21 and 
+                              has_liquidity_sweep and sweep_direction == 'SELL' and 
+                              has_reversal and reversal_direction == 'SELL')
+        
+        # Tổng hợp vùng xác nhận entry (bao gồm cả setup chuẩn và các setup khác)
+        entry_confirmation_buy = setup_buy_standard or (has_pullback and pullback_direction == 'BUY') or (has_break_retest and break_retest_direction == 'BUY') or (has_ob_fvg and ob_fvg_direction == 'BUY')
+        entry_confirmation_sell = setup_sell_standard or (has_pullback and pullback_direction == 'SELL') or (has_break_retest and break_retest_direction == 'SELL') or (has_ob_fvg and ob_fvg_direction == 'SELL')
+        
+        # Lưu thông tin setup chuẩn để dùng cho SL/TP
+        if setup_buy_standard:
+            logging.info("=" * 60)
+            logging.info("🎯 SETUP BUY CHUẨN M15 PHÁT HIỆN!")
+            logging.info("=" * 60)
+            logging.info(f"   ✅ EMA9 ({ema9:.2f}) > EMA21 ({ema21:.2f})")
+            logging.info(f"   ✅ Liquidity Sweep LOW: {sweep_level:.2f}")
+            logging.info(f"   ✅ Nến đảo chiều BUY")
+            logging.info("=" * 60)
+        
+        if setup_sell_standard:
+            logging.info("=" * 60)
+            logging.info("🎯 SETUP SELL CHUẨN M15 PHÁT HIỆN!")
+            logging.info("=" * 60)
+            logging.info(f"   ✅ EMA9 ({ema9:.2f}) < EMA21 ({ema21:.2f})")
+            logging.info(f"   ✅ Liquidity Sweep HIGH: {sweep_level:.2f}")
+            logging.info(f"   ✅ Nến đảo chiều SELL")
+            logging.info("=" * 60)
         
         if not entry_confirmation_buy and not entry_confirmation_sell:
-            logging.warning("⚠️ Không có vùng xác nhận entry (pullback EMA21, sweep low, break retest, OB/FVG) → HOLD")
+            logging.warning("⚠️ Không có vùng xác nhận entry (setup chuẩn hoặc pullback EMA21, break retest, OB/FVG) → HOLD")
             return {
                 'action': 'HOLD',
                 'strength': 0,
@@ -621,6 +758,13 @@ class TechnicalAnalyzer:
                 'tp_pips': 0,
                 'reason': 'Không có vùng xác nhận entry'
             }
+        
+        # Lưu thông tin setup để dùng cho SL/TP
+        self.setup_info = {
+            'is_standard_setup': setup_buy_standard or setup_sell_standard,
+            'sweep_level': sweep_level if has_liquidity_sweep else None,
+            'direction': 'BUY' if setup_buy_standard else ('SELL' if setup_sell_standard else None)
+        }
         
         # Lấy các cột giá cần thiết
         close = df['close']  # Giá đóng cửa
@@ -846,9 +990,10 @@ class TechnicalAnalyzer:
         # --- Tín hiệu BUY: Rule mới - H1 trend tăng → ưu tiên Buy ở M15 ---
         # Điều kiện đầy đủ:
         # 1. H1 trend = BULLISH (EMA50 > EMA200)
-        # 2. Có vùng xác nhận entry (pullback EMA21, sweep low, break retest, OB/FVG)
-        # 3. buy_signals >= MIN_SIGNAL_STRENGTH, buy_signals > sell_signals
-        # 4. ATR > 12 pips, Volume confirmed
+        # 2. EMA9 > EMA21 (điều kiện cơ bản)
+        # 3. Có vùng xác nhận entry (setup chuẩn hoặc pullback EMA21, break retest, OB/FVG)
+        # 4. buy_signals >= MIN_SIGNAL_STRENGTH, buy_signals > sell_signals
+        # 5. ATR > 12 pips, Volume confirmed
         h1_allows_buy = True
         if h1_trend_info:
             if h1_trend_info['trend'] == 'BEARISH':
@@ -861,23 +1006,52 @@ class TechnicalAnalyzer:
         else:
             logging.warning("⚠️ Không lấy được H1 trend → Bỏ qua filter H1")
         
-        if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals and atr_value > atr_min_pips and volume_confirmed and h1_allows_buy and entry_confirmation_buy:
-            # Tính SL/TP theo grok.md: SL = Entry ± 1.5×ATR
-            use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
-            # Theo grok.md: SL = 1.5×ATR (thay vì 2.5×ATR hiện tại)
-            atr_multiplier_sl = 1.5  # Theo grok.md
-            atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
+        # Kiểm tra EMA9 > EMA21 (điều kiện cơ bản cho BUY)
+        ema9_above_ema21 = current['ema_9'] > current['ema_21']
+        if not ema9_above_ema21:
+            logging.warning(f"⚠️ EMA9 ({current['ema_9']:.2f}) <= EMA21 ({current['ema_21']:.2f}) → Không đủ điều kiện BUY")
+        
+        if buy_signals >= MIN_SIGNAL_STRENGTH and buy_signals > sell_signals and atr_value > atr_min_pips and volume_confirmed and h1_allows_buy and entry_confirmation_buy and ema9_above_ema21:
+            # Kiểm tra xem có phải setup chuẩn M15 không
+            is_standard_setup = hasattr(self, 'setup_info') and self.setup_info.get('is_standard_setup', False) and self.setup_info.get('direction') == 'BUY'
             
-            if use_atr_sl_tp:
-                # Tính SL/TP theo ATR động (theo grok.md)
-                sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
-                # TP sẽ được tính theo partial close strategy (TP1: +15 pips, TP2: +30 pips, TP3: trailing)
-                # Tạm thời dùng ATR multiplier cho TP, sẽ được điều chỉnh trong partial close
-                tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+            if is_standard_setup:
+                # SETUP CHUẨN M15: SL dưới đáy 10-15$, TP 1:1.5 hoặc 1:2
+                sweep_level = self.setup_info.get('sweep_level')
+                current_price = current['close']
+                
+                if sweep_level:
+                    # SL dưới đáy 10-15$ (tính bằng pips)
+                    # 1 pip XAUUSD = $1 cho 1 lot, nên 10-15$ = 10-15 pips
+                    sl_distance_usd = 12.0  # Trung bình 12$ (có thể điều chỉnh 10-15$)
+                    sl_distance_pips = sl_distance_usd  # 1 pip = $1 cho 1 lot
+                    sl_price = sweep_level - (sl_distance_pips * 0.01)  # SL dưới đáy
+                    sl_pips = abs(current_price - sl_price) / 0.01
+                    
+                    # TP 1:1.5 hoặc 1:2 (ưu tiên 1:2)
+                    tp_ratio = 2.0  # TP 1:2 (có thể điều chỉnh 1.5 hoặc 2.0)
+                    tp_pips = int(sl_pips * tp_ratio)
+                    
+                    logging.info(f"📊 Setup BUY chuẩn M15: SL={sl_pips:.0f} pips (${sl_distance_usd:.0f} dưới đáy {sweep_level:.2f}), TP={tp_pips} pips (RR 1:{tp_ratio})")
+                else:
+                    # Fallback nếu không có sweep_level
+                    use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+                    atr_multiplier_sl = 1.5
+                    atr_multiplier_tp = 2.0  # TP 1:2 cho setup chuẩn
+                    sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                    tp_pips = max(self.min_tp_pips, int(sl_pips * atr_multiplier_tp))
             else:
-                # Tính SL/TP theo công thức cố định (giữ nguyên logic cũ)
-                sl_pips = max(self.min_sl_pips, atr_value * 1.5)
-                tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+                # Setup thông thường: Tính SL/TP theo ATR
+                use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+                atr_multiplier_sl = 1.5
+                atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
+                
+                if use_atr_sl_tp:
+                    sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                    tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+                else:
+                    sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+                    tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
             
             # TP Boost: Tăng TP khi trend mạnh (nếu bật)
             enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
@@ -901,9 +1075,10 @@ class TechnicalAnalyzer:
         # --- Tín hiệu SELL: Rule mới - H1 trend giảm → ưu tiên Sell ở M15 ---
         # Điều kiện đầy đủ:
         # 1. H1 trend = BEARISH (EMA50 < EMA200)
-        # 2. Có vùng xác nhận entry (pullback EMA21, break retest, OB/FVG)
-        # 3. sell_signals >= MIN_SIGNAL_STRENGTH, sell_signals > buy_signals
-        # 4. ATR > 12 pips, Volume confirmed
+        # 2. EMA9 < EMA21 (điều kiện cơ bản)
+        # 3. Có vùng xác nhận entry (setup chuẩn hoặc pullback EMA21, break retest, OB/FVG)
+        # 4. sell_signals >= MIN_SIGNAL_STRENGTH, sell_signals > buy_signals
+        # 5. ATR > 12 pips, Volume confirmed
         h1_allows_sell = True
         if h1_trend_info:
             if h1_trend_info['trend'] == 'BULLISH':
@@ -916,23 +1091,52 @@ class TechnicalAnalyzer:
         else:
             logging.warning("⚠️ Không lấy được H1 trend → Bỏ qua filter H1")
         
-        if sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals and atr_value > atr_min_pips and volume_confirmed and h1_allows_sell and entry_confirmation_sell:
-            # Tính SL/TP theo grok.md: SL = Entry ± 1.5×ATR
-            use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
-            # Theo grok.md: SL = 1.5×ATR (thay vì 2.5×ATR hiện tại)
-            atr_multiplier_sl = 1.5  # Theo grok.md
-            atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
+        # Kiểm tra EMA9 < EMA21 (điều kiện cơ bản cho SELL)
+        ema9_below_ema21 = current['ema_9'] < current['ema_21']
+        if not ema9_below_ema21:
+            logging.warning(f"⚠️ EMA9 ({current['ema_9']:.2f}) >= EMA21 ({current['ema_21']:.2f}) → Không đủ điều kiện SELL")
+        
+        if sell_signals >= MIN_SIGNAL_STRENGTH and sell_signals > buy_signals and atr_value > atr_min_pips and volume_confirmed and h1_allows_sell and entry_confirmation_sell and ema9_below_ema21:
+            # Kiểm tra xem có phải setup chuẩn M15 không
+            is_standard_setup = hasattr(self, 'setup_info') and self.setup_info.get('is_standard_setup', False) and self.setup_info.get('direction') == 'SELL'
             
-            if use_atr_sl_tp:
-                # Tính SL/TP theo ATR động (theo grok.md)
-                sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
-                # TP sẽ được tính theo partial close strategy (TP1: +15 pips, TP2: +30 pips, TP3: trailing)
-                # Tạm thời dùng ATR multiplier cho TP, sẽ được điều chỉnh trong partial close
-                tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+            if is_standard_setup:
+                # SETUP CHUẨN M15: SL trên swing high 10-15$, TP 1:2
+                sweep_level = self.setup_info.get('sweep_level')
+                current_price = current['close']
+                
+                if sweep_level:
+                    # SL trên swing high 10-15$ (tính bằng pips)
+                    # 1 pip XAUUSD = $1 cho 1 lot, nên 10-15$ = 10-15 pips
+                    sl_distance_usd = 12.0  # Trung bình 12$ (có thể điều chỉnh 10-15$)
+                    sl_distance_pips = sl_distance_usd  # 1 pip = $1 cho 1 lot
+                    sl_price = sweep_level + (sl_distance_pips * 0.01)  # SL trên đỉnh
+                    sl_pips = abs(sl_price - current_price) / 0.01
+                    
+                    # TP 1:2
+                    tp_ratio = 2.0  # TP 1:2
+                    tp_pips = int(sl_pips * tp_ratio)
+                    
+                    logging.info(f"📊 Setup SELL chuẩn M15: SL={sl_pips:.0f} pips (${sl_distance_usd:.0f} trên đỉnh {sweep_level:.2f}), TP={tp_pips} pips (RR 1:{tp_ratio})")
+                else:
+                    # Fallback nếu không có sweep_level
+                    use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+                    atr_multiplier_sl = 1.5
+                    atr_multiplier_tp = 2.0  # TP 1:2 cho setup chuẩn
+                    sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                    tp_pips = max(self.min_tp_pips, int(sl_pips * atr_multiplier_tp))
             else:
-                # Tính SL/TP theo công thức cố định (giữ nguyên logic cũ)
-                sl_pips = max(self.min_sl_pips, atr_value * 1.5)
-                tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
+                # Setup thông thường: Tính SL/TP theo ATR
+                use_atr_sl_tp = USE_ATR_BASED_SL_TP if 'USE_ATR_BASED_SL_TP' in globals() else True
+                atr_multiplier_sl = 1.5
+                atr_multiplier_tp = ATR_MULTIPLIER_TP if 'ATR_MULTIPLIER_TP' in globals() else 2.5
+                
+                if use_atr_sl_tp:
+                    sl_pips = max(self.min_sl_pips, atr_value * atr_multiplier_sl)
+                    tp_pips = max(self.min_tp_pips, int(atr_value * atr_multiplier_tp))
+                else:
+                    sl_pips = max(self.min_sl_pips, atr_value * 1.5)
+                    tp_pips = max(self.min_tp_pips, int(sl_pips * MIN_RR_RATIO))
             
             # TP Boost: Tăng TP khi trend mạnh (nếu bật)
             enable_tp_boost = ENABLE_TP_BOOST if 'ENABLE_TP_BOOST' in globals() else True
