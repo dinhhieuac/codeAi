@@ -8,12 +8,13 @@ import numpy as np
 import time
 import datetime as dt
 import requests
+import matplotlib
+
 import matplotlib.pyplot as plt
 import os
 from typing import Optional
 matplotlib.use('Agg')  # Không dùng GUI → tiết kiệm RAM cực mạnh
 
-# ========================== CẤU HÌNH ==========================
 YOUR_LOGIN = 272736909          # ← ĐỔI THÀNH LOGIN EXNESS CỦA BẠN
 YOUR_PASSWORD = "@Dinhhieu273"    # ← ĐỔI THÀNH PASS
 SERVER = "Exness-MT5Trial14"      # hoặc Exness-MT5Trial / Exness-MT5Real2...
@@ -57,7 +58,7 @@ def tg(msg: str, img: str = None):
 
 # ========================== KHỞI TẠO SIÊU NHANH ==========================
 def fast_init():
-    if not mt5.initialize(login=LOGIN, password=PASSWORD, server=SERVER, timeout=10000):
+    if not mt5.initialize(path=PATH,login=YOUR_LOGIN, password=YOUR_PASSWORD, server=SERVER, timeout=10000):
         print("LỖI MT5:", mt5.last_error())
         return False
     mt5.symbol_select(SYMBOL, True)
