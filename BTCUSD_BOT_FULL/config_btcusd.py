@@ -293,7 +293,7 @@ MIN_TIME_BETWEEN_SAME_DIRECTION = 90  # Đơn vị: phút (tăng từ 60 lên 90
 # Với REQUIRE_STRONG_SIGNAL = True, đã yêu cầu ít nhất 1 tín hiệu mạnh → 3 điểm là hợp lý
 # Giá trị cao hơn = ít lệnh nhưng chính xác hơn
 # Giá trị thấp hơn = nhiều lệnh nhưng có thể nhiều false signals
-MIN_SIGNAL_STRENGTH = 3  # Tăng từ 2 lên 3 để tăng chất lượng tín hiệu (khuyến nghị: 3 cho M15 timeframe)
+MIN_SIGNAL_STRENGTH = 2  # Tăng từ 2 lên 3 để tăng chất lượng tín hiệu (khuyến nghị: 3 cho M15 timeframe)
 
 # Yêu cầu ít nhất 1 tín hiệu mạnh (RSI cắt hoặc EMA cắt) để vào lệnh
 # Tín hiệu mạnh = RSI cắt (từ trên xuống dưới 30 hoặc từ dưới lên trên 70) HOẶC EMA cắt (EMA20 cắt EMA50)
