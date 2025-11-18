@@ -67,8 +67,6 @@ def init_mt5():
         print("LỖI KẾT NỐI MT5:", mt5.last_error())
         return False
     print(f"✓ Đã kết nối Exness | Balance: {mt5.account_info().balance:,}$")
-    send_telegram("🤖 <b>EA Gold M15 Ultimate 2025</b> đã khởi động!\n"
-                  f"Balance: <b>{mt5.account_info().balance():,}$</b>")
     return True
 
 # ========================== INDICATORS ==========================
@@ -205,7 +203,8 @@ def trading_logic():
                 chart_path
             )
             os.remove(chart_path)
-
+    else:
+        print("No valid trade signal at this time.")
 # ========================== MAIN LOOP ==========================
 if not init_mt5():
     exit()
