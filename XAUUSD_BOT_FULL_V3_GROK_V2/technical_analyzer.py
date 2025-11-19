@@ -444,7 +444,8 @@ class TechnicalAnalyzer:
         3. Body size > 60% tổng range (nến có lực)
         
         Args:
-            df: DataFrame với high, low, close, open, ema_9, ema_21, atr
+            df: DataFrame với high, low, close, open
+                Nếu chưa có ema_9, ema_21, atr → Sẽ tự tính toán
             
         Returns:
             Tuple (bool, dict): (has_strong_momentum, conditions_info)
@@ -453,6 +454,21 @@ class TechnicalAnalyzer:
         """
         if len(df) < 14:
             return False, {}
+        
+        # Tính toán các chỉ báo nếu chưa có
+        if 'atr' not in df.columns:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            df['atr'] = self.calculate_atr(high, low, close)
+        
+        if 'ema_9' not in df.columns:
+            close = df['close']
+            df['ema_9'] = self.calculate_ema(close, 9)
+        
+        if 'ema_21' not in df.columns:
+            close = df['close']
+            df['ema_21'] = self.calculate_ema(close, 21)
         
         current = df.iloc[-1]
         conditions_info = {}
