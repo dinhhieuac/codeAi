@@ -98,6 +98,10 @@ class ETHUSD_Bot:
         
         # Trailing stop tracking
         self.trailing_stop_activated = set()  # Set các ticket đã kích hoạt trailing stop
+        self.breakeven_activated = set()  # Set các ticket đã kích hoạt break-even
+        self.partial_close_done = {}  # Dict {ticket: [TP1_done, TP2_done, TP3_done]} để theo dõi partial close
+        self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
+        self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
         self.hard_lock_notified = set()  # Set các ticket đã gửi thông báo Hard Lock
         
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
@@ -1180,12 +1184,10 @@ class ETHUSD_Bot:
     
     def _manage_trailing_stops(self):
         """
-        Quản lý Smart Trailing Stop: Dời SL thông minh để bảo vệ lợi nhuận
-        
-        Logic:
-        - Kích hoạt khi profit ≥ TRAIL_START_PIPS
-        - SL sẽ cách giá hiện tại TRAIL_DISTANCE_PIPS
-        - Khi profit > TRAIL_HARD_LOCK_PIPS → Chốt cứng SL ở mức an toàn
+        Quản lý Trailing Stop chuyên nghiệp với 3 giai đoạn:
+        1. Break-Even Step: Dời SL về entry + buffer khi đạt BREAK_EVEN_START_PIPS
+        2. ATR-Based Trailing: Dời SL theo ATR × ATR_K
+        3. Partial Close: Chốt một phần lợi nhuận khi đạt TP1, TP2, TP3
         """
         # Kiểm tra xem có bật trailing stop không
         enable_trailing = ENABLE_TRAILING_STOP if 'ENABLE_TRAILING_STOP' in globals() else True
@@ -1197,9 +1199,11 @@ class ETHUSD_Bot:
             return
         
         # Lấy tham số từ config
-        trail_start_pips = TRAIL_START_PIPS if 'TRAIL_START_PIPS' in globals() else 150
-        trail_distance_pips = TRAIL_DISTANCE_PIPS if 'TRAIL_DISTANCE_PIPS' in globals() else 100
-        trail_hard_lock_pips = TRAIL_HARD_LOCK_PIPS if 'TRAIL_HARD_LOCK_PIPS' in globals() else 250
+        break_even_start_pips = BREAK_EVEN_START_PIPS if 'BREAK_EVEN_START_PIPS' in globals() else 600
+        break_even_buffer_pips = BREAK_EVEN_BUFFER_PIPS if 'BREAK_EVEN_BUFFER_PIPS' in globals() else 50
+        atr_trailing_k = ATR_TRAILING_K if 'ATR_TRAILING_K' in globals() else 1.5
+        atr_min_distance_pips = ATR_TRAILING_MIN_DISTANCE_PIPS if 'ATR_TRAILING_MIN_DISTANCE_PIPS' in globals() else 100
+        trailing_interval = 10  # Giây - tránh modify quá thường xuyên
         
         tick = mt5.symbol_info_tick(self.symbol)
         if not tick:
@@ -1209,182 +1213,459 @@ class ETHUSD_Bot:
         if not symbol_info:
             return
         
+        # Lấy ATR cho ATR-based trailing
+        df = self.get_price_data(100)
+        if df is None or len(df) < 14:
+            atr_value = None
+        else:
+            atr_series = self.technical_analyzer.calculate_atr(df['high'], df['low'], df['close'])
+            atr_value = atr_series.iloc[-1] if not atr_series.empty else None
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # ATR đã là pips rồi (không cần chia cho 0.01)
+            # atr_value giữ nguyên giá trị (đã là pips)
+        
+        # Kiểm tra broker's stops_level
+        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+        stops_level = symbol_info.trade_stops_level if hasattr(symbol_info, 'trade_stops_level') else 0
+        stops_level_pips = stops_level if stops_level > 0 else 0  # ETHUSD: stops_level đã là pips
+        
+        current_time = time.time()
+        
         for pos in positions:
             ticket = pos.ticket
             entry_price = pos.price_open
             current_sl = pos.sl
+            current_volume = pos.volume
+            
+            # Kiểm tra interval để tránh modify quá thường xuyên
+            if ticket in self.last_trailing_check:
+                if current_time - self.last_trailing_check[ticket] < trailing_interval:
+                    continue
             
             # Tính profit hiện tại (pips)
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+            # Vậy profit_pips = profit USD (không cần chia cho 0.01)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price)  # ETHUSD: 1 USD = 1 pip
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price)  # ETHUSD: 1 USD = 1 pip
             
-            # Chỉ kích hoạt trailing stop khi profit ≥ TRAIL_START_PIPS
-            if profit_pips < trail_start_pips:
-                continue  # Chưa đạt ngưỡng để bắt đầu trailing
-            
-            if ticket not in self.trailing_stop_activated:
-                self.trailing_stop_activated.add(ticket)
-                logging.info(f"✅ Smart Trailing Stop kích hoạt: Ticket {ticket}, Profit: {profit_pips:.1f} pips (≥ {trail_start_pips} pips)")
-                
-                # Gửi Telegram notification khi kích hoạt lần đầu
+            # ====================================================================
+            # BƯỚC 1: BREAK-EVEN STEP
+            # Kích hoạt khi: profit_pips >= BREAK_EVEN_START_PIPS (600 pips)
+            # ====================================================================
+            # Kiểm tra xem có bật break-even không
+            enable_break_even = ENABLE_BREAK_EVEN if 'ENABLE_BREAK_EVEN' in globals() else True
+            if enable_break_even and profit_pips >= break_even_start_pips and ticket not in self.breakeven_activated:
+                # Dời SL về entry + buffer
+                # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    new_sl = entry_price + break_even_buffer_pips  # ETHUSD: buffer_pips đã là USD
+                    # Đảm bảo SL mới cao hơn SL hiện tại hoặc SL hiện tại < entry
+                    if new_sl > current_sl or current_sl < entry_price:
+                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even", send_telegram=False):
+                            self.breakeven_activated.add(ticket)
+                            logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
+                            
+                            # Gửi Telegram notification
+                            if self.use_telegram:
+                                direction = "BUY"
+                                pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                                protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
+                                message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b> (Entry + {break_even_buffer_pips} pips)\n\n"
+                                message += f"<b>Trạng thái:</b>\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {break_even_start_pips} pips)\n"
+                                message += f"• Protected: <b>${protected_usd:.2f}</b>\n"
+                                message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
+                                message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
+                                self.send_telegram_message(message)
+                else:  # SELL
+                    new_sl = entry_price - break_even_buffer_pips  # ETHUSD: buffer_pips đã là USD
+                    # Đảm bảo SL mới thấp hơn SL hiện tại hoặc SL hiện tại > entry
+                    if new_sl < current_sl or current_sl == 0 or current_sl > entry_price:
+                        if self._update_sl(ticket, new_sl, pos.tp, "Break-Even", send_telegram=False):
+                            self.breakeven_activated.add(ticket)
+                            logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
+                            
+                            # Gửi Telegram notification
                 if self.use_telegram:
-                    direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                                direction = "SELL"
                     pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
-                    profit_usd = profit_pips * pip_value_per_lot * pos.volume
-                    message = f"<b>✅ SMART TRAILING STOP KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
+                                message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
                     message += f"<b>Thông tin lệnh:</b>\n"
                     message += f"• Ticket: <code>{ticket}</code>\n"
                     message += f"• Loại: <b>{direction}</b>\n"
                     message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                    message += f"• SL hiện tại: <b>{current_sl:.2f}</b>\n\n"
+                                message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b> (Entry - {break_even_buffer_pips} pips)\n\n"
                     message += f"<b>Trạng thái:</b>\n"
                     message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
-                    message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {trail_start_pips} pips)\n"
-                    message += f"• Profit USD: <b>${profit_usd:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {break_even_start_pips} pips)\n"
+                                message += f"• Protected: <b>${protected_usd:.2f}</b>\n"
                     message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
-                    message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
+                                message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
                     self.send_telegram_message(message)
             
-            # Tính SL mới: Cách giá hiện tại TRAIL_DISTANCE_PIPS
-            if pos.type == mt5.ORDER_TYPE_BUY:
-                new_sl = current_price - (trail_distance_pips * 0.01)
+            # ====================================================================
+            # BƯỚC 2: PARTIAL CLOSE (nếu bật)
+            # ====================================================================
+            enable_partial = ENABLE_PARTIAL_CLOSE if 'ENABLE_PARTIAL_CLOSE' in globals() else True
+            if enable_partial:
+                self._manage_partial_close(pos, profit_pips, ticket)
+            
+            # ====================================================================
+            # BƯỚC 3: ATR-BASED TRAILING
+            # Kích hoạt khi: Đã break-even (profit >= 600 pips) VÀ ATR có giá trị
+            # Khoảng cách trailing: ATR × ATR_TRAILING_K (1.5) hoặc tối thiểu 100 pips
+            # ====================================================================
+            if ticket in self.breakeven_activated and atr_value is not None:
+                # Tính khoảng cách trailing dựa trên ATR
+                trail_distance_pips = max(atr_value * atr_trailing_k, atr_min_distance_pips)
                 
-                # Hard Lock: Khi profit > TRAIL_HARD_LOCK_PIPS, đảm bảo SL không thấp hơn entry + (profit - hard_lock)
-                if profit_pips > trail_hard_lock_pips:
-                    # Chốt cứng: Bảo vệ ít nhất (profit - hard_lock) pips
-                    protected_profit_pips = profit_pips - trail_hard_lock_pips
-                    min_sl = entry_price + (protected_profit_pips * 0.01)
-                    new_sl = max(new_sl, min_sl)
+                # Áp dụng partial close ATR_K nếu đã chốt lời
+                if ticket in self.partial_close_done:
+                    partial_atr_k = PARTIAL_CLOSE_ATR_K if 'PARTIAL_CLOSE_ATR_K' in globals() else 1.0
+                    trail_distance_pips = max(atr_value * partial_atr_k, atr_min_distance_pips)
                 
-                # SL mới phải cao hơn SL hiện tại và không thấp hơn Entry (breakeven)
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = current_price - trail_distance_pips  # ETHUSD: trail_distance_pips đã là USD
+                    # SL mới phải cao hơn SL hiện tại và >= entry (breakeven)
                 if new_sl > current_sl and new_sl >= entry_price:
+                        # Kiểm tra stops_level
+                        if stops_level_pips > 0:
+                            min_sl = current_price - stops_level_pips  # ETHUSD: stops_level_pips đã là USD
+                            if new_sl < min_sl:
+                                new_sl = min_sl
+                        
+                        if self._update_sl(ticket, new_sl, pos.tp, "ATR Trailing"):
+                            self.last_trailing_check[ticket] = current_time
+                            logging.info(f"📈 ATR Trailing: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, ATR: {atr_value:.1f} pips, Distance: {trail_distance_pips:.1f} pips)")
+                            
+                            # Gửi Telegram notification lần đầu tiên ATR Trailing kích hoạt
+                            if self.use_telegram and ticket not in self.atr_trailing_first_activation:
+                                self.atr_trailing_first_activation.add(ticket)
+                                direction = "BUY"
+                                pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                                message = f"<b>📈 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                                message += f"• TP: <b>{pos.tp:.2f}</b>\n\n"
+                                message += f"<b>Thông số Trailing:</b>\n"
+                                message += f"• ATR: <b>{atr_value:.1f} pips</b>\n"
+                                message += f"• Khoảng cách: <b>{trail_distance_pips:.1f} pips</b> (ATR × {atr_trailing_k})\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n\n"
+                                message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
+                                self.send_telegram_message(message)
+                
+                else:  # SELL
+                    # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = current_price + trail_distance_pips  # ETHUSD: trail_distance_pips đã là USD
+                    # SL mới phải thấp hơn SL hiện tại và <= entry (breakeven)
+                    if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
+                        # Kiểm tra stops_level
+                        if stops_level_pips > 0:
+                            max_sl = current_price + stops_level_pips  # ETHUSD: stops_level_pips đã là USD
+                            if new_sl > max_sl:
+                                new_sl = max_sl
+                        
+                        if self._update_sl(ticket, new_sl, pos.tp, "ATR Trailing"):
+                            self.last_trailing_check[ticket] = current_time
+                            logging.info(f"📉 ATR Trailing: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, ATR: {atr_value:.1f} pips, Distance: {trail_distance_pips:.1f} pips)")
+                            
+                            # Gửi Telegram notification lần đầu tiên ATR Trailing kích hoạt
+                            if self.use_telegram and ticket not in self.atr_trailing_first_activation:
+                                self.atr_trailing_first_activation.add(ticket)
+                                direction = "SELL"
+                                pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                                message = f"<b>📉 ATR TRAILING KÍCH HOẠT - {self.symbol}</b>\n\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                                message += f"• TP: <b>{pos.tp:.2f}</b>\n\n"
+                                message += f"<b>Thông số Trailing:</b>\n"
+                                message += f"• ATR: <b>{atr_value:.1f} pips</b>\n"
+                                message += f"• Khoảng cách: <b>{trail_distance_pips:.1f} pips</b> (ATR × {atr_trailing_k})\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n\n"
+                                message += f"🔄 SL sẽ tự động dời theo giá để bảo vệ lợi nhuận!"
+                                self.send_telegram_message(message)
+    
+    def _update_sl(self, ticket, new_sl, tp, reason="", send_telegram=True):
+        """
+        Helper function để update SL với error handling
+        Gửi Telegram notification khi thành công (trừ khi send_telegram=False)
+        
+        Args:
+            ticket: Ticket của position
+            new_sl: SL mới
+            tp: TP (giữ nguyên)
+            reason: Lý do update SL
+            send_telegram: Có gửi Telegram notification không (mặc định True)
+        """
+        # Lấy thông tin position TRƯỚC khi update để có old_sl
+        pos_before = mt5.positions_get(ticket=ticket)
+        old_sl = None
+        pos_type = None
+        entry_price = None
+        lot_size = None
+        if pos_before and len(pos_before) > 0:
+            old_sl = pos_before[0].sl
+            pos_type = pos_before[0].type
+            entry_price = pos_before[0].price_open
+            lot_size = pos_before[0].volume
+        
                     request = {
                         "action": mt5.TRADE_ACTION_SLTP,
                         "symbol": self.symbol,
                         "position": ticket,
                         "sl": new_sl,
-                        "tp": pos.tp
+            "tp": tp
                     }
                     result = mt5.order_send(request)
                     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                        lock_status = "🔒 Hard Lock" if profit_pips > trail_hard_lock_pips else ""
-                        logging.info(f"📈 Smart Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, Distance: {trail_distance_pips} pips) {lock_status}")
-                        
-                        # Gửi Telegram notification khi SL được update thành công
-                        if self.use_telegram:
-                            direction = "BUY"
+            # Gửi Telegram notification - Chỉ gửi nếu send_telegram=True
+            # Break-Even sẽ được gửi riêng trong _manage_trailing_stops() để tránh duplicate
+            if self.use_telegram and send_telegram:
+                # Lấy lại position SAU khi update để có thông tin mới nhất
+                pos_after = mt5.positions_get(ticket=ticket)
+                if pos_after and len(pos_after) > 0:
+                    # Nếu không có old_sl từ trước, dùng SL hiện tại (có thể khác new_sl do broker adjust)
+                    if old_sl is None:
+                        old_sl = pos_after[0].sl
+                    if pos_type is None:
+                        pos_type = pos_after[0].type
+                    if entry_price is None:
+                        entry_price = pos_after[0].price_open
+                    if lot_size is None:
+                        lot_size = pos_after[0].volume
+                
+                # Tính profit protected
+                tick = mt5.symbol_info_tick(self.symbol)
+                if tick and entry_price is not None:
+                    # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    if pos_type == mt5.ORDER_TYPE_BUY:
+                        current_price = tick.bid
+                        profit_pips = (current_price - entry_price)  # ETHUSD: 1 USD = 1 pip
+                        protected_pips = (new_sl - entry_price)  # ETHUSD: 1 USD = 1 pip
+                    else:  # SELL
+                        current_price = tick.ask
+                        profit_pips = (entry_price - current_price)  # ETHUSD: 1 USD = 1 pip
+                        protected_pips = (entry_price - new_sl)  # ETHUSD: 1 USD = 1 pip
+                    
+                    # Tính SL USD
+                    if lot_size is not None:
                             pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
-                            sl_pips_change = (new_sl - current_sl) / 0.01 if current_sl > 0 else 0
-                            protected_usd = sl_pips_change * pip_value_per_lot * pos.volume
+                        sl_usd = abs(new_sl - entry_price) * pip_value_per_lot * lot_size
                             
+                        direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
                             message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
                             message += f"<b>Thông tin lệnh:</b>\n"
                             message += f"• Ticket: <code>{ticket}</code>\n"
                             message += f"• Loại: <b>{direction}</b>\n"
                             message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                            message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
+                        if old_sl is not None:
+                            message += f"• SL cũ: <b>{old_sl:.2f}</b>\n"
                             message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
-                            message += f"• Protected: <b>${protected_usd:.2f}</b>\n\n"
+                        message += f"• SL USD: <b>${sl_usd:.2f}</b>\n"
+                        message += f"• Lý do: <b>{reason}</b>\n\n"
                             message += f"<b>Trạng thái:</b>\n"
                             message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
                             message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
-                            message += f"• Khoảng cách: <b>{trail_distance_pips} pips</b>\n"
-                            if profit_pips > trail_hard_lock_pips:
-                                message += f"• <b>🔒 Hard Lock đã kích hoạt</b>\n"
-                            message += f"• Volume: <b>{pos.volume:.2f} lots</b>"
+                        message += f"• Protected: <b>{protected_pips:.1f} pips</b>\n"
+                        
                             self.send_telegram_message(message)
-                            
-                            # Gửi thông báo riêng khi Hard Lock kích hoạt lần đầu
-                            if profit_pips > trail_hard_lock_pips and ticket not in self.hard_lock_notified:
-                                self.hard_lock_notified.add(ticket)
-                                protected_profit_pips = profit_pips - trail_hard_lock_pips
-                                protected_profit_usd = protected_profit_pips * pip_value_per_lot * pos.volume
-                                hard_lock_message = f"<b>🔒 HARD LOCK KÍCH HOẠT - {self.symbol}</b>\n\n"
-                                hard_lock_message += f"<b>Thông tin lệnh:</b>\n"
-                                hard_lock_message += f"• Ticket: <code>{ticket}</code>\n"
-                                hard_lock_message += f"• Loại: <b>{direction}</b>\n"
-                                hard_lock_message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                                hard_lock_message += f"• SL mới: <b>{new_sl:.2f}</b>\n\n"
-                                hard_lock_message += f"<b>Bảo vệ lợi nhuận:</b>\n"
-                                hard_lock_message += f"• Profit hiện tại: <b>{profit_pips:.1f} pips</b> (${profit_pips * pip_value_per_lot * pos.volume:.2f})\n"
-                                hard_lock_message += f"• Protected profit: <b>{protected_profit_pips:.1f} pips</b> (${protected_profit_usd:.2f})\n"
-                                hard_lock_message += f"• Hard Lock threshold: <b>{trail_hard_lock_pips} pips</b>\n\n"
-                                hard_lock_message += f"✅ Lợi nhuận đã được bảo vệ - SL sẽ không giảm xuống dưới mức này!"
-                                self.send_telegram_message(hard_lock_message)
-                    elif result:
-                        logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+                        logging.debug(f"✅ Đã gửi Telegram notification cho SL update: Ticket {ticket}, Reason: {reason}")
             
+            return True
+        else:
+            if result:
+                logging.debug(f"⚠️ Update SL thất bại ({reason}): {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+            return False
+    
+    def _manage_partial_close(self, pos, profit_pips, ticket):
+        """
+        Quản lý Partial Close: Chốt một phần lợi nhuận khi đạt TP1, TP2, TP3
+        
+        Logic:
+        - TP1: Đóng 30-50% volume khi đạt PARTIAL_CLOSE_TP1_PIPS
+        - TP2: Đóng thêm 25-30% volume còn lại khi đạt PARTIAL_CLOSE_TP2_PIPS
+        - TP3: Đóng thêm 25-30% volume còn lại khi đạt PARTIAL_CLOSE_TP3_PIPS
+        - Sau mỗi lần partial close, dời SL về break-even + buffer lớn hơn
+        """
+        # Khởi tạo tracking nếu chưa có
+        if ticket not in self.partial_close_done:
+            self.partial_close_done[ticket] = [False, False, False]
+        
+        tp1_done, tp2_done, tp3_done = self.partial_close_done[ticket]
+        
+        # Lấy tham số từ config
+        tp1_pips = PARTIAL_CLOSE_TP1_PIPS if 'PARTIAL_CLOSE_TP1_PIPS' in globals() else 1000
+        tp1_percent = PARTIAL_CLOSE_TP1_PERCENT if 'PARTIAL_CLOSE_TP1_PERCENT' in globals() else 40
+        tp2_pips = PARTIAL_CLOSE_TP2_PIPS if 'PARTIAL_CLOSE_TP2_PIPS' in globals() else 2000
+        tp2_percent = PARTIAL_CLOSE_TP2_PERCENT if 'PARTIAL_CLOSE_TP2_PERCENT' in globals() else 30
+        tp3_pips = PARTIAL_CLOSE_TP3_PIPS if 'PARTIAL_CLOSE_TP3_PIPS' in globals() else 3000
+        tp3_percent = PARTIAL_CLOSE_TP3_PERCENT if 'PARTIAL_CLOSE_TP3_PERCENT' in globals() else 30
+        partial_buffer_pips = PARTIAL_CLOSE_SL_BUFFER_PIPS if 'PARTIAL_CLOSE_SL_BUFFER_PIPS' in globals() else 100
+        
+        entry_price = pos.price_open
+        current_volume = pos.volume
+        
+        # Kiểm tra lot size tối thiểu
+        symbol_info = mt5.symbol_info(self.symbol)
+        if not symbol_info:
+            return
+        
+        min_lot = symbol_info.volume_min if symbol_info.volume_min > 0 else 0.1  # ETHUSD: min lot = 0.1
+        
+        # TP1: Đóng 30-50% volume
+        if profit_pips >= tp1_pips and not tp1_done:
+            close_volume = round(current_volume * (tp1_percent / 100), 2)
+            close_volume = max(min_lot, close_volume)  # Đảm bảo >= min_lot
+            
+            if close_volume < current_volume:  # Đảm bảo không đóng hết
+                if self._close_partial_position(pos, close_volume, "TP1"):
+                    self.partial_close_done[ticket][0] = True
+                    # Dời SL về break-even + buffer lớn hơn
+                    # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                    new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
+                    self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP1")
+                    logging.info(f"💰 Partial Close TP1: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp1_percent}%), Dời SL về {new_sl:.2f}")
+        
+        # TP2: Đóng thêm 25-30% volume còn lại
+        elif profit_pips >= tp2_pips and tp1_done and not tp2_done:
+            # Lấy volume hiện tại lại (có thể đã thay đổi sau TP1)
+            current_pos = mt5.positions_get(ticket=ticket)
+            if current_pos and len(current_pos) > 0:
+                remaining_volume = current_pos[0].volume
+                close_volume = round(remaining_volume * (tp2_percent / 100), 2)
+                close_volume = max(min_lot, close_volume)
+                
+                if close_volume < remaining_volume:
+                    if self._close_partial_position(current_pos[0], close_volume, "TP2"):
+                        self.partial_close_done[ticket][1] = True
+                        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                        new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
+                        self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP2")
+                        logging.info(f"💰 Partial Close TP2: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp2_percent}%), Dời SL về {new_sl:.2f}")
+        
+        # TP3: Đóng thêm 25-30% volume còn lại
+        elif profit_pips >= tp3_pips and tp2_done and not tp3_done:
+            current_pos = mt5.positions_get(ticket=ticket)
+            if current_pos and len(current_pos) > 0:
+                remaining_volume = current_pos[0].volume
+                close_volume = round(remaining_volume * (tp3_percent / 100), 2)
+                close_volume = max(min_lot, close_volume)
+                
+                if close_volume < remaining_volume:
+                    if self._close_partial_position(current_pos[0], close_volume, "TP3"):
+                        self.partial_close_done[ticket][2] = True
+                        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                        new_sl = entry_price + partial_buffer_pips if pos.type == mt5.ORDER_TYPE_BUY else entry_price - partial_buffer_pips
+                        self._update_sl(ticket, new_sl, pos.tp, "Partial Close TP3")
+                        logging.info(f"💰 Partial Close TP3: Ticket {ticket}, Đóng {close_volume:.2f} lots ({tp3_percent}%), Dời SL về {new_sl:.2f}")
+    
+    def _close_partial_position(self, pos, close_volume, reason=""):
+        """
+        Đóng một phần position
+        
+        Args:
+            pos: MT5 position object
+            close_volume: Volume cần đóng (lots)
+            reason: Lý do đóng (TP1, TP2, TP3)
+        
+        Returns:
+            True nếu thành công, False nếu thất bại
+        """
+        if close_volume >= pos.volume:
+            logging.warning(f"⚠️ Partial Close: Volume đóng ({close_volume}) >= Volume hiện tại ({pos.volume}) → Bỏ qua")
+            return False
+        
+        tick = mt5.symbol_info_tick(self.symbol)
+        if not tick:
+            return False
+        
+        # Xác định giá đóng
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            close_price = tick.bid
+            order_type = mt5.ORDER_TYPE_SELL
             else:  # SELL
-                new_sl = current_price + (trail_distance_pips * 0.01)
-                
-                # Hard Lock: Khi profit > TRAIL_HARD_LOCK_PIPS, đảm bảo SL không cao hơn entry - (profit - hard_lock)
-                if profit_pips > trail_hard_lock_pips:
-                    # Chốt cứng: Bảo vệ ít nhất (profit - hard_lock) pips
-                    protected_profit_pips = profit_pips - trail_hard_lock_pips
-                    max_sl = entry_price - (protected_profit_pips * 0.01)
-                    new_sl = min(new_sl, max_sl)
-                
-                # SL mới phải thấp hơn SL hiện tại và không cao hơn Entry (breakeven)
-                if (new_sl < current_sl or current_sl == 0) and new_sl <= entry_price:
+            close_price = tick.ask
+            order_type = mt5.ORDER_TYPE_BUY
+        
+        # Lấy filling mode phù hợp
+        filling_mode = self.get_filling_mode(self.symbol)
+        
+        # Tạo request để đóng một phần
                     request = {
-                        "action": mt5.TRADE_ACTION_SLTP,
+            "action": mt5.TRADE_ACTION_DEAL,
                         "symbol": self.symbol,
-                        "position": ticket,
-                        "sl": new_sl,
-                        "tp": pos.tp
-                    }
+            "volume": close_volume,
+            "type": order_type,
+            "position": pos.ticket,
+            "price": close_price,
+            "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
+            "magic": 888888,
+            "comment": f"Partial Close {reason}",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": filling_mode,
+        }
+        
                     result = mt5.order_send(request)
                     if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                        lock_status = "🔒 Hard Lock" if profit_pips > trail_hard_lock_pips else ""
-                        logging.info(f"📉 Smart Trailing Stop: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips, Distance: {trail_distance_pips} pips) {lock_status}")
-                        
-                        # Gửi Telegram notification khi SL được update thành công
+            # Gửi Telegram notification
                         if self.use_telegram:
-                            direction = "SELL"
+                # Tính profit và lợi nhuận
+                profit_usd = 0
+                # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    profit_pips = (close_price - pos.price_open)  # ETHUSD: 1 USD = 1 pip
+                else:  # SELL
+                    profit_pips = (pos.price_open - close_price)  # ETHUSD: 1 USD = 1 pip
+                
                             pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
-                            sl_pips_change = (current_sl - new_sl) / 0.01 if current_sl > 0 else 0
-                            protected_usd = sl_pips_change * pip_value_per_lot * pos.volume
+                profit_usd = profit_pips * pip_value_per_lot * close_volume
                             
-                            message = f"<b>📉 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
+                direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                remaining_volume = pos.volume - close_volume
+                
+                message = f"<b>💰 PARTIAL CLOSE THÀNH CÔNG - {self.symbol}</b>\n\n"
                             message += f"<b>Thông tin lệnh:</b>\n"
-                            message += f"• Ticket: <code>{ticket}</code>\n"
+                message += f"• Ticket: <code>{pos.ticket}</code>\n"
                             message += f"• Loại: <b>{direction}</b>\n"
-                            message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                            message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
-                            message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
-                            message += f"• Protected: <b>${protected_usd:.2f}</b>\n\n"
-                            message += f"<b>Trạng thái:</b>\n"
-                            message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                message += f"• Entry: <b>{pos.price_open:.2f}</b>\n"
+                message += f"• Close Price: <b>{close_price:.2f}</b>\n\n"
+                message += f"<b>Partial Close:</b>\n"
+                message += f"• Mốc: <b>{reason}</b>\n"
+                message += f"• Volume đóng: <b>{close_volume:.2f} lots</b>\n"
+                message += f"• Volume còn lại: <b>{remaining_volume:.2f} lots</b>\n\n"
+                message += f"<b>Lợi nhuận:</b>\n"
                             message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
-                            message += f"• Khoảng cách: <b>{trail_distance_pips} pips</b>\n"
-                            if profit_pips > trail_hard_lock_pips:
-                                message += f"• <b>🔒 Hard Lock đã kích hoạt</b>\n"
-                            message += f"• Volume: <b>{pos.volume:.2f} lots</b>"
+                message += f"• Profit USD: <b>${profit_usd:.2f}</b>\n"
+                
                             self.send_telegram_message(message)
                             
-                            # Gửi thông báo riêng khi Hard Lock kích hoạt lần đầu
-                            if profit_pips > trail_hard_lock_pips and ticket not in self.hard_lock_notified:
-                                self.hard_lock_notified.add(ticket)
-                                protected_profit_pips = profit_pips - trail_hard_lock_pips
-                                protected_profit_usd = protected_profit_pips * pip_value_per_lot * pos.volume
-                                hard_lock_message = f"<b>🔒 HARD LOCK KÍCH HOẠT - {self.symbol}</b>\n\n"
-                                hard_lock_message += f"<b>Thông tin lệnh:</b>\n"
-                                hard_lock_message += f"• Ticket: <code>{ticket}</code>\n"
-                                hard_lock_message += f"• Loại: <b>{direction}</b>\n"
-                                hard_lock_message += f"• Entry: <b>{entry_price:.2f}</b>\n"
-                                hard_lock_message += f"• SL mới: <b>{new_sl:.2f}</b>\n\n"
-                                hard_lock_message += f"<b>Bảo vệ lợi nhuận:</b>\n"
-                                hard_lock_message += f"• Profit hiện tại: <b>{profit_pips:.1f} pips</b> (${profit_pips * pip_value_per_lot * pos.volume:.2f})\n"
-                                hard_lock_message += f"• Protected profit: <b>{protected_profit_pips:.1f} pips</b> (${protected_profit_usd:.2f})\n"
-                                hard_lock_message += f"• Hard Lock threshold: <b>{trail_hard_lock_pips} pips</b>\n\n"
-                                hard_lock_message += f"✅ Lợi nhuận đã được bảo vệ - SL sẽ không tăng lên trên mức này!"
-                                self.send_telegram_message(hard_lock_message)
-                    elif result:
-                        logging.debug(f"⚠️ Trailing Stop update thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+            return True
+        else:
+            if result:
+                logging.warning(f"⚠️ Partial Close {reason} thất bại: {result.comment if hasattr(result, 'comment') else 'Unknown'}")
+            return False
     
     def _manage_smart_exit(self):
         """
@@ -1424,7 +1705,9 @@ class ETHUSD_Bot:
         # Lấy tham số từ config
         opposite_signal_count = OPPOSITE_SIGNAL_COUNT_TO_EXIT if 'OPPOSITE_SIGNAL_COUNT_TO_EXIT' in globals() else 2
         enable_rsi_exit = ENABLE_RSI_EXIT if 'ENABLE_RSI_EXIT' in globals() else True
-        rsi_exit_threshold = RSI_EXIT_THRESHOLD if 'RSI_EXIT_THRESHOLD' in globals() else 50
+        rsi_exit_threshold_buy = RSI_EXIT_THRESHOLD_BUY if 'RSI_EXIT_THRESHOLD_BUY' in globals() else 35
+        rsi_exit_threshold_sell = RSI_EXIT_THRESHOLD_SELL if 'RSI_EXIT_THRESHOLD_SELL' in globals() else 65
+        rsi_exit_min_profit_pips = RSI_EXIT_MIN_PROFIT_PIPS if 'RSI_EXIT_MIN_PROFIT_PIPS' in globals() else 200
         enable_profit_dd_exit = ENABLE_PROFIT_DRAWDOWN_EXIT if 'ENABLE_PROFIT_DRAWDOWN_EXIT' in globals() else True
         profit_dd_exit_percent = PROFIT_DRAWDOWN_EXIT_PERCENT if 'PROFIT_DRAWDOWN_EXIT_PERCENT' in globals() else 40
         
@@ -1437,12 +1720,13 @@ class ETHUSD_Bot:
             entry_price = pos.price_open
             
             # Tính profit hiện tại (pips)
+            # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_price = tick.bid
-                profit_pips = (current_price - entry_price) / 0.01
+                profit_pips = (current_price - entry_price)  # ETHUSD: 1 USD = 1 pip
             else:  # SELL
                 current_price = tick.ask
-                profit_pips = (entry_price - current_price) / 0.01
+                profit_pips = (entry_price - current_price)  # ETHUSD: 1 USD = 1 pip
             
             # Cập nhật đỉnh profit
             if ticket not in self.position_peak_profit or profit_pips > self.position_peak_profit[ticket]:
@@ -1473,16 +1757,17 @@ class ETHUSD_Bot:
                         self.opposite_signal_count[ticket] = 0
             
             # Kiểm tra 2: RSI quay đầu vượt vùng trung tính
-            if enable_rsi_exit and profit_pips > 0:  # Chỉ exit khi đang lời
-                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold:
-                    # BUY nhưng RSI < 50 → Momentum giảm
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold})")
-                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+            # ⚠️ CHỈ EXIT KHI: profit > min_profit VÀ RSI vượt threshold mạnh (tránh exit quá sớm)
+            if enable_rsi_exit and profit_pips > rsi_exit_min_profit_pips:  # Chỉ exit khi đang lời và đạt profit tối thiểu
+                if pos.type == mt5.ORDER_TYPE_BUY and current_rsi < rsi_exit_threshold_buy:
+                    # BUY nhưng RSI < 35 (oversold mạnh) → Momentum giảm mạnh
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} < {rsi_exit_threshold_buy}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
+                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} < {rsi_exit_threshold_buy})")
                     continue
-                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold:
-                    # SELL nhưng RSI > 50 → Momentum giảm
-                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold})")
-                    self._close_position(ticket, "Smart Exit: RSI quay đầu")
+                elif pos.type == mt5.ORDER_TYPE_SELL and current_rsi > rsi_exit_threshold_sell:
+                    # SELL nhưng RSI > 65 (overbought mạnh) → Momentum giảm mạnh
+                    logging.info(f"🔄 Smart Exit: Ticket {ticket} - RSI quay đầu mạnh ({current_rsi:.2f} > {rsi_exit_threshold_sell}, Profit: {profit_pips:.1f} pips ≥ {rsi_exit_min_profit_pips})")
+                    self._close_position(ticket, f"Smart Exit: RSI quay đầu ({current_rsi:.2f} > {rsi_exit_threshold_sell})")
                     continue
             
             # Kiểm tra 3: Profit drawdown (lợi nhuận giảm quá nhanh)
@@ -1495,7 +1780,7 @@ class ETHUSD_Bot:
     
     def _close_position(self, ticket, reason):
         """
-        Đóng lệnh với lý do cụ thể
+        Đóng lệnh với lý do cụ thể và cleanup tất cả tracking variables
         
         Args:
             ticket: Ticket của lệnh cần đóng
@@ -1543,8 +1828,18 @@ class ETHUSD_Bot:
                 del self.position_peak_profit[ticket]
             if hasattr(self, 'opposite_signal_count') and ticket in self.opposite_signal_count:
                 del self.opposite_signal_count[ticket]
+            
+            # Cleanup tracking variables khi position đóng
             if ticket in self.trailing_stop_activated:
                 self.trailing_stop_activated.remove(ticket)
+            if ticket in self.breakeven_activated:
+                self.breakeven_activated.remove(ticket)
+            if ticket in self.partial_close_done:
+                del self.partial_close_done[ticket]
+            if ticket in self.last_trailing_check:
+                del self.last_trailing_check[ticket]
+            if ticket in self.atr_trailing_first_activation:
+                self.atr_trailing_first_activation.remove(ticket)
             if ticket in self.hard_lock_notified:
                 self.hard_lock_notified.remove(ticket)
         elif result:
