@@ -435,21 +435,120 @@ class TechnicalAnalyzer:
         
         return False, None
     
+    def check_strong_momentum_conditions(self, df):
+        """
+        Kiểm tra 3 điều kiện momentum mạnh (có thể bỏ qua check range)
+        
+        1. ATR(14) M15 > 8 hoặc 10
+        2. EMA9 đang nằm xa EMA21
+        3. Body size > 60% tổng range (nến có lực)
+        
+        Args:
+            df: DataFrame với high, low, close, open, ema_9, ema_21, atr
+            
+        Returns:
+            Tuple (bool, dict): (has_strong_momentum, conditions_info)
+                - has_strong_momentum: True nếu đủ cả 3 điều kiện
+                - conditions_info: Dict chứa thông tin từng điều kiện
+        """
+        if len(df) < 14:
+            return False, {}
+        
+        current = df.iloc[-1]
+        conditions_info = {}
+        
+        # 1. ATR(14) M15 > 8 hoặc 10
+        atr_value = current['atr']
+        atr_pips = atr_value / 0.01  # Convert to pips
+        atr_threshold = 8.0  # Có thể điều chỉnh 8 hoặc 10
+        atr_ok = atr_pips > atr_threshold
+        conditions_info['atr'] = {
+            'value': atr_pips,
+            'threshold': atr_threshold,
+            'ok': atr_ok
+        }
+        
+        # 2. EMA9 đang nằm xa EMA21
+        ema9 = current['ema_9']
+        ema21 = current['ema_21']
+        ema_distance = abs(ema9 - ema21)
+        ema_distance_pips = ema_distance / 0.01
+        # Khoảng cách tối thiểu: 5 pips (có thể điều chỉnh)
+        ema_distance_threshold = 5.0
+        ema_far_ok = ema_distance_pips > ema_distance_threshold
+        conditions_info['ema_distance'] = {
+            'value': ema_distance_pips,
+            'threshold': ema_distance_threshold,
+            'ok': ema_far_ok,
+            'ema9': ema9,
+            'ema21': ema21
+        }
+        
+        # 3. Body size > 60% tổng range (nến có lực)
+        body_size = abs(current['close'] - current['open'])
+        range_candle = current['high'] - current['low']
+        if range_candle > 0:
+            body_ratio = body_size / range_candle
+            body_threshold = 0.6  # 60%
+            body_strong_ok = body_ratio > body_threshold
+            conditions_info['body_strength'] = {
+                'value': body_ratio * 100,  # %
+                'threshold': body_threshold * 100,  # %
+                'ok': body_strong_ok,
+                'body_size': body_size,
+                'range': range_candle
+            }
+        else:
+            body_strong_ok = False
+            conditions_info['body_strength'] = {
+                'value': 0,
+                'threshold': 60,
+                'ok': False,
+                'body_size': 0,
+                'range': 0
+            }
+        
+        # Đủ cả 3 điều kiện → Momentum mạnh
+        has_strong_momentum = atr_ok and ema_far_ok and body_strong_ok
+        
+        return has_strong_momentum, conditions_info
+    
     def check_m15_range(self, df):
         """
         Kiểm tra range M15 (không vào lệnh khi sideway - range nhỏ < $12)
         
         Range = High - Low của nến hiện tại hoặc trung bình range của các nến gần đây
         
+        Lưu ý: Nếu có strong momentum (ATR > 8, EMA9 xa EMA21, Body > 60%) → Có thể bỏ qua check range
+        
         Args:
             df: DataFrame với high, low
             
         Returns:
-            Tuple (bool, float): (is_valid_range, range_usd) - True nếu range >= $12
+            Tuple (bool, float, bool): (is_valid_range, range_usd, can_skip_range_check)
+                - is_valid_range: True nếu range >= $12
+                - range_usd: Giá trị range trung bình
+                - can_skip_range_check: True nếu có strong momentum (đủ 3 điều kiện)
         """
         if len(df) < 5:
-            return False, 0.0
+            return False, 0.0, False
         
+        # Kiểm tra strong momentum trước
+        has_strong_momentum, momentum_info = self.check_strong_momentum_conditions(df)
+        
+        if has_strong_momentum:
+            # Đủ 3 điều kiện momentum mạnh → Có thể bỏ qua check range
+            logging.info("=" * 60)
+            logging.info("✅ PHÁT HIỆN MOMENTUM MẠNH - Có thể bỏ qua check range")
+            logging.info("=" * 60)
+            logging.info(f"   ✅ ATR: {momentum_info['atr']['value']:.1f} pips > {momentum_info['atr']['threshold']:.0f} pips")
+            logging.info(f"   ✅ EMA Distance: {momentum_info['ema_distance']['value']:.1f} pips > {momentum_info['ema_distance']['threshold']:.0f} pips")
+            logging.info(f"   ✅ Body Strength: {momentum_info['body_strength']['value']:.1f}% > {momentum_info['body_strength']['threshold']:.0f}%")
+            logging.info("=" * 60)
+            # Trả về True để bỏ qua check range
+            return True, 0.0, True
+        
+        # Không có strong momentum → Kiểm tra range bình thường
         # Tính range trung bình của 5 nến gần nhất (để tránh false signal từ 1 nến)
         recent_5 = df.tail(5)
         ranges = recent_5['high'] - recent_5['low']
@@ -461,7 +560,15 @@ class TechnicalAnalyzer:
         
         is_valid = avg_range >= min_range_usd
         
-        return is_valid, avg_range
+        # Log thông tin momentum nếu không đủ
+        if not has_strong_momentum:
+            logging.debug("📊 Kiểm tra momentum (có thể bỏ qua range):")
+            logging.debug(f"   - ATR: {momentum_info['atr']['value']:.1f} pips {'✅' if momentum_info['atr']['ok'] else '❌'} (cần > {momentum_info['atr']['threshold']:.0f})")
+            logging.debug(f"   - EMA Distance: {momentum_info['ema_distance']['value']:.1f} pips {'✅' if momentum_info['ema_distance']['ok'] else '❌'} (cần > {momentum_info['ema_distance']['threshold']:.0f})")
+            logging.debug(f"   - Body Strength: {momentum_info['body_strength']['value']:.1f}% {'✅' if momentum_info['body_strength']['ok'] else '❌'} (cần > {momentum_info['body_strength']['threshold']:.0f}%)")
+            logging.debug(f"   → Không đủ 3 điều kiện → Phải check range")
+        
+        return is_valid, avg_range, False
     
     def get_h1_trend(self, symbol):
         """
@@ -661,16 +768,22 @@ class TechnicalAnalyzer:
         
         # ====================================================================
         # KIỂM TRA RANGE M15 (Không vào lệnh khi sideway - range < $12)
+        # Lưu ý: Nếu có strong momentum (ATR > 8, EMA9 xa EMA21, Body > 60%) → Bỏ qua check range
         # ====================================================================
-        range_valid, range_usd = self.check_m15_range(df)
-        if not range_valid:
-            logging.warning(f"⚠️ M15 đang sideway (range ${range_usd:.2f} < $12) → Không trade")
+        range_valid, range_usd, can_skip_range = self.check_m15_range(df)
+        
+        if can_skip_range:
+            # Có strong momentum → Bỏ qua check range
+            logging.info(f"✅ Có momentum mạnh → Bỏ qua check range (range hiện tại: ${range_usd:.2f})")
+        elif not range_valid:
+            # Không có strong momentum và range < $12 → Không trade
+            logging.warning(f"⚠️ M15 đang sideway (range ${range_usd:.2f} < $12) và không có momentum mạnh → Không trade")
             return {
                 'action': 'HOLD',
                 'strength': 0,
                 'sl_pips': 0,
                 'tp_pips': 0,
-                'reason': f'M15 sideway (range ${range_usd:.2f} < $12)'
+                'reason': f'M15 sideway (range ${range_usd:.2f} < $12) và không có momentum mạnh'
             }
         else:
             logging.info(f"✅ M15 range hợp lệ: ${range_usd:.2f} >= $12 (không sideway)")
