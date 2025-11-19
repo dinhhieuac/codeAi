@@ -36,6 +36,7 @@ MAGIC = 1811251118
 RISK_PERCENT = 0.7
 ATR_MUL = 1.35
 
+
 # Cache toàn cục để tránh tính toán lặp lại
 class Cache:
     last_bar_time = 0
