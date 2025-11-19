@@ -288,6 +288,8 @@ def trading_signal():
     sl = round(price - atr_pips * 0.1, 2)
     tp = round(price + atr_pips * 2.8 * 0.1, 2)
     
+    sl=price-8
+    tp=price+16
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": SYMBOL,
