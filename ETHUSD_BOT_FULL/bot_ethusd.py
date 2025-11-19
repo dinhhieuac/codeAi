@@ -1297,24 +1297,24 @@ class ETHUSD_Bot:
                             logging.info(f"✅ Break-Even kích hoạt: Ticket {ticket}, SL: {current_sl:.2f} → {new_sl:.2f} (Profit: {profit_pips:.1f} pips ≥ {break_even_start_pips} pips)")
                             
                             # Gửi Telegram notification
-                if self.use_telegram:
+                            if self.use_telegram:
                                 direction = "SELL"
-                    pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                                pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
                                 protected_usd = break_even_buffer_pips * pip_value_per_lot * pos.volume
                                 message = f"<b>🛡️ BREAK-EVEN KÍCH HOẠT - {self.symbol}</b>\n\n"
-                    message += f"<b>Thông tin lệnh:</b>\n"
-                    message += f"• Ticket: <code>{ticket}</code>\n"
-                    message += f"• Loại: <b>{direction}</b>\n"
-                    message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                                message += f"<b>Thông tin lệnh:</b>\n"
+                                message += f"• Ticket: <code>{ticket}</code>\n"
+                                message += f"• Loại: <b>{direction}</b>\n"
+                                message += f"• Entry: <b>{entry_price:.2f}</b>\n"
                                 message += f"• SL cũ: <b>{current_sl:.2f}</b>\n"
                                 message += f"• SL mới: <b>{new_sl:.2f}</b> (Entry - {break_even_buffer_pips} pips)\n\n"
-                    message += f"<b>Trạng thái:</b>\n"
-                    message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                                message += f"<b>Trạng thái:</b>\n"
+                                message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
                                 message += f"• Profit: <b>{profit_pips:.1f} pips</b> (≥ {break_even_start_pips} pips)\n"
                                 message += f"• Protected: <b>${protected_usd:.2f}</b>\n"
-                    message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
+                                message += f"• Volume: <b>{pos.volume:.2f} lots</b>\n\n"
                                 message += f"✅ Lệnh đã được bảo vệ - Không còn rủi ro!"
-                    self.send_telegram_message(message)
+                                self.send_telegram_message(message)
             
             # ====================================================================
             # BƯỚC 2: PARTIAL CLOSE (nếu bật)
@@ -1341,7 +1341,7 @@ class ETHUSD_Bot:
                     # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
                     new_sl = current_price - trail_distance_pips  # ETHUSD: trail_distance_pips đã là USD
                     # SL mới phải cao hơn SL hiện tại và >= entry (breakeven)
-                if new_sl > current_sl and new_sl >= entry_price:
+                    if new_sl > current_sl and new_sl >= entry_price:
                         # Kiểm tra stops_level
                         if stops_level_pips > 0:
                             min_sl = current_price - stops_level_pips  # ETHUSD: stops_level_pips đã là USD
@@ -1431,15 +1431,15 @@ class ETHUSD_Bot:
             entry_price = pos_before[0].price_open
             lot_size = pos_before[0].volume
         
-                    request = {
-                        "action": mt5.TRADE_ACTION_SLTP,
-                        "symbol": self.symbol,
-                        "position": ticket,
-                        "sl": new_sl,
+        request = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": self.symbol,
+            "position": ticket,
+            "sl": new_sl,
             "tp": tp
-                    }
-                    result = mt5.order_send(request)
-                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
             # Gửi Telegram notification - Chỉ gửi nếu send_telegram=True
             # Break-Even sẽ được gửi riêng trong _manage_trailing_stops() để tránh duplicate
             if self.use_telegram and send_telegram:
@@ -1471,26 +1471,26 @@ class ETHUSD_Bot:
                     
                     # Tính SL USD
                     if lot_size is not None:
-                            pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                        pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
                         sl_usd = abs(new_sl - entry_price) * pip_value_per_lot * lot_size
-                            
+                        
                         direction = "BUY" if pos_type == mt5.ORDER_TYPE_BUY else "SELL"
-                            message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
-                            message += f"<b>Thông tin lệnh:</b>\n"
-                            message += f"• Ticket: <code>{ticket}</code>\n"
-                            message += f"• Loại: <b>{direction}</b>\n"
-                            message += f"• Entry: <b>{entry_price:.2f}</b>\n"
+                        message = f"<b>📈 DỜI SL THÀNH CÔNG - {self.symbol}</b>\n\n"
+                        message += f"<b>Thông tin lệnh:</b>\n"
+                        message += f"• Ticket: <code>{ticket}</code>\n"
+                        message += f"• Loại: <b>{direction}</b>\n"
+                        message += f"• Entry: <b>{entry_price:.2f}</b>\n"
                         if old_sl is not None:
                             message += f"• SL cũ: <b>{old_sl:.2f}</b>\n"
-                            message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
+                        message += f"• SL mới: <b>{new_sl:.2f}</b>\n"
                         message += f"• SL USD: <b>${sl_usd:.2f}</b>\n"
                         message += f"• Lý do: <b>{reason}</b>\n\n"
-                            message += f"<b>Trạng thái:</b>\n"
-                            message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
-                            message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
+                        message += f"<b>Trạng thái:</b>\n"
+                        message += f"• Giá hiện tại: <b>{current_price:.2f}</b>\n"
+                        message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
                         message += f"• Protected: <b>{protected_pips:.1f} pips</b>\n"
                         
-                            self.send_telegram_message(message)
+                        self.send_telegram_message(message)
                         logging.debug(f"✅ Đã gửi Telegram notification cho SL update: Ticket {ticket}, Reason: {reason}")
             
             return True
@@ -1605,7 +1605,7 @@ class ETHUSD_Bot:
         if pos.type == mt5.ORDER_TYPE_BUY:
             close_price = tick.bid
             order_type = mt5.ORDER_TYPE_SELL
-            else:  # SELL
+        else:  # SELL
             close_price = tick.ask
             order_type = mt5.ORDER_TYPE_BUY
         
@@ -1613,9 +1613,9 @@ class ETHUSD_Bot:
         filling_mode = self.get_filling_mode(self.symbol)
         
         # Tạo request để đóng một phần
-                    request = {
+        request = {
             "action": mt5.TRADE_ACTION_DEAL,
-                        "symbol": self.symbol,
+            "symbol": self.symbol,
             "volume": close_volume,
             "type": order_type,
             "position": pos.ticket,
@@ -1627,10 +1627,10 @@ class ETHUSD_Bot:
             "type_filling": filling_mode,
         }
         
-                    result = mt5.order_send(request)
-                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
             # Gửi Telegram notification
-                        if self.use_telegram:
+            if self.use_telegram:
                 # Tính profit và lợi nhuận
                 profit_usd = 0
                 # ⚠️ VỚI ETHUSD: 1 pip = 1 USD (không phải 0.01 như XAUUSD)
@@ -1639,16 +1639,16 @@ class ETHUSD_Bot:
                 else:  # SELL
                     profit_pips = (pos.price_open - close_price)  # ETHUSD: 1 USD = 1 pip
                 
-                            pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
+                pip_value_per_lot = 1  # ETHUSD: 1 pip = $1 cho 1 lot
                 profit_usd = profit_pips * pip_value_per_lot * close_volume
-                            
+                
                 direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
                 remaining_volume = pos.volume - close_volume
                 
                 message = f"<b>💰 PARTIAL CLOSE THÀNH CÔNG - {self.symbol}</b>\n\n"
-                            message += f"<b>Thông tin lệnh:</b>\n"
+                message += f"<b>Thông tin lệnh:</b>\n"
                 message += f"• Ticket: <code>{pos.ticket}</code>\n"
-                            message += f"• Loại: <b>{direction}</b>\n"
+                message += f"• Loại: <b>{direction}</b>\n"
                 message += f"• Entry: <b>{pos.price_open:.2f}</b>\n"
                 message += f"• Close Price: <b>{close_price:.2f}</b>\n\n"
                 message += f"<b>Partial Close:</b>\n"
@@ -1656,10 +1656,10 @@ class ETHUSD_Bot:
                 message += f"• Volume đóng: <b>{close_volume:.2f} lots</b>\n"
                 message += f"• Volume còn lại: <b>{remaining_volume:.2f} lots</b>\n\n"
                 message += f"<b>Lợi nhuận:</b>\n"
-                            message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
+                message += f"• Profit: <b>{profit_pips:.1f} pips</b>\n"
                 message += f"• Profit USD: <b>${profit_usd:.2f}</b>\n"
                 
-                            self.send_telegram_message(message)
+                self.send_telegram_message(message)
                             
             return True
         else:
