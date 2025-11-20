@@ -301,7 +301,17 @@ class TechnicalAnalyzer:
         
         try:
             # Lấy thời gian của nến cuối cùng (timestamp UTC từ MT5)
-            last_candle_time = df.iloc[-1]['time']
+            last_candle_time_raw = df.iloc[-1]['time']
+            
+            # Chuyển đổi sang int (Unix timestamp) nếu là pandas Timestamp
+            if isinstance(last_candle_time_raw, pd.Timestamp):
+                last_candle_time = int(last_candle_time_raw.timestamp())
+            elif hasattr(last_candle_time_raw, 'timestamp'):
+                # Nếu là datetime object
+                last_candle_time = int(last_candle_time_raw.timestamp())
+            else:
+                # Nếu đã là int hoặc float
+                last_candle_time = int(last_candle_time_raw)
             
             # Lấy thời gian hiện tại từ MT5 server (UTC)
             # Sử dụng symbol từ tham số hoặc config
@@ -312,7 +322,7 @@ class TechnicalAnalyzer:
                 from datetime import datetime
                 now_time = int(datetime.utcnow().timestamp())
             else:
-                now_time = tick.time
+                now_time = int(tick.time)  # Đảm bảo là int
             
             # Tính timeframe (giây)
             timeframe_minutes = TIMEFRAME_MT5.get(TIMEFRAME, 15)  # Mặc định 15 phút
