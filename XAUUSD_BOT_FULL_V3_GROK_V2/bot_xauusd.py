@@ -188,10 +188,32 @@ class XAUUSD_Bot:
         logging.info("-" * 60)
         
         # Kiểm tra xem time_check có sẵn không
+        # Import trực tiếp time_check từ parent directory (đơn giản nhất)
+        tc_mod = None
         try:
-            # Thử truy cập các biến từ time_check module
-            if 'tc_module' in globals() and globals()['tc_module'] is not None:
-                tc_mod = globals()['tc_module']
+            import sys
+            import os
+            
+            # Import time_check từ parent directory
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+            
+            # Import time_check module
+            import time_check as tc_mod
+            logging.info("   ✅ Đã import time_check module thành công")
+            
+        except ImportError as e:
+            logging.warning(f"   ⚠️ Không thể import time_check từ parent directory: {e}")
+            tc_mod = None
+        except Exception as e:
+            logging.warning(f"   ⚠️ Lỗi khi import time_check: {e}")
+            import traceback
+            logging.warning(f"   Chi tiết lỗi: {traceback.format_exc()}")
+            tc_mod = None
+        
+        # Nếu import thành công, log tất cả các rule
+        if tc_mod is not None:
                 
                 # Lấy các giá trị từ module
                 enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
@@ -273,13 +295,9 @@ class XAUUSD_Bot:
                 bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
-            else:
-                logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
-                logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-        except Exception as e:
-            logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
-            import traceback
-            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
+        else:
+            # Nếu không import được, log warning
+            logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
