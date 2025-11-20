@@ -190,28 +190,47 @@ class XAUUSD_Bot:
         
         # Kiểm tra xem time_check có sẵn không
         try:
-            # Thử truy cập các biến từ time_check module
-            if 'tc_module' in globals() and tc_module is not None:
-                # Lấy các giá trị từ module
-                enable_daily_loss = getattr(tc_module, 'ENABLE_DAILY_LOSS_LIMIT', False)
-                enable_win_streak = getattr(tc_module, 'ENABLE_WIN_STREAK_LIMIT', False)
-                enable_min_time = getattr(tc_module, 'ENABLE_MIN_TIME_AFTER_CLOSE', False)
-                enable_two_losses = getattr(tc_module, 'ENABLE_TWO_LOSSES_COOLDOWN', False)
-                enable_big_win = getattr(tc_module, 'ENABLE_BIG_WIN_COOLDOWN', False)
-                enable_trading_hours = getattr(tc_module, 'ENABLE_TRADING_HOURS_LIMIT', False)
-                enable_news = getattr(tc_module, 'ENABLE_NEWS_FILTER', False)
+            # Import lại module để đảm bảo có sẵn
+            import sys
+            import importlib
+            
+            # Thử import time_check từ parent directory
+            if 'tc_module' not in globals() or tc_module is None:
+                # Thử import lại
+                try:
+                    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    if parent_dir not in sys.path:
+                        sys.path.insert(0, parent_dir)
+                    import time_check as tc_module_reload
+                    globals()['tc_module'] = tc_module_reload
+                    logging.debug("✅ Đã reload time_check module")
+                except Exception as reload_err:
+                    logging.warning(f"⚠️ Không thể reload time_check module: {reload_err}")
+            
+            # Kiểm tra lại sau khi reload
+            if 'tc_module' in globals() and globals()['tc_module'] is not None:
+                tc_mod = globals()['tc_module']
                 
-                daily_loss_limit = getattr(tc_module, 'DAILY_LOSS_LIMIT_PERCENT', -10.0)
-                win_streak_limit = getattr(tc_module, 'WIN_STREAK_LIMIT', 3)
-                profit_target = getattr(tc_module, 'PROFIT_TARGET_PERCENT', 10.0)
-                min_time_after = getattr(tc_module, 'MIN_TIME_AFTER_CLOSE_MINUTES', 10)
-                two_losses_cooldown = getattr(tc_module, 'TWO_LOSSES_COOLDOWN_MINUTES', 45)
-                big_win_cooldown = getattr(tc_module, 'BIG_WIN_COOLDOWN_MINUTES', 45)
-                big_win_r = getattr(tc_module, 'BIG_WIN_R_MULTIPLIER', 3.0)
-                trading_hours_start = getattr(tc_module, 'TRADING_HOURS_START', 14)
-                trading_hours_end = getattr(tc_module, 'TRADING_HOURS_END', 23)
-                news_block_before = getattr(tc_module, 'NEWS_BLOCK_BEFORE_HOURS', 1)
-                news_block_after = getattr(tc_module, 'NEWS_BLOCK_AFTER_HOURS', 2)
+                # Lấy các giá trị từ module
+                enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
+                enable_win_streak = getattr(tc_mod, 'ENABLE_WIN_STREAK_LIMIT', False)
+                enable_min_time = getattr(tc_mod, 'ENABLE_MIN_TIME_AFTER_CLOSE', False)
+                enable_two_losses = getattr(tc_mod, 'ENABLE_TWO_LOSSES_COOLDOWN', False)
+                enable_big_win = getattr(tc_mod, 'ENABLE_BIG_WIN_COOLDOWN', False)
+                enable_trading_hours = getattr(tc_mod, 'ENABLE_TRADING_HOURS_LIMIT', False)
+                enable_news = getattr(tc_mod, 'ENABLE_NEWS_FILTER', False)
+                
+                daily_loss_limit = getattr(tc_mod, 'DAILY_LOSS_LIMIT_PERCENT', -10.0)
+                win_streak_limit = getattr(tc_mod, 'WIN_STREAK_LIMIT', 3)
+                profit_target = getattr(tc_mod, 'PROFIT_TARGET_PERCENT', 10.0)
+                min_time_after = getattr(tc_mod, 'MIN_TIME_AFTER_CLOSE_MINUTES', 10)
+                two_losses_cooldown = getattr(tc_mod, 'TWO_LOSSES_COOLDOWN_MINUTES', 45)
+                big_win_cooldown = getattr(tc_mod, 'BIG_WIN_COOLDOWN_MINUTES', 45)
+                big_win_r = getattr(tc_mod, 'BIG_WIN_R_MULTIPLIER', 3.0)
+                trading_hours_start = getattr(tc_mod, 'TRADING_HOURS_START', 14)
+                trading_hours_end = getattr(tc_mod, 'TRADING_HOURS_END', 23)
+                news_block_before = getattr(tc_mod, 'NEWS_BLOCK_BEFORE_HOURS', 1)
+                news_block_after = getattr(tc_mod, 'NEWS_BLOCK_AFTER_HOURS', 2)
                 
                 logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
                 logging.info("")
@@ -269,7 +288,7 @@ class XAUUSD_Bot:
                 logging.info("")
                 
                 # Lấy magic number
-                bot_magic_val = getattr(tc_module, 'BOT_MAGIC', 202411)
+                bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
             else:
@@ -277,6 +296,8 @@ class XAUUSD_Bot:
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         except Exception as e:
             logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
+            import traceback
+            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
