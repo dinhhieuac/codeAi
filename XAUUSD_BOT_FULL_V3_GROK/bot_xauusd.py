@@ -188,66 +188,95 @@ class XAUUSD_Bot:
         logging.info("⏰ QUY TẮC THỜI GIAN (từ time_check.py)")
         logging.info("-" * 60)
         
-        if time_check_available:
-            logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
-            logging.info("")
-            
-            # Rule 1: Daily Loss Limit
-            status_1 = "✅ BẬT" if ENABLE_DAILY_LOSS_LIMIT else "❌ TẮT"
-            logging.info(f"   1. Tổng lỗ trong ngày vượt quá {DAILY_LOSS_LIMIT_PERCENT}% → Dừng giao dịch HẾT NGÀY")
-            logging.info(f"      Trạng thái: {status_1}")
-            logging.info(f"      Ngưỡng: {DAILY_LOSS_LIMIT_PERCENT}% tài khoản")
-            logging.info("")
-            
-            # Rule 2: Win Streak & Profit Target
-            status_2 = "✅ BẬT" if ENABLE_WIN_STREAK_LIMIT else "❌ TẮT"
-            logging.info(f"   2. Thắng {WIN_STREAK_LIMIT} lệnh liên tiếp HOẶC đạt +{PROFIT_TARGET_PERCENT}% → Dừng hoặc giảm lot size 50%")
-            logging.info(f"      Trạng thái: {status_2}")
-            logging.info(f"      Win streak limit: {WIN_STREAK_LIMIT} lệnh")
-            logging.info(f"      Profit target: +{PROFIT_TARGET_PERCENT}%")
-            logging.info("")
-            
-            # Rule 3: Min Time After Close
-            status_3 = "✅ BẬT" if ENABLE_MIN_TIME_AFTER_CLOSE else "❌ TẮT"
-            logging.info(f"   3. Chờ tối thiểu {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh")
-            logging.info(f"      Trạng thái: {status_3}")
-            logging.info(f"      Thời gian chờ: {MIN_TIME_AFTER_CLOSE_MINUTES} phút")
-            logging.info("")
-            
-            # Rule 4: Two Losses Cooldown
-            status_4 = "✅ BẬT" if ENABLE_TWO_LOSSES_COOLDOWN else "❌ TẮT"
-            logging.info(f"   4. Thua 2 lệnh liên tiếp → Nghỉ {TWO_LOSSES_COOLDOWN_MINUTES} phút")
-            logging.info(f"      Trạng thái: {status_4}")
-            logging.info(f"      Thời gian nghỉ: {TWO_LOSSES_COOLDOWN_MINUTES} phút")
-            logging.info("")
-            
-            # Rule 5: Big Win Cooldown
-            status_5 = "✅ BẬT" if ENABLE_BIG_WIN_COOLDOWN else "❌ TẮT"
-            logging.info(f"   5. Chốt lệnh ≥ {BIG_WIN_R_MULTIPLIER}R → Nghỉ {BIG_WIN_COOLDOWN_MINUTES} phút")
-            logging.info(f"      Trạng thái: {status_5}")
-            logging.info(f"      Ngưỡng R-multiple: ≥ {BIG_WIN_R_MULTIPLIER}R")
-            logging.info(f"      Thời gian nghỉ: {BIG_WIN_COOLDOWN_MINUTES} phút")
-            logging.info("")
-            
-            # Rule 6: Trading Hours Limit
-            status_6 = "✅ BẬT" if ENABLE_TRADING_HOURS_LIMIT else "❌ TẮT"
-            logging.info(f"   6. Chỉ trade {TRADING_HOURS_START}h-{TRADING_HOURS_END}h VN")
-            logging.info(f"      Trạng thái: {status_6}")
-            logging.info(f"      Giờ giao dịch: {TRADING_HOURS_START}h-{TRADING_HOURS_END}h (VN)")
-            logging.info("")
-            
-            # Rule 7: News Filter
-            status_7 = "✅ BẬT" if ENABLE_NEWS_FILTER else "❌ TẮT"
-            logging.info(f"   7. Tránh tin đỏ (NFP, FOMC) - {NEWS_BLOCK_BEFORE_HOURS}h trước + {NEWS_BLOCK_AFTER_HOURS}h sau")
-            logging.info(f"      Trạng thái: {status_7}")
-            logging.info(f"      Block trước: {NEWS_BLOCK_BEFORE_HOURS} giờ")
-            logging.info(f"      Block sau: {NEWS_BLOCK_AFTER_HOURS} giờ")
-            logging.info("")
-            
-            logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-            logging.info(f"   🔢 Magic number: {bot_magic_value}")
-        else:
-            logging.warning("   ⚠️ Không thể import time_check.py - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+        # Kiểm tra xem time_check có sẵn không
+        try:
+            # Thử truy cập các biến từ time_check module
+            if 'tc_module' in globals() and tc_module is not None:
+                # Lấy các giá trị từ module
+                enable_daily_loss = getattr(tc_module, 'ENABLE_DAILY_LOSS_LIMIT', False)
+                enable_win_streak = getattr(tc_module, 'ENABLE_WIN_STREAK_LIMIT', False)
+                enable_min_time = getattr(tc_module, 'ENABLE_MIN_TIME_AFTER_CLOSE', False)
+                enable_two_losses = getattr(tc_module, 'ENABLE_TWO_LOSSES_COOLDOWN', False)
+                enable_big_win = getattr(tc_module, 'ENABLE_BIG_WIN_COOLDOWN', False)
+                enable_trading_hours = getattr(tc_module, 'ENABLE_TRADING_HOURS_LIMIT', False)
+                enable_news = getattr(tc_module, 'ENABLE_NEWS_FILTER', False)
+                
+                daily_loss_limit = getattr(tc_module, 'DAILY_LOSS_LIMIT_PERCENT', -10.0)
+                win_streak_limit = getattr(tc_module, 'WIN_STREAK_LIMIT', 3)
+                profit_target = getattr(tc_module, 'PROFIT_TARGET_PERCENT', 10.0)
+                min_time_after = getattr(tc_module, 'MIN_TIME_AFTER_CLOSE_MINUTES', 10)
+                two_losses_cooldown = getattr(tc_module, 'TWO_LOSSES_COOLDOWN_MINUTES', 45)
+                big_win_cooldown = getattr(tc_module, 'BIG_WIN_COOLDOWN_MINUTES', 45)
+                big_win_r = getattr(tc_module, 'BIG_WIN_R_MULTIPLIER', 3.0)
+                trading_hours_start = getattr(tc_module, 'TRADING_HOURS_START', 14)
+                trading_hours_end = getattr(tc_module, 'TRADING_HOURS_END', 23)
+                news_block_before = getattr(tc_module, 'NEWS_BLOCK_BEFORE_HOURS', 1)
+                news_block_after = getattr(tc_module, 'NEWS_BLOCK_AFTER_HOURS', 2)
+                
+                logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
+                logging.info("")
+                
+                # Rule 1: Daily Loss Limit
+                status_1 = "✅ BẬT" if enable_daily_loss else "❌ TẮT"
+                logging.info(f"   1. Tổng lỗ trong ngày vượt quá {daily_loss_limit}% → Dừng giao dịch HẾT NGÀY")
+                logging.info(f"      Trạng thái: {status_1}")
+                logging.info(f"      Ngưỡng: {daily_loss_limit}% tài khoản")
+                logging.info("")
+                
+                # Rule 2: Win Streak & Profit Target
+                status_2 = "✅ BẬT" if enable_win_streak else "❌ TẮT"
+                logging.info(f"   2. Thắng {win_streak_limit} lệnh liên tiếp HOẶC đạt +{profit_target}% → Dừng hoặc giảm lot size 50%")
+                logging.info(f"      Trạng thái: {status_2}")
+                logging.info(f"      Win streak limit: {win_streak_limit} lệnh")
+                logging.info(f"      Profit target: +{profit_target}%")
+                logging.info("")
+                
+                # Rule 3: Min Time After Close
+                status_3 = "✅ BẬT" if enable_min_time else "❌ TẮT"
+                logging.info(f"   3. Chờ tối thiểu {min_time_after} phút sau khi chốt lệnh")
+                logging.info(f"      Trạng thái: {status_3}")
+                logging.info(f"      Thời gian chờ: {min_time_after} phút")
+                logging.info("")
+                
+                # Rule 4: Two Losses Cooldown
+                status_4 = "✅ BẬT" if enable_two_losses else "❌ TẮT"
+                logging.info(f"   4. Thua 2 lệnh liên tiếp → Nghỉ {two_losses_cooldown} phút")
+                logging.info(f"      Trạng thái: {status_4}")
+                logging.info(f"      Thời gian nghỉ: {two_losses_cooldown} phút")
+                logging.info("")
+                
+                # Rule 5: Big Win Cooldown
+                status_5 = "✅ BẬT" if enable_big_win else "❌ TẮT"
+                logging.info(f"   5. Chốt lệnh ≥ {big_win_r}R → Nghỉ {big_win_cooldown} phút")
+                logging.info(f"      Trạng thái: {status_5}")
+                logging.info(f"      Ngưỡng R-multiple: ≥ {big_win_r}R")
+                logging.info(f"      Thời gian nghỉ: {big_win_cooldown} phút")
+                logging.info("")
+                
+                # Rule 6: Trading Hours Limit
+                status_6 = "✅ BẬT" if enable_trading_hours else "❌ TẮT"
+                logging.info(f"   6. Chỉ trade {trading_hours_start}h-{trading_hours_end}h VN")
+                logging.info(f"      Trạng thái: {status_6}")
+                logging.info(f"      Giờ giao dịch: {trading_hours_start}h-{trading_hours_end}h (VN)")
+                logging.info("")
+                
+                # Rule 7: News Filter
+                status_7 = "✅ BẬT" if enable_news else "❌ TẮT"
+                logging.info(f"   7. Tránh tin đỏ (NFP, FOMC) - {news_block_before}h trước + {news_block_after}h sau")
+                logging.info(f"      Trạng thái: {status_7}")
+                logging.info(f"      Block trước: {news_block_before} giờ")
+                logging.info(f"      Block sau: {news_block_after} giờ")
+                logging.info("")
+                
+                # Lấy magic number
+                bot_magic_val = getattr(tc_module, 'BOT_MAGIC', 202411)
+                logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+                logging.info(f"   🔢 Magic number: {bot_magic_val}")
+            else:
+                logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+                logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+        except Exception as e:
+            logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
