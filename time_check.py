@@ -138,8 +138,10 @@ def get_daily_profit_loss(account_login=None):
     start_of_day_utc = start_of_day.astimezone(pytz.UTC)
     start_timestamp = int(start_of_day_utc.timestamp())
     
-    # Lấy tất cả deals từ đầu ngày đến bây giờ
-    deals = mt5.history_deals_get(start_timestamp, int(datetime.now().timestamp()))
+    # Lấy tất cả deals từ đầu ngày đến bây giờ (UTC timestamp)
+    now_utc = datetime.utcnow()
+    now_timestamp = int(now_utc.timestamp())
+    deals = mt5.history_deals_get(start_timestamp, now_timestamp)
     
     if deals is None:
         deals = []
@@ -346,11 +348,15 @@ def check_min_time_after_close():
                 'remaining_minutes': 0
             }
         
-        last_close_time = datetime.fromtimestamp(closed_trades[0].time)
-        now = datetime.now()
-        time_elapsed = (now - last_close_time).total_seconds() / 60  # phút
+        # MT5 trả về timestamp UTC, chuyển sang UTC datetime
+        last_close_time_utc = datetime.utcfromtimestamp(closed_trades[0].time)
+        now_utc = datetime.utcnow()
+        time_elapsed = (now_utc - last_close_time_utc).total_seconds() / 60  # phút
         
-        logging.debug(f"🔍 Min Time After Close: Lệnh cuối đóng lúc {last_close_time.strftime('%Y-%m-%d %H:%M:%S')}, đã trôi qua {time_elapsed:.2f} phút")
+        # Log với cả UTC và VN time để dễ debug
+        last_close_time_vn = pytz.utc.localize(last_close_time_utc).astimezone(VN_TIMEZONE)
+        now_vn = pytz.utc.localize(now_utc).astimezone(VN_TIMEZONE)
+        logging.debug(f"🔍 Min Time After Close: Lệnh cuối đóng lúc {last_close_time_vn.strftime('%Y-%m-%d %H:%M:%S')} VN ({last_close_time_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC), đã trôi qua {time_elapsed:.2f} phút")
         
         if time_elapsed < MIN_TIME_AFTER_CLOSE_MINUTES:
             remaining = MIN_TIME_AFTER_CLOSE_MINUTES - time_elapsed
@@ -419,23 +425,29 @@ def check_two_losses_cooldown():
         }
     
     # Có 2 lệnh thua liên tiếp → Kiểm tra thời gian
-    last_loss_time = datetime.fromtimestamp(last_two[0].time)
-    now = datetime.now()
-    time_elapsed = (now - last_loss_time).total_seconds() / 60  # phút
+    # MT5 trả về timestamp UTC, chuyển sang UTC datetime
+    last_loss_time_utc = datetime.utcfromtimestamp(last_two[0].time)
+    now_utc = datetime.utcnow()
+    time_elapsed = (now_utc - last_loss_time_utc).total_seconds() / 60  # phút
+    
+    # Chuyển sang VN time để log
+    last_loss_time_vn = pytz.utc.localize(last_loss_time_utc).astimezone(VN_TIMEZONE)
     
     if time_elapsed < TWO_LOSSES_COOLDOWN_MINUTES:
         remaining = TWO_LOSSES_COOLDOWN_MINUTES - time_elapsed
+        logging.info(f"⏸️ Two Losses Cooldown: Thua 2 lệnh liên tiếp lúc {last_loss_time_vn.strftime('%Y-%m-%d %H:%M:%S')} VN, còn {remaining:.1f} phút - CHẶN GIAO DỊCH")
         return {
             'blocked': True,
             'reason': f'Thua 2 lệnh liên tiếp → Nghỉ {TWO_LOSSES_COOLDOWN_MINUTES} phút (còn {remaining:.1f} phút)',
-            'last_loss_time': last_loss_time,
+            'last_loss_time': last_loss_time_vn,
             'remaining_minutes': remaining
         }
     
+    logging.debug(f"✅ Two Losses Cooldown: Đã hết thời gian nghỉ ({time_elapsed:.1f} phút) - Cho phép giao dịch")
     return {
         'blocked': False,
         'reason': f'Đã hết thời gian nghỉ sau 2 lệnh thua ({time_elapsed:.1f} phút)',
-        'last_loss_time': last_loss_time,
+        'last_loss_time': last_loss_time_vn,
         'remaining_minutes': 0
     }
 
@@ -524,24 +536,30 @@ def check_big_win_cooldown():
         }
     
     # Có lệnh ≥ 3R → Kiểm tra thời gian
-    last_big_win_time = datetime.fromtimestamp(last_trade.time)
-    now = datetime.now()
-    time_elapsed = (now - last_big_win_time).total_seconds() / 60  # phút
+    # MT5 trả về timestamp UTC, chuyển sang UTC datetime
+    last_big_win_time_utc = datetime.utcfromtimestamp(last_trade.time)
+    now_utc = datetime.utcnow()
+    time_elapsed = (now_utc - last_big_win_time_utc).total_seconds() / 60  # phút
+    
+    # Chuyển sang VN time để log
+    last_big_win_time_vn = pytz.utc.localize(last_big_win_time_utc).astimezone(VN_TIMEZONE)
     
     if time_elapsed < BIG_WIN_COOLDOWN_MINUTES:
         remaining = BIG_WIN_COOLDOWN_MINUTES - time_elapsed
+        logging.info(f"⏸️ Big Win Cooldown: Chốt lệnh {r_multiple:.2f}R lúc {last_big_win_time_vn.strftime('%Y-%m-%d %H:%M:%S')} VN, còn {remaining:.1f} phút - CHẶN GIAO DỊCH")
         return {
             'blocked': True,
             'reason': f'Chốt lệnh {r_multiple:.2f}R ≥ {BIG_WIN_R_MULTIPLIER}R → Nghỉ {BIG_WIN_COOLDOWN_MINUTES} phút (còn {remaining:.1f} phút)',
-            'last_big_win_time': last_big_win_time,
+            'last_big_win_time': last_big_win_time_vn,
             'r_multiple': r_multiple,
             'remaining_minutes': remaining
         }
     
+    logging.debug(f"✅ Big Win Cooldown: Đã hết thời gian nghỉ ({time_elapsed:.1f} phút) - Cho phép giao dịch")
     return {
         'blocked': False,
         'reason': f'Đã hết thời gian nghỉ sau lệnh {r_multiple:.2f}R ({time_elapsed:.1f} phút)',
-        'last_big_win_time': last_big_win_time,
+        'last_big_win_time': last_big_win_time_vn,
         'r_multiple': r_multiple,
         'remaining_minutes': 0
     }
