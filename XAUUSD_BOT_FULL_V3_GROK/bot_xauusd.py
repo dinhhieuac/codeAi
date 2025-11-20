@@ -12,45 +12,7 @@ from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
 
-# Import time_check module (từ thư mục root)
-# Lấy đường dẫn thư mục cha (root của project)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
-
-try:
-    from time_check import check_all_rules, set_mt5
-    import time_check as tc_module
-    # Import các biến config từ time_check để log
-    from time_check import (
-        ENABLE_DAILY_LOSS_LIMIT, ENABLE_WIN_STREAK_LIMIT, ENABLE_MIN_TIME_AFTER_CLOSE,
-        ENABLE_TWO_LOSSES_COOLDOWN, ENABLE_BIG_WIN_COOLDOWN, ENABLE_TRADING_HOURS_LIMIT,
-        ENABLE_NEWS_FILTER, DAILY_LOSS_LIMIT_PERCENT, WIN_STREAK_LIMIT, PROFIT_TARGET_PERCENT,
-        MIN_TIME_AFTER_CLOSE_MINUTES, TWO_LOSSES_COOLDOWN_MINUTES, BIG_WIN_COOLDOWN_MINUTES,
-        BIG_WIN_R_MULTIPLIER, TRADING_HOURS_START, TRADING_HOURS_END,
-        NEWS_BLOCK_BEFORE_HOURS, NEWS_BLOCK_AFTER_HOURS
-    )
-    # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
-    # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
-    bot_magic_value = globals().get('MAGIC', 202411)  # Magic number mặc định
-    tc_module.BOT_MAGIC = bot_magic_value
-    logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
-    time_check_available = True
-except ImportError as e:
-    logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
-    check_all_rules = None
-    set_mt5 = None
-    tc_module = None
-    time_check_available = False
-    # Set các biến để tránh lỗi
-    ENABLE_DAILY_LOSS_LIMIT = None
-    ENABLE_WIN_STREAK_LIMIT = None
-    ENABLE_MIN_TIME_AFTER_CLOSE = None
-    ENABLE_TWO_LOSSES_COOLDOWN = None
-    ENABLE_BIG_WIN_COOLDOWN = None
-    ENABLE_TRADING_HOURS_LIMIT = None
-    ENABLE_NEWS_FILTER = None
-
+# Setup logging TRƯỚC KHI import time_check để có thể log ngay từ đầu
 # Setup logging với encoding UTF-8 để hỗ trợ emoji
 # Tạo custom StreamHandler để xử lý encoding errors trên Windows
 class SafeStreamHandler(logging.StreamHandler):
@@ -116,6 +78,61 @@ logging.basicConfig(
         SafeStreamHandler(sys.stdout)
     ]
 )
+
+# Import time_check module (từ thư mục root) - SAU KHI logging đã được setup
+# Lấy đường dẫn thư mục cha (root của project)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+try:
+    from time_check import check_all_rules, set_mt5
+    import time_check as tc_module
+    # Import các biến config từ time_check để log
+    from time_check import (
+        ENABLE_DAILY_LOSS_LIMIT, ENABLE_WIN_STREAK_LIMIT, ENABLE_MIN_TIME_AFTER_CLOSE,
+        ENABLE_TWO_LOSSES_COOLDOWN, ENABLE_BIG_WIN_COOLDOWN, ENABLE_TRADING_HOURS_LIMIT,
+        ENABLE_NEWS_FILTER, DAILY_LOSS_LIMIT_PERCENT, WIN_STREAK_LIMIT, PROFIT_TARGET_PERCENT,
+        MIN_TIME_AFTER_CLOSE_MINUTES, TWO_LOSSES_COOLDOWN_MINUTES, BIG_WIN_COOLDOWN_MINUTES,
+        BIG_WIN_R_MULTIPLIER, TRADING_HOURS_START, TRADING_HOURS_END,
+        NEWS_BLOCK_BEFORE_HOURS, NEWS_BLOCK_AFTER_HOURS
+    )
+    # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
+    # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
+    bot_magic_value = globals().get('MAGIC', 202411)  # Magic number mặc định
+    tc_module.BOT_MAGIC = bot_magic_value
+    logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
+    time_check_available = True
+except ImportError as e:
+    logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
+    check_all_rules = None
+    set_mt5 = None
+    tc_module = None
+    time_check_available = False
+    # Set các biến để tránh lỗi
+    ENABLE_DAILY_LOSS_LIMIT = None
+    ENABLE_WIN_STREAK_LIMIT = None
+    ENABLE_MIN_TIME_AFTER_CLOSE = None
+    ENABLE_TWO_LOSSES_COOLDOWN = None
+    ENABLE_BIG_WIN_COOLDOWN = None
+    ENABLE_TRADING_HOURS_LIMIT = None
+    ENABLE_NEWS_FILTER = None
+except Exception as e:
+    logging.error(f"❌ Lỗi khi import time_check: {e}")
+    import traceback
+    logging.error(f"Chi tiết lỗi: {traceback.format_exc()}")
+    check_all_rules = None
+    set_mt5 = None
+    tc_module = None
+    time_check_available = False
+    # Set các biến để tránh lỗi
+    ENABLE_DAILY_LOSS_LIMIT = None
+    ENABLE_WIN_STREAK_LIMIT = None
+    ENABLE_MIN_TIME_AFTER_CLOSE = None
+    ENABLE_TWO_LOSSES_COOLDOWN = None
+    ENABLE_BIG_WIN_COOLDOWN = None
+    ENABLE_TRADING_HOURS_LIMIT = None
+    ENABLE_NEWS_FILTER = None
 
 class XAUUSD_Bot:
     def __init__(self):
@@ -188,27 +205,9 @@ class XAUUSD_Bot:
         logging.info("-" * 60)
         
         # Kiểm tra xem time_check có sẵn không
-        try:
-            # Import lại module để đảm bảo có sẵn
-            import sys
-            import importlib
-            
-            # Thử import time_check từ parent directory
-            if 'tc_module' not in globals() or tc_module is None:
-                # Thử import lại
-                try:
-                    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    if parent_dir not in sys.path:
-                        sys.path.insert(0, parent_dir)
-                    import time_check as tc_module_reload
-                    globals()['tc_module'] = tc_module_reload
-                    logging.debug("✅ Đã reload time_check module")
-                except Exception as reload_err:
-                    logging.warning(f"⚠️ Không thể reload time_check module: {reload_err}")
-            
-            # Kiểm tra lại sau khi reload
-            if 'tc_module' in globals() and globals()['tc_module'] is not None:
-                tc_mod = globals()['tc_module']
+        if time_check_available and 'tc_module' in globals() and tc_module is not None:
+            try:
+                tc_mod = tc_module
                 
                 # Lấy các giá trị từ module
                 enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
@@ -290,13 +289,16 @@ class XAUUSD_Bot:
                 bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
-            else:
-                logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+            except Exception as e:
+                logging.error(f"   ❌ Lỗi khi đọc config từ time_check.py: {e}")
+                import traceback
+                logging.error(f"   Chi tiết lỗi: {traceback.format_exc()}")
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-        except Exception as e:
-            logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
-            import traceback
-            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
+        else:
+            if not time_check_available:
+                logging.warning("   ⚠️ Module time_check không khả dụng (import thất bại) - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+            elif 'tc_module' not in globals() or tc_module is None:
+                logging.warning("   ⚠️ Module time_check không khả dụng (tc_module = None) - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
