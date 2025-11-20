@@ -1,6 +1,11 @@
 """
 time_check.py - Kiểm tra các quy tắc giao dịch mới trên MT5
 
+⚠️ LƯU Ý QUAN TRỌNG:
+- File này KHÔNG khởi tạo MT5, giả định MT5 đã được khởi tạo từ bot (bot_xauusd.py)
+- Tất cả các hàm trong file này sử dụng MT5 đã được khởi tạo sẵn
+- Chỉ hàm main() (dùng để test độc lập) mới khởi tạo và đóng MT5
+
 Các quy tắc:
 1. Tổng lỗ trong ngày vượt quá -10% tài khoản → Dừng giao dịch HẾT NGÀY (cho phép bật tắt)
 2. Thắng 3 lệnh liên tiếp HOẶC đạt mục tiêu +10% lợi nhuận → Dừng giao dịch HẾT NGÀY hoặc giảm khối lượng 50% (cho phép bật tắt)
@@ -49,7 +54,11 @@ BOT_MAGIC = None  # None = lấy tất cả lệnh
 # ========================== HÀM KIỂM TRA ==========================
 
 def get_account_info():
-    """Lấy thông tin tài khoản"""
+    """
+    Lấy thông tin tài khoản
+    
+    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    """
     account_info = mt5.account_info()
     if account_info:
         return {
@@ -64,6 +73,8 @@ def get_daily_profit_loss(account_login=None):
     """
     Tính tổng lợi nhuận/lỗ trong ngày (từ 0h VN hôm nay đến bây giờ)
     
+    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    
     Returns:
         dict: {
             'profit': float,  # Tổng profit/loss trong ngày
@@ -72,9 +83,7 @@ def get_daily_profit_loss(account_login=None):
             'balance_current': float  # Balance hiện tại
         }
     """
-    if not mt5.initialize():
-        return None
-    
+    # MT5 đã được khởi tạo từ bot, không cần khởi tạo lại
     account_info = get_account_info()
     if not account_info:
         return None
@@ -155,6 +164,8 @@ def check_daily_loss_limit():
 def get_last_closed_trades(count=10, magic=None):
     """
     Lấy các lệnh đã đóng gần nhất
+    
+    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
     
     Args:
         count: Số lệnh cần lấy
@@ -556,6 +567,8 @@ def check_news_filter():
 def check_all_rules():
     """
     Kiểm tra tất cả các quy tắc
+    
+    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
     
     Returns:
         dict: {

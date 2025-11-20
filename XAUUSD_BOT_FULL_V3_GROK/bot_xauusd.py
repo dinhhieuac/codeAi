@@ -21,6 +21,15 @@ sys.path.insert(0, parent_dir)
 try:
     from time_check import check_all_rules
     import time_check as tc_module
+    # Import các biến config từ time_check để log
+    from time_check import (
+        ENABLE_DAILY_LOSS_LIMIT, ENABLE_WIN_STREAK_LIMIT, ENABLE_MIN_TIME_AFTER_CLOSE,
+        ENABLE_TWO_LOSSES_COOLDOWN, ENABLE_BIG_WIN_COOLDOWN, ENABLE_TRADING_HOURS_LIMIT,
+        ENABLE_NEWS_FILTER, DAILY_LOSS_LIMIT_PERCENT, WIN_STREAK_LIMIT, PROFIT_TARGET_PERCENT,
+        MIN_TIME_AFTER_CLOSE_MINUTES, TWO_LOSSES_COOLDOWN_MINUTES, BIG_WIN_COOLDOWN_MINUTES,
+        BIG_WIN_R_MULTIPLIER, TRADING_HOURS_START, TRADING_HOURS_END,
+        NEWS_BLOCK_BEFORE_HOURS, NEWS_BLOCK_AFTER_HOURS
+    )
     # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
     # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
     bot_magic_value = 202411  # Magic number mặc định
@@ -28,10 +37,20 @@ try:
         bot_magic_value = MAGIC
     tc_module.BOT_MAGIC = bot_magic_value
     logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
+    time_check_available = True
 except ImportError as e:
     logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
     check_all_rules = None
     tc_module = None
+    time_check_available = False
+    # Set các biến để tránh lỗi
+    ENABLE_DAILY_LOSS_LIMIT = None
+    ENABLE_WIN_STREAK_LIMIT = None
+    ENABLE_MIN_TIME_AFTER_CLOSE = None
+    ENABLE_TWO_LOSSES_COOLDOWN = None
+    ENABLE_BIG_WIN_COOLDOWN = None
+    ENABLE_TRADING_HOURS_LIMIT = None
+    ENABLE_NEWS_FILTER = None
 
 # Setup logging với encoding UTF-8 để hỗ trợ emoji
 # Tạo custom StreamHandler để xử lý encoding errors trên Windows
@@ -169,19 +188,68 @@ class XAUUSD_Bot:
         logging.info("⏰ QUY TẮC THỜI GIAN (từ time_check.py)")
         logging.info("-" * 60)
         
-        if check_all_rules:
+        if time_check_available:
             logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
-            logging.info("      • Tổng lỗ trong ngày vượt quá -10% → Dừng giao dịch HẾT NGÀY")
-            logging.info("      • Thắng 3 lệnh liên tiếp HOẶC đạt +10% → Dừng hoặc giảm lot size 50%")
-            logging.info("      • Chờ tối thiểu 10 phút sau khi chốt lệnh")
-            logging.info("      • Thua 2 lệnh liên tiếp → Nghỉ 45 phút")
-            logging.info("      • Chốt lệnh ≥ 3R → Nghỉ 45 phút")
-            logging.info("      • Chỉ trade 14h-23h VN (có thể bật/tắt)")
-            logging.info("      • Tránh tin đỏ (NFP, FOMC) - 1h trước + 2h sau")
+            logging.info("")
+            
+            # Rule 1: Daily Loss Limit
+            status_1 = "✅ BẬT" if ENABLE_DAILY_LOSS_LIMIT else "❌ TẮT"
+            logging.info(f"   1. Tổng lỗ trong ngày vượt quá {DAILY_LOSS_LIMIT_PERCENT}% → Dừng giao dịch HẾT NGÀY")
+            logging.info(f"      Trạng thái: {status_1}")
+            logging.info(f"      Ngưỡng: {DAILY_LOSS_LIMIT_PERCENT}% tài khoản")
+            logging.info("")
+            
+            # Rule 2: Win Streak & Profit Target
+            status_2 = "✅ BẬT" if ENABLE_WIN_STREAK_LIMIT else "❌ TẮT"
+            logging.info(f"   2. Thắng {WIN_STREAK_LIMIT} lệnh liên tiếp HOẶC đạt +{PROFIT_TARGET_PERCENT}% → Dừng hoặc giảm lot size 50%")
+            logging.info(f"      Trạng thái: {status_2}")
+            logging.info(f"      Win streak limit: {WIN_STREAK_LIMIT} lệnh")
+            logging.info(f"      Profit target: +{PROFIT_TARGET_PERCENT}%")
+            logging.info("")
+            
+            # Rule 3: Min Time After Close
+            status_3 = "✅ BẬT" if ENABLE_MIN_TIME_AFTER_CLOSE else "❌ TẮT"
+            logging.info(f"   3. Chờ tối thiểu {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh")
+            logging.info(f"      Trạng thái: {status_3}")
+            logging.info(f"      Thời gian chờ: {MIN_TIME_AFTER_CLOSE_MINUTES} phút")
+            logging.info("")
+            
+            # Rule 4: Two Losses Cooldown
+            status_4 = "✅ BẬT" if ENABLE_TWO_LOSSES_COOLDOWN else "❌ TẮT"
+            logging.info(f"   4. Thua 2 lệnh liên tiếp → Nghỉ {TWO_LOSSES_COOLDOWN_MINUTES} phút")
+            logging.info(f"      Trạng thái: {status_4}")
+            logging.info(f"      Thời gian nghỉ: {TWO_LOSSES_COOLDOWN_MINUTES} phút")
+            logging.info("")
+            
+            # Rule 5: Big Win Cooldown
+            status_5 = "✅ BẬT" if ENABLE_BIG_WIN_COOLDOWN else "❌ TẮT"
+            logging.info(f"   5. Chốt lệnh ≥ {BIG_WIN_R_MULTIPLIER}R → Nghỉ {BIG_WIN_COOLDOWN_MINUTES} phút")
+            logging.info(f"      Trạng thái: {status_5}")
+            logging.info(f"      Ngưỡng R-multiple: ≥ {BIG_WIN_R_MULTIPLIER}R")
+            logging.info(f"      Thời gian nghỉ: {BIG_WIN_COOLDOWN_MINUTES} phút")
+            logging.info("")
+            
+            # Rule 6: Trading Hours Limit
+            status_6 = "✅ BẬT" if ENABLE_TRADING_HOURS_LIMIT else "❌ TẮT"
+            logging.info(f"   6. Chỉ trade {TRADING_HOURS_START}h-{TRADING_HOURS_END}h VN")
+            logging.info(f"      Trạng thái: {status_6}")
+            logging.info(f"      Giờ giao dịch: {TRADING_HOURS_START}h-{TRADING_HOURS_END}h (VN)")
+            logging.info("")
+            
+            # Rule 7: News Filter
+            status_7 = "✅ BẬT" if ENABLE_NEWS_FILTER else "❌ TẮT"
+            logging.info(f"   7. Tránh tin đỏ (NFP, FOMC) - {NEWS_BLOCK_BEFORE_HOURS}h trước + {NEWS_BLOCK_AFTER_HOURS}h sau")
+            logging.info(f"      Trạng thái: {status_7}")
+            logging.info(f"      Block trước: {NEWS_BLOCK_BEFORE_HOURS} giờ")
+            logging.info(f"      Block sau: {NEWS_BLOCK_AFTER_HOURS} giờ")
+            logging.info("")
+            
+            logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+            logging.info(f"   🔢 Magic number: {bot_magic_value}")
         else:
             logging.warning("   ⚠️ Không thể import time_check.py - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+            logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
-        logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         logging.info("-" * 60)
         
         if not mt5.initialize(path=PATH,login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
