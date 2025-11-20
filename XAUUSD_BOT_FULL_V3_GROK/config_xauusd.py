@@ -95,7 +95,7 @@ MAX_SL_USD = 5.0  # Đơn vị: USD (giảm từ 10 xuống 8 để giữ risk $
 USE_ATR_BASED_SL_TP = True  # True: Tính SL/TP theo ATR, False: Dùng công thức cố định
 
 # Bật/tắt rule chỉ check tín hiệu khi nến đã đóng
-ENABLE_WAIT_FOR_CANDLE_CLOSE = True  # True: Chỉ check tín hiệu khi nến đã đóng, False: Check ngay (như hiện tại)
+ENABLE_WAIT_FOR_CANDLE_CLOSE = False  # True: Chỉ check tín hiệu khi nến đã đóng, False: Check ngay (như hiện tại)
 
 # Chế độ tính SL/TP theo ATR:
 # - "ATR_FREE": SL/TP tự do theo ATR, KHÔNG giới hạn theo USD (chỉ đảm bảo SL >= MIN_SL_PIPS)
