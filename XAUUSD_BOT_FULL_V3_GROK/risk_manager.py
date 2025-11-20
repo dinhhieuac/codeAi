@@ -272,6 +272,10 @@ class XAUUSD_RiskManager:
         """
         Kiểm tra cooldown sau 2 lệnh thua liên tiếp
         
+        ⚠️ LƯU Ý: Rule này đã được chuyển sang time_check.py
+        Method này chỉ được giữ lại để tương thích ngược.
+        Nếu ENABLE_TWO_LOSSES_COOLDOWN = False, rule sẽ bị tắt.
+        
         Kiểm tra 2 lệnh đóng cuối cùng từ MT5:
         - Nếu cả 2 đều thua (profit < 0) → Dừng giao dịch 1 giờ
         - Nếu có ít nhất 1 lệnh thắng → Cho phép giao dịch
@@ -280,8 +284,10 @@ class XAUUSD_RiskManager:
             Tuple (bool, str): (True/False, message)
         """
         # Kiểm tra xem có bật tính năng không
+        # Lấy từ config_xauusd.py (không phải time_check.py)
         enable_cooldown = ENABLE_TWO_LOSSES_COOLDOWN if 'ENABLE_TWO_LOSSES_COOLDOWN' in globals() else True
         if not enable_cooldown:
+            logging.debug("🔍 check_two_losses_cooldown: Rule đã tắt trong config_xauusd.py")
             return True, "OK"  # Nếu tắt → Luôn cho phép
         
         # Kiểm tra cooldown hiện tại

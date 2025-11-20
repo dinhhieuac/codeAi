@@ -30,7 +30,7 @@ _mt5_instance = None
 ENABLE_DAILY_LOSS_LIMIT = True  # Quy tắc 1: Dừng khi lỗ -10% trong ngày
 ENABLE_WIN_STREAK_LIMIT = True  # Quy tắc 2: Dừng khi thắng 3 lệnh liên tiếp hoặc +10%
 ENABLE_MIN_TIME_AFTER_CLOSE = True  # Quy tắc 3: Chờ 10 phút sau khi chốt lệnh
-ENABLE_TWO_LOSSES_COOLDOWN = True  # Quy tắc 4: Nghỉ 45 phút sau 2 lệnh thua
+ENABLE_TWO_LOSSES_COOLDOWN = False  # Quy tắc 4: Nghỉ 45 phút sau 2 lệnh thua
 ENABLE_BIG_WIN_COOLDOWN = True  # Quy tắc 5: Nghỉ 45 phút sau lệnh ≥ 3R
 ENABLE_TRADING_HOURS_LIMIT = False  # Quy tắc 6: Chỉ trade 14h-23h VN
 ENABLE_NEWS_FILTER = True  # Quy tắc 7: Tránh tin đỏ (NFP, FOMC)
@@ -229,7 +229,7 @@ def get_last_closed_trades(count=10, magic=None):
         return []
     
     try:
-        # Lấy deals từ 30 ngày gần nhất
+        # Lấy deals từ 1 ngày gần nhất
         from_timestamp = int((datetime.now() - timedelta(days=1)).timestamp())
         deals = mt5.history_deals_get(from_timestamp, int(datetime.now().timestamp()))
         

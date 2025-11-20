@@ -290,9 +290,11 @@ NO_TRADE_FRIDAY_AFTER = "17:00"  # 5:00 PM EST/EDT (thường là 5:00 PM NY tim
 BREAK_AFTER_LOSS_MINUTES = 30
 
 # Bật/tắt tính năng dừng giao dịch sau 2 lệnh thua liên tiếp
+# ⚠️ LƯU Ý: Rule này đã được chuyển sang time_check.py (ENABLE_TWO_LOSSES_COOLDOWN)
+# Config này chỉ để tương thích ngược với risk_manager.py cũ
 # True: Kiểm tra 2 lệnh đóng cuối cùng, nếu cả 2 đều thua → Dừng giao dịch 1 giờ
-# False: Tắt tính năng này
-ENABLE_TWO_LOSSES_COOLDOWN = True  # True: Bật, False: Tắt
+# False: Tắt tính năng này (rule trong risk_manager.py)
+ENABLE_TWO_LOSSES_COOLDOWN = False  # True: Bật, False: Tắt (đã chuyển sang time_check.py)
 
 # Thời gian dừng giao dịch sau 2 lệnh thua liên tiếp (đơn vị: giờ)
 # Nếu 2 lệnh đóng cuối cùng đều thua → Bot sẽ dừng giao dịch trong TWO_LOSSES_COOLDOWN_HOURS giờ
