@@ -205,10 +205,27 @@ class XAUUSD_Bot:
         logging.info("-" * 60)
         
         # Kiểm tra xem time_check có sẵn không
+        # Truy cập biến module-level thông qua import module hiện tại
         try:
-            # Thử truy cập các biến từ time_check module
-            if 'tc_module' in globals() and globals()['tc_module'] is not None:
+            # Import module hiện tại để truy cập biến module-level
+            import sys
+            import importlib
+            
+            # Lấy tên module hiện tại (bot_xauusd)
+            module_name = __name__
+            if module_name in sys.modules:
+                main_module = sys.modules[module_name]
+            else:
+                main_module = None
+            
+            # Thử truy cập tc_module từ module-level
+            tc_mod = None
+            if main_module and hasattr(main_module, 'tc_module'):
+                tc_mod = getattr(main_module, 'tc_module')
+            elif 'tc_module' in globals():
                 tc_mod = globals()['tc_module']
+            
+            if tc_mod is not None:
                 
                 # Lấy các giá trị từ module
                 enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
@@ -291,12 +308,24 @@ class XAUUSD_Bot:
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
             else:
+                # Debug: Log thông tin để tìm lỗi
                 logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+                if main_module:
+                    if hasattr(main_module, 'time_check_available'):
+                        logging.warning(f"   ⚠️ time_check_available = {main_module.time_check_available}")
+                    if hasattr(main_module, 'tc_module'):
+                        logging.warning(f"   ⚠️ tc_module = {main_module.tc_module}")
+                    else:
+                        logging.warning(f"   ⚠️ tc_module không tồn tại trong module")
+                if 'time_check_available' in globals():
+                    logging.warning(f"   ⚠️ time_check_available (globals) = {globals()['time_check_available']}")
+                if 'tc_module' in globals():
+                    logging.warning(f"   ⚠️ tc_module (globals) = {globals()['tc_module']}")
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         except Exception as e:
             logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
             import traceback
-            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
+            logging.warning(f"   Chi tiết lỗi: {traceback.format_exc()}")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
