@@ -205,9 +205,10 @@ class XAUUSD_Bot:
         logging.info("-" * 60)
         
         # Kiểm tra xem time_check có sẵn không
-        if time_check_available and 'tc_module' in globals() and tc_module is not None:
-            try:
-                tc_mod = tc_module
+        try:
+            # Thử truy cập các biến từ time_check module
+            if 'tc_module' in globals() and globals()['tc_module'] is not None:
+                tc_mod = globals()['tc_module']
                 
                 # Lấy các giá trị từ module
                 enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
@@ -289,16 +290,13 @@ class XAUUSD_Bot:
                 bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
-            except Exception as e:
-                logging.error(f"   ❌ Lỗi khi đọc config từ time_check.py: {e}")
-                import traceback
-                logging.error(f"   Chi tiết lỗi: {traceback.format_exc()}")
+            else:
+                logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-        else:
-            if not time_check_available:
-                logging.warning("   ⚠️ Module time_check không khả dụng (import thất bại) - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
-            elif 'tc_module' not in globals() or tc_module is None:
-                logging.warning("   ⚠️ Module time_check không khả dụng (tc_module = None) - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+        except Exception as e:
+            logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
+            import traceback
+            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
             logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
