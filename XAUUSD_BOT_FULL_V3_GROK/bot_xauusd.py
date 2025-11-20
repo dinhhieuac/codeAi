@@ -32,9 +32,7 @@ try:
     )
     # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
     # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
-    bot_magic_value = 202411  # Magic number mặc định
-    if 'MAGIC' in globals():
-        bot_magic_value = MAGIC
+    bot_magic_value = globals().get('MAGIC', 202411)  # Magic number mặc định
     tc_module.BOT_MAGIC = bot_magic_value
     logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
     time_check_available = True
