@@ -303,19 +303,8 @@ class XAUUSD_Bot:
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
                 logging.info(f"   🔢 Magic number: {bot_magic_val}")
             else:
-                # Debug: Log thông tin để tìm lỗi
+                # Nếu không import được, log warning
                 logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
-                if main_module:
-                    if hasattr(main_module, 'time_check_available'):
-                        logging.warning(f"   ⚠️ time_check_available = {main_module.time_check_available}")
-                    if hasattr(main_module, 'tc_module'):
-                        logging.warning(f"   ⚠️ tc_module = {main_module.tc_module}")
-                    else:
-                        logging.warning(f"   ⚠️ tc_module không tồn tại trong module")
-                if 'time_check_available' in globals():
-                    logging.warning(f"   ⚠️ time_check_available (globals) = {globals()['time_check_available']}")
-                if 'tc_module' in globals():
-                    logging.warning(f"   ⚠️ tc_module (globals) = {globals()['tc_module']}")
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         except Exception as e:
             logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
@@ -1283,7 +1272,12 @@ class XAUUSD_Bot:
                         # ⚠️ QUAN TRỌNG: Kiểm tra các rule từ time_check.py TRƯỚC KHI mở lệnh
                         if check_all_rules and callable(check_all_rules):
                             try:
+                                logging.info(f"🔍 Đang kiểm tra các rule từ time_check.py trước khi mở lệnh {action}...")
                                 time_check_results = check_all_rules()
+                                
+                                # Log kết quả để debug
+                                if time_check_results:
+                                    logging.info(f"📊 Kết quả time_check: can_trade={time_check_results.get('can_trade', 'N/A')}, blocked_rules={time_check_results.get('blocked_rules', [])}")
                                 
                                 if not time_check_results or 'can_trade' not in time_check_results:
                                     logging.warning("⚠️ time_check.check_all_rules() trả về kết quả không hợp lệ, bỏ qua kiểm tra")
@@ -1305,6 +1299,9 @@ class XAUUSD_Bot:
                                     logging.warning("=" * 60)
                                     log_delay_and_sleep()
                                     continue  # Bỏ qua lệnh này
+                                else:
+                                    # Log khi tất cả rule đều pass
+                                    logging.info(f"✅ Tất cả rule từ time_check.py đều pass - Có thể mở lệnh {action}")
                                 
                                 # Kiểm tra có cần giảm lot size không
                                 if time_check_results.get('reduce_lot_size', False):
@@ -1315,13 +1312,13 @@ class XAUUSD_Bot:
                             except Exception as e:
                                 logging.error(f"❌ Lỗi khi gọi check_all_rules(): {e}")
                                 import traceback
-                                logging.debug(f"Chi tiết lỗi: {traceback.format_exc()}")
+                                logging.error(f"Chi tiết lỗi: {traceback.format_exc()}")
                                 # Nếu có lỗi, vẫn tiếp tục (không chặn giao dịch)
                                 self.time_check_reduce_lot_size = False
                         else:
                             # Nếu check_all_rules không khả dụng, log warning
                             if not check_all_rules:
-                                logging.debug("⚠️ check_all_rules không khả dụng (có thể import thất bại)")
+                                logging.warning("⚠️ check_all_rules không khả dụng (có thể import thất bại) - Bỏ qua kiểm tra rule")
                             self.time_check_reduce_lot_size = False
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade

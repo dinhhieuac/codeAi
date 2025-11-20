@@ -219,26 +219,42 @@ def get_last_closed_trades(count=10, magic=None):
     Returns:
         list: Danh sách các deal đã đóng
     """
-    mt5 = get_mt5()
-    # Lấy deals từ 30 ngày gần nhất
-    from_timestamp = int((datetime.now() - timedelta(days=30)).timestamp())
-    deals = mt5.history_deals_get(from_timestamp, int(datetime.now().timestamp()))
-    
-    if deals is None:
+    try:
+        mt5 = get_mt5()
+    except RuntimeError as e:
+        logging.error(f"❌ Lỗi: MT5 chưa được thiết lập trong time_check.py: {e}")
+        logging.error("   ⚠️ Vui lòng đảm bảo set_mt5(mt5) được gọi từ bot trước khi sử dụng các rule")
         return []
     
-    # Lọc chỉ lấy deals đóng lệnh (DEAL_ENTRY_OUT)
-    mt5 = get_mt5()
-    closed_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
-    
-    # Lọc theo magic nếu có
-    if magic is not None:
-        closed_deals = [d for d in closed_deals if d.magic == magic]
-    
-    # Sắp xếp theo thời gian (mới nhất trước)
-    closed_deals.sort(key=lambda x: x.time, reverse=True)
-    
-    return closed_deals[:count]
+    try:
+        # Lấy deals từ 30 ngày gần nhất
+        from_timestamp = int((datetime.now() - timedelta(days=30)).timestamp())
+        deals = mt5.history_deals_get(from_timestamp, int(datetime.now().timestamp()))
+        
+        if deals is None:
+            logging.debug("⚠️ history_deals_get() trả về None - Không có deals nào")
+            return []
+        
+        # Lọc chỉ lấy deals đóng lệnh (DEAL_ENTRY_OUT)
+        mt5 = get_mt5()
+        closed_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+        
+        # Lọc theo magic nếu có
+        if magic is not None:
+            closed_deals = [d for d in closed_deals if d.magic == magic]
+            logging.debug(f"🔍 Đã lọc {len(closed_deals)} deals với magic={magic}")
+        else:
+            logging.debug(f"🔍 Tìm thấy {len(closed_deals)} deals đã đóng (không lọc magic)")
+        
+        # Sắp xếp theo thời gian (mới nhất trước)
+        closed_deals.sort(key=lambda x: x.time, reverse=True)
+        
+        return closed_deals[:count]
+    except Exception as e:
+        logging.error(f"❌ Lỗi khi lấy closed trades: {e}")
+        import traceback
+        logging.error(f"Chi tiết: {traceback.format_exc()}")
+        return []
 
 def check_win_streak_and_profit_target():
     """
@@ -319,35 +335,51 @@ def check_min_time_after_close():
     if not ENABLE_MIN_TIME_AFTER_CLOSE:
         return {'blocked': False, 'reason': 'Quy tắc tắt'}
     
-    closed_trades = get_last_closed_trades(count=1, magic=BOT_MAGIC)
-    
-    if not closed_trades:
+    try:
+        closed_trades = get_last_closed_trades(count=1, magic=BOT_MAGIC)
+        
+        if not closed_trades:
+            return {
+                'blocked': False,
+                'reason': 'Chưa có lệnh nào đóng',
+                'time_elapsed_minutes': 0,
+                'remaining_minutes': 0
+            }
+        
+        last_close_time = datetime.fromtimestamp(closed_trades[0].time)
+        now = datetime.now()
+        time_elapsed = (now - last_close_time).total_seconds() / 60  # phút
+        
+        logging.debug(f"🔍 Min Time After Close: Lệnh cuối đóng lúc {last_close_time.strftime('%Y-%m-%d %H:%M:%S')}, đã trôi qua {time_elapsed:.2f} phút")
+        
+        if time_elapsed < MIN_TIME_AFTER_CLOSE_MINUTES:
+            remaining = MIN_TIME_AFTER_CLOSE_MINUTES - time_elapsed
+            logging.info(f"⏸️ Min Time After Close: Chưa đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút (còn {remaining:.1f} phút) - CHẶN GIAO DỊCH")
+            return {
+                'blocked': True,
+                'reason': f'Chưa đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh (còn {remaining:.1f} phút)',
+                'time_elapsed_minutes': time_elapsed,
+                'remaining_minutes': remaining
+            }
+        
+        logging.debug(f"✅ Min Time After Close: Đã đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút - Cho phép giao dịch")
         return {
             'blocked': False,
-            'reason': 'Chưa có lệnh nào đóng',
+            'reason': f'Đã đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh',
+            'time_elapsed_minutes': time_elapsed,
+            'remaining_minutes': 0
+        }
+    except Exception as e:
+        logging.error(f"❌ Lỗi trong check_min_time_after_close(): {e}")
+        import traceback
+        logging.error(f"Chi tiết: {traceback.format_exc()}")
+        # Nếu có lỗi, không chặn giao dịch (fail-safe)
+        return {
+            'blocked': False,
+            'reason': f'Lỗi khi kiểm tra: {e}',
             'time_elapsed_minutes': 0,
             'remaining_minutes': 0
         }
-    
-    last_close_time = datetime.fromtimestamp(closed_trades[0].time)
-    now = datetime.now()
-    time_elapsed = (now - last_close_time).total_seconds() / 60  # phút
-    
-    if time_elapsed < MIN_TIME_AFTER_CLOSE_MINUTES:
-        remaining = MIN_TIME_AFTER_CLOSE_MINUTES - time_elapsed
-        return {
-            'blocked': True,
-            'reason': f'Chưa đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh (còn {remaining:.1f} phút)',
-            'time_elapsed_minutes': time_elapsed,
-            'remaining_minutes': remaining
-        }
-    
-    return {
-        'blocked': False,
-        'reason': f'Đã đủ {MIN_TIME_AFTER_CLOSE_MINUTES} phút sau khi chốt lệnh',
-        'time_elapsed_minutes': time_elapsed,
-        'remaining_minutes': 0
-    }
 
 def check_two_losses_cooldown():
     """
