@@ -12,6 +12,27 @@ from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
 
+# Import time_check module (từ thư mục root)
+# Lấy đường dẫn thư mục cha (root của project)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+try:
+    from time_check import check_all_rules
+    import time_check as tc_module
+    # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
+    # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
+    bot_magic_value = 202411  # Magic number mặc định
+    if 'MAGIC' in globals():
+        bot_magic_value = MAGIC
+    tc_module.BOT_MAGIC = bot_magic_value
+    logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
+except ImportError as e:
+    logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
+    check_all_rules = None
+    tc_module = None
+
 # Setup logging với encoding UTF-8 để hỗ trợ emoji
 # Tạo custom StreamHandler để xử lý encoding errors trên Windows
 class SafeStreamHandler(logging.StreamHandler):
@@ -103,6 +124,9 @@ class XAUUSD_Bot:
         self.last_trailing_check = {}  # Dict {ticket: timestamp} để tránh modify quá thường xuyên
         self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
         
+        # Time check rules tracking
+        self.time_check_reduce_lot_size = False  # Flag để giảm lot size 50% nếu cần
+        
         # Dynamic TP tracking
         self.tp_boost_count = {}  # Dict {ticket: count} - Số lần đã dời TP
         self.last_tp_update = {}  # Dict {ticket: timestamp} - Thời gian dời TP lần cuối
@@ -140,56 +164,24 @@ class XAUUSD_Bot:
         logging.info(f"📅 Max daily trades: {MAX_DAILY_TRADES}")
         logging.info(f"⏰ Check interval: {CHECK_INTERVAL} giây")
         
-        # Log các rule thời gian
+        # Log các rule thời gian - ĐÃ CHUYỂN SANG time_check.py
         logging.info("-" * 60)
-        logging.info("⏰ QUY TẮC THỜI GIAN")
+        logging.info("⏰ QUY TẮC THỜI GIAN (từ time_check.py)")
         logging.info("-" * 60)
-        try:
-            timezone = TRADING_TIMEZONE
-        except NameError:
-            timezone = "Local time"
         
-        logging.info(f"   🌍 Timezone: {timezone}")
+        if check_all_rules:
+            logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
+            logging.info("      • Tổng lỗ trong ngày vượt quá -10% → Dừng giao dịch HẾT NGÀY")
+            logging.info("      • Thắng 3 lệnh liên tiếp HOẶC đạt +10% → Dừng hoặc giảm lot size 50%")
+            logging.info("      • Chờ tối thiểu 10 phút sau khi chốt lệnh")
+            logging.info("      • Thua 2 lệnh liên tiếp → Nghỉ 45 phút")
+            logging.info("      • Chốt lệnh ≥ 3R → Nghỉ 45 phút")
+            logging.info("      • Chỉ trade 14h-23h VN (có thể bật/tắt)")
+            logging.info("      • Tránh tin đỏ (NFP, FOMC) - 1h trước + 2h sau")
+        else:
+            logging.warning("   ⚠️ Không thể import time_check.py - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+        
         logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-        
-        # Log NO_TRADE_SESSIONS
-        try:
-            if NO_TRADE_SESSIONS:
-                logging.info(f"   🚫 Không giao dịch trong các session:")
-                for start, end in NO_TRADE_SESSIONS:
-                    logging.info(f"      • {start} - {end} ({timezone})")
-            else:
-                logging.info(f"   ✅ Không có session cấm giao dịch")
-        except NameError:
-            logging.info(f"   ✅ Không có session cấm giao dịch")
-        
-        # Log NO_TRADE_FRIDAY_AFTER
-        try:
-            if NO_TRADE_FRIDAY_AFTER:
-                logging.info(f"   🚫 Không giao dịch sau {NO_TRADE_FRIDAY_AFTER} vào thứ 6 ({timezone})")
-            else:
-                logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
-        except NameError:
-            logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
-        
-        # Log BREAK_AFTER_LOSS_MINUTES
-        try:
-            logging.info(f"   ⏸️  Nghỉ {BREAK_AFTER_LOSS_MINUTES} phút sau khi thua lệnh")
-        except NameError:
-            logging.info(f"   ⏸️  Không có thời gian nghỉ sau khi thua")
-        
-        # Log MIN_TIME_BETWEEN_SAME_DIRECTION
-        try:
-            logging.info(f"   ⏳ Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
-        except NameError:
-            logging.info(f"   ⏳ Không có giới hạn thời gian giữa 2 lệnh cùng chiều")
-        
-        # Log MAX_HOURLY_TRADES
-        try:
-            logging.info(f"   📊 Tối đa {MAX_HOURLY_TRADES} lệnh trong 1 giờ")
-        except NameError:
-            logging.info(f"   📊 Không có giới hạn số lệnh trong 1 giờ")
-        
         logging.info("-" * 60)
         
         if not mt5.initialize(path=PATH,login=ACCOUNT_NUMBER, password=PASSWORD, server=SERVER):
@@ -392,11 +384,11 @@ class XAUUSD_Bot:
             logging.warning(f"⚠️ Spread quá cao: {spread:.1f} pips > {MAX_SPREAD} pips")
             return False, f"Spread quá cao: {spread:.1f}pips"
             
-        # Kiểm tra thời gian giao dịch
-        trading_time_ok, time_msg = self.risk_manager.check_trading_time()
-        if not trading_time_ok:
-            logging.debug(f"⏸️ {time_msg}")
-            return False, time_msg
+        # Kiểm tra thời gian giao dịch - ĐÃ CHUYỂN SANG time_check.py
+        # trading_time_ok, time_msg = self.risk_manager.check_trading_time()
+        # if not trading_time_ok:
+        #     logging.debug(f"⏸️ {time_msg}")
+        #     return False, time_msg
             
         # Kiểm tra điều kiện tài khoản
         account_ok, account_msg = self.risk_manager.check_account_conditions()
@@ -448,6 +440,12 @@ class XAUUSD_Bot:
         
         # Tính lot size ban đầu dựa trên risk_per_trade
         lot_size = self.calculate_position_size(sl_pips)
+        
+        # Áp dụng giảm lot size 50% nếu có flag từ time_check
+        if hasattr(self, 'time_check_reduce_lot_size') and self.time_check_reduce_lot_size:
+            lot_size_original = lot_size
+            lot_size = lot_size * 0.5
+            logging.info(f"📊 Giảm lot size 50% do quy tắc time_check: {lot_size_original:.2f} → {lot_size:.2f} lots")
         
         # Validate lot size trước (giống eth.py)
         lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
@@ -1133,61 +1131,34 @@ class XAUUSD_Bot:
                             log_delay_and_sleep()
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
-                        # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
-                        # Lấy lệnh cùng chiều mới nhất từ MT5 và check xem đã đủ 60 phút chưa
-                        if current_position_count > 0:
-                            # Xác định loại lệnh cần check (BUY = 0, SELL = 1 trong MT5)
-                            check_order_type = 0 if action == "BUY" else 1  # 0 = BUY, 1 = SELL
+                        # ⚠️ QUAN TRỌNG: Kiểm tra các rule từ time_check.py TRƯỚC KHI mở lệnh
+                        if check_all_rules:
+                            time_check_results = check_all_rules()
                             
-                            # Lọc các lệnh cùng chiều
-                            same_direction_positions = [
-                                pos for pos in current_positions 
-                                if pos.type == check_order_type
-                            ]
+                            if not time_check_results['can_trade']:
+                                blocked_rules = ', '.join(time_check_results['blocked_rules'])
+                                logging.warning("=" * 60)
+                                logging.warning(f"🚫 KHÔNG THỂ GIAO DỊCH - BỊ CHẶN BỞI CÁC QUY TẮC")
+                                logging.warning("=" * 60)
+                                logging.warning(f"   📊 Tín hiệu: {action} (Strength: {strength})")
+                                logging.warning(f"   🚫 Quy tắc chặn: {blocked_rules}")
+                                
+                                # Log chi tiết từng quy tắc
+                                for rule_name, rule_result in time_check_results['details'].items():
+                                    if rule_result.get('blocked', False):
+                                        reason = rule_result.get('reason', 'N/A')
+                                        logging.warning(f"   • {rule_name}: {reason}")
+                                
+                                logging.warning("=" * 60)
+                                log_delay_and_sleep()
+                                continue  # Bỏ qua lệnh này
                             
-                            if same_direction_positions:
-                                # Lấy lệnh mới nhất cùng chiều (time lớn nhất)
-                                latest_same_direction = max(same_direction_positions, key=lambda x: x.time)
-                                
-                                # Chuyển đổi time từ timestamp (seconds) sang datetime
-                                latest_open_time = datetime.fromtimestamp(latest_same_direction.time)
-                                now_time = datetime.now()
-                                
-                                # Tính thời gian đã trôi qua (timedelta)
-                                time_elapsed = now_time - latest_open_time
-                                time_elapsed_minutes = time_elapsed.total_seconds() / 60
-                                
-                                # Kiểm tra xem đã đủ MIN_TIME_BETWEEN_SAME_DIRECTION phút chưa
-                                if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
-                                    remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
-                                    remaining_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60) % 60
-                                    remaining_total_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60)
-                                    
-                                    # Lưu thông tin delay để log sau
-                                    pending_delay_info = {
-                                        'action': action,
-                                        'strength': strength,
-                                        'remaining_minutes': remaining_minutes,
-                                        'remaining_seconds': remaining_seconds,
-                                        'remaining_total_seconds': remaining_total_seconds,
-                                        'next_check_time': datetime.now() + timedelta(seconds=remaining_total_seconds)
-                                    }
-                                    
-                                    # Log rõ ràng với format đẹp
-                                    logging.info("=" * 60)
-                                    logging.info(f"⏸️ TÍN HIỆU {action} {self.symbol} - KHÔNG ĐỦ ĐIỀU KIỆN THỜI GIAN")
-                                    logging.info("=" * 60)
-                                    logging.info(f"   📊 Tín hiệu: {action} (Strength: {strength})")
-                                    logging.info(f"   ⏰ Lệnh {action} cuối cùng mở lúc: {latest_open_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                                    logging.info(f"   ⏱️ Thời gian đã trôi qua: {int(time_elapsed_minutes)} phút {int(time_elapsed.total_seconds() % 60)} giây")
-                                    logging.info(f"   ⚠️ Cần đợi thêm: {remaining_minutes} phút {remaining_seconds} giây")
-                                    logging.info(f"   📋 Rule: Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
-                                    logging.info("=" * 60)
-                                    logging.info(f"   🔄 Bỏ qua tín hiệu này, chờ cycle tiếp theo...")
-                                    logging.info("=" * 60)
-                                    
-                                    log_delay_and_sleep()
-                                    continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                            # Kiểm tra có cần giảm lot size không
+                            if time_check_results.get('reduce_lot_size', False):
+                                self.time_check_reduce_lot_size = True
+                                logging.info(f"⚠️ Giảm lot size 50% do quy tắc: {time_check_results.get('blocked_rules', [])}")
+                            else:
+                                self.time_check_reduce_lot_size = False
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
