@@ -2,8 +2,9 @@
 time_check.py - Kiểm tra các quy tắc giao dịch mới trên MT5
 
 ⚠️ LƯU Ý QUAN TRỌNG:
-- File này KHÔNG khởi tạo MT5, giả định MT5 đã được khởi tạo từ bot (bot_xauusd.py)
-- Tất cả các hàm trong file này sử dụng MT5 đã được khởi tạo sẵn
+- File này KHÔNG khởi tạo MT5, MT5 phải được truyền từ bot (bot_xauusd.py, bot_btcusd.py, etc.)
+- Sử dụng hàm set_mt5(mt5_module) để truyền MT5 module từ bot vào
+- Tất cả các hàm trong file này sử dụng MT5 đã được truyền vào
 - Chỉ hàm main() (dùng để test độc lập) mới khởi tạo và đóng MT5
 
 Các quy tắc:
@@ -16,11 +17,13 @@ Các quy tắc:
 7. Tin đỏ (NFP, FOMC) → Không trade 1h trước + 2h sau (cho phép bật tắt)
 """
 
-import MetaTrader5 as mt5
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import logging
+
+# Module-level variable để lưu MT5 instance
+_mt5_instance = None
 
 # ========================== CẤU HÌNH ==========================
 # Các quy tắc có thể bật/tắt
@@ -51,14 +54,55 @@ VN_TIMEZONE = pytz.timezone('Asia/Ho_Chi_Minh')
 # Magic number để lọc lệnh (có thể thay đổi)
 BOT_MAGIC = None  # None = lấy tất cả lệnh
 
+# ========================== HÀM KHỞI TẠO ==========================
+
+def set_mt5(mt5_module):
+    """
+    Thiết lập MT5 module từ bot bên ngoài
+    
+    Args:
+        mt5_module: MetaTrader5 module đã được khởi tạo từ bot
+    
+    Ví dụ:
+        import MetaTrader5 as mt5
+        from time_check import set_mt5, check_all_rules
+        
+        # Trong bot
+        mt5.initialize(...)
+        set_mt5(mt5)  # Truyền MT5 vào time_check
+        
+        # Sau đó có thể sử dụng các hàm trong time_check
+        results = check_all_rules()
+    """
+    global _mt5_instance
+    _mt5_instance = mt5_module
+    logging.debug("✅ Đã thiết lập MT5 module trong time_check.py")
+
+def get_mt5():
+    """
+    Lấy MT5 instance hiện tại
+    
+    Returns:
+        MT5 module hoặc None nếu chưa được thiết lập
+    
+    Raises:
+        RuntimeError: Nếu MT5 chưa được thiết lập
+    """
+    if _mt5_instance is None:
+        raise RuntimeError(
+            "MT5 chưa được thiết lập! Vui lòng gọi set_mt5(mt5_module) từ bot trước khi sử dụng các hàm trong time_check.py"
+        )
+    return _mt5_instance
+
 # ========================== HÀM KIỂM TRA ==========================
 
 def get_account_info():
     """
     Lấy thông tin tài khoản
     
-    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    Lưu ý: MT5 phải đã được thiết lập bằng set_mt5() từ bot
     """
+    mt5 = get_mt5()
     account_info = mt5.account_info()
     if account_info:
         return {
@@ -73,7 +117,7 @@ def get_daily_profit_loss(account_login=None):
     """
     Tính tổng lợi nhuận/lỗ trong ngày (từ 0h VN hôm nay đến bây giờ)
     
-    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    Lưu ý: MT5 phải đã được thiết lập bằng set_mt5() từ bot
     
     Returns:
         dict: {
@@ -83,7 +127,7 @@ def get_daily_profit_loss(account_login=None):
             'balance_current': float  # Balance hiện tại
         }
     """
-    # MT5 đã được khởi tạo từ bot, không cần khởi tạo lại
+    mt5 = get_mt5()
     account_info = get_account_info()
     if not account_info:
         return None
@@ -95,7 +139,7 @@ def get_daily_profit_loss(account_login=None):
     start_timestamp = int(start_of_day_utc.timestamp())
     
     # Lấy tất cả deals từ đầu ngày đến bây giờ
-    deals = mt5.history_deals_get(start_timestamp, datetime.now().timestamp())
+    deals = mt5.history_deals_get(start_timestamp, int(datetime.now().timestamp()))
     
     if deals is None:
         deals = []
@@ -105,6 +149,7 @@ def get_daily_profit_loss(account_login=None):
         deals = [d for d in deals if d.login == account_login]
     
     # Tính tổng profit trong ngày
+    mt5 = get_mt5()
     daily_profit = sum(d.profit for d in deals if d.entry == mt5.DEAL_ENTRY_OUT)
     
     # Balance đầu ngày = balance hiện tại - profit trong ngày
@@ -165,7 +210,7 @@ def get_last_closed_trades(count=10, magic=None):
     """
     Lấy các lệnh đã đóng gần nhất
     
-    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    Lưu ý: MT5 phải đã được thiết lập bằng set_mt5() từ bot
     
     Args:
         count: Số lệnh cần lấy
@@ -174,14 +219,16 @@ def get_last_closed_trades(count=10, magic=None):
     Returns:
         list: Danh sách các deal đã đóng
     """
+    mt5 = get_mt5()
     # Lấy deals từ 30 ngày gần nhất
     from_timestamp = int((datetime.now() - timedelta(days=30)).timestamp())
-    deals = mt5.history_deals_get(from_timestamp, datetime.now().timestamp())
+    deals = mt5.history_deals_get(from_timestamp, int(datetime.now().timestamp()))
     
     if deals is None:
         return []
     
     # Lọc chỉ lấy deals đóng lệnh (DEAL_ENTRY_OUT)
+    mt5 = get_mt5()
     closed_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
     
     # Lọc theo magic nếu có
@@ -568,7 +615,7 @@ def check_all_rules():
     """
     Kiểm tra tất cả các quy tắc
     
-    Lưu ý: MT5 phải đã được khởi tạo từ bot (không khởi tạo lại ở đây)
+    Lưu ý: MT5 phải đã được thiết lập bằng set_mt5() từ bot
     
     Returns:
         dict: {
@@ -641,17 +688,22 @@ def check_all_rules():
 # ========================== HÀM MAIN ĐỂ TEST ==========================
 
 def main():
-    """Hàm main để test các quy tắc"""
+    """Hàm main để test các quy tắc (chỉ dùng để test độc lập)"""
+    import MetaTrader5 as mt5
+    
     print("=" * 60)
     print("🔍 KIỂM TRA CÁC QUY TẮC GIAO DỊCH")
     print("=" * 60)
     
-    # Khởi tạo MT5
+    # Khởi tạo MT5 (chỉ để test)
     if not mt5.initialize():
         print("❌ Không thể khởi tạo MT5")
         return
     
     print("✅ Đã kết nối MT5\n")
+    
+    # Thiết lập MT5 cho time_check
+    set_mt5(mt5)
     
     # Kiểm tra tất cả quy tắc
     results = check_all_rules()

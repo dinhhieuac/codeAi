@@ -19,7 +19,7 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 try:
-    from time_check import check_all_rules
+    from time_check import check_all_rules, set_mt5
     import time_check as tc_module
     # Import các biến config từ time_check để log
     from time_check import (
@@ -39,6 +39,7 @@ try:
 except ImportError as e:
     logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
     check_all_rules = None
+    set_mt5 = None
     tc_module = None
     time_check_available = False
     # Set các biến để tránh lỗi
@@ -314,6 +315,14 @@ class XAUUSD_Bot:
             return False
             
         logging.info(f"✅ Đã đăng nhập MT5: Account {ACCOUNT_NUMBER}, Server: {SERVER}")
+        
+        # Thiết lập MT5 cho time_check module (nếu có)
+        if time_check_available and set_mt5:
+            try:
+                set_mt5(mt5)
+                logging.info("✅ Đã thiết lập MT5 cho time_check.py")
+            except Exception as e:
+                logging.warning(f"⚠️ Không thể thiết lập MT5 cho time_check: {e}")
         
         # Kiểm tra symbol
         if not mt5.symbol_select(self.symbol, True):
