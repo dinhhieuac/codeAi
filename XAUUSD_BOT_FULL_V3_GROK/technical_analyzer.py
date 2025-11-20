@@ -278,6 +278,63 @@ class TechnicalAnalyzer:
         except Exception as e:
             logging.error(f"❌ Lỗi khi lấy multi-timeframe bias: {e}")
             return None
+    
+    def _is_candle_closed(self, df, symbol=None):
+        """
+        Kiểm tra xem nến cuối cùng đã đóng chưa
+        
+        Logic:
+        - Lấy thời gian của nến cuối cùng trong df
+        - Lấy thời gian hiện tại từ MT5 server
+        - Tính timeframe (từ TIMEFRAME_MT5)
+        - Nếu thời gian hiện tại - thời gian nến cuối >= timeframe, thì nến đã đóng
+        
+        Args:
+            df: DataFrame chứa dữ liệu giá (có column 'time')
+            symbol: Symbol để lấy tick time (nếu None, dùng SYMBOL từ config)
+            
+        Returns:
+            True nếu nến đã đóng, False nếu nến chưa đóng
+        """
+        if len(df) == 0:
+            return False
+        
+        try:
+            # Lấy thời gian của nến cuối cùng (timestamp UTC từ MT5)
+            last_candle_time = df.iloc[-1]['time']
+            
+            # Lấy thời gian hiện tại từ MT5 server (UTC)
+            # Sử dụng symbol từ tham số hoặc config
+            symbol_to_check = symbol if symbol else (SYMBOL if 'SYMBOL' in globals() else 'XAUUSDc')
+            tick = self.mt5.symbol_info_tick(symbol_to_check)
+            if tick is None:
+                # Fallback: dùng datetime.utcnow()
+                from datetime import datetime
+                now_time = int(datetime.utcnow().timestamp())
+            else:
+                now_time = tick.time
+            
+            # Tính timeframe (giây)
+            timeframe_minutes = TIMEFRAME_MT5.get(TIMEFRAME, 15)  # Mặc định 15 phút
+            timeframe_seconds = timeframe_minutes * 60
+            
+            # Kiểm tra: nếu thời gian hiện tại - thời gian nến cuối >= timeframe, thì nến đã đóng
+            time_diff = now_time - last_candle_time
+            
+            # Nến đã đóng nếu time_diff >= timeframe (cho phép sai số 5 giây)
+            is_closed = time_diff >= (timeframe_seconds - 5)
+            
+            if not is_closed:
+                remaining_seconds = timeframe_seconds - time_diff
+                remaining_minutes = int(remaining_seconds // 60)
+                remaining_secs = int(remaining_seconds % 60)
+                logging.debug(f"⏳ Nến chưa đóng - Còn {remaining_minutes}m {remaining_secs}s")
+            
+            return is_closed
+        except Exception as e:
+            logging.warning(f"⚠️ Lỗi khi kiểm tra nến đóng: {e}")
+            # Nếu có lỗi, cho phép tiếp tục (fail-safe)
+            return True
         
     def analyze(self, df, symbol=None, use_multi_timeframe=True):
         """
@@ -307,11 +364,20 @@ class TechnicalAnalyzer:
             - 'sl_pips': Stop Loss tính bằng pips
             - 'tp_pips': Take Profit tính bằng pips
             
-            None nếu không đủ dữ liệu (< 50 nến)
+            None nếu không đủ dữ liệu (< 50 nến) hoặc nến chưa đóng (nếu ENABLE_WAIT_FOR_CANDLE_CLOSE = True)
         """
         # Kiểm tra dữ liệu đủ để tính toán
         if len(df) < 50:
             return None  # Cần ít nhất 50 nến để tính các chỉ báo chính xác
+        
+        # ====================================================================
+        # KIỂM TRA NẾN ĐÃ ĐÓNG CHƯA (nếu rule được bật)
+        # ====================================================================
+        enable_wait_candle = ENABLE_WAIT_FOR_CANDLE_CLOSE if 'ENABLE_WAIT_FOR_CANDLE_CLOSE' in globals() else False
+        if enable_wait_candle:
+            if not self._is_candle_closed(df, symbol):
+                logging.debug("⏳ Nến hiện tại chưa đóng - Chờ nến đóng để check tín hiệu")
+                return None  # Chờ nến đóng
         
         # ====================================================================
         # MULTI-TIMEFRAME BIAS (theo grok.md: D1/H4 cho bias, M15 cho entry)
