@@ -11,6 +11,7 @@ from risk_manager import XAUUSD_RiskManager
 from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
+import importlib.util
 
 # Setup logging TRƯỚC KHI import time_check để có thể log ngay từ đầu
 # Setup logging với encoding UTF-8 để hỗ trợ emoji
@@ -205,25 +206,19 @@ class XAUUSD_Bot:
         logging.info("-" * 60)
         
         # Kiểm tra xem time_check có sẵn không
-        # Truy cập biến module-level thông qua import module hiện tại
+        # Import trực tiếp time_check từ parent directory (đơn giản nhất)
         try:
-            # Import module hiện tại để truy cập biến module-level
             import sys
-            import importlib
+            import os
             
-            # Lấy tên module hiện tại (bot_xauusd)
-            module_name = __name__
-            if module_name in sys.modules:
-                main_module = sys.modules[module_name]
-            else:
-                main_module = None
+            # Import time_check từ parent directory
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
             
-            # Thử truy cập tc_module từ module-level
-            tc_mod = None
-            if main_module and hasattr(main_module, 'tc_module'):
-                tc_mod = getattr(main_module, 'tc_module')
-            elif 'tc_module' in globals():
-                tc_mod = globals()['tc_module']
+            # Import time_check module
+            import time_check as tc_mod
+            logging.debug("   ✅ Đã import time_check module thành công")
             
             if tc_mod is not None:
                 
