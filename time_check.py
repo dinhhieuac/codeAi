@@ -32,7 +32,7 @@ ENABLE_WIN_STREAK_LIMIT = True  # Quy tắc 2: Dừng khi thắng 3 lệnh liên
 ENABLE_MIN_TIME_AFTER_CLOSE = True  # Quy tắc 3: Chờ 10 phút sau khi chốt lệnh
 ENABLE_TWO_LOSSES_COOLDOWN = True  # Quy tắc 4: Nghỉ 45 phút sau 2 lệnh thua
 ENABLE_BIG_WIN_COOLDOWN = True  # Quy tắc 5: Nghỉ 45 phút sau lệnh ≥ 3R
-ENABLE_TRADING_HOURS_LIMIT = True  # Quy tắc 6: Chỉ trade 14h-23h VN
+ENABLE_TRADING_HOURS_LIMIT = False  # Quy tắc 6: Chỉ trade 14h-23h VN
 ENABLE_NEWS_FILTER = True  # Quy tắc 7: Tránh tin đỏ (NFP, FOMC)
 
 # Tham số
