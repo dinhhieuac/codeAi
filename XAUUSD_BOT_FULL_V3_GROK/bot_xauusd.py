@@ -1257,33 +1257,48 @@ class XAUUSD_Bot:
                             continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
                         
                         # ⚠️ QUAN TRỌNG: Kiểm tra các rule từ time_check.py TRƯỚC KHI mở lệnh
-                        if check_all_rules:
-                            time_check_results = check_all_rules()
-                            
-                            if not time_check_results['can_trade']:
-                                blocked_rules = ', '.join(time_check_results['blocked_rules'])
-                                logging.warning("=" * 60)
-                                logging.warning(f"🚫 KHÔNG THỂ GIAO DỊCH - BỊ CHẶN BỞI CÁC QUY TẮC")
-                                logging.warning("=" * 60)
-                                logging.warning(f"   📊 Tín hiệu: {action} (Strength: {strength})")
-                                logging.warning(f"   🚫 Quy tắc chặn: {blocked_rules}")
+                        if check_all_rules and callable(check_all_rules):
+                            try:
+                                time_check_results = check_all_rules()
                                 
-                                # Log chi tiết từng quy tắc
-                                for rule_name, rule_result in time_check_results['details'].items():
-                                    if rule_result.get('blocked', False):
-                                        reason = rule_result.get('reason', 'N/A')
-                                        logging.warning(f"   • {rule_name}: {reason}")
+                                if not time_check_results or 'can_trade' not in time_check_results:
+                                    logging.warning("⚠️ time_check.check_all_rules() trả về kết quả không hợp lệ, bỏ qua kiểm tra")
+                                elif not time_check_results['can_trade']:
+                                    blocked_rules = ', '.join(time_check_results.get('blocked_rules', []))
+                                    logging.warning("=" * 60)
+                                    logging.warning(f"🚫 KHÔNG THỂ GIAO DỊCH - BỊ CHẶN BỞI CÁC QUY TẮC")
+                                    logging.warning("=" * 60)
+                                    logging.warning(f"   📊 Tín hiệu: {action} (Strength: {strength})")
+                                    logging.warning(f"   🚫 Quy tắc chặn: {blocked_rules}")
+                                    
+                                    # Log chi tiết từng quy tắc
+                                    if 'details' in time_check_results:
+                                        for rule_name, rule_result in time_check_results['details'].items():
+                                            if rule_result.get('blocked', False):
+                                                reason = rule_result.get('reason', 'N/A')
+                                                logging.warning(f"   • {rule_name}: {reason}")
+                                    
+                                    logging.warning("=" * 60)
+                                    log_delay_and_sleep()
+                                    continue  # Bỏ qua lệnh này
                                 
-                                logging.warning("=" * 60)
-                                log_delay_and_sleep()
-                                continue  # Bỏ qua lệnh này
-                            
-                            # Kiểm tra có cần giảm lot size không
-                            if time_check_results.get('reduce_lot_size', False):
-                                self.time_check_reduce_lot_size = True
-                                logging.info(f"⚠️ Giảm lot size 50% do quy tắc: {time_check_results.get('blocked_rules', [])}")
-                            else:
+                                # Kiểm tra có cần giảm lot size không
+                                if time_check_results.get('reduce_lot_size', False):
+                                    self.time_check_reduce_lot_size = True
+                                    logging.info(f"⚠️ Giảm lot size 50% do quy tắc: {time_check_results.get('blocked_rules', [])}")
+                                else:
+                                    self.time_check_reduce_lot_size = False
+                            except Exception as e:
+                                logging.error(f"❌ Lỗi khi gọi check_all_rules(): {e}")
+                                import traceback
+                                logging.debug(f"Chi tiết lỗi: {traceback.format_exc()}")
+                                # Nếu có lỗi, vẫn tiếp tục (không chặn giao dịch)
                                 self.time_check_reduce_lot_size = False
+                        else:
+                            # Nếu check_all_rules không khả dụng, log warning
+                            if not check_all_rules:
+                                logging.debug("⚠️ check_all_rules không khả dụng (có thể import thất bại)")
+                            self.time_check_reduce_lot_size = False
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):

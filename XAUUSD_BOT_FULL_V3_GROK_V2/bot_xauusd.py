@@ -12,6 +12,45 @@ from technical_analyzer import TechnicalAnalyzer
 import logging
 import os
 
+# Import time_check module (từ thư mục root)
+# Lấy đường dẫn thư mục cha (root của project)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+try:
+    from time_check import check_all_rules, set_mt5
+    import time_check as tc_module
+    # Import các biến config từ time_check để log
+    from time_check import (
+        ENABLE_DAILY_LOSS_LIMIT, ENABLE_WIN_STREAK_LIMIT, ENABLE_MIN_TIME_AFTER_CLOSE,
+        ENABLE_TWO_LOSSES_COOLDOWN, ENABLE_BIG_WIN_COOLDOWN, ENABLE_TRADING_HOURS_LIMIT,
+        ENABLE_NEWS_FILTER, DAILY_LOSS_LIMIT_PERCENT, WIN_STREAK_LIMIT, PROFIT_TARGET_PERCENT,
+        MIN_TIME_AFTER_CLOSE_MINUTES, TWO_LOSSES_COOLDOWN_MINUTES, BIG_WIN_COOLDOWN_MINUTES,
+        BIG_WIN_R_MULTIPLIER, TRADING_HOURS_START, TRADING_HOURS_END,
+        NEWS_BLOCK_BEFORE_HOURS, NEWS_BLOCK_AFTER_HOURS
+    )
+    # Cập nhật BOT_MAGIC nếu có trong config (magic number từ bot)
+    # Magic number mặc định trong bot là 202411 (xem trong execute_trade)
+    bot_magic_value = globals().get('MAGIC', 202411)  # Magic number mặc định
+    tc_module.BOT_MAGIC = bot_magic_value
+    logging.info(f"✅ Đã cập nhật BOT_MAGIC trong time_check: {bot_magic_value}")
+    time_check_available = True
+except ImportError as e:
+    logging.warning(f"⚠️ Không thể import time_check: {e}. Sẽ bỏ qua các rule từ time_check.py")
+    check_all_rules = None
+    set_mt5 = None
+    tc_module = None
+    time_check_available = False
+    # Set các biến để tránh lỗi
+    ENABLE_DAILY_LOSS_LIMIT = None
+    ENABLE_WIN_STREAK_LIMIT = None
+    ENABLE_MIN_TIME_AFTER_CLOSE = None
+    ENABLE_TWO_LOSSES_COOLDOWN = None
+    ENABLE_BIG_WIN_COOLDOWN = None
+    ENABLE_TRADING_HOURS_LIMIT = None
+    ENABLE_NEWS_FILTER = None
+
 # Setup logging với encoding UTF-8 để hỗ trợ emoji
 # Tạo custom StreamHandler để xử lý encoding errors trên Windows
 class SafeStreamHandler(logging.StreamHandler):
@@ -111,6 +150,9 @@ class XAUUSD_Bot:
         # Tracking để phát hiện TP/SL hit
         self.previous_positions = {}  # Dict {ticket: position_info} để theo dõi positions từ cycle trước
         
+        # Time check rules tracking
+        self.time_check_reduce_lot_size = False  # Flag để giảm lot size 50% nếu cần
+        
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
         
     def setup_directories(self):
@@ -140,55 +182,105 @@ class XAUUSD_Bot:
         logging.info(f"📅 Max daily trades: {MAX_DAILY_TRADES}")
         logging.info(f"⏰ Check interval: {CHECK_INTERVAL} giây")
         
-        # Log các rule thời gian
+        # Log các rule thời gian - ĐÃ CHUYỂN SANG time_check.py
         logging.info("-" * 60)
-        logging.info("⏰ QUY TẮC THỜI GIAN")
+        logging.info("⏰ QUY TẮC THỜI GIAN (từ time_check.py)")
         logging.info("-" * 60)
-        try:
-            timezone = TRADING_TIMEZONE
-        except NameError:
-            timezone = "Local time"
         
-        logging.info(f"   🌍 Timezone: {timezone}")
-        logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
-        
-        # Log NO_TRADE_SESSIONS
+        # Kiểm tra xem time_check có sẵn không
         try:
-            if NO_TRADE_SESSIONS:
-                logging.info(f"   🚫 Không giao dịch trong các session:")
-                for start, end in NO_TRADE_SESSIONS:
-                    logging.info(f"      • {start} - {end} ({timezone})")
+            # Thử truy cập các biến từ time_check module
+            if 'tc_module' in globals() and globals()['tc_module'] is not None:
+                tc_mod = globals()['tc_module']
+                
+                # Lấy các giá trị từ module
+                enable_daily_loss = getattr(tc_mod, 'ENABLE_DAILY_LOSS_LIMIT', False)
+                enable_win_streak = getattr(tc_mod, 'ENABLE_WIN_STREAK_LIMIT', False)
+                enable_min_time = getattr(tc_mod, 'ENABLE_MIN_TIME_AFTER_CLOSE', False)
+                enable_two_losses = getattr(tc_mod, 'ENABLE_TWO_LOSSES_COOLDOWN', False)
+                enable_big_win = getattr(tc_mod, 'ENABLE_BIG_WIN_COOLDOWN', False)
+                enable_trading_hours = getattr(tc_mod, 'ENABLE_TRADING_HOURS_LIMIT', False)
+                enable_news = getattr(tc_mod, 'ENABLE_NEWS_FILTER', False)
+                
+                daily_loss_limit = getattr(tc_mod, 'DAILY_LOSS_LIMIT_PERCENT', -10.0)
+                win_streak_limit = getattr(tc_mod, 'WIN_STREAK_LIMIT', 3)
+                profit_target = getattr(tc_mod, 'PROFIT_TARGET_PERCENT', 10.0)
+                min_time_after = getattr(tc_mod, 'MIN_TIME_AFTER_CLOSE_MINUTES', 10)
+                two_losses_cooldown = getattr(tc_mod, 'TWO_LOSSES_COOLDOWN_MINUTES', 45)
+                big_win_cooldown = getattr(tc_mod, 'BIG_WIN_COOLDOWN_MINUTES', 45)
+                big_win_r = getattr(tc_mod, 'BIG_WIN_R_MULTIPLIER', 3.0)
+                trading_hours_start = getattr(tc_mod, 'TRADING_HOURS_START', 14)
+                trading_hours_end = getattr(tc_mod, 'TRADING_HOURS_END', 23)
+                news_block_before = getattr(tc_mod, 'NEWS_BLOCK_BEFORE_HOURS', 1)
+                news_block_after = getattr(tc_mod, 'NEWS_BLOCK_AFTER_HOURS', 2)
+                
+                logging.info("   ✅ Đang sử dụng các quy tắc từ time_check.py:")
+                logging.info("")
+                
+                # Rule 1: Daily Loss Limit
+                status_1 = "✅ BẬT" if enable_daily_loss else "❌ TẮT"
+                logging.info(f"   1. Tổng lỗ trong ngày vượt quá {daily_loss_limit}% → Dừng giao dịch HẾT NGÀY")
+                logging.info(f"      Trạng thái: {status_1}")
+                logging.info(f"      Ngưỡng: {daily_loss_limit}% tài khoản")
+                logging.info("")
+                
+                # Rule 2: Win Streak & Profit Target
+                status_2 = "✅ BẬT" if enable_win_streak else "❌ TẮT"
+                logging.info(f"   2. Thắng {win_streak_limit} lệnh liên tiếp HOẶC đạt +{profit_target}% → Dừng hoặc giảm lot size 50%")
+                logging.info(f"      Trạng thái: {status_2}")
+                logging.info(f"      Win streak limit: {win_streak_limit} lệnh")
+                logging.info(f"      Profit target: +{profit_target}%")
+                logging.info("")
+                
+                # Rule 3: Min Time After Close
+                status_3 = "✅ BẬT" if enable_min_time else "❌ TẮT"
+                logging.info(f"   3. Chờ tối thiểu {min_time_after} phút sau khi chốt lệnh")
+                logging.info(f"      Trạng thái: {status_3}")
+                logging.info(f"      Thời gian chờ: {min_time_after} phút")
+                logging.info("")
+                
+                # Rule 4: Two Losses Cooldown
+                status_4 = "✅ BẬT" if enable_two_losses else "❌ TẮT"
+                logging.info(f"   4. Thua 2 lệnh liên tiếp → Nghỉ {two_losses_cooldown} phút")
+                logging.info(f"      Trạng thái: {status_4}")
+                logging.info(f"      Thời gian nghỉ: {two_losses_cooldown} phút")
+                logging.info("")
+                
+                # Rule 5: Big Win Cooldown
+                status_5 = "✅ BẬT" if enable_big_win else "❌ TẮT"
+                logging.info(f"   5. Chốt lệnh ≥ {big_win_r}R → Nghỉ {big_win_cooldown} phút")
+                logging.info(f"      Trạng thái: {status_5}")
+                logging.info(f"      Ngưỡng R-multiple: ≥ {big_win_r}R")
+                logging.info(f"      Thời gian nghỉ: {big_win_cooldown} phút")
+                logging.info("")
+                
+                # Rule 6: Trading Hours Limit
+                status_6 = "✅ BẬT" if enable_trading_hours else "❌ TẮT"
+                logging.info(f"   6. Chỉ trade {trading_hours_start}h-{trading_hours_end}h VN")
+                logging.info(f"      Trạng thái: {status_6}")
+                logging.info(f"      Giờ giao dịch: {trading_hours_start}h-{trading_hours_end}h (VN)")
+                logging.info("")
+                
+                # Rule 7: News Filter
+                status_7 = "✅ BẬT" if enable_news else "❌ TẮT"
+                logging.info(f"   7. Tránh tin đỏ (NFP, FOMC) - {news_block_before}h trước + {news_block_after}h sau")
+                logging.info(f"      Trạng thái: {status_7}")
+                logging.info(f"      Block trước: {news_block_before} giờ")
+                logging.info(f"      Block sau: {news_block_after} giờ")
+                logging.info("")
+                
+                # Lấy magic number
+                bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
+                logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+                logging.info(f"   🔢 Magic number: {bot_magic_val}")
             else:
-                logging.info(f"   ✅ Không có session cấm giao dịch")
-        except NameError:
-            logging.info(f"   ✅ Không có session cấm giao dịch")
-        
-        # Log NO_TRADE_FRIDAY_AFTER
-        try:
-            if NO_TRADE_FRIDAY_AFTER:
-                logging.info(f"   🚫 Không giao dịch sau {NO_TRADE_FRIDAY_AFTER} vào thứ 6 ({timezone})")
-            else:
-                logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
-        except NameError:
-            logging.info(f"   ✅ Không có giới hạn thời gian cho thứ 6")
-        
-        # Log BREAK_AFTER_LOSS_MINUTES
-        try:
-            logging.info(f"   ⏸️  Nghỉ {BREAK_AFTER_LOSS_MINUTES} phút sau khi thua lệnh")
-        except NameError:
-            logging.info(f"   ⏸️  Không có thời gian nghỉ sau khi thua")
-        
-        # Log MIN_TIME_BETWEEN_SAME_DIRECTION
-        try:
-            logging.info(f"   ⏳ Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
-        except NameError:
-            logging.info(f"   ⏳ Không có giới hạn thời gian giữa 2 lệnh cùng chiều")
-        
-        # Log MAX_HOURLY_TRADES
-        try:
-            logging.info(f"   📊 Tối đa {MAX_HOURLY_TRADES} lệnh trong 1 giờ")
-        except NameError:
-            logging.info(f"   📊 Không có giới hạn số lệnh trong 1 giờ")
+                logging.warning("   ⚠️ Module time_check không khả dụng - Các quy tắc thời gian từ time_check sẽ bị bỏ qua")
+                logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
+        except Exception as e:
+            logging.warning(f"   ⚠️ Lỗi khi đọc config từ time_check.py: {e}")
+            import traceback
+            logging.debug(f"   Chi tiết lỗi: {traceback.format_exc()}")
+            logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
         
         logging.info("-" * 60)
         
@@ -206,6 +298,14 @@ class XAUUSD_Bot:
             return False
             
         logging.info(f"✅ Đã đăng nhập MT5: Account {ACCOUNT_NUMBER}, Server: {SERVER}")
+        
+        # Thiết lập MT5 cho time_check module (nếu có)
+        if time_check_available and set_mt5:
+            try:
+                set_mt5(mt5)
+                logging.info("✅ Đã thiết lập MT5 cho time_check.py")
+            except Exception as e:
+                logging.warning(f"⚠️ Không thể thiết lập MT5 cho time_check: {e}")
         
         # Kiểm tra symbol
         if not mt5.symbol_select(self.symbol, True):
@@ -448,6 +548,12 @@ class XAUUSD_Bot:
         
         # Tính lot size ban đầu dựa trên risk_per_trade
         lot_size = self.calculate_position_size(sl_pips)
+        
+        # Áp dụng giảm lot size 50% nếu có flag từ time_check
+        if hasattr(self, 'time_check_reduce_lot_size') and self.time_check_reduce_lot_size:
+            lot_size_original = lot_size
+            lot_size = lot_size * 0.5
+            logging.info(f"📊 Giảm lot size 50% do quy tắc time_check: {lot_size_original:.2f} → {lot_size:.2f} lots")
         
         # Validate lot size trước (giống eth.py)
         lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
@@ -1236,6 +1342,39 @@ class XAUUSD_Bot:
                                     
                                     log_delay_and_sleep()
                                     continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        
+                        # ⚠️ QUAN TRỌNG: Kiểm tra các rule từ time_check.py TRƯỚC KHI mở lệnh
+                        if check_all_rules:
+                            time_check_results = check_all_rules()
+                            
+                            if not time_check_results['can_trade']:
+                                blocked_rules = ', '.join(time_check_results['blocked_rules'])
+                                logging.warning("=" * 60)
+                                logging.warning(f"🚫 KHÔNG THỂ GIAO DỊCH - BỊ CHẶN BỞI CÁC QUY TẮC")
+                                logging.warning("=" * 60)
+                                logging.warning(f"   📊 Tín hiệu: {action} (Strength: {strength})")
+                                logging.warning(f"   🚫 Quy tắc chặn: {blocked_rules}")
+                                
+                                # Log chi tiết từng quy tắc
+                                for rule_name, rule_result in time_check_results['details'].items():
+                                    if rule_result.get('blocked', False):
+                                        reason = rule_result.get('reason', 'N/A')
+                                        logging.warning(f"   • {rule_name}: {reason}")
+                                
+                                logging.warning("=" * 60)
+                                log_delay_and_sleep()
+                                continue  # Bỏ qua lệnh này
+                            
+                            # Kiểm tra có cần giảm lot size không
+                            if time_check_results.get('reduce_lot_size', False):
+                                # Lưu flag để sử dụng trong execute_trade
+                                if not hasattr(self, 'time_check_reduce_lot_size'):
+                                    self.time_check_reduce_lot_size = False
+                                self.time_check_reduce_lot_size = True
+                                logging.info(f"⚠️ Giảm lot size 50% do quy tắc: {time_check_results.get('blocked_rules', [])}")
+                            else:
+                                if hasattr(self, 'time_check_reduce_lot_size'):
+                                    self.time_check_reduce_lot_size = False
                         
                         # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
                         if not self.risk_manager.can_open_trade(action):
