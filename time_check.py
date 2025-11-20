@@ -230,7 +230,7 @@ def get_last_closed_trades(count=10, magic=None):
     
     try:
         # Lấy deals từ 30 ngày gần nhất
-        from_timestamp = int((datetime.now() - timedelta(days=30)).timestamp())
+        from_timestamp = int((datetime.now() - timedelta(days=1)).timestamp())
         deals = mt5.history_deals_get(from_timestamp, int(datetime.now().timestamp()))
         
         if deals is None:
