@@ -34,6 +34,7 @@ SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
 SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
 TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
+ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 TS_START_FACTOR = 1.3              # Bắt đầu Trailing Stop khi lời 1.3 * SL
 TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
@@ -554,7 +555,7 @@ def manage_positions():
         profit_points = abs(current_price - pos.price_open) / point
         
         # --- LOGIC HÒA VỐN (BREAK EVEN) ---
-        if BREAK_EVEN_START_POINTS > 0 and profit_points >= BREAK_EVEN_START_POINTS:
+        if ENABLE_BREAK_EVEN and BREAK_EVEN_START_POINTS > 0 and profit_points >= BREAK_EVEN_START_POINTS:
             # +1 pip (10 points) để bù spread và tránh bị dính SL ngay lập tức
             pips_buffer = 10 * point 
             new_sl_price = pos.price_open + pips_buffer if is_buy else pos.price_open - pips_buffer

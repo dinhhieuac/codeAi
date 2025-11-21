@@ -36,6 +36,10 @@ SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL l
 TP_POINTS_MIN = 30   # TP tối thiểu: 3 pips (30 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
+# Hòa vốn (Break-Even)
+ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
+BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips (100 points)
+
 # Trailing Stop khi lời 1/2 TP để lock profit
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
@@ -462,6 +466,26 @@ def manage_positions():
             profit_points = (current_price - entry_price) / point
         else:  # SELL
             profit_points = (entry_price - current_price) / point
+        
+        # --- LOGIC HÒA VỐN (BREAK EVEN) ---
+        if ENABLE_BREAK_EVEN and BREAK_EVEN_START_POINTS > 0 and profit_points >= BREAK_EVEN_START_POINTS:
+            # +1 pip (10 points) để bù spread và tránh bị dính SL ngay lập tức
+            pips_buffer = 10 * point 
+            new_sl_price = entry_price + pips_buffer if is_buy else entry_price - pips_buffer
+            
+            # Chỉ cập nhật nếu SL hiện tại không phải là giá mở cửa (đã di chuyển)
+            if (is_buy and new_sl_price > pos.sl) or (not is_buy and new_sl_price < pos.sl):
+                request = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "position": pos.ticket,
+                    "sl": new_sl_price,
+                    "tp": pos.tp,
+                    "magic": MAGIC,
+                    "deviation": 20,
+                }
+                result = mt5.order_send(request)
+                if result.retcode == mt5.TRADE_RETCODE_DONE:
+                    print(f"🎯 Lệnh {pos.ticket} đã di chuyển SL về Hòa Vốn.")
         
         # Tính TP distance (points) từ entry đến TP
         if is_buy:
