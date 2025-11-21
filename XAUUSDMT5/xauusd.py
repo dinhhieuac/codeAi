@@ -27,11 +27,13 @@ ADX_PERIOD = 14  # Chu kỳ tính ADX
 ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
-# Chiến thuật M1: TP 10-20 pip, SL 8-15 pip
-SL_POINTS_MIN = 80   # SL tối thiểu: 8 pips (80 points)
-SL_POINTS_MAX = 150  # SL tối đa: 15 pips (150 points)
-TP_POINTS_MIN = 100  # TP tối thiểu: 10 pips (100 points)
-TP_POINTS_MAX = 200  # TP tối đa: 20 pips (200 points)
+# Chiến thuật M1: SL/TP theo nến M1
+SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
+TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
+SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
+SL_POINTS_MAX = 200  # SL tối đa: 20 pips (200 points) - giới hạn rủi ro
+TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
+TP_POINTS_MAX = 300  # TP tối đa: 30 pips (300 points) - giới hạn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 TS_START_FACTOR = 1.3              # Bắt đầu Trailing Stop khi lời 1.3 * SL
 TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
@@ -375,9 +377,45 @@ def get_symbol_info():
     point = symbol_info.point 
     return point
 
-def send_order(trade_type, volume, deviation=20):
-    """Gửi lệnh Market Execution với SL/TP theo chiến thuật M1."""
+def calculate_atr_from_m1(df_m1, period=14):
+    """
+    Tính ATR từ nến M1
     
+    Args:
+        df_m1: DataFrame M1
+        period: Chu kỳ ATR (mặc định: 14)
+        
+    Returns:
+        ATR value (points) hoặc None nếu không đủ dữ liệu
+    """
+    if df_m1 is None or len(df_m1) < period + 1:
+        return None
+    
+    high = df_m1['high']
+    low = df_m1['low']
+    close = df_m1['close']
+    
+    # Tính True Range (TR)
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # Tính ATR (trung bình của TR)
+    atr = tr.rolling(window=period).mean().iloc[-1]
+    
+    return atr
+
+def send_order(trade_type, volume, df_m1=None, deviation=20):
+    """
+    Gửi lệnh Market Execution với SL/TP theo nến M1 (ATR-based).
+    
+    Args:
+        trade_type: mt5.ORDER_TYPE_BUY hoặc mt5.ORDER_TYPE_SELL
+        volume: Khối lượng giao dịch
+        df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
+        deviation: Độ lệch giá cho phép
+    """
     point = get_symbol_info()
     if point is None:
         print("❌ Lỗi: Không thể lấy thông tin ký hiệu để gửi lệnh.")
@@ -386,10 +424,32 @@ def send_order(trade_type, volume, deviation=20):
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP theo chiến thuật M1: TP 10-20 pip, SL 8-15 pip
-    # Sử dụng giá trị trung bình: SL = 12 pip, TP = 15 pip
-    sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2  # ~12 pips
-    tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2  # ~15 pips
+    # Tính SL và TP theo ATR của nến M1
+    if df_m1 is not None:
+        atr_value = calculate_atr_from_m1(df_m1)
+        if atr_value is not None:
+            # Chuyển ATR từ giá sang points
+            atr_points = atr_value / point
+            
+            # Tính SL và TP dựa trên ATR
+            sl_points = atr_points * SL_ATR_MULTIPLIER
+            tp_points = atr_points * TP_ATR_MULTIPLIER
+            
+            # Giới hạn SL/TP trong khoảng min-max
+            sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
+            tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
+            
+            print(f"  📊 [ORDER] ATR(M1): {atr_points/10:.1f} pips → SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
+        else:
+            # Fallback: Dùng giá trị trung bình nếu không tính được ATR
+            sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
+            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
+            print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
+    else:
+        # Fallback: Dùng giá trị trung bình nếu không có df_m1
+        sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
+        tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
+        print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
     
     sl_distance = sl_points * point
     tp_distance = tp_points * point
@@ -401,7 +461,7 @@ def send_order(trade_type, volume, deviation=20):
         sl = price + sl_distance
         tp = price - tp_distance
     
-    print(f"  💰 [ORDER] SL: {sl_points/10:.1f} pips ({sl:.5f}) | TP: {tp_points/10:.1f} pips ({tp:.5f})")
+    print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -633,7 +693,7 @@ def run_bot():
                         print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
-                    send_order(mt5.ORDER_TYPE_BUY, VOLUME)
+                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
                     
                 elif m1_signal == 'SELL' and h1_trend == 'SELL':
                     print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
@@ -645,7 +705,7 @@ def run_bot():
                         print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
-                    send_order(mt5.ORDER_TYPE_SELL, VOLUME)
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
                 
                 else:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
