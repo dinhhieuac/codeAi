@@ -399,25 +399,35 @@ def calculate_atr_from_m1(df_m1, period=14):
         period: Chu kỳ ATR (mặc định: 14)
         
     Returns:
-        ATR value (points) hoặc None nếu không đủ dữ liệu
+        ATR value (trong pips) hoặc None nếu không đủ dữ liệu
     """
     if df_m1 is None or len(df_m1) < period + 1:
+        return None
+    
+    point = get_symbol_info()
+    if point is None:
         return None
     
     high = df_m1['high']
     low = df_m1['low']
     close = df_m1['close']
     
-    # Tính True Range (TR)
+    # Tính True Range (TR) - giá trị thực (USD)
     tr1 = high - low
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     
-    # Tính ATR (trung bình của TR)
-    atr = tr.rolling(window=period).mean().iloc[-1]
+    # Tính ATR (trung bình của TR) - giá trị thực (USD)
+    atr_price = tr.rolling(window=period).mean().iloc[-1]
     
-    return atr
+    # Chuyển ATR từ giá trị thực sang pips
+    # Với XAUUSD: 1 pip = 0.01 USD (lot 0.01) → ATR(pips) = ATR(USD) / 0.01 = ATR(USD) × 100
+    # Nhưng ATR được tính bằng giá (ví dụ: 2.9394), không phải USD profit
+    # Cần chuyển: ATR(pips) = ATR(price) / 0.01 = ATR(price) × 100
+    atr_pips = atr_price / 0.01  # = atr_price × 100
+    
+    return atr_pips
 
 def send_order(trade_type, volume, df_m1=None, deviation=20):
     """
@@ -439,18 +449,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     
     # Tính SL và TP theo ATR của nến M1
     # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
-    # ATR được tính bằng giá trị thực (USD với lot 0.01), cần chuyển sang pips
-    # Công thức: ATR(pips) = ATR(USD) / pip_value = ATR(USD) / 0.01 = ATR(USD) × 100
-    pip_value = get_pip_value()  # 0.01 USD với lot 0.01
-    
+    # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
     if df_m1 is not None:
-        atr_value_usd = calculate_atr_from_m1(df_m1)
-        if atr_value_usd is not None:
-            # ATR đã là giá trị USD (với lot 0.01), chuyển sang pips
-            # Với lot 0.01: 1 pip = 0.01 USD → ATR(pips) = ATR(USD) / 0.01 = ATR(USD) × 100
-            atr_pips = atr_value_usd / pip_value  # = atr_value_usd × 100
-            
-            # Tính SL và TP dựa trên ATR (trong pips)
+        atr_pips = calculate_atr_from_m1(df_m1)
+        if atr_pips is not None:
+            # ATR đã là pips, tính SL và TP trực tiếp
             sl_pips = atr_pips * SL_ATR_MULTIPLIER
             tp_pips = atr_pips * TP_ATR_MULTIPLIER
             
@@ -462,7 +465,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
             tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_value_usd:.4f} USD (lot 0.01) = {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{SL_ATR_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{TP_ATR_MULTIPLIER})")
+            # Tính lại pips sau khi giới hạn (để hiển thị đúng)
+            sl_pips_limited = sl_points / 10
+            tp_pips_limited = tp_points / 10
+            
+            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
