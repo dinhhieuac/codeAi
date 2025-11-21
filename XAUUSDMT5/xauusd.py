@@ -19,20 +19,26 @@ VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 MAGIC = 20251117
 
 # Thông số Chỉ báo & Lọc
-EMA_SHORT = 9
-EMA_MEDIUM = 21
-EMA_D1_H4_FAST = 50  # Lọc xu hướng nhanh trên D1/H4
-EMA_D1_H4_SLOW = 200 # Lọc xu hướng chậm trên D1/H4
+# Chiến thuật M1: "BÁM THEO H1 – ĂN 5–10 PHÚT"
+EMA_H1 = 50  # EMA50 trên H1 để xác định trend
+EMA_M1 = 20  # EMA20 trên M1 để tìm điểm retest
 ATR_PERIOD = 14
 ADX_PERIOD = 14  # Chu kỳ tính ADX
 ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
-SL_POINTS = 500                    # Cắt lỗ cố định (50 pips)
-TP_FACTOR = 2.0                    # Chốt lời = SL * TP_FACTOR
-BREAK_EVEN_START_POINTS = 500      # Hòa vốn khi lời 50 pips
+# Chiến thuật M1: TP 10-20 pip, SL 8-15 pip
+SL_POINTS_MIN = 80   # SL tối thiểu: 8 pips (80 points)
+SL_POINTS_MAX = 150  # SL tối đa: 15 pips (150 points)
+TP_POINTS_MIN = 100  # TP tối thiểu: 10 pips (100 points)
+TP_POINTS_MAX = 200  # TP tối đa: 20 pips (200 points)
+BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 TS_START_FACTOR = 1.3              # Bắt đầu Trailing Stop khi lời 1.3 * SL
-TS_STEP_POINTS = 250               # Bước Trailing Stop (25 pips)
+TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
+
+# Khoảng cách retest EMA20 trên M1 (points)
+# Giá chạm EMA20 hoặc dưới 3-6 pip (30-60 points)
+RETEST_DISTANCE_MAX = 60  # Tối đa 6 pips (60 points) từ EMA20
 
 # ==============================================================================
 # 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
@@ -180,93 +186,99 @@ def calculate_adx(df, period=14):
     
     return adx
 
-def check_multi_timeframe_bias():
-    """Kiểm tra xu hướng lớn trên D1 và H4."""
+def check_h1_trend():
+    """
+    Kiểm tra xu hướng H1 bằng EMA50
     
-    bias_up = 0
-    bias_down = 0
+    Chiến thuật: "BÁM THEO H1 – ĂN 5–10 PHÚT"
+    - Giá > EMA50 → CHỈ BUY
+    - Giá < EMA50 → CHỈ SELL
     
-    print("  📊 [MULTI-TIMEFRAME] Kiểm tra xu hướng D1 & H4...")
+    Returns:
+        'BUY', 'SELL', hoặc 'SIDEWAYS'
+    """
+    print("  📊 [H1 TREND] Kiểm tra xu hướng H1 bằng EMA50...")
     
-    # Lọc trên D1 (EMA 50 & 200)
-    df_d1 = get_rates(mt5.TIMEFRAME_D1)
-    if df_d1 is not None and len(df_d1) >= EMA_D1_H4_SLOW:
-        ema_50_d1 = calculate_ema(df_d1, EMA_D1_H4_FAST).iloc[-1]
-        ema_200_d1 = calculate_ema(df_d1, EMA_D1_H4_SLOW).iloc[-1]
-        close_d1 = df_d1['close'].iloc[-1]
-        
-        print(f"    [D1] Giá: {close_d1:.5f} | EMA50: {ema_50_d1:.5f} | EMA200: {ema_200_d1:.5f}")
-        
-        if close_d1 > ema_50_d1 and ema_50_d1 > ema_200_d1:
-            bias_up += 1
-            print(f"    [D1] ✅ XU HƯỚNG MUA (Giá > EMA50 > EMA200)")
-        elif close_d1 < ema_50_d1 and ema_50_d1 < ema_200_d1:
-            bias_down += 1
-            print(f"    [D1] ✅ XU HƯỚNG BÁN (Giá < EMA50 < EMA200)")
-        else:
-            print(f"    [D1] ⚠️ SIDEWAYS (Không rõ xu hướng)")
-    else:
-        print(f"    [D1] ❌ Không đủ dữ liệu để tính EMA")
-            
-    # Lọc trên H4 (EMA 50 & 200)
-    df_h4 = get_rates(mt5.TIMEFRAME_H4)
-    if df_h4 is not None and len(df_h4) >= EMA_D1_H4_SLOW:
-        ema_50_h4 = calculate_ema(df_h4, EMA_D1_H4_FAST).iloc[-1]
-        ema_200_h4 = calculate_ema(df_h4, EMA_D1_H4_SLOW).iloc[-1]
-        close_h4 = df_h4['close'].iloc[-1]
-        
-        print(f"    [H4] Giá: {close_h4:.5f} | EMA50: {ema_50_h4:.5f} | EMA200: {ema_200_h4:.5f}")
-        
-        if close_h4 > ema_50_h4 and ema_50_h4 > ema_200_h4:
-            bias_up += 1
-            print(f"    [H4] ✅ XU HƯỚNG MUA (Giá > EMA50 > EMA200)")
-        elif close_h4 < ema_50_h4 and ema_50_h4 < ema_200_h4:
-            bias_down += 1
-            print(f"    [H4] ✅ XU HƯỚNG BÁN (Giá < EMA50 < EMA200)")
-        else:
-            print(f"    [H4] ⚠️ SIDEWAYS (Không rõ xu hướng)")
-    else:
-        print(f"    [H4] ❌ Không đủ dữ liệu để tính EMA")
+    df_h1 = get_rates(mt5.TIMEFRAME_H1)
+    if df_h1 is None or len(df_h1) < EMA_H1:
+        print(f"    [H1] ❌ Không đủ dữ liệu để tính EMA50")
+        return 'SIDEWAYS'
     
-    print(f"  📊 [MULTI-TIMEFRAME] Tổng kết: bias_up={bias_up}, bias_down={bias_down}")
-            
-    if bias_up >= 2:
-        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: BUY (≥2 khung thời gian đồng ý MUA)")
+    ema_50_h1 = calculate_ema(df_h1, EMA_H1).iloc[-1]
+    close_h1 = df_h1['close'].iloc[-1]
+    
+    print(f"    [H1] Giá: {close_h1:.5f} | EMA50: {ema_50_h1:.5f}")
+    
+    if close_h1 > ema_50_h1:
+        print(f"    [H1] ✅ XU HƯỚNG MUA (Giá > EMA50) → CHỈ BUY")
         return 'BUY'
-    elif bias_down >= 2:
-        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: SELL (≥2 khung thời gian đồng ý BÁN)")
+    elif close_h1 < ema_50_h1:
+        print(f"    [H1] ✅ XU HƯỚNG BÁN (Giá < EMA50) → CHỈ SELL")
         return 'SELL'
     else:
-        print(f"  📊 [MULTI-TIMEFRAME] KẾT QUẢ: SIDEWAYS (Không đủ đồng thuận)")
+        print(f"    [H1] ⚠️ SIDEWAYS (Giá ≈ EMA50)")
         return 'SIDEWAYS'
 
-def check_m5_entry_signals(ema_short, ema_medium, prev_ema_short, prev_ema_medium):
-    """Kiểm tra tín hiệu giao cắt EMA trên M5."""
+def check_m1_retest_ema20(df_m1, h1_trend):
+    """
+    Kiểm tra điểm vào ở M1 khi giá RETEST lại EMA20
     
-    print("  📈 [M5 SIGNAL] Kiểm tra giao cắt EMA...")
-    print(f"    EMA9 (hiện tại): {ema_short:.5f} | EMA21 (hiện tại): {ema_medium:.5f}")
-    print(f"    EMA9 (trước đó): {prev_ema_short:.5f} | EMA21 (trước đó): {prev_ema_medium:.5f}")
+    Chiến thuật: "BÁM THEO H1 – ĂN 5–10 PHÚT"
+    - Trend BUY → chờ giá M1 chạm EMA20 (hoặc dưới 3–6 pip) → BUY
+    - Trend SELL → chờ giá M1 chạm EMA20 → SELL
     
-    # Kiểm tra vị trí hiện tại
-    current_position = "EMA9 > EMA21" if ema_short > ema_medium else "EMA9 < EMA21"
-    prev_position = "EMA9 > EMA21" if prev_ema_short > prev_ema_medium else "EMA9 < EMA21"
-    print(f"    Vị trí trước: {prev_position} | Vị trí hiện tại: {current_position}")
-    
-    # Giao cắt Mua (EMA ngắn cắt lên EMA dài)
-    is_buy_cross = (prev_ema_short < prev_ema_medium) and (ema_short > ema_medium)
-    
-    # Giao cắt Bán (EMA ngắn cắt xuống EMA dài)
-    is_sell_cross = (prev_ema_short > prev_ema_medium) and (ema_short < ema_medium)
-    
-    if is_buy_cross:
-        print(f"    ✅ [M5 SIGNAL] PHÁT HIỆN GIAO CẮT MUA! (EMA9 cắt lên EMA21)")
-        return 'BUY'
-    elif is_sell_cross:
-        print(f"    ✅ [M5 SIGNAL] PHÁT HIỆN GIAO CẮT BÁN! (EMA9 cắt xuống EMA21)")
-        return 'SELL'
-    else:
-        print(f"    ⚠️ [M5 SIGNAL] Chưa có giao cắt (NONE)")
+    Args:
+        df_m1: DataFrame M1
+        h1_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
+        
+    Returns:
+        'BUY', 'SELL', hoặc 'NONE'
+    """
+    if h1_trend == 'SIDEWAYS':
+        print("  📈 [M1 RETEST] H1 trend là SIDEWAYS → Không có tín hiệu")
         return 'NONE'
+    
+    if len(df_m1) < EMA_M1:
+        print("  📈 [M1 RETEST] Không đủ dữ liệu để tính EMA20")
+        return 'NONE'
+    
+    # Tính EMA20 trên M1
+    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
+    ema_20_current = ema_20_m1.iloc[-1]
+    
+    # Lấy giá hiện tại
+    tick = mt5.symbol_info_tick(SYMBOL)
+    current_price = tick.bid  # Dùng bid cho cả BUY và SELL (để tính khoảng cách)
+    
+    point = get_symbol_info()
+    if point is None:
+        return 'NONE'
+    
+    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
+    distance_points = abs(current_price - ema_20_current) / point
+    
+    print(f"  📈 [M1 RETEST] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
+    print(f"    Khoảng cách: {distance_points:.1f} points ({distance_points/10:.1f} pips)")
+    
+    if h1_trend == 'BUY':
+        # Trend BUY → chờ giá M1 chạm EMA20 hoặc dưới 3–6 pip
+        if current_price <= ema_20_current + (RETEST_DISTANCE_MAX * point):
+            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ dưới lên (BUY signal)")
+            return 'BUY'
+        else:
+            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points/10:.1f} pips) - Chờ retest")
+            return 'NONE'
+    
+    elif h1_trend == 'SELL':
+        # Trend SELL → chờ giá M1 chạm EMA20 hoặc trên 3–6 pip
+        if current_price >= ema_20_current - (RETEST_DISTANCE_MAX * point):
+            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ trên xuống (SELL signal)")
+            return 'SELL'
+        else:
+            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points/10:.1f} pips) - Chờ retest")
+            return 'NONE'
+    
+    return 'NONE'
 
 # ==============================================================================
 # 5. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
@@ -282,7 +294,7 @@ def get_symbol_info():
     return point
 
 def send_order(trade_type, volume, deviation=20):
-    """Gửi lệnh Market Execution."""
+    """Gửi lệnh Market Execution với SL/TP theo chiến thuật M1."""
     
     point = get_symbol_info()
     if point is None:
@@ -292,9 +304,13 @@ def send_order(trade_type, volume, deviation=20):
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP dựa trên SL_POINTS và TP_FACTOR
-    sl_distance = SL_POINTS * point
-    tp_distance = sl_distance * TP_FACTOR
+    # Tính SL và TP theo chiến thuật M1: TP 10-20 pip, SL 8-15 pip
+    # Sử dụng giá trị trung bình: SL = 12 pip, TP = 15 pip
+    sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2  # ~12 pips
+    tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2  # ~15 pips
+    
+    sl_distance = sl_points * point
+    tp_distance = tp_points * point
     
     if trade_type == mt5.ORDER_TYPE_BUY:
         sl = price - sl_distance
@@ -302,6 +318,8 @@ def send_order(trade_type, volume, deviation=20):
     else: # SELL
         sl = price + sl_distance
         tp = price - tp_distance
+    
+    print(f"  💰 [ORDER] SL: {sl_points/10:.1f} pips ({sl:.5f}) | TP: {tp_points/10:.1f} pips ({tp:.5f})")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -373,7 +391,8 @@ def manage_positions():
                     print(f"🎯 Lệnh {pos.ticket} đã di chuyển SL về Hòa Vốn.")
 
         # --- LOGIC TRAILING STOP (TS) ---
-        ts_start_level = SL_POINTS * TS_START_FACTOR 
+        sl_points_avg = (SL_POINTS_MIN + SL_POINTS_MAX) // 2  # ~12 pips
+        ts_start_level = sl_points_avg * TS_START_FACTOR 
 
         if profit_points >= ts_start_level:
             
@@ -424,27 +443,32 @@ def run_bot():
     
     last_candle_time = datetime(1970, 1, 1)
 
-    print("\n--- Bắt đầu Chu Trình Giao Dịch (Check 30s/lần) ---")
+    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: BÁM THEO H1 – ĂN 5–10 PHÚT) ---")
+    print("📋 Chiến thuật:")
+    print("   1. Xác định hướng H1 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
+    print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20")
+    print("   3. TP 10–20 pip, SL 8–15 pip")
+    print("   4. Chỉ check tín hiệu khi nến M1 đã đóng\n")
     
     while True:
         start_time = time.time() # Ghi lại thời gian bắt đầu chu kỳ
         current_time = datetime.now()
         
-        # 2. Lấy dữ liệu M5
-        df_m5 = get_rates(mt5.TIMEFRAME_M5)
-        if df_m5 is None or len(df_m5) < EMA_MEDIUM + 1:
-            print("Đang chờ dữ liệu M5...")
+        # 2. Lấy dữ liệu M1
+        df_m1 = get_rates(mt5.TIMEFRAME_M1)
+        if df_m1 is None or len(df_m1) < EMA_M1 + 1:
+            print("Đang chờ dữ liệu M1...")
             time.sleep(5)
             continue
             
         # Nến cuối cùng (vừa đóng)
-        current_candle_time = df_m5.index[-1].replace(tzinfo=None)
+        current_candle_time = df_m1.index[-1].replace(tzinfo=None)
         
         # 3. CHỈ XỬ LÝ TÍN HIỆU KHI CÓ NẾN MỚI ĐÓNG
         if current_candle_time > last_candle_time:
             last_candle_time = current_candle_time
             print(f"\n{'='*70}")
-            print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M5: {current_candle_time}")
+            print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M1: {current_candle_time}")
             print(f"{'='*70}")
             
             # Lấy giá hiện tại
@@ -453,35 +477,22 @@ def run_bot():
             current_ask = tick.ask
             print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
             
-            # --- TÍNH TOÁN CHỈ BÁO TRÊN M5 ---
-            print(f"\n  📊 [M5] Tính toán chỉ báo EMA...")
-            ema_short_values = calculate_ema(df_m5, EMA_SHORT)
-            ema_medium_values = calculate_ema(df_m5, EMA_MEDIUM)
-            
-            ema_short = ema_short_values.iloc[-1]
-            ema_medium = ema_medium_values.iloc[-1]
-            prev_ema_short = ema_short_values.iloc[-2]
-            prev_ema_medium = ema_medium_values.iloc[-2]
-            
-            close_m5 = df_m5['close'].iloc[-1]
-            print(f"  📊 [M5] Giá đóng cửa nến cuối: {close_m5:.5f}")
-
             # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
             print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
             
-            # 1. Tín hiệu M5 (Giao cắt EMA)
-            print(f"\n  ┌─ [BƯỚC 1] Kiểm tra tín hiệu M5 (Giao cắt EMA)")
-            m5_signal = check_m5_entry_signals(ema_short, ema_medium, prev_ema_short, prev_ema_medium)
-            print(f"  └─ [BƯỚC 1] Kết quả: {m5_signal}")
+            # 1. Xác định hướng H1 bằng EMA50
+            print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng H1 (EMA50)")
+            h1_trend = check_h1_trend()
+            print(f"  └─ [BƯỚC 1] Kết quả: {h1_trend}")
             
-            # 2. Lọc Xu hướng Đa khung (H4/D1) - *Chiếm nhiều tài nguyên nhất*
-            print(f"\n  ┌─ [BƯỚC 2] Kiểm tra xu hướng đa khung (D1 & H4)")
-            multi_bias = check_multi_timeframe_bias()
-            print(f"  └─ [BƯỚC 2] Kết quả: {multi_bias}")
-            
-            # 3. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang)
+            # 2. Kiểm tra điểm vào ở M1 khi giá RETEST lại EMA20
+            print(f"\n  ┌─ [BƯỚC 2] Kiểm tra retest EMA20 trên M1")
+            m1_signal = check_m1_retest_ema20(df_m1, h1_trend)
+            print(f"  └─ [BƯỚC 2] Kết quả: {m1_signal}")
+
+            # 3. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang) - Tùy chọn
             print(f"\n  ┌─ [BƯỚC 3] Kiểm tra ADX (Tránh thị trường đi ngang)")
-            adx_values = calculate_adx(df_m5, ADX_PERIOD)
+            adx_values = calculate_adx(df_m1, ADX_PERIOD)
             adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
             print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD})")
             
@@ -497,41 +508,43 @@ def run_bot():
             open_positions = mt5.positions_total()
             print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
             
-            print(f"\n  📊 [TÓM TẮT] EMA9={ema_short:.5f} | EMA21={ema_medium:.5f} | M5 Signal={m5_signal} | Multi-Bias={multi_bias} | ADX={adx_current:.2f}")
+            print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} | ADX={adx_current:.2f}")
 
             if open_positions == 0:
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
-                # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
+                # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh (tùy chọn)
                 if not adx_ok:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
                     print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
                     print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
-                elif m5_signal == 'BUY' and multi_bias == 'BUY':
+                elif m1_signal == 'BUY' and h1_trend == 'BUY':
                     print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
-                    print(f"     - M5 Signal: {m5_signal} (EMA9 cắt lên EMA21)")
-                    print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý MUA)")
+                    print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
+                    print(f"     - M1 Signal: {m1_signal} (Giá retest EMA20 từ dưới lên)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_BUY, VOLUME)
                     
-                elif m5_signal == 'SELL' and multi_bias == 'SELL':
+                elif m1_signal == 'SELL' and h1_trend == 'SELL':
                     print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
-                    print(f"     - M5 Signal: {m5_signal} (EMA9 cắt xuống EMA21)")
-                    print(f"     - Multi-Bias: {multi_bias} (Xu hướng lớn đồng ý BÁN)")
+                    print(f"     - H1 Trend: {h1_trend} (Giá < EMA50)")
+                    print(f"     - M1 Signal: {m1_signal} (Giá retest EMA20 từ trên xuống)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
                     send_order(mt5.ORDER_TYPE_SELL, VOLUME)
                 
                 else:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
-                    if m5_signal == 'NONE':
-                        print(f"     - M5 Signal: {m5_signal} (Chưa có giao cắt EMA)")
-                    elif m5_signal == 'BUY' and multi_bias != 'BUY':
-                        print(f"     - M5 Signal: {m5_signal} nhưng Multi-Bias: {multi_bias} (Không đồng ý)")
-                    elif m5_signal == 'SELL' and multi_bias != 'SELL':
-                        print(f"     - M5 Signal: {m5_signal} nhưng Multi-Bias: {multi_bias} (Không đồng ý)")
+                    if h1_trend == 'SIDEWAYS':
+                        print(f"     - H1 Trend: {h1_trend} (Không rõ xu hướng)")
+                    elif m1_signal == 'NONE':
+                        print(f"     - M1 Signal: {m1_signal} (Giá chưa retest EMA20)")
+                    elif m1_signal == 'BUY' and h1_trend != 'BUY':
+                        print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
+                    elif m1_signal == 'SELL' and h1_trend != 'SELL':
+                        print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
             else:
                 print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
             
@@ -540,14 +553,14 @@ def run_bot():
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()
         
-        # 5. ĐIỀU CHỈNH THỜI GIAN NGỦ ĐỂ ĐẠT CHU KỲ 30 GIÂY
+        # 5. ĐIỀU CHỈNH THỜI GIAN NGỦ ĐỂ ĐẠT CHU KỲ 10 GIÂY (M1 cần check thường xuyên hơn)
         elapsed_time = time.time() - start_time
-        sleep_time = 30 - elapsed_time
+        sleep_time = 10 - elapsed_time  # Check mỗi 10 giây cho M1
         
         if sleep_time > 0:
             time.sleep(sleep_time)
         else:
-            # Nếu thời gian xử lý quá 30s (ví dụ do mạng lag/MTF check quá lâu), thì không ngủ
+            # Nếu thời gian xử lý quá 10s, thì không ngủ
             print(f"⚠️ Chu kỳ xử lý quá dài ({elapsed_time:.2f}s), không ngủ.")
             time.sleep(1) # Ngủ tối thiểu 1s để tránh loop vô tận
 
