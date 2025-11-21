@@ -31,9 +31,9 @@ ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trư
 SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
 TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
 SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
-SL_POINTS_MAX = 200  # SL tối đa: 20 pips (200 points) - giới hạn rủi ro
+SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
 TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
-TP_POINTS_MAX = 300  # TP tối đa: 30 pips (300 points) - giới hạn
+TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 TS_START_FACTOR = 1.3              # Bắt đầu Trailing Stop khi lời 1.3 * SL
 TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
