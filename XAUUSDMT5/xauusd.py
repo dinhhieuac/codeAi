@@ -40,6 +40,11 @@ TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
 # Giá chạm EMA20 hoặc dưới 3-6 pip (30-60 points)
 RETEST_DISTANCE_MAX = 60  # Tối đa 6 pips (60 points) từ EMA20
 
+# Chiến thuật BREAKOUT (khi giá không retest)
+ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
+BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips (100 points)
+BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
+
 # ==============================================================================
 # 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
@@ -280,6 +285,83 @@ def check_m1_retest_ema20(df_m1, h1_trend):
     
     return 'NONE'
 
+def check_m1_breakout(df_m1, h1_trend, adx_current):
+    """
+    Kiểm tra điểm vào BREAKOUT khi giá không retest EMA20
+    
+    Chiến thuật: ENTRY BREAKOUT (KHI GIÁ KHÔNG RETEST)
+    - ADX > 28
+    - H1 trend SELL → Giá M1 phá đáy gần nhất trong khi còn cách EMA20 > 10–20 point
+    - H1 trend BUY → Giá M1 phá đỉnh gần nhất trong khi còn cách EMA20 > 10–20 point
+    - Không cần retest → Bot follow momentum
+    
+    Args:
+        df_m1: DataFrame M1
+        h1_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
+        adx_current: Giá trị ADX hiện tại
+        
+    Returns:
+        'BUY', 'SELL', hoặc 'NONE'
+    """
+    if h1_trend == 'SIDEWAYS':
+        return 'NONE'
+    
+    # Kiểm tra ADX > 28
+    if adx_current <= ADX_BREAKOUT_THRESHOLD:
+        return 'NONE'
+    
+    if len(df_m1) < EMA_M1 + 20:  # Cần ít nhất 20 nến để tìm đáy/đỉnh
+        return 'NONE'
+    
+    # Tính EMA20 trên M1
+    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
+    ema_20_current = ema_20_m1.iloc[-1]
+    
+    # Lấy giá hiện tại
+    tick = mt5.symbol_info_tick(SYMBOL)
+    current_price = tick.bid if h1_trend == 'SELL' else tick.ask
+    
+    point = get_symbol_info()
+    if point is None:
+        return 'NONE'
+    
+    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
+    if h1_trend == 'SELL':
+        distance_points = (ema_20_current - current_price) / point  # Khoảng cách từ giá đến EMA20 (phía trên)
+    else:  # BUY
+        distance_points = (current_price - ema_20_current) / point  # Khoảng cách từ giá đến EMA20 (phía dưới)
+    
+    # Kiểm tra khoảng cách > 10-20 point
+    if distance_points < BREAKOUT_DISTANCE_MIN or distance_points > BREAKOUT_DISTANCE_MAX:
+        return 'NONE'
+    
+    # Tìm đáy/đỉnh gần nhất (20 nến gần nhất)
+    lookback = 20
+    recent_lows = df_m1['low'].iloc[-lookback:].min()
+    recent_highs = df_m1['high'].iloc[-lookback:].max()
+    
+    print(f"  🚀 [M1 BREAKOUT] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
+    print(f"    Khoảng cách đến EMA20: {distance_points:.1f} points ({distance_points/10:.1f} pips)")
+    print(f"    Đáy gần nhất: {recent_lows:.5f} | Đỉnh gần nhất: {recent_highs:.5f}")
+    
+    if h1_trend == 'SELL':
+        # SELL: Giá phá đáy gần nhất
+        if current_price < recent_lows:
+            print(f"    ✅ [M1 BREAKOUT] Giá phá đáy gần nhất ({recent_lows:.5f}) → SELL BREAKOUT")
+            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
+            print(f"       - Khoảng cách EMA20: {distance_points/10:.1f} pips (10-20 pips)")
+            return 'SELL'
+    
+    elif h1_trend == 'BUY':
+        # BUY: Giá phá đỉnh gần nhất
+        if current_price > recent_highs:
+            print(f"    ✅ [M1 BREAKOUT] Giá phá đỉnh gần nhất ({recent_highs:.5f}) → BUY BREAKOUT")
+            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
+            print(f"       - Khoảng cách EMA20: {distance_points/10:.1f} pips (10-20 pips)")
+            return 'BUY'
+    
+    return 'NONE'
+
 # ==============================================================================
 # 5. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
 # ==============================================================================
@@ -465,89 +547,120 @@ def run_bot():
         current_candle_time = df_m1.index[-1].replace(tzinfo=None)
         
         # 3. CHỈ XỬ LÝ TÍN HIỆU KHI CÓ NẾN MỚI ĐÓNG
-        
-        print(f"\n{'='*70}")
-        print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M1: {current_candle_time}")
-        print(f"{'='*70}")
-        
-        # Lấy giá hiện tại
-        tick = mt5.symbol_info_tick(SYMBOL)
-        current_price = tick.bid
-        current_ask = tick.ask
-        print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
-        
-        # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
-        print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
-        
-        # 1. Xác định hướng H1 bằng EMA50
-        print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng H1 (EMA50)")
-        h1_trend = check_h1_trend()
-        print(f"  └─ [BƯỚC 1] Kết quả: {h1_trend}")
-        
-        # 2. Kiểm tra điểm vào ở M1 khi giá RETEST lại EMA20
-        print(f"\n  ┌─ [BƯỚC 2] Kiểm tra retest EMA20 trên M1")
-        m1_signal = check_m1_retest_ema20(df_m1, h1_trend)
-        print(f"  └─ [BƯỚC 2] Kết quả: {m1_signal}")
-
-        # 3. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang) - Tùy chọn
-        print(f"\n  ┌─ [BƯỚC 3] Kiểm tra ADX (Tránh thị trường đi ngang)")
-        adx_values = calculate_adx(df_m1, ADX_PERIOD)
-        adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
-        print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD})")
-        
-        if adx_current >= ADX_MIN_THRESHOLD:
-            adx_ok = True
-            print(f"    ✅ [ADX] XU HƯỚNG MẠNH (ADX={adx_current:.2f} ≥ {ADX_MIN_THRESHOLD}) - Có thể giao dịch")
-        else:
-            adx_ok = False
-            print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
-        print(f"  └─ [BƯỚC 3] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
-
-        # 4. Kiểm tra vị thế đang mở
-        open_positions = mt5.positions_total()
-        print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
-        
-        print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} | ADX={adx_current:.2f}")
-
-        if open_positions == 0:
-            # Không có lệnh nào, tìm tín hiệu vào lệnh
-            print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
+        if current_candle_time > last_candle_time:
+            last_candle_time = current_candle_time
             
-            # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh (tùy chọn)
-            if not adx_ok:
-                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
-                print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
-                print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
-            elif m1_signal == 'BUY' and h1_trend == 'BUY':
-                print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
-                print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
-                print(f"     - M1 Signal: {m1_signal} (Giá retest EMA20 từ dưới lên)")
-                print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                print(f"     - Volume: {VOLUME}")
-                send_order(mt5.ORDER_TYPE_BUY, VOLUME)
-                
-            elif m1_signal == 'SELL' and h1_trend == 'SELL':
-                print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
-                print(f"     - H1 Trend: {h1_trend} (Giá < EMA50)")
-                print(f"     - M1 Signal: {m1_signal} (Giá retest EMA20 từ trên xuống)")
-                print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                print(f"     - Volume: {VOLUME}")
-                send_order(mt5.ORDER_TYPE_SELL, VOLUME)
+            print(f"\n{'='*70}")
+            print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M1: {current_candle_time}")
+            print(f"{'='*70}")
             
+            # Lấy giá hiện tại
+            tick = mt5.symbol_info_tick(SYMBOL)
+            current_price = tick.bid
+            current_ask = tick.ask
+            print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
+            
+            # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
+            print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
+            
+            # 1. Xác định hướng H1 bằng EMA50
+            print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng H1 (EMA50)")
+            h1_trend = check_h1_trend()
+            print(f"  └─ [BƯỚC 1] Kết quả: {h1_trend}")
+            
+            # 2. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang)
+            print(f"\n  ┌─ [BƯỚC 2] Kiểm tra ADX (Tránh thị trường đi ngang)")
+            adx_values = calculate_adx(df_m1, ADX_PERIOD)
+            adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
+            print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD}, Breakout: {ADX_BREAKOUT_THRESHOLD})")
+            
+            if adx_current >= ADX_MIN_THRESHOLD:
+                adx_ok = True
+                print(f"    ✅ [ADX] XU HƯỚNG MẠNH (ADX={adx_current:.2f} ≥ {ADX_MIN_THRESHOLD}) - Có thể giao dịch")
             else:
-                print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
-                if h1_trend == 'SIDEWAYS':
-                    print(f"     - H1 Trend: {h1_trend} (Không rõ xu hướng)")
-                elif m1_signal == 'NONE':
-                    print(f"     - M1 Signal: {m1_signal} (Giá chưa retest EMA20)")
-                elif m1_signal == 'BUY' and h1_trend != 'BUY':
-                    print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
-                elif m1_signal == 'SELL' and h1_trend != 'SELL':
-                    print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
-        else:
-            print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
-        
-        print(f"{'='*70}\n")
+                adx_ok = False
+                print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
+            print(f"  └─ [BƯỚC 2] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
+
+            # 3. Kiểm tra điểm vào ở M1: RETEST hoặc BREAKOUT
+            print(f"\n  ┌─ [BƯỚC 3] Kiểm tra tín hiệu M1 (Retest EMA20 hoặc Breakout)")
+            
+            # Ưu tiên 1: Kiểm tra RETEST EMA20
+            m1_retest_signal = check_m1_retest_ema20(df_m1, h1_trend)
+            
+            # Ưu tiên 2: Nếu không có retest, kiểm tra BREAKOUT (khi ADX > 28)
+            m1_breakout_signal = 'NONE'
+            if m1_retest_signal == 'NONE' and adx_current > ADX_BREAKOUT_THRESHOLD:
+                m1_breakout_signal = check_m1_breakout(df_m1, h1_trend, adx_current)
+            
+            # Kết hợp tín hiệu: Ưu tiên retest, nếu không có thì dùng breakout
+            m1_signal = m1_retest_signal if m1_retest_signal != 'NONE' else m1_breakout_signal
+            
+            if m1_retest_signal != 'NONE':
+                print(f"    ✅ [M1 SIGNAL] RETEST EMA20: {m1_retest_signal}")
+            elif m1_breakout_signal != 'NONE':
+                print(f"    ✅ [M1 SIGNAL] BREAKOUT: {m1_breakout_signal} (ADX={adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD})")
+            else:
+                print(f"    ⚠️ [M1 SIGNAL] Chưa có tín hiệu (Retest: {m1_retest_signal}, Breakout: {m1_breakout_signal})")
+            
+            print(f"  └─ [BƯỚC 3] Kết quả: {m1_signal}")
+
+            # 4. Kiểm tra vị thế đang mở
+            open_positions = mt5.positions_total()
+            print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
+            
+            signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
+            print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
+
+            if open_positions == 0:
+                # Không có lệnh nào, tìm tín hiệu vào lệnh
+                print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
+                
+                # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
+                # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
+                # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
+                if signal_type == "RETEST" and not adx_ok:
+                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
+                    print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
+                    print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
+                elif m1_signal == 'BUY' and h1_trend == 'BUY':
+                    print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
+                    print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
+                    print(f"     - M1 Signal: {m1_signal} ({signal_type})")
+                    if signal_type == "RETEST":
+                        print(f"       → Giá retest EMA20 từ dưới lên")
+                    elif signal_type == "BREAKOUT":
+                        print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
+                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                    print(f"     - Volume: {VOLUME}")
+                    send_order(mt5.ORDER_TYPE_BUY, VOLUME)
+                    
+                elif m1_signal == 'SELL' and h1_trend == 'SELL':
+                    print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
+                    print(f"     - H1 Trend: {h1_trend} (Giá < EMA50)")
+                    print(f"     - M1 Signal: {m1_signal} ({signal_type})")
+                    if signal_type == "RETEST":
+                        print(f"       → Giá retest EMA20 từ trên xuống")
+                    elif signal_type == "BREAKOUT":
+                        print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
+                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                    print(f"     - Volume: {VOLUME}")
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME)
+                
+                else:
+                    print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
+                    if h1_trend == 'SIDEWAYS':
+                        print(f"     - H1 Trend: {h1_trend} (Không rõ xu hướng)")
+                    elif m1_signal == 'NONE':
+                        print(f"     - M1 Signal: {m1_signal} (Chưa có retest hoặc breakout)")
+                    elif m1_signal == 'BUY' and h1_trend != 'BUY':
+                        print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
+                    elif m1_signal == 'SELL' and h1_trend != 'SELL':
+                        print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
+            else:
+                print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
+            
+            print(f"{'='*70}\n")
             
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()

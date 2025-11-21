@@ -35,3 +35,22 @@ Chỉ SELL khi H1 trend là SELL và giá M1 retest EMA20 từ trên xuống
 Tránh giao dịch khi thị trường đi ngang (ADX < 25)
 TP 10-20 pip, SL 8-15 pip
 Lưu ý: Các cảnh báo linter về import MetaTrader5 và pandas chỉ là warning do linter không tìm thấy thư viện, không ảnh hưởng đến chạy bot.
+
+update 1
+ENTRY BREAKOUT (KHI GIÁ KHÔNG RETEST)
+
+Cực kỳ đơn giản:
+
+Điều kiện SELL (vì H1 đang SELL):
+
+ADX > 28
+
+H1 trend SELL
+
+Giá M1 phá đáy gần nhất trong khi còn cách EMA20 > 10–20 point
+
+Không cần retest
+
+→ Bot SELL follow momentum
+→ TP nhanh 10–20 point
+→ SL nhỏ phía trên vùng breakout
