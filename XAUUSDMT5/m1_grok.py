@@ -32,9 +32,9 @@ ATR_PERIOD = 14  # ATR 14 để tính SL/TP động
 ATR_SL_MULTIPLIER = 30  # SL = ATR(pips) × 30 (ví dụ: ATR = 0.5 pips → SL = 15 pips)
 ATR_TP_MULTIPLIER = 30  # TP = ATR(pips) × 30 (RR 1:1)
 SL_POINTS_MIN = 30   # SL tối thiểu: 3 pips (30 points) - bảo vệ
-SL_POINTS_MAX = 500  # SL tối đa: 50 pips (500 points) - giới hạn rủi ro
+SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
 TP_POINTS_MIN = 30   # TP tối thiểu: 3 pips (30 points) - bảo vệ
-TP_POINTS_MAX = 500  # TP tối đa: 50 pips (500 points) - giới hạn
+TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
 # Trailing Stop khi lời 1/2 TP để lock profit
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
@@ -296,25 +296,35 @@ def calculate_atr_from_m1(df_m1, period=14):
         period: Chu kỳ ATR (mặc định: 14)
         
     Returns:
-        ATR value (giá trị thực, không phải points) hoặc None nếu không đủ dữ liệu
+        ATR value (trong pips) hoặc None nếu không đủ dữ liệu
     """
     if df_m1 is None or len(df_m1) < period + 1:
+        return None
+    
+    point = get_symbol_info()
+    if point is None:
         return None
     
     high = df_m1['high']
     low = df_m1['low']
     close = df_m1['close']
     
-    # Tính True Range (TR)
+    # Tính True Range (TR) - giá trị thực (USD)
     tr1 = high - low
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     
-    # Tính ATR (trung bình của TR)
-    atr = tr.rolling(window=period).mean().iloc[-1]
+    # Tính ATR (trung bình của TR) - giá trị thực (USD)
+    atr_price = tr.rolling(window=period).mean().iloc[-1]
     
-    return atr
+    # Chuyển ATR từ giá trị thực sang pips
+    # Với XAUUSD: 1 pip = 0.01 USD (lot 0.01) → ATR(pips) = ATR(USD) / 0.01 = ATR(USD) × 100
+    # Nhưng ATR được tính bằng giá (ví dụ: 2.9394), không phải USD profit
+    # Cần chuyển: ATR(pips) = ATR(price) / 0.01 = ATR(price) × 100
+    atr_pips = atr_price / 0.01  # = atr_price × 100
+    
+    return atr_pips
 
 def send_order(trade_type, volume, df_m1=None, deviation=20):
     """
@@ -335,21 +345,16 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
     # Tính SL và TP theo ATR của nến M1 (theo m1_grok.md: ATR × 30)
-    # Lưu ý: Với XAUUSD, 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
+    # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
+    # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
     if df_m1 is not None:
-        atr_value = calculate_atr_from_m1(df_m1)
-        if atr_value is not None:
-            # Chuyển ATR từ giá trị thực sang pips
-            # ATR (giá trị thực) / point = points, sau đó chia 10 để ra pips
-            atr_points = atr_value / point  # ATR trong points
-            atr_pips = atr_points / 10     # ATR trong pips
-            
-            # Tính SL và TP dựa trên ATR (theo m1_grok.md: ATR(pips) × 30)
-            # Ví dụ: ATR = 0.5 pips → SL = 0.5 × 30 = 15 pips
+        atr_pips = calculate_atr_from_m1(df_m1)
+        if atr_pips is not None:
+            # ATR đã là pips, tính SL và TP trực tiếp
             sl_pips = atr_pips * ATR_SL_MULTIPLIER
             tp_pips = atr_pips * ATR_TP_MULTIPLIER
             
-            # Chuyển lại sang points (1 pip = 10 points)
+            # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
             sl_points = sl_pips * 10
             tp_points = tp_pips * 10
             
@@ -357,7 +362,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
             tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{ATR_SL_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{ATR_TP_MULTIPLIER}, RR 1:1)")
+            # Tính lại pips sau khi giới hạn (để hiển thị đúng)
+            sl_pips_limited = sl_points / 10
+            tp_pips_limited = tp_points / 10
+            
+            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{ATR_SL_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{ATR_TP_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips, RR 1:1)")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
@@ -373,11 +382,23 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     tp_distance = tp_points * point
     
     if trade_type == mt5.ORDER_TYPE_BUY:
+        # BUY: SL dưới entry, TP trên entry
         sl = price - sl_distance
         tp = price + tp_distance
     else: # SELL
+        # SELL: SL trên entry, TP dưới entry
         sl = price + sl_distance
         tp = price - tp_distance
+    
+    # Kiểm tra logic SL/TP
+    if trade_type == mt5.ORDER_TYPE_BUY:
+        if sl >= price or tp <= price:
+            print(f"  ⚠️ [ORDER] LỖI LOGIC: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f}) và TP ({tp:.5f}) phải > Entry")
+            return
+    else:  # SELL
+        if sl <= price or tp >= price:
+            print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
+            return
     
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
@@ -424,9 +445,9 @@ def manage_positions():
     
     # Lấy dữ liệu M1 để tính ATR cho trailing
     df_m1 = get_rates(mt5.TIMEFRAME_M1)
-    atr_value = None
+    atr_pips = None
     if df_m1 is not None:
-        atr_value = calculate_atr_from_m1(df_m1)
+        atr_pips = calculate_atr_from_m1(df_m1)  # ATR đã là pips
 
     for pos in positions:
         if pos.magic != MAGIC: # Chỉ quản lý lệnh của bot này
@@ -452,10 +473,10 @@ def manage_positions():
         # Bắt đầu trailing khi profit >= 1/2 TP
         tp_half_points = tp_distance_points * TRAILING_START_TP_RATIO
         
-        if profit_points >= tp_half_points and atr_value is not None:
-            # Tính bước trailing = ATR × 0.5
-            atr_points = atr_value / point
-            trailing_step_points = atr_points * TRAILING_STEP_ATR_MULTIPLIER
+        if profit_points >= tp_half_points and atr_pips is not None:
+            # Tính bước trailing = ATR(pips) × 0.5, sau đó chuyển sang points
+            trailing_step_pips = atr_pips * TRAILING_STEP_ATR_MULTIPLIER
+            trailing_step_points = trailing_step_pips * 10  # 1 pip = 10 points
             
             if is_buy:
                 # TS cho lệnh BUY: SL mới = current_bid - trailing_step
