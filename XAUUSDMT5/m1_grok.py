@@ -26,9 +26,11 @@ ATR_PERIOD = 14  # ATR 14 để tính SL/TP động
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo ATR (theo m1_grok.md)
-# SL = ATR 14 × 30, TP = ATR 14 × 30 (RR 1:1)
-ATR_SL_MULTIPLIER = 30  # SL = ATR × 30 (ví dụ: ATR = 0.5 → SL = 15 pips)
-ATR_TP_MULTIPLIER = 30  # TP = ATR × 30 (RR 1:1)
+# Theo m1_grok.md: "Ví dụ, nếu ATR = 0.5, SL = 15 pips"
+# → ATR = 0.5 pips → SL = 0.5 × 30 = 15 pips
+# Với XAUUSD: 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
+ATR_SL_MULTIPLIER = 30  # SL = ATR(pips) × 30 (ví dụ: ATR = 0.5 pips → SL = 15 pips)
+ATR_TP_MULTIPLIER = 30  # TP = ATR(pips) × 30 (RR 1:1)
 SL_POINTS_MIN = 30   # SL tối thiểu: 3 pips (30 points) - bảo vệ
 SL_POINTS_MAX = 500  # SL tối đa: 50 pips (500 points) - giới hạn rủi ro
 TP_POINTS_MIN = 30   # TP tối thiểu: 3 pips (30 points) - bảo vệ
@@ -333,21 +335,29 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
     # Tính SL và TP theo ATR của nến M1 (theo m1_grok.md: ATR × 30)
+    # Lưu ý: Với XAUUSD, 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
     if df_m1 is not None:
         atr_value = calculate_atr_from_m1(df_m1)
         if atr_value is not None:
-            # Chuyển ATR từ giá sang points
-            atr_points = atr_value / point
+            # Chuyển ATR từ giá trị thực sang pips
+            # ATR (giá trị thực) / point = points, sau đó chia 10 để ra pips
+            atr_points = atr_value / point  # ATR trong points
+            atr_pips = atr_points / 10     # ATR trong pips
             
-            # Tính SL và TP dựa trên ATR (theo m1_grok.md: ATR × 30)
-            sl_points = atr_points * ATR_SL_MULTIPLIER
-            tp_points = atr_points * ATR_TP_MULTIPLIER
+            # Tính SL và TP dựa trên ATR (theo m1_grok.md: ATR(pips) × 30)
+            # Ví dụ: ATR = 0.5 pips → SL = 0.5 × 30 = 15 pips
+            sl_pips = atr_pips * ATR_SL_MULTIPLIER
+            tp_pips = atr_pips * ATR_TP_MULTIPLIER
             
-            # Giới hạn SL/TP trong khoảng min-max
+            # Chuyển lại sang points (1 pip = 10 points)
+            sl_points = sl_pips * 10
+            tp_points = tp_pips * 10
+            
+            # Giới hạn SL/TP trong khoảng min-max (đã là points)
             sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
             tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_points/10:.1f} pips → SL: {sl_points/10:.1f} pips (ATR×{ATR_SL_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{ATR_TP_MULTIPLIER}, RR 1:1)")
+            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{ATR_SL_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{ATR_TP_MULTIPLIER}, RR 1:1)")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
