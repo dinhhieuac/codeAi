@@ -425,21 +425,27 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
     # Tính SL và TP theo ATR của nến M1
+    # Lưu ý: Với XAUUSD, 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
     if df_m1 is not None:
         atr_value = calculate_atr_from_m1(df_m1)
         if atr_value is not None:
-            # Chuyển ATR từ giá sang points
-            atr_points = atr_value / point
+            # Chuyển ATR từ giá trị thực sang points
+            atr_points = atr_value / point  # ATR trong points
+            atr_pips = atr_points / 10     # ATR trong pips
             
-            # Tính SL và TP dựa trên ATR
-            sl_points = atr_points * SL_ATR_MULTIPLIER
-            tp_points = atr_points * TP_ATR_MULTIPLIER
+            # Tính SL và TP dựa trên ATR (trong pips)
+            sl_pips = atr_pips * SL_ATR_MULTIPLIER
+            tp_pips = atr_pips * TP_ATR_MULTIPLIER
             
-            # Giới hạn SL/TP trong khoảng min-max
+            # Chuyển lại sang points (1 pip = 10 points)
+            sl_points = sl_pips * 10
+            tp_points = tp_pips * 10
+            
+            # Giới hạn SL/TP trong khoảng min-max (đã là points)
             sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
             tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_points/10:.1f} pips → SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
+            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{SL_ATR_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{TP_ATR_MULTIPLIER})")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
@@ -455,11 +461,23 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     tp_distance = tp_points * point
     
     if trade_type == mt5.ORDER_TYPE_BUY:
+        # BUY: SL dưới entry, TP trên entry
         sl = price - sl_distance
         tp = price + tp_distance
     else: # SELL
+        # SELL: SL trên entry, TP dưới entry
         sl = price + sl_distance
         tp = price - tp_distance
+    
+    # Kiểm tra logic SL/TP
+    if trade_type == mt5.ORDER_TYPE_BUY:
+        if sl >= price or tp <= price:
+            print(f"  ⚠️ [ORDER] LỖI LOGIC: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f}) và TP ({tp:.5f}) phải > Entry")
+            return
+    else:  # SELL
+        if sl <= price or tp >= price:
+            print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
+            return
     
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
