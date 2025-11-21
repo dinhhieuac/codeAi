@@ -377,6 +377,19 @@ def get_symbol_info():
     point = symbol_info.point 
     return point
 
+def get_pip_value():
+    """
+    Tính giá trị pip cho XAUUSD với lot 0.01
+    
+    Với XAUUSD, lot 0.01: 100 pips = 1 USD
+    → 1 pip = 0.01 USD (với lot 0.01)
+    → pip_value = 0.01 USD
+    
+    Returns:
+        pip_value: Giá trị 1 pip tính bằng USD (với lot 0.01)
+    """
+    return 0.01  # 1 pip = 0.01 USD với lot 0.01
+
 def calculate_atr_from_m1(df_m1, period=14):
     """
     Tính ATR từ nến M1
@@ -425,19 +438,23 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
     # Tính SL và TP theo ATR của nến M1
-    # Lưu ý: Với XAUUSD, 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
+    # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
+    # ATR được tính bằng giá trị thực (USD với lot 0.01), cần chuyển sang pips
+    # Công thức: ATR(pips) = ATR(USD) / pip_value = ATR(USD) / 0.01 = ATR(USD) × 100
+    pip_value = get_pip_value()  # 0.01 USD với lot 0.01
+    
     if df_m1 is not None:
-        atr_value = calculate_atr_from_m1(df_m1)
-        if atr_value is not None:
-            # Chuyển ATR từ giá trị thực sang points
-            atr_points = atr_value / point  # ATR trong points
-            atr_pips = atr_points / 10     # ATR trong pips
+        atr_value_usd = calculate_atr_from_m1(df_m1)
+        if atr_value_usd is not None:
+            # ATR đã là giá trị USD (với lot 0.01), chuyển sang pips
+            # Với lot 0.01: 1 pip = 0.01 USD → ATR(pips) = ATR(USD) / 0.01 = ATR(USD) × 100
+            atr_pips = atr_value_usd / pip_value  # = atr_value_usd × 100
             
             # Tính SL và TP dựa trên ATR (trong pips)
             sl_pips = atr_pips * SL_ATR_MULTIPLIER
             tp_pips = atr_pips * TP_ATR_MULTIPLIER
             
-            # Chuyển lại sang points (1 pip = 10 points)
+            # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
             sl_points = sl_pips * 10
             tp_points = tp_pips * 10
             
@@ -445,7 +462,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
             tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{SL_ATR_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{TP_ATR_MULTIPLIER})")
+            print(f"  📊 [ORDER] ATR(M1): {atr_value_usd:.4f} USD (lot 0.01) = {atr_pips:.2f} pips → SL: {sl_points/10:.1f} pips (ATR×{SL_ATR_MULTIPLIER}), TP: {tp_points/10:.1f} pips (ATR×{TP_ATR_MULTIPLIER})")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
