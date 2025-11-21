@@ -642,7 +642,7 @@ def run_bot():
             
             print(f"\n  📊 [TÓM TẮT] Session={session} | EMA Signal={ema_signal} | Daily Trades={daily_trades_count}/{MAX_TRADES_PER_DAY}")
 
-            if open_positions == 0:
+            if open_positions <=2:
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
