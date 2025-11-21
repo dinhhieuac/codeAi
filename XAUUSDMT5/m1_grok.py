@@ -46,7 +46,7 @@ TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Risk Management
 RISK_PER_TRADE_PERCENT = 0.5  # Risk max 0.5-1% tài khoản per trade
-MAX_TRADES_PER_DAY = 5  # Chỉ 2-5 trade/ngày, tránh overtrade trên M1
+MAX_TRADES_PER_DAY = 100  # Chỉ 2-5 trade/ngày, tránh overtrade trên M1
 
 # ==============================================================================
 # 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
