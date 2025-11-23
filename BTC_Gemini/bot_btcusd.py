@@ -1847,10 +1847,10 @@ class BTCUSD_Bot:
 
 def main():
     logging.info("=" * 60)
-    logging.info("🚀 KHỞI ĐỘNG BOT ETHUSD")
+    logging.info("🚀 KHỞI ĐỘNG BOT BTCUSD")
     logging.info("=" * 60)
     
-    bot = ETHUSD_Bot()
+    bot = BTCUSD_Bot()
     
     if not bot.setup_mt5():
         logging.error("❌ Không thể khởi tạo MT5. Thoát chương trình.")
