@@ -26,15 +26,13 @@ EMA_SLOW = 28  # EMA 28 (slow, màu đỏ)
 ATR_PERIOD = 14  # ATR 14 để tính SL/TP động
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
-# Chiến thuật M1: SL/TP theo ATR (theo m1_grok.md)
-# Theo m1_grok.md: "Ví dụ, nếu ATR = 0.5, SL = 15 pips"
-# → ATR = 0.5 pips → SL = 0.5 × 30 = 15 pips
+# Chiến thuật M1: SL/TP theo nến M1 (giống m1_gpt.py)
 # Với XAUUSD: 1 pip = 10 points, 100 pips = 1 USD (lot 0.01)
-ATR_SL_MULTIPLIER = 30  # SL = ATR(pips) × 30 (ví dụ: ATR = 0.5 pips → SL = 15 pips)
-ATR_TP_MULTIPLIER = 30  # TP = ATR(pips) × 30 (RR 1:1)
-SL_POINTS_MIN = 30   # SL tối thiểu: 3 pips (30 points) - bảo vệ
+SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
+TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
+SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
 SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
-TP_POINTS_MIN = 30   # TP tối thiểu: 3 pips (30 points) - bảo vệ
+TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
 # Hòa vốn (Break-Even)
@@ -353,15 +351,19 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP theo ATR của nến M1 (theo m1_grok.md: ATR × 30)
+    # Tính SL và TP theo ATR của nến M1
     # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
     # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
+    atr_pips = None
+    sl_pips_limited = None
+    tp_pips_limited = None
+    
     if df_m1 is not None:
         atr_pips = calculate_atr_from_m1(df_m1)
         if atr_pips is not None:
             # ATR đã là pips, tính SL và TP trực tiếp
-            sl_pips = atr_pips * ATR_SL_MULTIPLIER
-            tp_pips = atr_pips * ATR_TP_MULTIPLIER
+            sl_pips = atr_pips * SL_ATR_MULTIPLIER
+            tp_pips = atr_pips * TP_ATR_MULTIPLIER
             
             # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
             sl_points = sl_pips * 10
@@ -375,7 +377,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl_pips_limited = sl_points / 10
             tp_pips_limited = tp_points / 10
             
-            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{ATR_SL_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{ATR_TP_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips, RR 1:1)")
+            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
         else:
             # Fallback: Dùng giá trị trung bình nếu không tính được ATR
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
