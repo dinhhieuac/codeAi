@@ -1,3 +1,4 @@
+from math import fabs
 import MetaTrader5 as mt5
 import pandas as pd
 import time
@@ -48,6 +49,8 @@ TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 RISK_PER_TRADE_PERCENT = 0.5  # Risk max 0.5-1% tài khoản per trade
 MAX_TRADES_PER_DAY = 100  # Chỉ 2-5 trade/ngày, tránh overtrade trên M1
 
+
+SESSION_ALLOW=False
 # ==============================================================================
 # 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
@@ -205,6 +208,8 @@ def check_trading_session():
         'LONDON', 'NEW_YORK', 'ASIAN', hoặc 'UNKNOWN'
     """
     from datetime import datetime
+    if not SESSION_ALLOW:
+        return "UNKNOWN"
     try:
         import pytz
     except ImportError:
