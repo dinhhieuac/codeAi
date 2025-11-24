@@ -615,7 +615,7 @@ def run_bot():
             
             if session == 'ASIAN':
                 print(f"    ⚠️ [SESSION] Asian session (range-bound) → Tránh giao dịch")
-                session_ok = False
+                session_ok = True
             elif session in ['LONDON', 'NEW_YORK']:
                 print(f"    ✅ [SESSION] {session} session (volatile) → Có thể giao dịch")
                 session_ok = True
