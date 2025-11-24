@@ -621,7 +621,7 @@ def run_bot():
                 session_ok = True
             else:
                 print(f"    ⚠️ [SESSION] Unknown session → Tránh giao dịch")
-                session_ok = False
+                session_ok = True
             print(f"  └─ [BƯỚC 1] Kết quả: {'OK' if session_ok else 'BLOCKED'}")
             
             # 2. Kiểm tra EMA Crossover (theo m1_grok.md)
