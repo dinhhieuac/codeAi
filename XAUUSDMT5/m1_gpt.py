@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 import json
 import os
+import requests
 
 # ==============================================================================
 # 1. CÁC THAM SỐ CẤU HÌNH VÀ CHIẾN LƯỢC (GLOBAL VARIABLES)
@@ -41,6 +42,13 @@ BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
+# Telegram Bot Configuration
+ # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
+TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
+                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+
+CHAT_ID = "1887610382"      
 # Khoảng cách retest EMA20 trên M1 (points)
 # Giá chạm EMA20 hoặc dưới 3-6 pip (30-60 points)
 RETEST_DISTANCE_MAX = 60  # Tối đa 6 pips (60 points) từ EMA20
@@ -56,7 +64,7 @@ BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200
 
 def load_config(filename="XAUUSDMT5/mt5_account.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
-    global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME
+    global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
     
     if not os.path.exists(filename):
         print(f"❌ Lỗi: Không tìm thấy tệp cấu hình '{filename}'. Vui lòng tạo file này.")
@@ -72,6 +80,7 @@ def load_config(filename="XAUUSDMT5/mt5_account.json"):
         SYMBOL = config.get("SYMBOL", "XAUUSDm") 
         MT5_PATH = config.get("PATH")
         VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
+        CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
@@ -126,7 +135,38 @@ def initialize_mt5():
         quit()
 
 # ==============================================================================
-# 4. CÁC HÀM PHÂN TÍCH KỸ THUẬT (INDICATORS & ANALYSIS)
+# 4. TELEGRAM NOTIFICATION
+# ==============================================================================
+
+def send_telegram(message):
+    """
+    Gửi tin nhắn qua Telegram bot
+    
+    Args:
+        message: Nội dung tin nhắn cần gửi
+    """
+    if not CHAT_ID:
+        return  # Không có CHAT_ID → Bỏ qua Telegram
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, data=data, timeout=5)
+        if response.status_code == 200:
+            return True
+        else:
+            print(f"⚠️ Telegram error: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Lỗi gửi Telegram: {e}")
+        return False
+
+# ==============================================================================
+# 5. CÁC HÀM PHÂN TÍCH KỸ THUẬT (INDICATORS & ANALYSIS)
 # ==============================================================================
 
 def get_rates(timeframe, bars_count=500):
@@ -368,7 +408,7 @@ def check_m1_breakout(df_m1, h1_trend, adx_current):
     return 'NONE'
 
 # ==============================================================================
-# 5. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
+# 6. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
 # ==============================================================================
 
 def get_symbol_info():
@@ -453,6 +493,10 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     # Tính SL và TP theo ATR của nến M1
     # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
     # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
+    atr_pips = None
+    sl_pips_limited = None
+    tp_pips_limited = None
+    
     if df_m1 is not None:
         atr_pips = calculate_atr_from_m1(df_m1)
         if atr_pips is not None:
@@ -526,10 +570,33 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     result = mt5.order_send(request)
     
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}")
-        print(f"Chi tiết lỗi: {mt5.last_error()}")
+        error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}\nChi tiết lỗi: {mt5.last_error()}"
+        print(error_msg)
+        send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}")
     else:
-        print(f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}")
+        success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
+        print(success_msg)
+        
+        # Gửi thông báo Telegram với thông tin chi tiết
+        trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
+        atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
+        sl_atr_display = f"{sl_pips_limited:.1f}" if sl_pips_limited is not None else f"{sl_points/10:.1f}"
+        tp_atr_display = f"{tp_pips_limited:.1f}" if tp_pips_limited is not None else f"{tp_points/10:.1f}"
+        
+        telegram_msg = f"""
+<b>{trade_direction} LỆNH MỚI</b>
+
+📊 <b>Symbol:</b> {SYMBOL}
+💰 <b>Entry:</b> {price:.5f}
+🛑 <b>SL:</b> {sl:.5f} ({sl_points/10:.1f} pips)
+🎯 <b>TP:</b> {tp:.5f} ({tp_points/10:.1f} pips)
+📦 <b>Volume:</b> {volume}
+🆔 <b>Order ID:</b> {result.order}
+📈 <b>ATR:</b> {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)
+
+⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        send_telegram(telegram_msg)
 
 def manage_positions():
     """Quản lý các lệnh đang mở (Hòa vốn, Trailing Stop)."""
@@ -636,7 +703,7 @@ def manage_positions():
                         print(f"⏬ Lệnh {pos.ticket} SELL: Trailing Stop cập nhật xuống {new_sl_ts:.5f} (Profit: {profit_points/10:.1f} pips ≥ 1/2 TP: {tp_half_points/10:.1f} pips)")
 
 # ==============================================================================
-# 6. CHU TRÌNH CHÍNH (MAIN LOOP)
+# 7. CHU TRÌNH CHÍNH (MAIN LOOP)
 # ==============================================================================
 
 def run_bot():
