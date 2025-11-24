@@ -36,8 +36,10 @@ TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
-TS_START_FACTOR = 1.3              # Bắt đầu Trailing Stop khi lời 1.3 * SL
-TS_STEP_POINTS = 50                # Bước Trailing Stop (5 pips)
+
+# Trailing Stop khi lời 1/2 TP để lock profit
+TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
+TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Khoảng cách retest EMA20 trên M1 (points)
 # Giá chạm EMA20 hoặc dưới 3-6 pip (30-60 points)
@@ -543,6 +545,12 @@ def manage_positions():
     tick = mt5.symbol_info_tick(SYMBOL)
     current_bid = tick.bid
     current_ask = tick.ask
+    
+    # Lấy dữ liệu M1 để tính ATR cho trailing
+    df_m1 = get_rates(mt5.TIMEFRAME_M1)
+    atr_pips = None
+    if df_m1 is not None:
+        atr_pips = calculate_atr_from_m1(df_m1)  # ATR đã là pips
 
     for pos in positions:
         if pos.magic != MAGIC: # Chỉ quản lý lệnh của bot này
@@ -550,9 +558,13 @@ def manage_positions():
             
         is_buy = pos.type == mt5.POSITION_TYPE_BUY
         current_price = current_bid if is_buy else current_ask
+        entry_price = pos.price_open
         
-        # Lợi nhuận hiện tại tính bằng điểm (points)
-        profit_points = abs(current_price - pos.price_open) / point
+        # Tính profit hiện tại (points)
+        if is_buy:
+            profit_points = (current_price - entry_price) / point
+        else:  # SELL
+            profit_points = (entry_price - current_price) / point
         
         # --- LOGIC HÒA VỐN (BREAK EVEN) ---
         if ENABLE_BREAK_EVEN and BREAK_EVEN_START_POINTS > 0 and profit_points >= BREAK_EVEN_START_POINTS:
@@ -574,18 +586,27 @@ def manage_positions():
                 result = mt5.order_send(request)
                 if result.retcode == mt5.TRADE_RETCODE_DONE:
                     print(f"🎯 Lệnh {pos.ticket} đã di chuyển SL về Hòa Vốn.")
-
-        # --- LOGIC TRAILING STOP (TS) ---
-        sl_points_avg = (SL_POINTS_MIN + SL_POINTS_MAX) // 2  # ~12 pips
-        ts_start_level = sl_points_avg * TS_START_FACTOR 
-
-        if profit_points >= ts_start_level:
+        
+        # Tính TP distance (points) từ entry đến TP
+        if is_buy:
+            tp_distance_points = (pos.tp - entry_price) / point
+        else:  # SELL
+            tp_distance_points = (entry_price - pos.tp) / point
+        
+        # --- LOGIC TRAILING STOP (trail SL khi lời 1/2 TP) ---
+        # Bắt đầu trailing khi profit >= 1/2 TP
+        tp_half_points = tp_distance_points * TRAILING_START_TP_RATIO
+        
+        if profit_points >= tp_half_points and atr_pips is not None:
+            # Tính bước trailing = ATR(pips) × 0.5, sau đó chuyển sang points
+            trailing_step_pips = atr_pips * TRAILING_STEP_ATR_MULTIPLIER
+            trailing_step_points = trailing_step_pips * 10  # 1 pip = 10 points
             
             if is_buy:
-                # TS cho lệnh BUY: SL mới = current_bid - TS_STEP_POINTS (tính bằng point)
-                new_sl_ts = current_bid - (TS_STEP_POINTS * point)
+                # TS cho lệnh BUY: SL mới = current_bid - trailing_step
+                new_sl_ts = current_bid - (trailing_step_points * point)
                 # Chỉ cập nhật nếu SL mới cao hơn SL hiện tại (di chuyển lên)
-                if new_sl_ts > pos.sl:
+                if new_sl_ts > pos.sl and new_sl_ts < current_bid:
                     request = {
                         "action": mt5.TRADE_ACTION_SLTP,
                         "position": pos.ticket,
@@ -594,13 +615,14 @@ def manage_positions():
                         "magic": MAGIC,
                         "deviation": 20,
                     }
-                    mt5.order_send(request)
-                    print(f"⏫ Lệnh {pos.ticket} BUY: Trailing Stop cập nhật lên {new_sl_ts}.")
-            else: # SELL
-                # TS cho lệnh SELL: SL mới = current_ask + TS_STEP_POINTS (tính bằng point)
-                new_sl_ts = current_ask + (TS_STEP_POINTS * point)
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"⏫ Lệnh {pos.ticket} BUY: Trailing Stop cập nhật lên {new_sl_ts:.5f} (Profit: {profit_points/10:.1f} pips ≥ 1/2 TP: {tp_half_points/10:.1f} pips)")
+            else:  # SELL
+                # TS cho lệnh SELL: SL mới = current_ask + trailing_step
+                new_sl_ts = current_ask + (trailing_step_points * point)
                 # Chỉ cập nhật nếu SL mới thấp hơn SL hiện tại (di chuyển xuống)
-                if new_sl_ts < pos.sl or pos.sl == 0.0:
+                if (new_sl_ts < pos.sl or pos.sl == 0.0) and new_sl_ts > current_ask:
                     request = {
                         "action": mt5.TRADE_ACTION_SLTP,
                         "position": pos.ticket,
@@ -609,8 +631,9 @@ def manage_positions():
                         "magic": MAGIC,
                         "deviation": 20,
                     }
-                    mt5.order_send(request)
-                    print(f"⏬ Lệnh {pos.ticket} SELL: Trailing Stop cập nhật xuống {new_sl_ts}.")
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"⏬ Lệnh {pos.ticket} SELL: Trailing Stop cập nhật xuống {new_sl_ts:.5f} (Profit: {profit_points/10:.1f} pips ≥ 1/2 TP: {tp_half_points/10:.1f} pips)")
 
 # ==============================================================================
 # 6. CHU TRÌNH CHÍNH (MAIN LOOP)
