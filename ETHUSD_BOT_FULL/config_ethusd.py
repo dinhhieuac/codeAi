@@ -43,7 +43,7 @@ SAFE_EQUITY_RATIO = 0.92  # Giá trị từ 0.0 đến 1.0
 # Có 2 cách cấu hình:
 # - Số dương (ví dụ: 50) → Tối thiểu $50 USD
 # - Số âm (ví dụ: -0.1) → Tối thiểu 10% của balance
-MIN_FREE_MARGIN = 50.0  # Đơn vị: USD (hoặc % nếu < 0, ví dụ: -0.1 = 10%)
+MIN_FREE_MARGIN = 10.0  # Đơn vị: USD (hoặc % nếu < 0, ví dụ: -0.1 = 10%)
 
 # Số lượng vị thế tối đa có thể mở cùng lúc
 # Nếu đã có MAX_POSITIONS lệnh mở → Bot sẽ không mở lệnh mới
