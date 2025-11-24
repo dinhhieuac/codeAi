@@ -420,6 +420,13 @@ def get_symbol_info():
     point = symbol_info.point 
     return point
 
+def get_symbol_info_full():
+    """Lấy đầy đủ thông tin ký hiệu giao dịch."""
+    symbol_info = mt5.symbol_info(SYMBOL)
+    if symbol_info is None:
+        return None
+    return symbol_info
+
 def get_pip_value():
     """
     Tính giá trị pip cho XAUUSD với lot 0.01
@@ -550,6 +557,40 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
             return
     
+    # ⚠️ VALIDATION: Kiểm tra stops level của broker
+    symbol_info = get_symbol_info_full()
+    if symbol_info is not None:
+        stops_level = getattr(symbol_info, 'stops_level', 0)
+        if stops_level > 0:
+            # Tính khoảng cách từ entry đến SL/TP (points)
+            sl_distance_points = abs(price - sl) / point
+            tp_distance_points = abs(price - tp) / point
+            
+            # Kiểm tra xem SL/TP có đủ xa entry không (phải >= stops_level)
+            if sl_distance_points < stops_level:
+                print(f"  ⚠️ [ORDER] SL quá gần entry: {sl_distance_points:.1f} points < stops_level {stops_level} points")
+                print(f"     → Điều chỉnh SL từ {sl:.5f} để đảm bảo khoảng cách >= {stops_level} points")
+                # Điều chỉnh SL để đảm bảo khoảng cách >= stops_level
+                if trade_type == mt5.ORDER_TYPE_BUY:
+                    sl = price - (stops_level * point)
+                else:  # SELL
+                    sl = price + (stops_level * point)
+                # Tính lại sl_points sau khi điều chỉnh
+                sl_points = abs(price - sl) / point
+                print(f"     → SL mới: {sl:.5f} ({sl_points/10:.1f} pips)")
+            
+            if tp_distance_points < stops_level:
+                print(f"  ⚠️ [ORDER] TP quá gần entry: {tp_distance_points:.1f} points < stops_level {stops_level} points")
+                print(f"     → Điều chỉnh TP từ {tp:.5f} để đảm bảo khoảng cách >= {stops_level} points")
+                # Điều chỉnh TP để đảm bảo khoảng cách >= stops_level
+                if trade_type == mt5.ORDER_TYPE_BUY:
+                    tp = price + (stops_level * point)
+                else:  # SELL
+                    tp = price - (stops_level * point)
+                # Tính lại tp_points sau khi điều chỉnh
+                tp_points = abs(price - tp) / point
+                print(f"     → TP mới: {tp:.5f} ({tp_points/10:.1f} pips)")
+    
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
     request = {
@@ -570,9 +611,22 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     result = mt5.order_send(request)
     
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}\nChi tiết lỗi: {mt5.last_error()}"
+        error_info = mt5.last_error()
+        error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}"
         print(error_msg)
-        send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}")
+        print(f"Chi tiết lỗi: {error_info}")
+        print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
+        
+        # Giải thích lỗi retcode 10030 (Invalid stops)
+        if result.retcode == 10030:
+            print(f"  ⚠️ LỖI 10030: Invalid stops - SL/TP không hợp lệ")
+            print(f"     - Có thể SL/TP quá gần hoặc quá xa entry")
+            print(f"     - Hoặc vi phạm stops level của broker")
+            if symbol_info is not None:
+                stops_level = getattr(symbol_info, 'stops_level', 0)
+                print(f"     - Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
+        
+        send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
     else:
         success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
@@ -798,9 +852,14 @@ def run_bot():
             
             print(f"  └─ [BƯỚC 3] Kết quả: {m1_signal}")
 
-            # 4. Kiểm tra vị thế đang mở
-            open_positions = mt5.positions_total()
-            print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở: {open_positions}")
+            # 4. Kiểm tra vị thế đang mở (chỉ đếm lệnh của cặp XAUUSD)
+            positions = mt5.positions_get(symbol=SYMBOL)
+            if positions is None:
+                open_positions = 0
+            else:
+                # Chỉ đếm lệnh có magic number của bot này
+                open_positions = len([pos for pos in positions if pos.magic == MAGIC])
+            print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở ({SYMBOL}): {open_positions}")
             
             signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
             print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
