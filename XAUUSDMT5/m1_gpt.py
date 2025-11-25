@@ -605,7 +605,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         "magic": MAGIC,
         "comment": f"Bot_Auto_{'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_RETURN,
+        "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
     result = mt5.order_send(request)
