@@ -26,6 +26,23 @@ PULLBACK_RATIO_MIN = 0.3  # Hồi tối thiểu 30% cây nến M15
 PULLBACK_RATIO_MAX = 0.6  # Hồi tối đa 60% (nếu hồi sâu quá có thể là đảo chiều)
 MIN_CANDLE_SIZE_POINTS = 100 # Nến M15 phải lớn hơn 10 pips mới tính là tín hiệu
 
+# Thông số Quản lý Lệnh
+ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
+BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
+
+# Trailing Stop khi lời 1/2 TP để lock profit
+ENABLE_TRAILING_STOP = False        # Bật/tắt chức năng Trailing Stop
+TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
+TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
+
+# Cooldown sau lệnh thua
+ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
+LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
+
+# Telegram Bot Configuration
+TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+CHAT_ID = "1887610382"
+
 
 # ==============================================================================
 # 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
