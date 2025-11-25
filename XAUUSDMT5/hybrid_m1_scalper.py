@@ -170,6 +170,15 @@ def check_and_execute_hybrid_trade():
     # Lấy thông tin thị trường
     tick = mt5.symbol_info_tick(SYMBOL)
     if tick is None: return False
+    
+    # --- KIỂM TRA LỆNH ĐANG MỞ (MAX 1 LỆNH) ---
+    positions = mt5.positions_get(symbol=SYMBOL)
+    if positions:
+        # Lọc các lệnh có Magic Number của bot
+        bot_positions = [pos for pos in positions if pos.magic == MAGIC]
+        if len(bot_positions) > 0:
+            print(f"⚠️ Đang có {len(bot_positions)} lệnh mở. Bỏ qua tín hiệu mới.")
+            return False
     ask_price = tick.ask
     bid_price = tick.bid
     point = mt5.symbol_info(SYMBOL).point
