@@ -700,7 +700,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
     else:
-        success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
+        success_msg = f"✅ Gửi lệnh BOTM15 {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
         
         # Gửi thông báo Telegram với thông tin chi tiết
