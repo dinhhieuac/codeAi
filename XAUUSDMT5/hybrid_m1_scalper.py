@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import requests
+from datetime import datetime
 
 # --- 1. THÔNG SỐ CẤU HÌNH ---
 # Biến Cấu hình MT5 (Sẽ được ghi đè từ JSON)
@@ -12,7 +14,11 @@ MT5_PASSWORD = None
 MT5_SERVER = None
 MT5_PATH = None
 
-SYMBOL = "XAUUSDc"
+# Telegram Configuration
+TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+CHAT_ID = "1887610382"
+
+SYMBOL = "XAUUSDm"
 VOLUME = 0.01
 MAGIC = 123457
 TIMEFRAME_M1 = mt5.TIMEFRAME_M1
