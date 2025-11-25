@@ -717,7 +717,7 @@ def run_bot():
         
         # 2. Lấy dữ liệu M1
         df_m1 = get_rates(mt5.TIMEFRAME_M1)
-        if df_m1 is None or len(df_m1) < EMA_M1 + 1:
+        if df_m1 is None or len(df_m1) < 50:
             print("Đang chờ dữ liệu M1...")
             time.sleep(5)
             continue
