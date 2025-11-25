@@ -51,6 +51,7 @@ def load_config(filename="XAUUSDMT5/mt5_account1.json"):
         SYMBOL = config.get("SYMBOL", SYMBOL) 
         MT5_PATH = config.get("PATH")
         VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
+        CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
@@ -101,9 +102,39 @@ def initialize_mt5():
         quit()
 
 
+# --- 1.2 HÀM GỬI TELEGRAM ---
+
+def send_telegram(message):
+    """
+    Gửi tin nhắn qua Telegram bot
+    
+    Args:
+        message: Nội dung tin nhắn cần gửi
+    """
+    if not CHAT_ID:
+        return  # Không có CHAT_ID → Bỏ qua Telegram
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, data=data, timeout=5)
+        if response.status_code == 200:
+            return True
+        else:
+            print(f"⚠️ Telegram error: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Lỗi gửi Telegram: {e}")
+        return False
+
+
 # --- 2. HÀM TÍNH TOÁN CÁC CHỈ BÁO CẦN THIẾT ---
 
-def get_ma(symbol, timeframe, period, ma_type):
+def get_ma(symbol, timeframe, period):
     """Tính toán giá trị đường trung bình động (Moving Average)."""
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, period + 1)
     if rates is None or len(rates) < period + 1:
@@ -146,7 +177,7 @@ def check_and_execute_hybrid_trade():
     point = mt5.symbol_info(SYMBOL).point
     
     # BƯỚC 1: KIỂM TRA XU HƯỚNG LỚN (H1 EMA50)
-    ema50_h1 = get_ma(SYMBOL, TIMEFRAME_H1, 50, mt5.MA_MODE_SMA)
+    ema50_h1 = get_ma(SYMBOL, TIMEFRAME_H1, 50)
     if ema50_h1 is None: return False
     
     h1_trend = None
@@ -179,7 +210,7 @@ def check_and_execute_hybrid_trade():
     df_m1 = pd.DataFrame(rates_m1)
     
     # Tính toán EMA20 M1
-    ema20_m1 = get_ma(SYMBOL, TIMEFRAME_M1, 20, mt5.MA_MODE_SMA)
+    ema20_m1 = get_ma(SYMBOL, TIMEFRAME_M1, 20)
     if ema20_m1 is None: return False
     
     # Tính ATR (Average True Range) cho SL/TP
@@ -239,7 +270,30 @@ def check_and_execute_hybrid_trade():
     print(f"Kết quả gửi lệnh: {result}")
     
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"Lỗi gửi lệnh: retcode={result.retcode}, error={mt5.last_error()}")
+        error_msg = f"❌ Lỗi gửi lệnh {'BUY' if m1_signal == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}"
+        print(error_msg)
+        print(f"Chi tiết lỗi: {mt5.last_error()}")
+        send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nEntry: {ask_price} | SL: {round(sl_price, 5)} | TP: {round(tp_price, 5)}")
+    else:
+        success_msg = f"✅ Gửi lệnh {'BUY' if m1_signal == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
+        print(success_msg)
+        
+        # Gửi thông báo Telegram
+        trade_direction = "🟢 BUY" if m1_signal == mt5.ORDER_TYPE_BUY else "🔴 SELL"
+        telegram_msg = f"""
+<b>{trade_direction} LỆNH MỚI (Hybrid Scalper)</b>
+
+📊 <b>Symbol:</b> {SYMBOL}
+💰 <b>Entry:</b> {ask_price}
+🛑 <b>SL:</b> {round(sl_price, 5)} ({round(sl_points, 1)} pips)
+🎯 <b>TP:</b> {round(tp_price, 5)} ({round(tp_points, 1)} pips)
+📦 <b>Volume:</b> {VOLUME}
+🆔 <b>Order ID:</b> {result.order}
+📈 <b>ATR:</b> {atr_value/point:.2f} pips
+
+⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        send_telegram(telegram_msg)
     
     return True
 
