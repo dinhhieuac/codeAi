@@ -942,20 +942,10 @@ def run_bot():
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
-                # Kiểm tra cooldown sau lệnh thua
-                print(f"\n  ┌─ [BƯỚC 0] Kiểm tra cooldown sau lệnh thua")
-                cooldown_allowed, cooldown_message = check_last_loss_cooldown()
-                print(f"    {cooldown_message}")
-                print(f"  └─ [BƯỚC 0] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
-                
-                if not cooldown_allowed:
-                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
-                    print(f"     - {cooldown_message}")
-                    print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
                 # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
                 # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
-                elif signal_type == "RETEST" and not adx_ok:
+                if signal_type == "RETEST" and not adx_ok:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
                     print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
                     print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
@@ -969,7 +959,19 @@ def run_bot():
                         print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
-                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
+                    
+                    # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
+                    print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
+                    cooldown_allowed, cooldown_message = check_last_loss_cooldown()
+                    print(f"    {cooldown_message}")
+                    print(f"  └─ [COOLDOWN] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
+                    
+                    if not cooldown_allowed:
+                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
+                        print(f"     - {cooldown_message}")
+                        print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
+                    else:
+                        send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
                     
                 elif m1_signal == 'SELL' and h1_trend == 'SELL':
                     print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
@@ -981,7 +983,19 @@ def run_bot():
                         print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
                     print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
                     print(f"     - Volume: {VOLUME}")
-                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
+                    
+                    # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
+                    print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
+                    cooldown_allowed, cooldown_message = check_last_loss_cooldown()
+                    print(f"    {cooldown_message}")
+                    print(f"  └─ [COOLDOWN] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
+                    
+                    if not cooldown_allowed:
+                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
+                        print(f"     - {cooldown_message}")
+                        print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
+                    else:
+                        send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
                 
                 else:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
