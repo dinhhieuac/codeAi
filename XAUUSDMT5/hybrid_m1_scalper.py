@@ -50,9 +50,7 @@ def load_config(filename="XAUUSDMT5/mt5_account1.json"):
         MT5_SERVER = config.get("SERVER")
         SYMBOL = config.get("SYMBOL", SYMBOL) 
         MT5_PATH = config.get("PATH")
-        VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
-        CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
-        
+        VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có        
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
             print("❌ Lỗi: Các thông tin ACCOUNT_NUMBER, PASSWORD, SERVER, SYMBOL không được để trống trong file JSON.")
@@ -313,12 +311,15 @@ if __name__ == "__main__":
     # (Đã được kiểm tra trong initialize_mt5)
 
     # --- Vòng lặp giao dịch ---
-    print(f"Bắt đầu Hybrid Scalping trên {SYMBOL} M1...")
+    print(f"Bắt đầu Hybrid Scalping trên {SYMBOL} M1... (Check mỗi 10s)")
     
-    # Đây là một vòng lặp kiểm tra đơn giản. 
-    # Trong môi trường thực, bạn nên dùng vòng lặp while True và quản lý thời gian sleep.
-    
-    check_and_execute_hybrid_trade()
+    try:
+        while True:
+            check_and_execute_hybrid_trade()
+            time.sleep(10)
+            
+    except KeyboardInterrupt:
+        print("\nĐã dừng bot thủ công.")
 
     # --- Kết thúc ---
     mt5.shutdown()
