@@ -1,7 +1,7 @@
 import MetaTrader5 as mt5
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import requests
@@ -42,6 +42,10 @@ BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 ENABLE_TRAILING_STOP = False        # Bật/tắt chức năng Trailing Stop
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
+
+# Cooldown sau lệnh thua
+ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
+LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
 
 # Telegram Bot Configuration
  # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
@@ -409,7 +413,74 @@ def check_m1_breakout(df_m1, h1_trend, adx_current):
     return 'NONE'
 
 # ==============================================================================
-# 6. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
+# 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
+# ==============================================================================
+
+def check_last_loss_cooldown():
+    """
+    Kiểm tra lệnh đóng cuối cùng, nếu là lệnh thua thì kiểm tra thời gian cooldown
+    
+    Returns:
+        Tuple (bool, str): (allowed, message)
+            - allowed: True nếu cho phép mở lệnh mới, False nếu còn trong cooldown
+            - message: Thông báo chi tiết
+    """
+    if not ENABLE_LOSS_COOLDOWN:
+        return True, "Cooldown sau lệnh thua đã tắt"
+    
+    try:
+        # Lấy deals từ 1 ngày gần nhất
+        from_timestamp = int((datetime.now() - timedelta(days=1)).timestamp())
+        to_timestamp = int(datetime.now().timestamp())
+        deals = mt5.history_deals_get(from_timestamp, to_timestamp)
+        
+        if deals is None or len(deals) == 0:
+            return True, "Không có lệnh đóng nào trong lịch sử"
+        
+        # Lọc chỉ lấy deals đóng lệnh (DEAL_ENTRY_OUT) và có magic number của bot
+        closed_deals = []
+        for deal in deals:
+            if (deal.entry == mt5.DEAL_ENTRY_OUT and 
+                deal.magic == MAGIC and 
+                deal.profit != 0):
+                closed_deals.append(deal)
+        
+        if len(closed_deals) == 0:
+            return True, "Không có lệnh đóng nào của bot này"
+        
+        # Sắp xếp theo thời gian (mới nhất trước)
+        closed_deals.sort(key=lambda x: x.time, reverse=True)
+        
+        # Lấy lệnh đóng cuối cùng
+        last_deal = closed_deals[0]
+        last_deal_time = datetime.fromtimestamp(last_deal.time)
+        last_deal_profit = last_deal.profit
+        
+        # Kiểm tra nếu lệnh cuối cùng là lệnh thua (profit < 0)
+        if last_deal_profit < 0:
+            # Tính thời gian đã trôi qua từ khi đóng lệnh
+            time_elapsed = datetime.now() - last_deal_time
+            minutes_elapsed = time_elapsed.total_seconds() / 60
+            
+            if minutes_elapsed < LOSS_COOLDOWN_MINUTES:
+                remaining_minutes = LOSS_COOLDOWN_MINUTES - minutes_elapsed
+                message = f"⏸️ Cooldown sau lệnh thua: Còn {remaining_minutes:.1f} phút (Lệnh thua: {last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')})"
+                return False, message
+            else:
+                message = f"✅ Đã qua cooldown sau lệnh thua ({minutes_elapsed:.1f} phút đã trôi qua)"
+                return True, message
+        else:
+            # Lệnh cuối cùng là lệnh lời hoặc hòa vốn → Cho phép mở lệnh mới
+            message = f"✅ Lệnh đóng cuối cùng là lệnh lời/hòa vốn (Profit: {last_deal_profit:.2f} USD)"
+            return True, message
+            
+    except Exception as e:
+        print(f"⚠️ Lỗi khi kiểm tra cooldown sau lệnh thua: {e}")
+        # Nếu có lỗi, cho phép mở lệnh để tránh block bot
+        return True, f"Lỗi kiểm tra cooldown: {e}"
+
+# ==============================================================================
+# 7. HÀM GIAO DỊCH VÀ QUẢN LÝ LỆNH (TRADING & MANAGEMENT)
 # ==============================================================================
 
 def get_symbol_info():
@@ -871,10 +942,20 @@ def run_bot():
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
+                # Kiểm tra cooldown sau lệnh thua
+                print(f"\n  ┌─ [BƯỚC 0] Kiểm tra cooldown sau lệnh thua")
+                cooldown_allowed, cooldown_message = check_last_loss_cooldown()
+                print(f"    {cooldown_message}")
+                print(f"  └─ [BƯỚC 0] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
+                
+                if not cooldown_allowed:
+                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
+                    print(f"     - {cooldown_message}")
+                    print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
                 # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
                 # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
-                if signal_type == "RETEST" and not adx_ok:
+                elif signal_type == "RETEST" and not adx_ok:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
                     print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
                     print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
