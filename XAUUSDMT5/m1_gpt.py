@@ -44,7 +44,7 @@ TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Cooldown sau lệnh thua
-ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
+ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
 LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
 
 # Telegram Bot Configuration
