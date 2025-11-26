@@ -6,6 +6,7 @@ import json
 import os
 import requests
 from datetime import datetime
+import logging
 
 # --- 1. THÔNG SỐ CẤU HÌNH ---
 # Biến Cấu hình MT5 (Sẽ được ghi đè từ JSON)
@@ -31,7 +32,42 @@ ATR_MULTIPLIER_TP = 2.0   # TP = ATR * 2.0 (R:R = 1.33)
 RETEST_RANGE_POINTS = 50.0 # Khoảng cách tối đa để coi là Retest (0.5 USD)
 
 
-# --- 1.1 HÀM TẢI CẤU HÌNH (CONFIG LOADING) ---
+# --- 1.1 HÀM THIẾT LẬP LOGGING ---
+
+def setup_logging():
+    """
+    Thiết lập logging để ghi log vào file theo tên bot.
+    File log sẽ được tạo trong thư mục XAUUSDMT5/logs/
+    """
+    # Tạo thư mục logs nếu chưa có
+    log_dir = "XAUUSDMT5/logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Lấy tên file bot (ví dụ: hybrid_m1_scalper.py -> hybrid_m1_scalper)
+    bot_name = os.path.splitext(os.path.basename(__file__))[0]
+    log_file = os.path.join(log_dir, f"{bot_name}.log")
+    
+    # Cấu hình logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()  # Vẫn in ra console
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"=" * 70)
+    logger.info(f"BOT: {bot_name.upper()}")
+    logger.info(f"LOG FILE: {log_file}")
+    logger.info(f"=" * 70)
+    
+    return logger
+
+# --- 1.2 HÀM TẢI CẤU HÌNH (CONFIG LOADING) ---
 
 def load_config(filename="XAUUSDMT5/mt5_account1.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
@@ -276,17 +312,46 @@ def check_and_execute_hybrid_trade():
     result = mt5.order_send(request)
     print(f"Kết quả gửi lệnh: {result}")
     
+    # Lấy logger để ghi log
+    logger = logging.getLogger(__name__)
+    
     if result.retcode != mt5.TRADE_RETCODE_DONE:
+        error_info = mt5.last_error()
         error_msg = f"❌ Lỗi gửi lệnh {'BUY' if m1_signal == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}"
         print(error_msg)
-        print(f"Chi tiết lỗi: {mt5.last_error()}")
+        print(f"Chi tiết lỗi: {error_info}")
+        
+        # Ghi log lỗi
+        logger.error("=" * 70)
+        logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if m1_signal == mt5.ORDER_TYPE_BUY else 'SELL'}")
+        logger.error(f"Retcode: {result.retcode}")
+        logger.error(f"Chi tiết lỗi: {error_info}")
+        logger.error(f"Entry: {ask_price} | SL: {round(sl_price, 5)} ({round(sl_points, 1)} pips) | TP: {round(tp_price, 5)} ({round(tp_points, 1)} pips)")
+        logger.error(f"ATR: {atr_value/point:.2f} pips")
+        logger.error(f"Volume: {VOLUME} | Symbol: {SYMBOL}")
+        logger.error("=" * 70)
+        
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nEntry: {ask_price} | SL: {round(sl_price, 5)} | TP: {round(tp_price, 5)}")
     else:
         success_msg = f"✅ Gửi lệnh {'BUY' if m1_signal == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
         
-        # Gửi thông báo Telegram
+        # Ghi log thành công
         trade_direction = "🟢 BUY" if m1_signal == mt5.ORDER_TYPE_BUY else "🔴 SELL"
+        
+        logger.info("=" * 70)
+        logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
+        logger.info(f"Order ID: {result.order}")
+        logger.info(f"Symbol: {SYMBOL}")
+        logger.info(f"Entry: {ask_price}")
+        logger.info(f"SL: {round(sl_price, 5)} ({round(sl_points, 1)} pips)")
+        logger.info(f"TP: {round(tp_price, 5)} ({round(tp_points, 1)} pips)")
+        logger.info(f"Volume: {VOLUME}")
+        logger.info(f"ATR: {atr_value/point:.2f} pips")
+        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 70)
+        
+        # Gửi thông báo Telegram
         telegram_msg = f"""
 <b>{trade_direction} LỆNH MỚI (Hybrid Scalper)</b>
 

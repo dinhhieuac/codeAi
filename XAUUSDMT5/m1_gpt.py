@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 import os
 import requests
+import logging
 
 # ==============================================================================
 # 1. CÁC THAM SỐ CẤU HÌNH VÀ CHIẾN LƯỢC (GLOBAL VARIABLES)
@@ -64,7 +65,44 @@ BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips 
 BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
 
 # ==============================================================================
-# 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
+# 2. HÀM THIẾT LẬP LOGGING
+# ==============================================================================
+
+def setup_logging():
+    """
+    Thiết lập logging để ghi log vào file theo tên bot.
+    File log sẽ được tạo trong thư mục XAUUSDMT5/logs/
+    """
+    # Tạo thư mục logs nếu chưa có
+    log_dir = "XAUUSDMT5/logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Lấy tên file bot (ví dụ: m1_gpt.py -> m1_gpt)
+    bot_name = os.path.splitext(os.path.basename(__file__))[0]
+    log_file = os.path.join(log_dir, f"{bot_name}.log")
+    
+    # Cấu hình logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()  # Vẫn in ra console
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"=" * 70)
+    logger.info(f"BOT: {bot_name.upper()}")
+    logger.info(f"LOG FILE: {log_file}")
+    logger.info(f"=" * 70)
+    
+    return logger
+
+# ==============================================================================
+# 3. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
 
 def load_config(filename="XAUUSDMT5/mt5_account.json"):
@@ -682,12 +720,25 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
 
     result = mt5.order_send(request)
     
+    # Lấy logger để ghi log
+    logger = logging.getLogger(__name__)
+    
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         error_info = mt5.last_error()
         error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}"
         print(error_msg)
         print(f"Chi tiết lỗi: {error_info}")
         print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
+        
+        # Ghi log lỗi
+        logger.error("=" * 70)
+        logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
+        logger.error(f"Retcode: {result.retcode}")
+        logger.error(f"Chi tiết lỗi: {error_info}")
+        logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
+        logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
+        logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
+        logger.error("=" * 70)
         
         # Giải thích lỗi retcode 10030 (Invalid stops)
         if result.retcode == 10030:
@@ -697,18 +748,32 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             if symbol_info is not None:
                 stops_level = getattr(symbol_info, 'stops_level', 0)
                 print(f"     - Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
+                logger.error(f"Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
     else:
         success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
         
-        # Gửi thông báo Telegram với thông tin chi tiết
+        # Ghi log thành công
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
         atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
         sl_atr_display = f"{sl_pips_limited:.1f}" if sl_pips_limited is not None else f"{sl_points/10:.1f}"
         tp_atr_display = f"{tp_pips_limited:.1f}" if tp_pips_limited is not None else f"{tp_points/10:.1f}"
         
+        logger.info("=" * 70)
+        logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
+        logger.info(f"Order ID: {result.order}")
+        logger.info(f"Symbol: {SYMBOL}")
+        logger.info(f"Entry: {price:.5f}")
+        logger.info(f"SL: {sl:.5f} ({sl_points/10:.1f} pips)")
+        logger.info(f"TP: {tp:.5f} ({tp_points/10:.1f} pips)")
+        logger.info(f"Volume: {volume}")
+        logger.info(f"ATR: {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)")
+        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 70)
+        
+        # Gửi thông báo Telegram với thông tin chi tiết
         telegram_msg = f"""
 <b>{trade_direction} LỆNH MỚI</b>
 
@@ -837,12 +902,18 @@ def manage_positions():
 def run_bot():
     """Chu trình chính của bot, lặp lại việc kiểm tra tín hiệu và quản lý lệnh."""
     
-    # 0. Tải cấu hình
+    # 0. Thiết lập logging
+    logger = setup_logging()
+    logger.info("Khởi động bot...")
+    
+    # 1. Tải cấu hình
     if not load_config():
+        logger.error("Không thể tải cấu hình. Dừng bot.")
         return
         
-    # 1. Khởi tạo MT5 và kết nối
+    # 2. Khởi tạo MT5 và kết nối
     initialize_mt5()
+    logger.info("Đã kết nối MT5 thành công")
     
     last_candle_time = datetime(1970, 1, 1)
 

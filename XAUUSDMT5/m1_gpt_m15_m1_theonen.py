@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import json
 import os
 import requests
-import logging
 
 # ==============================================================================
 # 1. CÁC THAM SỐ CẤU HÌNH VÀ CHIẾN LƯỢC (GLOBAL VARIABLES)
@@ -21,21 +20,13 @@ VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 MAGIC = 20251117
 
 # Thông số Chỉ báo & Lọc
-# Chiến thuật M1: "BÁM THEO M15 – ĂN 5–10 PHÚT"
-EMA_M15 = 50  # EMA50 trên M15 để xác định trend
-EMA_M1 = 20  # EMA20 trên M1 để tìm điểm retest
-ATR_PERIOD = 14
-ADX_PERIOD = 14  # Chu kỳ tính ADX
-ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
+# Chiến thuật M15 Candle + M1 Pullback
+# M15 định hướng (Bias) -> M1 tìm điểm vào (Pullback 30-50%)
+PULLBACK_RATIO_MIN = 0.3  # Hồi tối thiểu 30% cây nến M15
+PULLBACK_RATIO_MAX = 0.6  # Hồi tối đa 60% (nếu hồi sâu quá có thể là đảo chiều)
+MIN_CANDLE_SIZE_POINTS = 100 # Nến M15 phải lớn hơn 10 pips mới tính là tín hiệu
 
-# Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
-# Chiến thuật M1: SL/TP theo nến M1
-SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
-TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
-SL_POINTS_MIN = 50000   # SL tối thiểu: 5 pips (50 points) - bảo vệ
-SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
-TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
-TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
+# Thông số Quản lý Lệnh
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
@@ -49,60 +40,12 @@ ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
 LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
 
 # Telegram Bot Configuration
- # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
-TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
-                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+CHAT_ID = "1887610382"
 
-CHAT_ID = "1887610382"      
-# Khoảng cách retest EMA20 trên M1 (points)
-# Giá chạm EMA20 hoặc dưới 3-6 pip (30-60 points)
-RETEST_DISTANCE_MAX = 60  # Tối đa 6 pips (60 points) từ EMA20
-
-# Chiến thuật BREAKOUT (khi giá không retest)
-ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
-BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips (100 points)
-BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
 
 # ==============================================================================
-# 2. HÀM THIẾT LẬP LOGGING
-# ==============================================================================
-
-def setup_logging():
-    """
-    Thiết lập logging để ghi log vào file theo tên bot.
-    File log sẽ được tạo trong thư mục XAUUSDMT5/logs/
-    """
-    # Tạo thư mục logs nếu chưa có
-    log_dir = "XAUUSDMT5/logs"
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-    
-    # Lấy tên file bot (ví dụ: m1_gpt_m15_Trent.py -> m1_gpt_m15_Trent)
-    bot_name = os.path.splitext(os.path.basename(__file__))[0]
-    log_file = os.path.join(log_dir, f"{bot_name}.log")
-    
-    # Cấu hình logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()  # Vẫn in ra console
-        ]
-    )
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"=" * 70)
-    logger.info(f"BOT: {bot_name.upper()}")
-    logger.info(f"LOG FILE: {log_file}")
-    logger.info(f"=" * 70)
-    
-    return logger
-
-# ==============================================================================
-# 3. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
+# 2. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
 
 def load_config(filename="XAUUSDMT5/mt5_account.json"):
@@ -279,176 +222,152 @@ def calculate_adx(df, period=14):
     
     return adx
 
-def check_m15_trend():
+def analyze_m15_candle_bias():
     """
-    Kiểm tra xu hướng M15 bằng EMA50
+    Phân tích nến M15 vừa đóng cửa để xác định Bias (Định hướng).
     
-    Chiến thuật: "BÁM THEO M15 – ĂN 5–10 PHÚT"
-    - Giá > EMA50 → CHỈ BUY
-    - Giá < EMA50 → CHỈ SELL
+    Patterns:
+    - Pinbar (Rút chân): Đảo chiều hoặc tiếp diễn.
+    - Marubozu/Strong Candle: Lực mạnh.
     
     Returns:
-        'BUY', 'SELL', hoặc 'SIDEWAYS'
+        bias (str): 'BUY', 'SELL', 'NEUTRAL'
+        candle_data (dict): Thông tin nến M15 {open, high, low, close, body_size, ...}
     """
-    print("  📊 [M15 TREND] Kiểm tra xu hướng M15 bằng EMA50...")
+    print("  📊 [M15 ANALYSIS] Đang phân tích nến M15 vừa đóng...")
     
-    df_m15 = get_rates(mt5.TIMEFRAME_M15)
-    if df_m15 is None or len(df_m15) < EMA_M15:
-        print(f"    [M15] ❌ Không đủ dữ liệu để tính EMA50")
-        return 'SIDEWAYS'
-    
-    ema_50_m15 = calculate_ema(df_m15, EMA_M15).iloc[-1]
-    close_m15 = df_m15['close'].iloc[-1]
-    
-    print(f"    [M15] Giá: {close_m15:.5f} | EMA50: {ema_50_m15:.5f}")
-    
-    if close_m15 > ema_50_m15:
-        print(f"    [M15] ✅ XU HƯỚNG MUA (Giá > EMA50) → CHỈ BUY")
-        return 'BUY'
-    elif close_m15 < ema_50_m15:
-        print(f"    [M15] ✅ XU HƯỚNG BÁN (Giá < EMA50) → CHỈ SELL")
-        return 'SELL'
-    else:
-        print(f"    [M15] ⚠️ SIDEWAYS (Giá ≈ EMA50)")
-        return 'SIDEWAYS'
-
-def check_m1_retest_ema20(df_m1, m15_trend):
-    """
-    Kiểm tra điểm vào ở M1 khi giá RETEST lại EMA20
-    
-    Chiến thuật: "BÁM THEO M15 – ĂN 5–10 PHÚT"
-    - Trend BUY → chờ giá M1 chạm EMA20 (hoặc dưới 3–6 pip) → BUY
-    - Trend SELL → chờ giá M1 chạm EMA20 → SELL
-    
-    Args:
-        df_m1: DataFrame M1
-        m15_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
+    # Lấy 2 nến M15 gần nhất (index 0 là đang chạy, index 1 là vừa đóng)
+    rates = mt5.copy_rates_from_pos(SYMBOL, mt5.TIMEFRAME_M15, 0, 2)
+    if rates is None or len(rates) < 2:
+        print("    ❌ Không đủ dữ liệu M15.")
+        return 'NEUTRAL', None
         
-    Returns:
-        'BUY', 'SELL', hoặc 'NONE'
-    """
-    if m15_trend == 'SIDEWAYS':
-        print("  📈 [M1 RETEST] M15 trend là SIDEWAYS → Không có tín hiệu")
-        return 'NONE'
+    candle = rates[0] # Nến vừa đóng (index 0 trong mảng 2 phần tử trả về từ copy_rates_from_pos với start 0, count 2 thì phần tử 0 là nến cũ hơn, phần tử 1 là nến mới nhất? 
+                      # Wait, copy_rates_from_pos(start_pos=0, count=2) returns [candle_index_1, candle_index_0]. 
+                      # Index 0 is the older one (closed), Index 1 is the current one (open).
+                      # Let's verify. mt5 returns numpy array. 
+                      # rates[0] is index 1 (previous closed), rates[1] is index 0 (current open).
+                      # Correct logic: rates = mt5.copy_rates_from_pos(SYMBOL, mt5.TIMEFRAME_M15, 0, 2)
+                      # rates[0] -> Nến index 1 (Vừa đóng)
+                      # rates[1] -> Nến index 0 (Đang chạy)
     
-    if len(df_m1) < EMA_M1:
-        print("  📈 [M1 RETEST] Không đủ dữ liệu để tính EMA20")
-        return 'NONE'
+    # Xác nhận lại logic index
+    # copy_rates_from_pos(symbol, timeframe, 0, 2) -> Lấy từ vị trí 0 (hiện tại) về quá khứ 2 nến.
+    # Kết quả trả về là mảng theo thứ tự thời gian tăng dần (cũ -> mới).
+    # Vậy rates[0] là nến Index 1 (Vừa đóng). rates[1] là nến Index 0 (Đang chạy).
     
-    # Tính EMA20 trên M1
-    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
-    ema_20_current = ema_20_m1.iloc[-1]
+    c_open = candle['open']
+    c_high = candle['high']
+    c_low = candle['low']
+    c_close = candle['close']
     
-    # Lấy giá hiện tại
-    tick = mt5.symbol_info_tick(SYMBOL)
-    current_price = tick.bid  # Dùng bid cho cả BUY và SELL (để tính khoảng cách)
+    body_size = abs(c_close - c_open)
+    total_size = c_high - c_low
+    upper_wick = c_high - max(c_open, c_close)
+    lower_wick = min(c_open, c_close) - c_low
     
-    point = get_symbol_info()
-    if point is None:
-        return 'NONE'
+    point = mt5.symbol_info(SYMBOL).point
     
-    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
-    distance_points = abs(current_price - ema_20_current) / point
+    candle_data = {
+        'open': c_open, 'high': c_high, 'low': c_low, 'close': c_close,
+        'body_size': body_size, 'total_size': total_size
+    }
     
-    print(f"  📈 [M1 RETEST] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
-    print(f"    Khoảng cách: {distance_points:.1f} points ({distance_points/10:.1f} pips)")
+    print(f"    [M15 Candle] O:{c_open} H:{c_high} L:{c_low} C:{c_close}")
+    print(f"    Size: {total_size/point:.1f} points, Body: {body_size/point:.1f} points")
     
-    if m15_trend == 'BUY':
-        # Trend BUY → chờ giá M1 chạm EMA20 hoặc dưới 3–6 pip
-        if current_price <= ema_20_current + (RETEST_DISTANCE_MAX * point):
-            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ dưới lên (BUY signal)")
-            return 'BUY'
-        else:
-            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points/10:.1f} pips) - Chờ retest")
-            return 'NONE'
-    
-    elif m15_trend == 'SELL':
-        # Trend SELL → chờ giá M1 chạm EMA20 hoặc trên 3–6 pip
-        if current_price >= ema_20_current - (RETEST_DISTANCE_MAX * point):
-            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ trên xuống (SELL signal)")
-            return 'SELL'
-        else:
-            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points/10:.1f} pips) - Chờ retest")
-            return 'NONE'
-    
-    return 'NONE'
+    if total_size < MIN_CANDLE_SIZE_POINTS * point:
+        print("    ⚠️ Nến M15 quá nhỏ (Sideways/Low Volatility) -> NEUTRAL")
+        return 'NEUTRAL', candle_data
 
-def check_m1_breakout(df_m1, m15_trend, adx_current):
-    """
-    Kiểm tra điểm vào BREAKOUT khi giá không retest EMA20
-    
-    Chiến thuật: ENTRY BREAKOUT (KHI GIÁ KHÔNG RETEST)
-    - ADX > 28
-    - M15 trend SELL → Giá M1 phá đáy gần nhất trong khi còn cách EMA20 > 10–20 point
-    - M15 trend BUY → Giá M1 phá đỉnh gần nhất trong khi còn cách EMA20 > 10–20 point
-    - Không cần retest → Bot follow momentum
-    
-    Args:
-        df_m1: DataFrame M1
-        m15_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
-        adx_current: Giá trị ADX hiện tại
+    # 1. BULLISH PINBAR (Rút chân dưới mạnh)
+    # Râu dưới dài >= 2/3 thân hoặc 1/2 tổng nến?
+    # Định nghĩa Pinbar mua: Râu dưới dài, thân nằm ở phần trên.
+    if lower_wick >= 0.6 * total_size:
+        print("    ✅ M15: BULLISH PINBAR (Rút chân dưới mạnh) -> BUY BIAS")
+        return 'BUY', candle_data
         
-    Returns:
-        'BUY', 'SELL', hoặc 'NONE'
+    # 2. BEARISH PINBAR (Rút chân trên mạnh)
+    if upper_wick >= 0.6 * total_size:
+        print("    ✅ M15: BEARISH PINBAR (Rút chân trên mạnh) -> SELL BIAS")
+        return 'SELL', candle_data
+        
+    # 3. STRONG BULLISH (Nến tăng mạnh)
+    # Thân nến chiếm > 60% tổng nến và là nến tăng
+    if c_close > c_open and body_size >= 0.6 * total_size:
+        print("    ✅ M15: STRONG BULLISH (Nến tăng mạnh) -> BUY BIAS")
+        return 'BUY', candle_data
+        
+    # 4. STRONG BEARISH (Nến giảm mạnh)
+    # Thân nến chiếm > 60% tổng nến và là nến giảm
+    if c_close < c_open and body_size >= 0.6 * total_size:
+        print("    ✅ M15: STRONG BEARISH (Nến giảm mạnh) -> SELL BIAS")
+        return 'SELL', candle_data
+        
+    print("    ⚠️ M15: Không rõ xu hướng (Indecision Candle) -> NEUTRAL")
+    return 'NEUTRAL', candle_data
+
+def check_m1_entry_pullback(bias, m15_candle):
     """
-    if m15_trend == 'SIDEWAYS':
-        return 'NONE'
+    Tìm điểm vào lệnh trên M1 dựa trên Pullback so với nến M15.
     
-    # Kiểm tra ADX > 28
-    if adx_current <= ADX_BREAKOUT_THRESHOLD:
-        return 'NONE'
-    
-    if len(df_m1) < EMA_M1 + 20:  # Cần ít nhất 20 nến để tìm đáy/đỉnh
-        return 'NONE'
-    
-    # Tính EMA20 trên M1
-    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
-    ema_20_current = ema_20_m1.iloc[-1]
-    
-    # Lấy giá hiện tại
+    Chiến thuật:
+    - BUY: Chờ giá hồi về 30-50% biên độ nến M15 (tính từ High xuống).
+    - SELL: Chờ giá hồi lên 30-50% biên độ nến M15 (tính từ Low lên).
+    """
     tick = mt5.symbol_info_tick(SYMBOL)
-    current_price = tick.bid if m15_trend == 'SELL' else tick.ask
+    if tick is None: return None, None, None
     
-    point = get_symbol_info()
-    if point is None:
-        return 'NONE'
+    current_price = tick.ask if bias == 'BUY' else tick.bid
+    point = mt5.symbol_info(SYMBOL).point
     
-    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
-    if m15_trend == 'SELL':
-        distance_points = (ema_20_current - current_price) / point  # Khoảng cách từ giá đến EMA20 (phía trên)
-    else:  # BUY
-        distance_points = (current_price - ema_20_current) / point  # Khoảng cách từ giá đến EMA20 (phía dưới)
+    c_high = m15_candle['high']
+    c_low = m15_candle['low']
+    c_range = c_high - c_low
     
-    # Kiểm tra khoảng cách > 10-20 point
-    if distance_points < BREAKOUT_DISTANCE_MIN or distance_points > BREAKOUT_DISTANCE_MAX:
-        return 'NONE'
+    print(f"  📈 [M1 ENTRY] Kiểm tra Pullback (Bias: {bias})...")
+    print(f"    Giá hiện tại: {current_price}")
     
-    # Tìm đáy/đỉnh gần nhất (20 nến gần nhất)
-    lookback = 20
-    recent_lows = df_m1['low'].iloc[-lookback:].min()
-    recent_highs = df_m1['high'].iloc[-lookback:].max()
-    
-    print(f"  🚀 [M1 BREAKOUT] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
-    print(f"    Khoảng cách đến EMA20: {distance_points:.1f} points ({distance_points/10:.1f} pips)")
-    print(f"    Đáy gần nhất: {recent_lows:.5f} | Đỉnh gần nhất: {recent_highs:.5f}")
-    
-    if m15_trend == 'SELL':
-        # SELL: Giá phá đáy gần nhất
-        if current_price < recent_lows:
-            print(f"    ✅ [M1 BREAKOUT] Giá phá đáy gần nhất ({recent_lows:.5f}) → SELL BREAKOUT")
-            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
-            print(f"       - Khoảng cách EMA20: {distance_points/10:.1f} pips (10-20 pips)")
-            return 'SELL'
-    
-    elif m15_trend == 'BUY':
-        # BUY: Giá phá đỉnh gần nhất
-        if current_price > recent_highs:
-            print(f"    ✅ [M1 BREAKOUT] Giá phá đỉnh gần nhất ({recent_highs:.5f}) → BUY BREAKOUT")
-            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
-            print(f"       - Khoảng cách EMA20: {distance_points/10:.1f} pips (10-20 pips)")
-            return 'BUY'
-    
-    return 'NONE'
+    if bias == 'BUY':
+        # Vùng Buy lý tưởng: Từ (High - 30%) đến (High - 60%)
+        # Tức là giá đã giảm được 30% - 60% của cây nến M15 trước đó
+        buy_zone_upper = c_high - (c_range * PULLBACK_RATIO_MIN)
+        buy_zone_lower = c_high - (c_range * PULLBACK_RATIO_MAX)
+        
+        sl_price = c_low - (50 * point) # SL dưới râu nến M15 5 pips
+        
+        print(f"    Vùng Buy: {buy_zone_lower:.2f} - {buy_zone_upper:.2f}")
+        
+        if buy_zone_lower <= current_price <= buy_zone_upper:
+            print("    ✅ GIÁ ĐANG TRONG VÙNG PULLBACK -> MỞ LỆNH BUY")
+            return 'BUY', sl_price, current_price
+        elif current_price < buy_zone_lower:
+             print("    ⚠️ Giá đã hồi quá sâu (> 60%) -> Cẩn thận đảo chiều -> Bỏ qua")
+             return None, None, None
+        else:
+             print("    ⏳ Giá chưa hồi đủ (Chưa đến 30%) -> Chờ thêm")
+             return None, None, None
+             
+    elif bias == 'SELL':
+        # Vùng Sell lý tưởng: Từ (Low + 30%) đến (Low + 60%)
+        sell_zone_lower = c_low + (c_range * PULLBACK_RATIO_MIN)
+        sell_zone_upper = c_low + (c_range * PULLBACK_RATIO_MAX)
+        
+        sl_price = c_high + (50 * point) # SL trên râu nến M15 5 pips
+        
+        print(f"    Vùng Sell: {sell_zone_lower:.2f} - {sell_zone_upper:.2f}")
+        
+        if sell_zone_lower <= current_price <= sell_zone_upper:
+            print("    ✅ GIÁ ĐANG TRONG VÙNG PULLBACK -> MỞ LỆNH SELL")
+            return 'SELL', sl_price, current_price
+        elif current_price > sell_zone_upper:
+             print("    ⚠️ Giá đã hồi quá cao (> 60%) -> Cẩn thận đảo chiều -> Bỏ qua")
+             return None, None, None
+        else:
+             print("    ⏳ Giá chưa hồi đủ (Chưa đến 30%) -> Chờ thêm")
+             return None, None, None
+             
+    return None, None, None
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
@@ -607,101 +526,19 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP theo ATR của nến M1
-    # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
-    # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
-    atr_pips = None
-    sl_pips_limited = None
-    tp_pips_limited = None
+    # Tính TP theo tỷ lệ R:R (Ví dụ 1:2) hoặc ATR
+    # Ở đây ta dùng ATR để tính TP cho linh hoạt, nhưng SL đã cố định theo nến M15
+    # Nếu dùng SL theo nến M15, ta nên tính TP theo R:R dựa trên SL distance
     
-    if df_m1 is not None:
-        atr_pips = calculate_atr_from_m1(df_m1)
-        if atr_pips is not None:
-            # ATR đã là pips, tính SL và TP trực tiếp
-            sl_pips = atr_pips * SL_ATR_MULTIPLIER
-            tp_pips = atr_pips * TP_ATR_MULTIPLIER
-            
-            # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
-            sl_points = sl_pips * 10
-            tp_points = tp_pips * 10
-            
-            # Giới hạn SL/TP trong khoảng min-max (đã là points)
-            sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
-            tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-            
-            # Tính lại pips sau khi giới hạn (để hiển thị đúng)
-            sl_pips_limited = sl_points / 10
-            tp_pips_limited = tp_points / 10
-            
-            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
-        else:
-            # Fallback: Dùng giá trị trung bình nếu không tính được ATR
-            sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-            print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
-    else:
-        # Fallback: Dùng giá trị trung bình nếu không có df_m1
-        sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-        tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-        print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
-    
-    sl_distance = sl_points * point
-    tp_distance = tp_points * point
+    sl_distance = abs(price - sl)
+    tp_distance = sl_distance * 2.0 # R:R = 1:2
     
     if trade_type == mt5.ORDER_TYPE_BUY:
-        # BUY: SL dưới entry, TP trên entry
-        sl = price - sl_distance
         tp = price + tp_distance
-    else: # SELL
-        # SELL: SL trên entry, TP dưới entry
-        sl = price + sl_distance
+    else:
         tp = price - tp_distance
-    
-    # Kiểm tra logic SL/TP
-    if trade_type == mt5.ORDER_TYPE_BUY:
-        if sl >= price or tp <= price:
-            print(f"  ⚠️ [ORDER] LỖI LOGIC: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f}) và TP ({tp:.5f}) phải > Entry")
-            return
-    else:  # SELL
-        if sl <= price or tp >= price:
-            print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
-            return
-    
-    # ⚠️ VALIDATION: Kiểm tra stops level của broker
-    symbol_info = get_symbol_info_full()
-    if symbol_info is not None:
-        stops_level = getattr(symbol_info, 'stops_level', 0)
-        if stops_level > 0:
-            # Tính khoảng cách từ entry đến SL/TP (points)
-            sl_distance_points = abs(price - sl) / point
-            tp_distance_points = abs(price - tp) / point
-            
-            # Kiểm tra xem SL/TP có đủ xa entry không (phải >= stops_level)
-            if sl_distance_points < stops_level:
-                print(f"  ⚠️ [ORDER] SL quá gần entry: {sl_distance_points:.1f} points < stops_level {stops_level} points")
-                print(f"     → Điều chỉnh SL từ {sl:.5f} để đảm bảo khoảng cách >= {stops_level} points")
-                # Điều chỉnh SL để đảm bảo khoảng cách >= stops_level
-                if trade_type == mt5.ORDER_TYPE_BUY:
-                    sl = price - (stops_level * point)
-                else:  # SELL
-                    sl = price + (stops_level * point)
-                # Tính lại sl_points sau khi điều chỉnh
-                sl_points = abs(price - sl) / point
-                print(f"     → SL mới: {sl:.5f} ({sl_points/10:.1f} pips)")
-            
-            if tp_distance_points < stops_level:
-                print(f"  ⚠️ [ORDER] TP quá gần entry: {tp_distance_points:.1f} points < stops_level {stops_level} points")
-                print(f"     → Điều chỉnh TP từ {tp:.5f} để đảm bảo khoảng cách >= {stops_level} points")
-                # Điều chỉnh TP để đảm bảo khoảng cách >= stops_level
-                if trade_type == mt5.ORDER_TYPE_BUY:
-                    tp = price + (stops_level * point)
-                else:  # SELL
-                    tp = price - (stops_level * point)
-                # Tính lại tp_points sau khi điều chỉnh
-                tp_points = abs(price - tp) / point
-                print(f"     → TP mới: {tp:.5f} ({tp_points/10:.1f} pips)")
-    
-    print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
+        
+    print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f} (R:R 1:2)")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -713,15 +550,12 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         "tp": tp,
         "deviation": deviation,
         "magic": MAGIC,
-        "comment": f"Bot_Auto_{'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}",
+        "comment": f"M15_Candle_M1_Pullback",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
     result = mt5.order_send(request)
-    
-    # Lấy logger để ghi log
-    logger = logging.getLogger(__name__)
     
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         error_info = mt5.last_error()
@@ -729,16 +563,6 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         print(error_msg)
         print(f"Chi tiết lỗi: {error_info}")
         print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-        
-        # Ghi log lỗi
-        logger.error("=" * 70)
-        logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
-        logger.error(f"Retcode: {result.retcode}")
-        logger.error(f"Chi tiết lỗi: {error_info}")
-        logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-        logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
-        logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
-        logger.error("=" * 70)
         
         # Giải thích lỗi retcode 10030 (Invalid stops)
         if result.retcode == 10030:
@@ -748,32 +572,18 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             if symbol_info is not None:
                 stops_level = getattr(symbol_info, 'stops_level', 0)
                 print(f"     - Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
-                logger.error(f"Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
     else:
-        success_msg = f"✅ Gửi lệnh BOTM15 {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
+        success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
         
-        # Ghi log thành công
+        # Gửi thông báo Telegram với thông tin chi tiết
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
         atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
         sl_atr_display = f"{sl_pips_limited:.1f}" if sl_pips_limited is not None else f"{sl_points/10:.1f}"
         tp_atr_display = f"{tp_pips_limited:.1f}" if tp_pips_limited is not None else f"{tp_points/10:.1f}"
         
-        logger.info("=" * 70)
-        logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
-        logger.info(f"Order ID: {result.order}")
-        logger.info(f"Symbol: {SYMBOL}")
-        logger.info(f"Entry: {price:.5f}")
-        logger.info(f"SL: {sl:.5f} ({sl_points/10:.1f} pips)")
-        logger.info(f"TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-        logger.info(f"Volume: {volume}")
-        logger.info(f"ATR: {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)")
-        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("=" * 70)
-        
-        # Gửi thông báo Telegram với thông tin chi tiết
         telegram_msg = f"""
 <b>{trade_direction} LỆNH MỚI</b>
 
@@ -902,24 +712,18 @@ def manage_positions():
 def run_bot():
     """Chu trình chính của bot, lặp lại việc kiểm tra tín hiệu và quản lý lệnh."""
     
-    # 0. Thiết lập logging
-    logger = setup_logging()
-    logger.info("Khởi động bot...")
-    
-    # 1. Tải cấu hình
+    # 0. Tải cấu hình
     if not load_config():
-        logger.error("Không thể tải cấu hình. Dừng bot.")
         return
         
-    # 2. Khởi tạo MT5 và kết nối
+    # 1. Khởi tạo MT5 và kết nối
     initialize_mt5()
-    logger.info("Đã kết nối MT5 thành công")
     
     last_candle_time = datetime(1970, 1, 1)
 
-    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: BÁM THEO M15 – ĂN 5–10 PHÚT) ---")
+    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: BÁM THEO H1 – ĂN 5–10 PHÚT) ---")
     print("📋 Chiến thuật:")
-    print("   1. Xác định hướng M15 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
+    print("   1. Xác định hướng H1 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
     print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20")
     print("   3. TP 10–20 pip, SL 8–15 pip")
     print("   4. Chỉ check tín hiệu khi nến M1 đã đóng\n")
@@ -930,7 +734,7 @@ def run_bot():
         
         # 2. Lấy dữ liệu M1
         df_m1 = get_rates(mt5.TIMEFRAME_M1)
-        if df_m1 is None or len(df_m1) < EMA_M1 + 1:
+        if df_m1 is None or len(df_m1) < 50:
             print("Đang chờ dữ liệu M1...")
             time.sleep(5)
             continue
@@ -955,134 +759,69 @@ def run_bot():
             # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
             print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
             
-            # 1. Xác định hướng M15 bằng EMA50
-            print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng M15 (EMA50)")
-            m15_trend = check_m15_trend()
-            print(f"  └─ [BƯỚC 1] Kết quả: {m15_trend}")
+            # 1. Phân tích M15 Candle để tìm Bias
+            bias, m15_candle = analyze_m15_candle_bias()
             
-            # 2. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang)
-            print(f"\n  ┌─ [BƯỚC 2] Kiểm tra ADX (Tránh thị trường đi ngang)")
-            adx_values = calculate_adx(df_m1, ADX_PERIOD)
-            adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
-            print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD}, Breakout: {ADX_BREAKOUT_THRESHOLD})")
-            
-            if adx_current >= ADX_MIN_THRESHOLD:
-                adx_ok = True
-                print(f"    ✅ [ADX] XU HƯỚNG MẠNH (ADX={adx_current:.2f} ≥ {ADX_MIN_THRESHOLD}) - Có thể giao dịch")
+            if bias == 'NEUTRAL':
+                print("  ⚠️ Bias NEUTRAL -> Chờ nến M15 rõ ràng hơn.")
             else:
-                adx_ok = False
-                print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
-            print(f"  └─ [BƯỚC 2] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
-
-            # 3. Kiểm tra điểm vào ở M1: RETEST hoặc BREAKOUT
-            print(f"\n  ┌─ [BƯỚC 3] Kiểm tra tín hiệu M1 (Retest EMA20 hoặc Breakout)")
-            
-            # Ưu tiên 1: Kiểm tra RETEST EMA20
-            m1_retest_signal = check_m1_retest_ema20(df_m1, m15_trend)
-            
-            # Ưu tiên 2: Nếu không có retest, kiểm tra BREAKOUT (khi ADX > 28)
-            m1_breakout_signal = 'NONE'
-            if m1_retest_signal == 'NONE' and adx_current > ADX_BREAKOUT_THRESHOLD:
-                m1_breakout_signal = check_m1_breakout(df_m1, m15_trend, adx_current)
-            
-            # Kết hợp tín hiệu: Ưu tiên retest, nếu không có thì dùng breakout
-            m1_signal = m1_retest_signal if m1_retest_signal != 'NONE' else m1_breakout_signal
-            
-            if m1_retest_signal != 'NONE':
-                print(f"    ✅ [M1 SIGNAL] RETEST EMA20: {m1_retest_signal}")
-            elif m1_breakout_signal != 'NONE':
-                print(f"    ✅ [M1 SIGNAL] BREAKOUT: {m1_breakout_signal} (ADX={adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD})")
-            else:
-                print(f"    ⚠️ [M1 SIGNAL] Chưa có tín hiệu (Retest: {m1_retest_signal}, Breakout: {m1_breakout_signal})")
-            
-            print(f"  └─ [BƯỚC 3] Kết quả: {m1_signal}")
-
-            # 4. Kiểm tra vị thế đang mở (chỉ đếm lệnh của cặp XAUUSD)
-            positions = mt5.positions_get(symbol=SYMBOL)
-            if positions is None:
-                open_positions = 0
-            else:
-                # Chỉ đếm lệnh có magic number của bot này
-                open_positions = len([pos for pos in positions if pos.magic == MAGIC])
-            print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở ({SYMBOL}): {open_positions}")
-            
-            signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
-            print(f"\n  📊 [TÓM TẮT] M15 Trend={m15_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
-
-            if open_positions <=2:
-                # Không có lệnh nào, tìm tín hiệu vào lệnh
-                print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
+                # 2. Tìm điểm vào trên M1 (Pullback)
+                signal, sl_price, entry_price = check_m1_entry_pullback(bias, m15_candle)
                 
-                # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
-                # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
-                # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
-                if signal_type == "RETEST" and not adx_ok:
-                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
-                    print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
-                    print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
-                elif m1_signal == 'BUY' and m15_trend == 'BUY':
-                    print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
-                    print(f"     - M15 Trend: {m15_trend} (Giá > EMA50)")
-                    print(f"     - M1 Signal: {m1_signal} ({signal_type})")
-                    if signal_type == "RETEST":
-                        print(f"       → Giá retest EMA20 từ dưới lên")
-                    elif signal_type == "BREAKOUT":
-                        print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
-                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                    print(f"     - Volume: {VOLUME}")
-                    
-                    # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
-                    print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
-                    cooldown_allowed, cooldown_message = check_last_loss_cooldown()
-                    print(f"    {cooldown_message}")
-                    print(f"  └─ [COOLDOWN] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
-                    
-                    if not cooldown_allowed:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
-                        print(f"     - {cooldown_message}")
-                        print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
-                    else:
-                        send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
-                    
-                elif m1_signal == 'SELL' and m15_trend == 'SELL':
-                    print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
-                    print(f"     - M15 Trend: {m15_trend} (Giá < EMA50)")
-                    print(f"     - M1 Signal: {m1_signal} ({signal_type})")
-                    if signal_type == "RETEST":
-                        print(f"       → Giá retest EMA20 từ trên xuống")
-                    elif signal_type == "BREAKOUT":
-                        print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
-                    print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                    print(f"     - Volume: {VOLUME}")
-                    
-                    # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
-                    print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
-                    cooldown_allowed, cooldown_message = check_last_loss_cooldown()
-                    print(f"    {cooldown_message}")
-                    print(f"  └─ [COOLDOWN] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
-                    
-                    if not cooldown_allowed:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
-                        print(f"     - {cooldown_message}")
-                        print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
-                    else:
-                        send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
-                
-                else:
-                    print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
-                    if m15_trend == 'SIDEWAYS':
-                        print(f"     - M15 Trend: {m15_trend} (Không rõ xu hướng)")
-                    elif m1_signal == 'NONE':
-                        print(f"     - M1 Signal: {m1_signal} (Chưa có retest hoặc breakout)")
-                    elif m1_signal == 'BUY' and m15_trend != 'BUY':
-                        print(f"     - M1 Signal: {m1_signal} nhưng M15 Trend: {m15_trend} (Không đồng ý)")
-                    elif m1_signal == 'SELL' and m15_trend != 'SELL':
-                        print(f"     - M1 Signal: {m1_signal} nhưng M15 Trend: {m15_trend} (Không đồng ý)")
-            else:
-                print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
-            
-            print(f"{'='*70}\n")
-            
+                if signal == 'BUY':
+                     tp_dist = abs(entry_price - sl_price) * 2.0
+                     tp_price = entry_price + tp_dist
+                     
+                     print(f"🚀 GỬI LỆNH BUY: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
+                     
+                     request = {
+                        "action": mt5.TRADE_ACTION_DEAL,
+                        "symbol": SYMBOL,
+                        "volume": VOLUME,
+                        "type": mt5.ORDER_TYPE_BUY,
+                        "price": entry_price,
+                        "sl": sl_price,
+                        "tp": tp_price,
+                        "deviation": 20,
+                        "magic": MAGIC,
+                        "comment": "M15_Pullback_Buy",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+                     result = mt5.order_send(request)
+                     if result.retcode == mt5.TRADE_RETCODE_DONE:
+                         print(f"✅ Gửi lệnh thành công: {result.order}")
+                         send_telegram(f"✅ BUY M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
+                     else:
+                         print(f"❌ Lỗi gửi lệnh: {result.retcode}")
+                         
+                elif signal == 'SELL':
+                     tp_dist = abs(entry_price - sl_price) * 2.0
+                     tp_price = entry_price - tp_dist
+                     
+                     print(f"🚀 GỬI LỆNH SELL: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
+                     
+                     request = {
+                        "action": mt5.TRADE_ACTION_DEAL,
+                        "symbol": SYMBOL,
+                        "volume": VOLUME,
+                        "type": mt5.ORDER_TYPE_SELL,
+                        "price": entry_price,
+                        "sl": sl_price,
+                        "tp": tp_price,
+                        "deviation": 20,
+                        "magic": MAGIC,
+                        "comment": "M15_Pullback_Sell",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+                     result = mt5.order_send(request)
+                     if result.retcode == mt5.TRADE_RETCODE_DONE:
+                         print(f"✅ Gửi lệnh thành công: {result.order}")
+                         send_telegram(f"✅ SELL M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
+                     else:
+                         print(f"❌ Lỗi gửi lệnh: {result.retcode}")
+
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()
         
