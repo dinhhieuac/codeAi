@@ -32,10 +32,14 @@ ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trư
 # Chiến thuật M1: SL/TP theo nến M1
 SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
 TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
-SL_POINTS_MIN = 50000   # SL tối thiểu: 5 pips (50 points) - bảo vệ
+SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
 SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
 TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
+
+# Fix SL theo giá trị USD cố định
+ENABLE_FIXED_SL_USD = True  # Bật/tắt fix SL theo USD
+FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
@@ -607,43 +611,73 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP theo ATR của nến M1
+    # Tính SL và TP
     # Lưu ý: Với XAUUSD, lot 0.01: 100 pips = 1 USD
-    # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
     atr_pips = None
     sl_pips_limited = None
     tp_pips_limited = None
     
-    if df_m1 is not None:
-        atr_pips = calculate_atr_from_m1(df_m1)
-        if atr_pips is not None:
-            # ATR đã là pips, tính SL và TP trực tiếp
-            sl_pips = atr_pips * SL_ATR_MULTIPLIER
-            tp_pips = atr_pips * TP_ATR_MULTIPLIER
-            
-            # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
-            sl_points = sl_pips * 10
-            tp_points = tp_pips * 10
-            
-            # Giới hạn SL/TP trong khoảng min-max (đã là points)
-            sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
-            tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-            
-            # Tính lại pips sau khi giới hạn (để hiển thị đúng)
-            sl_pips_limited = sl_points / 10
-            tp_pips_limited = tp_points / 10
-            
-            print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
+    # Kiểm tra nếu bật fix SL theo USD
+    if ENABLE_FIXED_SL_USD and FIXED_SL_USD > 0:
+        # Tính SL từ USD cố định
+        # Với XAUUSD, lot 0.01: 100 pips = 1 USD
+        # SL (pips) = SL (USD) / 0.01 = SL (USD) × 100
+        sl_pips_fixed = FIXED_SL_USD / 0.01  # Chuyển USD sang pips
+        sl_points = sl_pips_fixed * 10  # Chuyển pips sang points (1 pip = 10 points)
+        sl_pips_limited = sl_pips_fixed
+        
+        print(f"  📊 [ORDER] SL CỐ ĐỊNH: {FIXED_SL_USD} USD = {sl_pips_fixed:.1f} pips ({sl_points:.0f} points)")
+        
+        # Tính TP vẫn dựa trên ATR (nếu có) hoặc dùng giá trị mặc định
+        if df_m1 is not None:
+            atr_pips = calculate_atr_from_m1(df_m1)
+            if atr_pips is not None:
+                tp_pips = atr_pips * TP_ATR_MULTIPLIER
+                tp_points = tp_pips * 10
+                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
+                tp_pips_limited = tp_points / 10
+                print(f"  📊 [ORDER] TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
+            else:
+                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
+                tp_pips_limited = tp_points / 10
+                print(f"  ⚠️ [ORDER] Không tính được ATR cho TP, dùng giá trị mặc định: TP: {tp_pips_limited:.1f} pips")
         else:
-            # Fallback: Dùng giá trị trung bình nếu không tính được ATR
+            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
+            tp_pips_limited = tp_points / 10
+            print(f"  ⚠️ [ORDER] Không có dữ liệu M1 cho TP, dùng giá trị mặc định: TP: {tp_pips_limited:.1f} pips")
+    else:
+        # Tính SL và TP theo ATR của nến M1 (logic cũ)
+        # ATR đã được tính trực tiếp trong pips từ calculate_atr_from_m1()
+        if df_m1 is not None:
+            atr_pips = calculate_atr_from_m1(df_m1)
+            if atr_pips is not None:
+                # ATR đã là pips, tính SL và TP trực tiếp
+                sl_pips = atr_pips * SL_ATR_MULTIPLIER
+                tp_pips = atr_pips * TP_ATR_MULTIPLIER
+                
+                # Chuyển pips sang points (1 pip = 10 points cho XAUUSD)
+                sl_points = sl_pips * 10
+                tp_points = tp_pips * 10
+                
+                # Giới hạn SL/TP trong khoảng min-max (đã là points)
+                sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
+                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
+                
+                # Tính lại pips sau khi giới hạn (để hiển thị đúng)
+                sl_pips_limited = sl_points / 10
+                tp_pips_limited = tp_points / 10
+                
+                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN/10}-{SL_POINTS_MAX/10} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN/10}-{TP_POINTS_MAX/10} pips)")
+            else:
+                # Fallback: Dùng giá trị trung bình nếu không tính được ATR
+                sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
+                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
+                print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
+        else:
+            # Fallback: Dùng giá trị trung bình nếu không có df_m1
             sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
             tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-            print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
-    else:
-        # Fallback: Dùng giá trị trung bình nếu không có df_m1
-        sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-        tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-        print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
+            print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_points/10:.1f} pips, TP: {tp_points/10:.1f} pips")
     
     sl_distance = sl_points * point
     tp_distance = tp_points * point
