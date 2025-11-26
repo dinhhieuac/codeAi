@@ -759,100 +759,69 @@ def run_bot():
             # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
             print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
             
-            # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
-            print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
-
-           # 1. Phân tích M15 Candle để tìm Bias
-        bias, m15_candle = analyze_m15_candle_bias()
-        
-        if bias == 'NEUTRAL':
-            print("  ⚠️ Bias NEUTRAL -> Chờ nến M15 rõ ràng hơn.")
-            time.sleep(10)
-            continue
+            # 1. Phân tích M15 Candle để tìm Bias
+            bias, m15_candle = analyze_m15_candle_bias()
             
-        # 2. Tìm điểm vào trên M1 (Pullback)
-        signal, sl_price, entry_price = check_m1_entry_pullback(bias, m15_candle)
-        
-        if signal == 'BUY':
-             # Gửi lệnh BUY với SL theo nến M15
-             # Lưu ý: send_order hiện tại đang tính lại SL/TP theo ATR, cần chỉnh sửa send_order để nhận SL cố định
-             # Hoặc ta sửa send_order ở trên để nhận sl_price tham số
-             
-             # Sửa send_order để nhận sl_price và tính TP theo R:R
-             # Nhưng hàm send_order ở trên đã được sửa để tính TP theo R:R 1:2 dựa trên SL
-             # Tuy nhiên, hàm send_order hiện tại nhận `df_m1` và tự tính SL.
-             # Ta cần sửa hàm send_order để nhận `sl_override`
-             
-             # Để đơn giản, ta sẽ gọi hàm order_send trực tiếp ở đây hoặc tạo hàm send_order_v2.
-             # Tốt nhất là sửa send_order để linh hoạt.
-             # Nhưng vì công cụ replace không cho phép sửa nhiều chỗ rải rác dễ dàng, 
-             # ta sẽ gọi mt5.order_send trực tiếp hoặc tạo hàm send_order_v2.
-             
-             # Gọi hàm send_order đã sửa (đã sửa ở chunk trên để tính TP theo R:R từ SL)
-             # Wait, chunk trên vẫn tính SL/TP từ ATR nếu df_m1 được truyền vào?
-             # KHÔNG, chunk trên đã thay thế toàn bộ logic tính SL/TP bằng logic R:R 1:2
-             # NHƯNG, nó vẫn dùng `sl` được tính từ `sl_distance` mà `sl_distance` lại tính từ `sl_points` (ATR).
-             # Cần sửa lại logic truyền SL vào send_order.
-             
-             # Do hạn chế của việc sửa code từng phần, ta sẽ viết lại logic gửi lệnh ở đây cho chắc chắn.
-             
-             tp_dist = abs(entry_price - sl_price) * 2.0
-             tp_price = entry_price + tp_dist
-             
-             print(f"🚀 GỬI LỆNH BUY: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
-             
-             request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": SYMBOL,
-                "volume": VOLUME,
-                "type": mt5.ORDER_TYPE_BUY,
-                "price": entry_price,
-                "sl": sl_price,
-                "tp": tp_price,
-                "deviation": 20,
-                "magic": MAGIC,
-                "comment": "M15_Pullback_Buy",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-             result = mt5.order_send(request)
-             if result.retcode == mt5.TRADE_RETCODE_DONE:
-                 print(f"✅ Gửi lệnh thành công: {result.order}")
-                 send_telegram(f"✅ BUY M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
-             else:
-                 print(f"❌ Lỗi gửi lệnh: {result.retcode}")
-                 
-        elif signal == 'SELL':
-             tp_dist = abs(entry_price - sl_price) * 2.0
-             tp_price = entry_price - tp_dist
-             
-             print(f"🚀 GỬI LỆNH SELL: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
-             
-             request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": SYMBOL,
-                "volume": VOLUME,
-                "type": mt5.ORDER_TYPE_SELL,
-                "price": entry_price,
-                "sl": sl_price,
-                "tp": tp_price,
-                "deviation": 20,
-                "magic": MAGIC,
-                "comment": "M15_Pullback_Sell",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-             result = mt5.order_send(request)
-             if result.retcode == mt5.TRADE_RETCODE_DONE:
-                 print(f"✅ Gửi lệnh thành công: {result.order}")
-                 send_telegram(f"✅ SELL M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
-             else:
-                 print(f"❌ Lỗi gửi lệnh: {result.retcode}")
+            if bias == 'NEUTRAL':
+                print("  ⚠️ Bias NEUTRAL -> Chờ nến M15 rõ ràng hơn.")
+            else:
+                # 2. Tìm điểm vào trên M1 (Pullback)
+                signal, sl_price, entry_price = check_m1_entry_pullback(bias, m15_candle)
+                
+                if signal == 'BUY':
+                     tp_dist = abs(entry_price - sl_price) * 2.0
+                     tp_price = entry_price + tp_dist
+                     
+                     print(f"🚀 GỬI LỆNH BUY: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
+                     
+                     request = {
+                        "action": mt5.TRADE_ACTION_DEAL,
+                        "symbol": SYMBOL,
+                        "volume": VOLUME,
+                        "type": mt5.ORDER_TYPE_BUY,
+                        "price": entry_price,
+                        "sl": sl_price,
+                        "tp": tp_price,
+                        "deviation": 20,
+                        "magic": MAGIC,
+                        "comment": "M15_Pullback_Buy",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+                     result = mt5.order_send(request)
+                     if result.retcode == mt5.TRADE_RETCODE_DONE:
+                         print(f"✅ Gửi lệnh thành công: {result.order}")
+                         send_telegram(f"✅ BUY M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
+                     else:
+                         print(f"❌ Lỗi gửi lệnh: {result.retcode}")
+                         
+                elif signal == 'SELL':
+                     tp_dist = abs(entry_price - sl_price) * 2.0
+                     tp_price = entry_price - tp_dist
+                     
+                     print(f"🚀 GỬI LỆNH SELL: Entry {entry_price}, SL {sl_price}, TP {tp_price}")
+                     
+                     request = {
+                        "action": mt5.TRADE_ACTION_DEAL,
+                        "symbol": SYMBOL,
+                        "volume": VOLUME,
+                        "type": mt5.ORDER_TYPE_SELL,
+                        "price": entry_price,
+                        "sl": sl_price,
+                        "tp": tp_price,
+                        "deviation": 20,
+                        "magic": MAGIC,
+                        "comment": "M15_Pullback_Sell",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+                     result = mt5.order_send(request)
+                     if result.retcode == mt5.TRADE_RETCODE_DONE:
+                         print(f"✅ Gửi lệnh thành công: {result.order}")
+                         send_telegram(f"✅ SELL M1_M15 {SYMBOL}\nEntry: {entry_price}\nSL: {sl_price}\nTP: {tp_price}")
+                     else:
+                         print(f"❌ Lỗi gửi lệnh: {result.retcode}")
 
-        # Ngủ 10s trước khi check lại
-        time.sleep(10)
-
-            
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()
         
