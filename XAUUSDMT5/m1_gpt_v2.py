@@ -49,9 +49,9 @@ TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
 # Fix SL theo giá trị USD cố định
-ENABLE_FIXED_SL_USD = True  # Bật/tắt fix SL theo USD
+ENABLE_FIXED_SL_USD =False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
-ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
+ENABLE_BREAK_EVEN = True           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
 # Trailing Stop khi lời 1/2 TP để lock profit
