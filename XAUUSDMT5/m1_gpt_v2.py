@@ -514,7 +514,7 @@ def check_price_structure(df_m1, h1_trend):
         current_close = df_m1['close'].iloc[-1]
         has_micro_breakout = current_close > micro_high
         
-        if has_higher_low or has_micro_breakout:
+        if has_higher_low and has_micro_breakout:
             print(f"    ✅ [STRUCTURE] BUY: Higher Low={has_higher_low}, Micro Breakout={has_micro_breakout}")
             return 'BUY'
         else:
