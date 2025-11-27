@@ -50,7 +50,8 @@ TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Cooldown sau lệnh thua
 ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
-LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
+LOSS_COOLDOWN_MINUTES = 30         # Thời gian chờ sau lệnh thua (phút)
+LOSS_COOLDOWN_MODE = 1              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
 
 # Telegram Bot Configuration
  # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
@@ -460,7 +461,9 @@ def check_m1_breakout(df_m1, h1_trend, adx_current):
 
 def check_last_loss_cooldown():
     """
-    Kiểm tra lệnh đóng cuối cùng, nếu là lệnh thua thì kiểm tra thời gian cooldown
+    Kiểm tra cooldown sau lệnh thua với 2 mode:
+    - Mode 1: Nếu lệnh cuối cùng thua → nghỉ LOSS_COOLDOWN_MINUTES phút
+    - Mode 2: Nếu 2 lệnh cuối cùng đều thua → nghỉ LOSS_COOLDOWN_MINUTES phút
     
     Returns:
         Tuple (bool, str): (allowed, message)
@@ -493,28 +496,78 @@ def check_last_loss_cooldown():
         # Sắp xếp theo thời gian (mới nhất trước)
         closed_deals.sort(key=lambda x: x.time, reverse=True)
         
-        # Lấy lệnh đóng cuối cùng
-        last_deal = closed_deals[0]
-        last_deal_time = datetime.fromtimestamp(last_deal.time)
-        last_deal_profit = last_deal.profit
-        
-        # Kiểm tra nếu lệnh cuối cùng là lệnh thua (profit < 0)
-        if last_deal_profit < 0:
-            # Tính thời gian đã trôi qua từ khi đóng lệnh
-            time_elapsed = datetime.now() - last_deal_time
-            minutes_elapsed = time_elapsed.total_seconds() / 60
+        # MODE 1: Kiểm tra 1 lệnh cuối cùng thua
+        if LOSS_COOLDOWN_MODE == 1:
+            # Lấy lệnh đóng cuối cùng
+            last_deal = closed_deals[0]
+            last_deal_time = datetime.fromtimestamp(last_deal.time)
+            last_deal_profit = last_deal.profit
             
-            if minutes_elapsed < LOSS_COOLDOWN_MINUTES:
-                remaining_minutes = LOSS_COOLDOWN_MINUTES - minutes_elapsed
-                message = f"⏸️ Cooldown sau lệnh thua: Còn {remaining_minutes:.1f} phút (Lệnh thua: {last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')})"
-                return False, message
+            # Kiểm tra nếu lệnh cuối cùng là lệnh thua (profit < 0)
+            if last_deal_profit < 0:
+                # Tính thời gian đã trôi qua từ khi đóng lệnh
+                time_elapsed = datetime.now() - last_deal_time
+                minutes_elapsed = time_elapsed.total_seconds() / 60
+                
+                if minutes_elapsed < LOSS_COOLDOWN_MINUTES:
+                    remaining_minutes = LOSS_COOLDOWN_MINUTES - minutes_elapsed
+                    message = f"⏸️ Cooldown (Mode 1): Còn {remaining_minutes:.1f} phút (Lệnh cuối thua: {last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')})"
+                    return False, message
+                else:
+                    message = f"✅ Đã qua cooldown sau lệnh thua ({minutes_elapsed:.1f} phút đã trôi qua)"
+                    return True, message
             else:
-                message = f"✅ Đã qua cooldown sau lệnh thua ({minutes_elapsed:.1f} phút đã trôi qua)"
+                # Lệnh cuối cùng là lệnh lời hoặc hòa vốn → Cho phép mở lệnh mới
+                message = f"✅ Lệnh đóng cuối cùng là lệnh lời/hòa vốn (Profit: {last_deal_profit:.2f} USD)"
                 return True, message
+        
+        # MODE 2: Kiểm tra 2 lệnh cuối cùng đều thua
+        elif LOSS_COOLDOWN_MODE == 2:
+            # Cần ít nhất 2 lệnh để check
+            if len(closed_deals) < 2:
+                if len(closed_deals) == 1:
+                    last_deal = closed_deals[0]
+                    if last_deal.profit < 0:
+                        return True, "Chỉ có 1 lệnh đóng (Mode 2 cần 2 lệnh đều thua)"
+                    else:
+                        return True, f"Lệnh cuối cùng là lệnh lời/hòa vốn (Profit: {last_deal.profit:.2f} USD)"
+                else:
+                    return True, "Không đủ lệnh để kiểm tra (Mode 2 cần 2 lệnh)"
+            
+            # Lấy 2 lệnh cuối cùng
+            last_deal = closed_deals[0]
+            second_last_deal = closed_deals[1]
+            
+            last_deal_profit = last_deal.profit
+            second_last_deal_profit = second_last_deal.profit
+            last_deal_time = datetime.fromtimestamp(last_deal.time)
+            
+            # Kiểm tra nếu cả 2 lệnh cuối cùng đều thua
+            if last_deal_profit < 0 and second_last_deal_profit < 0:
+                # Tính thời gian đã trôi qua từ khi đóng lệnh cuối cùng
+                time_elapsed = datetime.now() - last_deal_time
+                minutes_elapsed = time_elapsed.total_seconds() / 60
+                
+                if minutes_elapsed < LOSS_COOLDOWN_MINUTES:
+                    remaining_minutes = LOSS_COOLDOWN_MINUTES - minutes_elapsed
+                    message = f"⏸️ Cooldown (Mode 2): Còn {remaining_minutes:.1f} phút (2 lệnh cuối đều thua: {last_deal_profit:.2f} USD, {second_last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')})"
+                    return False, message
+                else:
+                    message = f"✅ Đã qua cooldown sau 2 lệnh thua ({minutes_elapsed:.1f} phút đã trôi qua)"
+                    return True, message
+            else:
+                # Không phải cả 2 lệnh đều thua → Cho phép mở lệnh mới
+                if last_deal_profit >= 0:
+                    message = f"✅ Lệnh cuối cùng là lệnh lời/hòa vốn (Profit: {last_deal_profit:.2f} USD) - Mode 2 không áp dụng"
+                elif second_last_deal_profit >= 0:
+                    message = f"✅ Lệnh thứ 2 là lệnh lời/hòa vốn (Profit: {second_last_deal_profit:.2f} USD) - Mode 2 không áp dụng"
+                else:
+                    message = f"✅ Không phải cả 2 lệnh cuối đều thua (Lệnh cuối: {last_deal_profit:.2f} USD, Lệnh thứ 2: {second_last_deal_profit:.2f} USD)"
+                return True, message
+        
         else:
-            # Lệnh cuối cùng là lệnh lời hoặc hòa vốn → Cho phép mở lệnh mới
-            message = f"✅ Lệnh đóng cuối cùng là lệnh lời/hòa vốn (Profit: {last_deal_profit:.2f} USD)"
-            return True, message
+            # Mode không hợp lệ
+            return True, f"⚠️ LOSS_COOLDOWN_MODE không hợp lệ: {LOSS_COOLDOWN_MODE} (Chỉ hỗ trợ 1 hoặc 2)"
             
     except Exception as e:
         print(f"⚠️ Lỗi khi kiểm tra cooldown sau lệnh thua: {e}")
