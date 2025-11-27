@@ -38,19 +38,19 @@ TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
 # Fix SL theo giá trị USD cố định
-ENABLE_FIXED_SL_USD = True  # Bật/tắt fix SL theo USD
+ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
 # Trailing Stop khi lời 1/2 TP để lock profit
-ENABLE_TRAILING_STOP = False        # Bật/tắt chức năng Trailing Stop
+ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Cooldown sau lệnh thua
-ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
-LOSS_COOLDOWN_MINUTES = 30         # Thời gian chờ sau lệnh thua (phút)
+ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
+LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
 LOSS_COOLDOWN_MODE = 1              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
 
 # Telegram Bot Configuration
