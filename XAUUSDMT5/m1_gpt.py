@@ -1096,7 +1096,7 @@ def run_bot():
             signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
             print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
 
-            if open_positions <=2:
+            if open_positions <1:
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 

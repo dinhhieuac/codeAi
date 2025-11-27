@@ -116,7 +116,7 @@ def setup_logging():
 # 3. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
 
-def load_config(filename="XAUUSDMT5/mt5_account.json"):
+def load_config(filename="XAUUSDMT5/mt5_account25.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
     
