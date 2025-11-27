@@ -1603,8 +1603,35 @@ def run_bot():
                     logger.info(f"  - H1 Trend: {h1_trend} (Giá > EMA50)")
                     logger.info(f"  - M1 Signal Type: {signal_type}")
                     logger.info(f"  - M1 Signal: {m1_signal}")
-                    if signal_type == "GOLDEN_ENTRY":
-                        logger.info(f"    → Golden Entry: Đủ 3 điều kiện (Structure + Momentum + Confirmation)")
+                    if signal_type == "GOLDEN_ENTRY" and signal_details:
+                        logger.info(f"    → Golden Entry: Đủ 3 điều kiện với các giá trị cụ thể:")
+                        # Structure details
+                        if 'structure' in signal_details:
+                            s = signal_details['structure']
+                            if 'has_higher_low' in s:
+                                logger.info(f"      [1] STRUCTURE:")
+                                logger.info(f"        - Higher Low: {s['has_higher_low']} (Current Low: {s['current_low']:.5f} > Prev Low: {s['prev_low']:.5f})")
+                                logger.info(f"        - Micro Breakout: {s['has_micro_breakout']} (Close: {s['current_close']:.5f} > Micro High: {s['micro_high']:.5f})")
+                        # Momentum details
+                        if 'momentum' in signal_details:
+                            m = signal_details['momentum']
+                            logger.info(f"      [2] MOMENTUM:")
+                            logger.info(f"        - Body Ratio: {m['body_ratio_pct']} (Cần: {CANDLE_BODY_MIN_RATIO*100:.0f}%-{CANDLE_BODY_MAX_RATIO*100:.0f}%)")
+                            logger.info(f"        - EMA9: {m['ema_fast']:.5f} | EMA21: {m['ema_slow']:.5f} | Separation: {m['ema_separation']:.5f}")
+                            logger.info(f"        - EMA Expanding: {m['ema_expanding']}")
+                            logger.info(f"        - Spread: {m['spread']:.5f} (Max: {SPREAD_MAX})")
+                            logger.info(f"        - Volume Increase: {m['volume_ratio_pct']} (Cần: {(VOLUME_INCREASE_MIN-1)*100:.0f}%-{(VOLUME_INCREASE_MAX-1)*100:.0f}%)")
+                        # Confirmation details
+                        if 'confirmation' in signal_details:
+                            c = signal_details['confirmation']
+                            logger.info(f"      [3] CONFIRMATION:")
+                            if 'breaks_micro_high' in c:
+                                logger.info(f"        - Break Micro High: {c['breaks_micro_high']} (Close: {c['current_close']:.5f} > Micro High: {c['micro_high']:.5f})")
+                            if 'closes_above_ema9' in c:
+                                logger.info(f"        - Close Above EMA9: {c['closes_above_ema9']} (Close: {c['current_close']:.5f} > EMA9: {c['ema9']:.5f})")
+                                logger.info(f"        - Touched EMA21: {c['touched_ema21']} (EMA21: {c['ema21']:.5f})")
+                            if 'has_long_lower_wick' in c:
+                                logger.info(f"        - Long Lower Wick Rejection: {c['has_long_lower_wick']} (Lower Wick: {c['lower_wick']:.5f} > Body: {c['body_size']:.5f})")
                     elif signal_type == "RETEST":
                         logger.info(f"    → Giá retest EMA20 từ dưới lên")
                     elif signal_type == "BREAKOUT":
