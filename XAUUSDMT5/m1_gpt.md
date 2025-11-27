@@ -54,3 +54,5 @@ Không cần retest
 → Bot SELL follow momentum
 → TP nhanh 10–20 point
 → SL nhỏ phía trên vùng breakout
+
+v
