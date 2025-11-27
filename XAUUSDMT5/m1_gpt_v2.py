@@ -760,13 +760,15 @@ def check_golden_entry(df_m1, h1_trend):
         h1_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
         
     Returns:
-        'BUY', 'SELL', hoặc 'NONE'
+        Tuple: (signal, details_dict)
+            - signal: 'BUY', 'SELL', hoặc 'NONE'
+            - details_dict: Dict chứa thông tin chi tiết các điều kiện
     """
     if not ENABLE_GOLDEN_ENTRY:
-        return 'NONE'  # Nếu tắt rule này, trả về NONE để dùng logic cũ
+        return 'NONE', {}  # Nếu tắt rule này, trả về NONE để dùng logic cũ
     
     if h1_trend == 'SIDEWAYS':
-        return 'NONE'
+        return 'NONE', {}
     
     print(f"\n  🔍 [GOLDEN ENTRY] Kiểm tra 3 điều kiện cùng lúc...")
     
@@ -779,15 +781,148 @@ def check_golden_entry(df_m1, h1_trend):
     # Điều kiện 3: Xác nhận
     confirmation_signal = check_confirmation(df_m1, h1_trend)
     
+    # Lấy chi tiết các giá trị để log
+    details = {}
+    
+    # Chi tiết Structure
+    if len(df_m1) >= STRUCTURE_LOOKBACK + 5:
+        current_low = df_m1['low'].iloc[-1]
+        current_high = df_m1['high'].iloc[-1]
+        prev_low = df_m1['low'].iloc[-STRUCTURE_LOOKBACK:-1].min()
+        prev_high = df_m1['high'].iloc[-STRUCTURE_LOOKBACK:-1].max()
+        micro_lookback = 5
+        micro_high = df_m1['high'].iloc[-micro_lookback:-1].max() if len(df_m1) > micro_lookback else current_high
+        micro_low = df_m1['low'].iloc[-micro_lookback:-1].min() if len(df_m1) > micro_lookback else current_low
+        current_close = df_m1['close'].iloc[-1]
+        
+        if h1_trend == 'BUY':
+            details['structure'] = {
+                'has_higher_low': current_low > prev_low,
+                'current_low': current_low,
+                'prev_low': prev_low,
+                'has_micro_breakout': current_close > micro_high,
+                'current_close': current_close,
+                'micro_high': micro_high
+            }
+        else:  # SELL
+            details['structure'] = {
+                'has_lower_high': current_high < prev_high,
+                'current_high': current_high,
+                'prev_high': prev_high,
+                'has_micro_breakdown': current_close < micro_low,
+                'current_close': current_close,
+                'micro_low': micro_low
+            }
+    
+    # Chi tiết Momentum
+    if len(df_m1) >= EMA_SLOW + 2:
+        last_candle = df_m1.iloc[-1]
+        prev_candle = df_m1.iloc[-2] if len(df_m1) > 1 else last_candle
+        body_size = abs(last_candle['close'] - last_candle['open'])
+        total_size = last_candle['high'] - last_candle['low']
+        body_ratio = body_size / total_size if total_size > 0 else 0
+        
+        ema_fast = calculate_ema(df_m1, EMA_FAST)
+        ema_slow = calculate_ema(df_m1, EMA_SLOW)
+        ema_fast_current = ema_fast.iloc[-1]
+        ema_slow_current = ema_slow.iloc[-1]
+        ema_fast_prev = ema_fast.iloc[-2] if len(ema_fast) > 1 else ema_fast_current
+        ema_slow_prev = ema_slow.iloc[-2] if len(ema_slow) > 1 else ema_slow_current
+        ema_separation = abs(ema_fast_current - ema_slow_current)
+        ema_separation_prev = abs(ema_fast_prev - ema_slow_prev)
+        ema_expanding = ema_separation > ema_separation_prev
+        
+        tick = mt5.symbol_info_tick(SYMBOL)
+        spread = (tick.ask - tick.bid) if tick else 0
+        
+        current_volume = last_candle.get('tick_volume', 0) if 'tick_volume' in last_candle else 0
+        prev_volume = prev_candle.get('tick_volume', 0) if len(df_m1) > 1 and 'tick_volume' in prev_candle else current_volume
+        volume_ratio = current_volume / prev_volume if prev_volume > 0 else 1.0
+        
+        details['momentum'] = {
+            'body_ratio': body_ratio,
+            'body_ratio_pct': f"{body_ratio*100:.1f}%",
+            'ema_fast': ema_fast_current,
+            'ema_slow': ema_slow_current,
+            'ema_separation': ema_separation,
+            'ema_expanding': ema_expanding,
+            'spread': spread,
+            'volume_ratio': volume_ratio,
+            'volume_ratio_pct': f"{(volume_ratio-1)*100:.1f}%"
+        }
+    
+    # Chi tiết Confirmation
+    if len(df_m1) >= EMA_SLOW + 5:
+        last_candle = df_m1.iloc[-1]
+        current_close = last_candle['close']
+        current_open = last_candle['open']
+        current_high = last_candle['high']
+        current_low = last_candle['low']
+        
+        ema_fast = calculate_ema(df_m1, EMA_FAST)
+        ema_slow = calculate_ema(df_m1, EMA_SLOW)
+        ema_fast_current = ema_fast.iloc[-1]
+        ema_slow_current = ema_slow.iloc[-1]
+        
+        micro_lookback = 5
+        micro_high = df_m1['high'].iloc[-micro_lookback:-1].max() if len(df_m1) > micro_lookback else current_high
+        micro_low = df_m1['low'].iloc[-micro_lookback:-1].min() if len(df_m1) > micro_lookback else current_low
+        
+        body_size = abs(current_close - current_open)
+        total_size = current_high - current_low
+        upper_wick = current_high - max(current_open, current_close)
+        lower_wick = min(current_open, current_close) - current_low
+        
+        if h1_trend == 'BUY':
+            is_green = current_close > current_open
+            breaks_micro_high = current_close > micro_high
+            closes_above_ema9 = current_close > ema_fast_current
+            touched_ema21 = current_low <= ema_slow_current <= current_high
+            has_long_lower_wick = lower_wick > body_size and total_size > 0
+            
+            details['confirmation'] = {
+                'is_green': is_green,
+                'breaks_micro_high': breaks_micro_high,
+                'current_close': current_close,
+                'micro_high': micro_high,
+                'closes_above_ema9': closes_above_ema9,
+                'ema9': ema_fast_current,
+                'touched_ema21': touched_ema21,
+                'ema21': ema_slow_current,
+                'has_long_lower_wick': has_long_lower_wick,
+                'lower_wick': lower_wick,
+                'body_size': body_size
+            }
+        else:  # SELL
+            is_red = current_close < current_open
+            breaks_micro_low = current_close < micro_low
+            closes_below_ema9 = current_close < ema_fast_current
+            touched_ema21 = current_low <= ema_slow_current <= current_high
+            has_long_upper_wick = upper_wick > body_size and total_size > 0
+            
+            details['confirmation'] = {
+                'is_red': is_red,
+                'breaks_micro_low': breaks_micro_low,
+                'current_close': current_close,
+                'micro_low': micro_low,
+                'closes_below_ema9': closes_below_ema9,
+                'ema9': ema_fast_current,
+                'touched_ema21': touched_ema21,
+                'ema21': ema_slow_current,
+                'has_long_upper_wick': has_long_upper_wick,
+                'upper_wick': upper_wick,
+                'body_size': body_size
+            }
+    
     # Tổng hợp: Phải có đủ 3 điều kiện và cùng hướng
     if structure_signal != 'NONE' and has_momentum and confirmation_signal != 'NONE':
         # Kiểm tra tất cả cùng hướng
         if structure_signal == momentum_direction == confirmation_signal:
             print(f"    ✅ [GOLDEN ENTRY] ĐỦ 3 ĐIỀU KIỆN: Structure={structure_signal}, Momentum={momentum_direction}, Confirmation={confirmation_signal}")
-            return structure_signal
+            return structure_signal, details
         else:
             print(f"    ⚠️ [GOLDEN ENTRY] 3 điều kiện không cùng hướng: Structure={structure_signal}, Momentum={momentum_direction}, Confirmation={confirmation_signal}")
-            return 'NONE'
+            return 'NONE', details
     else:
         missing = []
         if structure_signal == 'NONE':
@@ -797,7 +932,7 @@ def check_golden_entry(df_m1, h1_trend):
         if confirmation_signal == 'NONE':
             missing.append("Confirmation")
         print(f"    ⚠️ [GOLDEN ENTRY] Thiếu điều kiện: {', '.join(missing)}")
-        return 'NONE'
+        return 'NONE', details
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
@@ -1363,8 +1498,9 @@ def run_bot():
         
         # Kiểm tra GOLDEN ENTRY (rule "Vào lệnh chuẩn nhất") nếu được bật
         golden_entry_signal = 'NONE'
+        golden_entry_details = {}
         if ENABLE_GOLDEN_ENTRY:
-            golden_entry_signal = check_golden_entry(df_m1, h1_trend)
+            golden_entry_signal, golden_entry_details = check_golden_entry(df_m1, h1_trend)
             if golden_entry_signal != 'NONE':
                 print(f"    ✅ [M1 SIGNAL] GOLDEN ENTRY: {golden_entry_signal} (Đủ 3 điều kiện: Structure + Momentum + Confirmation)")
         
@@ -1404,15 +1540,19 @@ def run_bot():
             open_positions = len([pos for pos in positions if pos.magic == MAGIC])
         print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở ({SYMBOL}): {open_positions}")
         
-        # Xác định loại signal
+        # Xác định loại signal và lưu details
         if golden_entry_signal != 'NONE':
             signal_type = "GOLDEN_ENTRY"
+            signal_details = golden_entry_details
         elif m1_retest_signal != 'NONE':
             signal_type = "RETEST"
+            signal_details = {}
         elif m1_breakout_signal != 'NONE':
             signal_type = "BREAKOUT"
+            signal_details = {}
         else:
             signal_type = "NONE"
+            signal_details = {}
         
         print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
 
@@ -1457,6 +1597,24 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
+                    # Ghi log các tín hiệu trước khi vào lệnh
+                    logger.info("=" * 70)
+                    logger.info("📊 THÔNG TIN TÍN HIỆU TRƯỚC KHI VÀO LỆNH BUY:")
+                    logger.info(f"  - H1 Trend: {h1_trend} (Giá > EMA50)")
+                    logger.info(f"  - M1 Signal Type: {signal_type}")
+                    logger.info(f"  - M1 Signal: {m1_signal}")
+                    if signal_type == "GOLDEN_ENTRY":
+                        logger.info(f"    → Golden Entry: Đủ 3 điều kiện (Structure + Momentum + Confirmation)")
+                    elif signal_type == "RETEST":
+                        logger.info(f"    → Giá retest EMA20 từ dưới lên")
+                    elif signal_type == "BREAKOUT":
+                        logger.info(f"    → Giá phá đỉnh gần nhất (Breakout momentum)")
+                    logger.info(f"  - ADX: {adx_current:.2f}")
+                    logger.info(f"  - ADX Status: {'OK' if adx_ok else 'BLOCKED'}")
+                    logger.info(f"  - Volume: {VOLUME}")
+                    logger.info(f"  - Current Price: BID={current_price:.5f} | ASK={current_ask:.5f}")
+                    logger.info(f"  - Spread: {(current_ask-current_price):.5f}")
+                    logger.info("=" * 70)
                     send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
                 
             elif m1_signal == 'SELL' and h1_trend == 'SELL':
@@ -1483,6 +1641,51 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
+                    # Ghi log các tín hiệu trước khi vào lệnh
+                    logger.info("=" * 70)
+                    logger.info("📊 THÔNG TIN TÍN HIỆU TRƯỚC KHI VÀO LỆNH SELL:")
+                    logger.info(f"  - H1 Trend: {h1_trend} (Giá < EMA50)")
+                    logger.info(f"  - M1 Signal Type: {signal_type}")
+                    logger.info(f"  - M1 Signal: {m1_signal}")
+                    if signal_type == "GOLDEN_ENTRY" and signal_details:
+                        logger.info(f"    → Golden Entry: Đủ 3 điều kiện với các giá trị cụ thể:")
+                        # Structure details
+                        if 'structure' in signal_details:
+                            s = signal_details['structure']
+                            if 'has_lower_high' in s:
+                                logger.info(f"      [1] STRUCTURE:")
+                                logger.info(f"        - Lower High: {s['has_lower_high']} (Current High: {s['current_high']:.5f} < Prev High: {s['prev_high']:.5f})")
+                                logger.info(f"        - Micro Breakdown: {s['has_micro_breakdown']} (Close: {s['current_close']:.5f} < Micro Low: {s['micro_low']:.5f})")
+                        # Momentum details
+                        if 'momentum' in signal_details:
+                            m = signal_details['momentum']
+                            logger.info(f"      [2] MOMENTUM:")
+                            logger.info(f"        - Body Ratio: {m['body_ratio_pct']} (Cần: {CANDLE_BODY_MIN_RATIO*100:.0f}%-{CANDLE_BODY_MAX_RATIO*100:.0f}%)")
+                            logger.info(f"        - EMA9: {m['ema_fast']:.5f} | EMA21: {m['ema_slow']:.5f} | Separation: {m['ema_separation']:.5f}")
+                            logger.info(f"        - EMA Expanding: {m['ema_expanding']}")
+                            logger.info(f"        - Spread: {m['spread']:.5f} (Max: {SPREAD_MAX})")
+                            logger.info(f"        - Volume Increase: {m['volume_ratio_pct']} (Cần: {(VOLUME_INCREASE_MIN-1)*100:.0f}%-{(VOLUME_INCREASE_MAX-1)*100:.0f}%)")
+                        # Confirmation details
+                        if 'confirmation' in signal_details:
+                            c = signal_details['confirmation']
+                            logger.info(f"      [3] CONFIRMATION:")
+                            if 'breaks_micro_low' in c:
+                                logger.info(f"        - Break Micro Low: {c['breaks_micro_low']} (Close: {c['current_close']:.5f} < Micro Low: {c['micro_low']:.5f})")
+                            if 'closes_below_ema9' in c:
+                                logger.info(f"        - Close Below EMA9: {c['closes_below_ema9']} (Close: {c['current_close']:.5f} < EMA9: {c['ema9']:.5f})")
+                                logger.info(f"        - Touched EMA21: {c['touched_ema21']} (EMA21: {c['ema21']:.5f})")
+                            if 'has_long_upper_wick' in c:
+                                logger.info(f"        - Long Upper Wick Rejection: {c['has_long_upper_wick']} (Upper Wick: {c['upper_wick']:.5f} > Body: {c['body_size']:.5f})")
+                    elif signal_type == "RETEST":
+                        logger.info(f"    → Giá retest EMA20 từ trên xuống")
+                    elif signal_type == "BREAKOUT":
+                        logger.info(f"    → Giá phá đáy gần nhất (Breakout momentum)")
+                    logger.info(f"  - ADX: {adx_current:.2f}")
+                    logger.info(f"  - ADX Status: {'OK' if adx_ok else 'BLOCKED'}")
+                    logger.info(f"  - Volume: {VOLUME}")
+                    logger.info(f"  - Current Price: BID={current_price:.5f} | ASK={current_ask:.5f}")
+                    logger.info(f"  - Spread: {(current_ask-current_price):.5f}")
+                    logger.info("=" * 70)
                     send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
             
             else:
