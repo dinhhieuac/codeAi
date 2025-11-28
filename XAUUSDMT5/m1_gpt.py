@@ -28,6 +28,10 @@ ATR_PERIOD = 14
 ADX_PERIOD = 14  # Chu kỳ tính ADX
 ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
+# Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
+ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
+ATR_MIN_THRESHOLD = 100    # ATR tối thiểu (pips) để vào lệnh
+
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M1
 SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
@@ -44,14 +48,14 @@ ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL v�
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
 # Trailing Stop khi lời 1/2 TP để lock profit
-ENABLE_TRAILING_STOP = False        # Bật/tắt chức năng Trailing Stop
+ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop
 TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Cooldown sau lệnh thua
-ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
-LOSS_COOLDOWN_MINUTES = 30         # Thời gian chờ sau lệnh thua (phút)
-LOSS_COOLDOWN_MODE = 1              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
+ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
+LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
+LOSS_COOLDOWN_MODE = 2              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
 
 # Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
 ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
@@ -1096,6 +1100,25 @@ def run_bot():
             adx_ok = False
             print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
         print(f"  └─ [BƯỚC 2] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
+        
+        # 2.5. Kiểm tra ATR (Bộ lọc biến động thị trường)
+        atr_pips = None
+        atr_ok = True  # Mặc định OK nếu không bật filter
+        if ENABLE_ATR_FILTER:
+            print(f"\n  ┌─ [BƯỚC 2.5] Kiểm tra ATR (Lọc biến động thị trường)")
+            atr_pips = calculate_atr_from_m1(df_m1)
+            if atr_pips is not None:
+                print(f"    ATR hiện tại: {atr_pips:.2f} pips (Ngưỡng tối thiểu: {ATR_MIN_THRESHOLD} pips)")
+                if atr_pips >= ATR_MIN_THRESHOLD:
+                    atr_ok = True
+                    print(f"    ✅ [ATR] BIẾN ĐỘNG ĐỦ LỚN (ATR={atr_pips:.2f} ≥ {ATR_MIN_THRESHOLD} pips) - Có thể giao dịch")
+                else:
+                    atr_ok = False
+                    print(f"    ⚠️ [ATR] BIẾN ĐỘNG QUÁ NHỎ (ATR={atr_pips:.2f} < {ATR_MIN_THRESHOLD} pips) - Tránh giao dịch")
+            else:
+                atr_ok = False
+                print(f"    ⚠️ [ATR] Không tính được ATR - Tránh giao dịch")
+            print(f"  └─ [BƯỚC 2.5] Kết quả: {'OK' if atr_ok else 'BLOCKED'}")
 
         # 3. Kiểm tra điểm vào ở M1: RETEST hoặc BREAKOUT
         print(f"\n  ┌─ [BƯỚC 3] Kiểm tra tín hiệu M1 (Retest EMA20 hoặc Breakout)")
@@ -1156,13 +1179,19 @@ def run_bot():
                     error_count = 0
                     error_cooldown_start = None
             
-            # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
+            # ⚠️ QUAN TRỌNG: Kiểm tra ADX và ATR trước khi vào lệnh
             # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
             # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
+            # - ATR: >= ATR_MIN_THRESHOLD (nếu bật ENABLE_ATR_FILTER)
             if signal_type == "RETEST" and not adx_ok:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
                 print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
                 print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
+            elif ENABLE_ATR_FILTER and not atr_ok:
+                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ATR FILTER:")
+                atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
+                print(f"     - ATR: {atr_display} pips < {ATR_MIN_THRESHOLD} pips (Biến động quá nhỏ)")
+                print(f"     - Không giao dịch khi biến động thị trường quá nhỏ")
             elif m1_signal == 'BUY' and h1_trend == 'BUY':
                 print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
                 print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
@@ -1172,6 +1201,8 @@ def run_bot():
                 elif signal_type == "BREAKOUT":
                     print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
                 print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                if ENABLE_ATR_FILTER and atr_pips is not None:
+                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
                 print(f"     - Volume: {VOLUME}")
                 
                 # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
@@ -1196,6 +1227,8 @@ def run_bot():
                 elif signal_type == "BREAKOUT":
                     print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
                 print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                if ENABLE_ATR_FILTER and atr_pips is not None:
+                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
                 print(f"     - Volume: {VOLUME}")
                 
                 # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
