@@ -38,7 +38,7 @@ TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
 TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
 
 # Fix SL theo giá trị USD cố định
-ENABLE_FIXED_SL_USD = True  # Bật/tắt fix SL theo USD
+ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
@@ -52,6 +52,15 @@ TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 ENABLE_LOSS_COOLDOWN = False         # Bật/tắt cooldown sau lệnh thua
 LOSS_COOLDOWN_MINUTES = 30         # Thời gian chờ sau lệnh thua (phút)
 LOSS_COOLDOWN_MODE = 1              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
+
+# Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
+ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
+ERROR_COOLDOWN_COUNT = 5            # Số lần lỗi liên tiếp để kích hoạt cooldown
+ERROR_COOLDOWN_MINUTES = 1          # Thời gian tạm dừng sau khi lỗi (phút)
+
+# Biến đếm lỗi (sẽ được reset khi thành công)
+error_count = 0                     # Số lần lỗi liên tiếp hiện tại
+error_cooldown_start = None         # Thời gian bắt đầu cooldown (None nếu không có)
 
 # Telegram Bot Configuration
  # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
@@ -655,7 +664,12 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         volume: Khối lượng giao dịch
         df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
         deviation: Độ lệch giá cho phép
+    
+    Returns:
+        bool: True nếu gửi lệnh thành công, False nếu lỗi
     """
+    global error_count, error_cooldown_start
+    
     point = get_symbol_info()
     if point is None:
         print("❌ Lỗi: Không thể lấy thông tin ký hiệu để gửi lệnh.")
@@ -817,6 +831,18 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         print(f"Chi tiết lỗi: {error_info}")
         print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
+        # Tăng đếm lỗi liên tiếp
+        if ENABLE_ERROR_COOLDOWN:
+            error_count += 1
+            print(f"  ⚠️ [ERROR COUNT] Lỗi liên tiếp: {error_count}/{ERROR_COOLDOWN_COUNT}")
+            
+            # Nếu đạt ngưỡng lỗi, kích hoạt cooldown
+            if error_count >= ERROR_COOLDOWN_COUNT:
+                error_cooldown_start = datetime.now()
+                print(f"  🛑 [ERROR COOLDOWN] Đã lỗi {error_count}/{ERROR_COOLDOWN_COUNT} lần liên tiếp → Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+                logger.warning(f"🛑 Tạm dừng {ERROR_COOLDOWN_MINUTES} phút do lỗi {error_count} lần liên tiếp")
+                send_telegram(f"<b>🛑 TẠM DỪNG BOT</b>\nĐã lỗi {error_count}/{ERROR_COOLDOWN_COUNT} lần liên tiếp\nTạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+        
         # Ghi log lỗi
         logger.error("=" * 70)
         logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
@@ -825,6 +851,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
         logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
+        logger.error(f"Error Count: {error_count}/{ERROR_COOLDOWN_COUNT}")
         logger.error("=" * 70)
         
         # Giải thích lỗi retcode 10030 (Invalid stops)
@@ -838,9 +865,17 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 logger.error(f"Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
+        return False
     else:
         success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
+        
+        # Reset đếm lỗi khi thành công
+        if ENABLE_ERROR_COOLDOWN:
+            if error_count > 0:
+                print(f"  ✅ [ERROR COUNT] Reset đếm lỗi (Trước đó: {error_count} lần)")
+            error_count = 0
+            error_cooldown_start = None
         
         # Ghi log thành công
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
@@ -875,6 +910,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
 ⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
         send_telegram(telegram_msg)
+        return True
 
 def manage_positions():
     """Quản lý các lệnh đang mở (Hòa vốn, Trailing Stop)."""
@@ -1100,6 +1136,25 @@ def run_bot():
                 # Không có lệnh nào, tìm tín hiệu vào lệnh
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
+                # Kiểm tra cooldown sau lỗi gửi lệnh
+                if ENABLE_ERROR_COOLDOWN and error_cooldown_start is not None:
+                    time_elapsed = datetime.now() - error_cooldown_start
+                    minutes_elapsed = time_elapsed.total_seconds() / 60
+                    
+                    if minutes_elapsed < ERROR_COOLDOWN_MINUTES:
+                        remaining_minutes = ERROR_COOLDOWN_MINUTES - minutes_elapsed
+                        print(f"  🛑 [QUYẾT ĐỊNH] BỊ CHẶN BỞI ERROR COOLDOWN:")
+                        print(f"     - Đã lỗi {error_count} lần liên tiếp")
+                        print(f"     - Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+                        print(f"     - Còn {remaining_minutes:.1f} phút")
+                        print(f"{'='*70}\n")
+                        continue  # Bỏ qua chu kỳ này
+                    else:
+                        # Hết cooldown, reset
+                        print(f"  ✅ [ERROR COOLDOWN] Đã hết thời gian tạm dừng ({minutes_elapsed:.1f} phút đã trôi qua)")
+                        error_count = 0
+                        error_cooldown_start = None
+                
                 # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
                 # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
                 # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
@@ -1175,7 +1230,7 @@ def run_bot():
         
         # 5. ĐIỀU CHỈNH THỜI GIAN NGỦ ĐỂ ĐẠT CHU KỲ 10 GIÂY (M1 cần check thường xuyên hơn)
         elapsed_time = time.time() - start_time
-        sleep_time = 10 - elapsed_time  # Check mỗi 10 giây cho M1
+        sleep_time = 2 - elapsed_time  # Check mỗi 10 giây cho M1
         
         if sleep_time > 0:
             time.sleep(sleep_time)
