@@ -1137,6 +1137,7 @@ def run_bot():
                 print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
                 
                 # Kiểm tra cooldown sau lỗi gửi lệnh
+                global error_count, error_cooldown_start
                 if ENABLE_ERROR_COOLDOWN and error_cooldown_start is not None:
                     time_elapsed = datetime.now() - error_cooldown_start
                     minutes_elapsed = time_elapsed.total_seconds() / 60
