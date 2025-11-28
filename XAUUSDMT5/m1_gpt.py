@@ -1232,7 +1232,7 @@ def run_bot():
         # 5. ĐIỀU CHỈNH THỜI GIAN NGỦ ĐỂ ĐẠT CHU KỲ 10 GIÂY (M1 cần check thường xuyên hơn)
         elapsed_time = time.time() - start_time
         sleep_time = 2 - elapsed_time  # Check mỗi 10 giây cho M1
-        
+        sleep_time = 1
         if sleep_time > 0:
             time.sleep(sleep_time)
         else:
