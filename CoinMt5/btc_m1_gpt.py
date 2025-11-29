@@ -40,9 +40,9 @@ ATR_MIN_THRESHOLD = 2.0   # ATR tối thiểu (pips) để vào lệnh (BTCUSD M
 SL_ATR_MULTIPLIER = 2.5  # SL = ATR(M1) × 2.5 (tăng từ 1.5 để SL đủ xa, tránh bị quét)
 TP_ATR_MULTIPLIER = 3.5  # TP = ATR(M1) × 3.5 (tăng từ 2.0 để tăng RR ratio ~1.4:1)
 SL_POINTS_MIN = 100   # SL tối thiểu: 100 pips (100 USD) - tăng từ 50 để tránh lỗi retcode 10016
-SL_POINTS_MAX = 2000  # SL tối đa: 2000 pips (2000 USD) - cho phép SL lớn theo ATR khi biến động mạnh
+SL_POINTS_MAX = 10000  # SL tối đa: 10000 pips (100 USD) - Tăng lên để phù hợp với ATR của BTC
 TP_POINTS_MIN = 150   # TP tối thiểu: 150 pips (150 USD) - tăng từ 100 để đảm bảo hợp lệ với broker
-TP_POINTS_MAX = 4000  # TP tối đa: 4000 pips (4000 USD) - cho phép TP lớn theo ATR
+TP_POINTS_MAX = 20000  # TP tối đa: 20000 pips (200 USD) - Tăng lên để phù hợp với ATR của BTC
 
 # Fix SL theo giá trị USD cố định
 ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
