@@ -810,7 +810,13 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     min_sl_required = max(SL_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else SL_POINTS_MIN
     min_tp_required = max(TP_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else TP_POINTS_MIN
     
+    # Chuyển đổi sl_distance và tp_distance (USD) sang points để validation
+    # Với ETHUSD: 1 pip = 1 USD = 1 point, nên sl_distance (USD) = sl_points (points)
+    sl_points = sl_distance / point if point > 0 else 0
+    tp_points = tp_distance / point if point > 0 else 0
+    
     print(f"  📊 [ORDER] Yêu cầu tối thiểu: SL >= {min_sl_required:.1f} pips, TP >= {min_tp_required:.1f} pips")
+    print(f"  📊 [ORDER] SL hiện tại: {sl_points:.1f} pips ({sl_distance:.2f} USD), TP hiện tại: {tp_points:.1f} pips ({tp_distance:.2f} USD)")
     
     if sl_points < min_sl_required:
         print(f"  ⚠️ [ORDER] SL quá nhỏ: {sl_points:.1f} pips < yêu cầu tối thiểu {min_sl_required:.1f} pips (SL_POINTS_MIN={SL_POINTS_MIN}, stops_level={stops_level})")
@@ -821,6 +827,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl = price - sl_distance
         else:  # SELL
             sl = price + sl_distance
+        # Cập nhật lại sl_points từ sl mới để đảm bảo nhất quán
+        sl_points = abs(price - sl) / point if point > 0 else sl_points
         print(f"     → SL mới: {sl:.5f} ({sl_points:.1f} pips)")
     
     if tp_points < min_tp_required:
@@ -832,6 +840,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             tp = price + tp_distance
         else:  # SELL
             tp = price - tp_distance
+        # Cập nhật lại tp_points từ tp mới để đảm bảo nhất quán
+        tp_points = abs(price - tp) / point if point > 0 else tp_points
         print(f"     → TP mới: {tp:.5f} ({tp_points:.1f} pips)")
     
     # Kiểm tra lại stops_level sau khi điều chỉnh (double check)
@@ -860,8 +870,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             print(f"     → TP cuối cùng: {tp:.5f} ({tp_points:.1f} pips)")
     
     # ⚠️ FINAL VALIDATION: Kiểm tra lại lần cuối trước khi gửi
-    sl_distance_final = abs(price - sl) / point
-    tp_distance_final = abs(price - tp) / point
+    # Tính lại sl_points và tp_points từ sl và tp hiện tại để đảm bảo nhất quán
+    sl_distance_final = abs(price - sl) / point if point > 0 else 0
+    tp_distance_final = abs(price - tp) / point if point > 0 else 0
+    sl_points = sl_distance_final
+    tp_points = tp_distance_final
     
     # Đảm bảo SL/TP đủ xa (ít nhất min_sl_required cho SL, min_tp_required cho TP)
     if sl_distance_final < min_sl_required:
@@ -873,7 +886,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             sl = price - sl_distance
         else:  # SELL
             sl = price + sl_distance
-        sl_distance_final = abs(price - sl) / point
+        sl_distance_final = abs(price - sl) / point if point > 0 else sl_points
+        sl_points = sl_distance_final
         print(f"     → SL đã điều chỉnh: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f})")
     
     if tp_distance_final < min_tp_required:
@@ -885,7 +899,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             tp = price + tp_distance
         else:  # SELL
             tp = price - tp_distance
-        tp_distance_final = abs(price - tp) / point
+        tp_distance_final = abs(price - tp) / point if point > 0 else tp_points
+        tp_points = tp_distance_final
         print(f"     → TP đã điều chỉnh: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
     
     # Kiểm tra lại logic SL/TP sau khi điều chỉnh
@@ -1003,8 +1018,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         # Ghi log thành công
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
         atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
-        sl_atr_display = f"{sl_pips_limited:.1f}" if sl_pips_limited is not None else f"{sl_points:.1f}"
-        tp_atr_display = f"{tp_pips_limited:.1f}" if tp_pips_limited is not None else f"{tp_points:.1f}"
+        sl_atr_display = f"{sl_points:.1f}"
+        tp_atr_display = f"{tp_points:.1f}"
         
         logger.info("=" * 70)
         logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
