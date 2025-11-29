@@ -63,7 +63,7 @@ LOSS_COOLDOWN_MODE = 2              # Mode cooldown: 1 = 1 lệnh cuối thua, 2
 # Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
 ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
 ERROR_COOLDOWN_COUNT = 5            # Số lần lỗi liên tiếp để kích hoạt cooldown
-ERROR_COOLDOWN_MINUTES = 1          # Thời gian tạm dừng sau khi lỗi (phút)
+ERROR_COOLDOWN_MINUTES = 5          # Thời gian tạm dừng sau khi lỗi (phút)
 
 # Biến đếm lỗi (sẽ được reset khi thành công)
 error_count = 0                     # Số lần lỗi liên tiếp hiện tại
