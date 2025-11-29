@@ -39,9 +39,9 @@ ATR_MIN_THRESHOLD = 1.5   # ATR tối thiểu (pips) để vào lệnh (ETHUSD M
 # ETHUSD biến động lớn, cần SL/TP đủ xa để tránh bị quét bởi noise
 SL_ATR_MULTIPLIER = 2.5  # SL = ATR(M1) × 2.5 (tăng từ 1.5 để SL đủ xa, tránh bị quét)
 TP_ATR_MULTIPLIER = 3.5  # TP = ATR(M1) × 3.5 (tăng từ 2.0 để tăng RR ratio ~1.4:1)
-SL_POINTS_MIN = 50   # SL tối thiểu: 50 pips (50 USD) - bảo vệ, tránh SL quá gần
+SL_POINTS_MIN = 100   # SL tối thiểu: 100 pips (100 USD) - tăng từ 50 để tránh lỗi retcode 10016
 SL_POINTS_MAX = 2000  # SL tối đa: 2000 pips (2000 USD) - cho phép SL lớn theo ATR khi biến động mạnh
-TP_POINTS_MIN = 100   # TP tối thiểu: 100 pips (100 USD) - đảm bảo reward đủ để justify risk
+TP_POINTS_MIN = 150   # TP tối thiểu: 150 pips (150 USD) - tăng từ 100 để đảm bảo hợp lệ với broker
 TP_POINTS_MAX = 4000  # TP tối đa: 4000 pips (4000 USD) - cho phép TP lớn theo ATR
 
 # Fix SL theo giá trị USD cố định
@@ -869,19 +869,45 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     sl_distance_final = abs(price - sl) / point
     tp_distance_final = abs(price - tp) / point
     
-    # Đảm bảo SL/TP đủ xa (ít nhất 50 pips cho SL, 100 pips cho TP, hoặc stops_level nếu lớn hơn)
+    # Đảm bảo SL/TP đủ xa (ít nhất min_sl_required cho SL, min_tp_required cho TP)
     if sl_distance_final < min_sl_required:
         print(f"  ❌ [ORDER] LỖI VALIDATION: SL distance {sl_distance_final:.1f} pips < yêu cầu {min_sl_required:.1f} pips")
-        print(f"     → Không thể gửi lệnh với SL quá gần")
-        return False
+        print(f"     → Điều chỉnh SL lên {min_sl_required:.1f} pips")
+        sl_points = min_sl_required
+        sl_distance = sl_points * point
+        if trade_type == mt5.ORDER_TYPE_BUY:
+            sl = price - sl_distance
+        else:  # SELL
+            sl = price + sl_distance
+        sl_distance_final = abs(price - sl) / point
+        print(f"     → SL đã điều chỉnh: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f})")
     
     if tp_distance_final < min_tp_required:
         print(f"  ❌ [ORDER] LỖI VALIDATION: TP distance {tp_distance_final:.1f} pips < yêu cầu {min_tp_required:.1f} pips")
-        print(f"     → Không thể gửi lệnh với TP quá gần")
-        return False
+        print(f"     → Điều chỉnh TP lên {min_tp_required:.1f} pips")
+        tp_points = min_tp_required
+        tp_distance = tp_points * point
+        if trade_type == mt5.ORDER_TYPE_BUY:
+            tp = price + tp_distance
+        else:  # SELL
+            tp = price - tp_distance
+        tp_distance_final = abs(price - tp) / point
+        print(f"     → TP đã điều chỉnh: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
+    
+    # Kiểm tra lại logic SL/TP sau khi điều chỉnh
+    if trade_type == mt5.ORDER_TYPE_BUY:
+        if sl >= price or tp <= price:
+            print(f"  ❌ [ORDER] LỖI LOGIC SAU ĐIỀU CHỈNH: BUY - SL ({sl:.5f}) >= Entry ({price:.5f}) hoặc TP ({tp:.5f}) <= Entry")
+            return False
+    else:  # SELL
+        if sl <= price or tp >= price:
+            print(f"  ❌ [ORDER] LỖI LOGIC SAU ĐIỀU CHỈNH: SELL - SL ({sl:.5f}) <= Entry ({price:.5f}) hoặc TP ({tp:.5f}) >= Entry")
+            return False
     
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f}) | TP: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
     print(f"  📊 [ORDER] Validation: SL distance {sl_distance_final:.1f} >= {min_sl_required:.1f} ✓, TP distance {tp_distance_final:.1f} >= {min_tp_required:.1f} ✓")
+    if stops_level > 0:
+        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points, với buffer 10%: {stops_level_with_buffer:.1f} points")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
