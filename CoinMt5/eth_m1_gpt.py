@@ -710,73 +710,67 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     # Tính SL và TP
     # ⚠️ VỚI ETHUSD: 1 pip = 1 USD = 1 point (khác với XAUUSD: 1 pip = 10 points)
     atr_pips = None
-    sl_pips_limited = None
-    tp_pips_limited = None
+    sl_usd_final = None
+    tp_usd_final = None
     
+    # Chuyển đổi các giới hạn từ Points sang USD (Price)
+    # Ví dụ: SL_POINTS_MIN = 100, point = 0.01 → Min SL = 1.0 USD
+    sl_min_usd = SL_POINTS_MIN * point
+    sl_max_usd = SL_POINTS_MAX * point
+    tp_min_usd = TP_POINTS_MIN * point
+    tp_max_usd = TP_POINTS_MAX * point
+
     # Kiểm tra nếu bật fix SL theo USD
     if ENABLE_FIXED_SL_USD and FIXED_SL_USD > 0:
         # Tính SL từ USD cố định
-        # ⚠️ VỚI ETHUSD: 1 pip = 1 USD, nên SL (pips) = SL (USD)
-        sl_pips_fixed = FIXED_SL_USD  # Với ETHUSD: 1 USD = 1 pip
-        sl_points = sl_pips_fixed  # Với ETHUSD: 1 pip = 1 point
-        sl_pips_limited = sl_pips_fixed
+        sl_usd_final = FIXED_SL_USD
         
-        print(f"  📊 [ORDER] SL CỐ ĐỊNH: {FIXED_SL_USD} USD = {sl_pips_fixed:.1f} pips ({sl_points:.0f} points)")
+        print(f"  📊 [ORDER] SL CỐ ĐỊNH: {FIXED_SL_USD} USD")
         
         # Tính TP vẫn dựa trên ATR (nếu có) hoặc dùng giá trị mặc định
         if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1)
+            atr_pips = calculate_atr_from_m1(df_m1) # ATR trả về giá trị USD
             if atr_pips is not None:
-                tp_pips = atr_pips * TP_ATR_MULTIPLIER
-                tp_points = tp_pips  # Với ETHUSD: 1 pip = 1 point
-                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-                tp_pips_limited = tp_points  # Với ETHUSD: points = pips
-                print(f"  📊 [ORDER] TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN}-{TP_POINTS_MAX} pips)")
+                tp_usd = atr_pips * TP_ATR_MULTIPLIER
+                # Clamp TP theo USD
+                tp_usd_final = max(tp_min_usd, min(tp_usd, tp_max_usd))
+                print(f"  📊 [ORDER] TP: {tp_usd_final:.2f} USD (ATR×{TP_ATR_MULTIPLIER}, giới hạn {tp_min_usd:.2f}-{tp_max_usd:.2f} USD)")
             else:
-                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-                tp_pips_limited = tp_points
-                print(f"  ⚠️ [ORDER] Không tính được ATR cho TP, dùng giá trị mặc định: TP: {tp_pips_limited:.1f} pips")
+                tp_usd_final = (tp_min_usd + tp_max_usd) / 2
+                print(f"  ⚠️ [ORDER] Không tính được ATR cho TP, dùng giá trị mặc định: TP: {tp_usd_final:.2f} USD")
         else:
-            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-            tp_pips_limited = tp_points
-            print(f"  ⚠️ [ORDER] Không có dữ liệu M1 cho TP, dùng giá trị mặc định: TP: {tp_pips_limited:.1f} pips")
+            tp_usd_final = (tp_min_usd + tp_max_usd) / 2
+            print(f"  ⚠️ [ORDER] Không có dữ liệu M1 cho TP, dùng giá trị mặc định: TP: {tp_usd_final:.2f} USD")
     else:
         # Tính SL và TP theo ATR của nến M1
-        # ⚠️ VỚI ETHUSD: 1 pip = 1 point, ATR đã là pips
         if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1)
+            atr_pips = calculate_atr_from_m1(df_m1) # ATR trả về giá trị USD
             if atr_pips is not None:
-                # ATR đã là pips, tính SL và TP trực tiếp
-                sl_pips = atr_pips * SL_ATR_MULTIPLIER
-                tp_pips = atr_pips * TP_ATR_MULTIPLIER
+                # Tính SL/TP theo ATR (đơn vị USD)
+                sl_usd = atr_pips * SL_ATR_MULTIPLIER
+                tp_usd = atr_pips * TP_ATR_MULTIPLIER
                 
-                # ⚠️ VỚI ETHUSD: 1 pip = 1 point (không cần nhân 10)
-                sl_points = sl_pips
-                tp_points = tp_pips
+                # Clamp SL/TP theo USD
+                sl_usd_final = max(sl_min_usd, min(sl_usd, sl_max_usd))
+                tp_usd_final = max(tp_min_usd, min(tp_usd, tp_max_usd))
                 
-                # ⚠️ QUAN TRỌNG: Đảm bảo SL/TP đủ xa (áp dụng min trước, sau đó giới hạn max)
-                # Nếu ATR quá nhỏ, SL/TP sẽ được nâng lên tối thiểu
-                sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
-                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-                
-                # Với ETHUSD: points = pips
-                sl_pips_limited = sl_points
-                tp_pips_limited = tp_points
-                
-                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}={sl_pips:.2f}, giới hạn {SL_POINTS_MIN}-{SL_POINTS_MAX} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}={tp_pips:.2f}, giới hạn {TP_POINTS_MIN}-{TP_POINTS_MAX} pips)")
+                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} USD")
+                print(f"     SL: {sl_usd_final:.2f} USD (ATR×{SL_ATR_MULTIPLIER}={sl_usd:.2f}, limit {sl_min_usd:.2f}-{sl_max_usd:.2f})")
+                print(f"     TP: {tp_usd_final:.2f} USD (ATR×{TP_ATR_MULTIPLIER}={tp_usd:.2f}, limit {tp_min_usd:.2f}-{tp_max_usd:.2f})")
             else:
-                # Fallback: Dùng giá trị trung bình nếu không tính được ATR
-                sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-                print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_points:.1f} pips, TP: {tp_points:.1f} pips")
+                # Fallback: Dùng giá trị trung bình
+                sl_usd_final = (sl_min_usd + sl_max_usd) / 2
+                tp_usd_final = (tp_min_usd + tp_max_usd) / 2
+                print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_usd_final:.2f} USD, TP: {tp_usd_final:.2f} USD")
         else:
-            # Fallback: Dùng giá trị trung bình nếu không có df_m1
-            sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-            print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_points:.1f} pips, TP: {tp_points:.1f} pips")
+            # Fallback: Dùng giá trị trung bình
+            sl_usd_final = (sl_min_usd + sl_max_usd) / 2
+            tp_usd_final = (tp_min_usd + tp_max_usd) / 2
+            print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_usd_final:.2f} USD, TP: {tp_usd_final:.2f} USD")
     
-    sl_distance = sl_points * point
-    tp_distance = tp_points * point
+    # Khoảng cách giá (Distance) chính là giá trị USD tính được
+    sl_distance = sl_usd_final
+    tp_distance = tp_usd_final
     
     if trade_type == mt5.ORDER_TYPE_BUY:
         # BUY: SL dưới entry, TP trên entry
