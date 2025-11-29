@@ -31,7 +31,7 @@ ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trư
 
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 10    # ATR tối thiểu (pips) để vào lệnh (ETHUSD: 10-20 pips phù hợp với biến động lớn)
+ATR_MIN_THRESHOLD = 1.5   # ATR tối thiểu (pips) để vào lệnh (ETHUSD M1: ATR thường 1-5 pips, không phải 10+)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 1 point = 1 pip cho ETHUSD)
 # Chiến thuật M1: SL/TP theo nến M1
