@@ -807,47 +807,81 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     # Với ETHUSD, stops_level có thể lớn hơn 50, cần đảm bảo SL/TP đủ xa
     # Tăng thêm buffer 10% để đảm bảo không bị reject
     stops_level_with_buffer = int(stops_level * 1.1) if stops_level > 0 else 0
-    min_sl_required = max(SL_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else SL_POINTS_MIN
-    min_tp_required = max(TP_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else TP_POINTS_MIN
     
     # Chuyển đổi sl_distance và tp_distance (USD) sang points để validation
-    # Với ETHUSD: 1 pip = 1 USD = 1 point, nên sl_distance (USD) = sl_points (points)
-    sl_points = sl_distance / point if point > 0 else 0
-    tp_points = tp_distance / point if point > 0 else 0
+    # ⚠️ VỚI ETHUSD: 1 pip = 1 USD movement
+    # Nếu point = 0.01: 1 point = 0.01 USD → 1 pip = 100 points
+    # Nếu point = 1.0: 1 point = 1 USD → 1 pip = 1 point
+    # Vì sl_distance đã là USD (pips), nên:
+    # - Nếu point = 0.01: sl_points = sl_distance / 0.01 = sl_distance * 100
+    # - Nếu point = 1.0: sl_points = sl_distance / 1.0 = sl_distance
+    # Nhưng để đơn giản và đúng: sl_points (trong pips) = sl_distance (USD)
+    # Vì với ETHUSD: 1 pip = 1 USD movement
+    sl_points = sl_distance  # Với ETHUSD: sl_distance (USD) = sl_points (pips)
+    tp_points = tp_distance  # Với ETHUSD: tp_distance (USD) = tp_points (pips)
+    
+    # ⚠️ ĐIỀU CHỈNH LOGIC: Chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN khi:
+    # 1. stops_level yêu cầu (quan trọng nhất - để tránh lỗi retcode 10016)
+    # 2. Hoặc khi SL/TP từ ATR quá nhỏ (nhỏ hơn SL_POINTS_MIN/TP_POINTS_MIN)
+    # NHƯNG: Nếu ATR nhỏ, không ép SL/TP lên quá cao - chỉ đảm bảo đáp ứng stops_level
+    if stops_level > 0:
+        # Nếu có stops_level, ưu tiên đáp ứng stops_level (với buffer)
+        min_sl_required = max(stops_level, stops_level_with_buffer)
+        min_tp_required = max(stops_level, stops_level_with_buffer)
+        # Chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN nếu stops_level nhỏ hơn min
+        # (Nếu stops_level đã lớn hơn min, thì dùng stops_level)
+        min_sl_required = max(min_sl_required, min(SL_POINTS_MIN, stops_level_with_buffer) if stops_level_with_buffer > 0 else SL_POINTS_MIN)
+        min_tp_required = max(min_tp_required, min(TP_POINTS_MIN, stops_level_with_buffer) if stops_level_with_buffer > 0 else TP_POINTS_MIN)
+    else:
+        # Nếu không có stops_level, chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN
+        # NHƯNG: Nếu ATR nhỏ và SL/TP từ ATR cũng nhỏ, thì chỉ nâng lên một mức hợp lý
+        # Không ép lên quá cao nếu ATR nhỏ
+        if atr_pips is not None and atr_pips < 2.0:
+            # Nếu ATR < 2 pips, chỉ đảm bảo SL/TP >= stops_level (nếu có) hoặc một mức tối thiểu nhỏ hơn
+            min_sl_required = max(SL_POINTS_MIN * 0.5, stops_level) if stops_level > 0 else SL_POINTS_MIN * 0.5
+            min_tp_required = max(TP_POINTS_MIN * 0.5, stops_level) if stops_level > 0 else TP_POINTS_MIN * 0.5
+        else:
+            min_sl_required = SL_POINTS_MIN
+            min_tp_required = TP_POINTS_MIN
     
     print(f"  📊 [ORDER] Yêu cầu tối thiểu: SL >= {min_sl_required:.1f} pips, TP >= {min_tp_required:.1f} pips")
     print(f"  📊 [ORDER] SL hiện tại: {sl_points:.1f} pips ({sl_distance:.2f} USD), TP hiện tại: {tp_points:.1f} pips ({tp_distance:.2f} USD)")
+    if stops_level > 0:
+        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points (với buffer: {stops_level_with_buffer:.1f} points)")
     
     if sl_points < min_sl_required:
         print(f"  ⚠️ [ORDER] SL quá nhỏ: {sl_points:.1f} pips < yêu cầu tối thiểu {min_sl_required:.1f} pips (SL_POINTS_MIN={SL_POINTS_MIN}, stops_level={stops_level})")
         print(f"     → Điều chỉnh SL từ {sl_points:.1f} lên {min_sl_required:.1f} pips")
         sl_points = min_sl_required
-        sl_distance = sl_points * point
+        # ⚠️ VỚI ETHUSD: sl_distance (USD) = sl_points (pips)
+        sl_distance = sl_points
         if trade_type == mt5.ORDER_TYPE_BUY:
             sl = price - sl_distance
         else:  # SELL
             sl = price + sl_distance
         # Cập nhật lại sl_points từ sl mới để đảm bảo nhất quán
-        sl_points = abs(price - sl) / point if point > 0 else sl_points
+        sl_points = abs(price - sl)
         print(f"     → SL mới: {sl:.5f} ({sl_points:.1f} pips)")
     
     if tp_points < min_tp_required:
         print(f"  ⚠️ [ORDER] TP quá nhỏ: {tp_points:.1f} pips < yêu cầu tối thiểu {min_tp_required:.1f} pips (TP_POINTS_MIN={TP_POINTS_MIN}, stops_level={stops_level})")
         print(f"     → Điều chỉnh TP từ {tp_points:.1f} lên {min_tp_required:.1f} pips")
         tp_points = min_tp_required
-        tp_distance = tp_points * point
+        # ⚠️ VỚI ETHUSD: tp_distance (USD) = tp_points (pips)
+        tp_distance = tp_points
         if trade_type == mt5.ORDER_TYPE_BUY:
             tp = price + tp_distance
         else:  # SELL
             tp = price - tp_distance
         # Cập nhật lại tp_points từ tp mới để đảm bảo nhất quán
-        tp_points = abs(price - tp) / point if point > 0 else tp_points
+        tp_points = abs(price - tp)
         print(f"     → TP mới: {tp:.5f} ({tp_points:.1f} pips)")
     
     # Kiểm tra lại stops_level sau khi điều chỉnh (double check)
     if stops_level > 0:
-        sl_distance_points = abs(price - sl) / point
-        tp_distance_points = abs(price - tp) / point
+        # Tính distance trong points để so sánh với stops_level (points)
+        sl_distance_points = abs(price - sl) / point if point > 0 else 0
+        tp_distance_points = abs(price - tp) / point if point > 0 else 0
         
         if sl_distance_points < stops_level:
             print(f"  ⚠️ [ORDER] SL vẫn quá gần sau điều chỉnh: {sl_distance_points:.1f} points < stops_level {stops_level} points")
@@ -856,7 +890,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 sl = price - (stops_level * point)
             else:  # SELL
                 sl = price + (stops_level * point)
-            sl_points = abs(price - sl) / point
+            # Cập nhật lại sl_points (trong pips) từ sl mới
+            sl_points = abs(price - sl)  # Với ETHUSD: 1 pip = 1 USD movement
             print(f"     → SL cuối cùng: {sl:.5f} ({sl_points:.1f} pips)")
         
         if tp_distance_points < stops_level:
@@ -866,27 +901,31 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 tp = price + (stops_level * point)
             else:  # SELL
                 tp = price - (stops_level * point)
-            tp_points = abs(price - tp) / point
+            # Cập nhật lại tp_points (trong pips) từ tp mới
+            tp_points = abs(price - tp)  # Với ETHUSD: 1 pip = 1 USD movement
             print(f"     → TP cuối cùng: {tp:.5f} ({tp_points:.1f} pips)")
     
     # ⚠️ FINAL VALIDATION: Kiểm tra lại lần cuối trước khi gửi
     # Tính lại sl_points và tp_points từ sl và tp hiện tại để đảm bảo nhất quán
-    sl_distance_final = abs(price - sl) / point if point > 0 else 0
-    tp_distance_final = abs(price - tp) / point if point > 0 else 0
-    sl_points = sl_distance_final
-    tp_points = tp_distance_final
+    # Với ETHUSD: sl_points (pips) = abs(price - sl) (USD movement)
+    sl_points = abs(price - sl)
+    tp_points = abs(price - tp)
+    # Tính distance trong points để so sánh với min_sl_required (pips)
+    sl_distance_final = sl_points  # Với ETHUSD: pips = USD movement
+    tp_distance_final = tp_points  # Với ETHUSD: pips = USD movement
     
     # Đảm bảo SL/TP đủ xa (ít nhất min_sl_required cho SL, min_tp_required cho TP)
     if sl_distance_final < min_sl_required:
         print(f"  ❌ [ORDER] LỖI VALIDATION: SL distance {sl_distance_final:.1f} pips < yêu cầu {min_sl_required:.1f} pips")
         print(f"     → Điều chỉnh SL lên {min_sl_required:.1f} pips")
         sl_points = min_sl_required
-        sl_distance = sl_points * point
+        # ⚠️ VỚI ETHUSD: sl_distance (USD) = sl_points (pips)
+        sl_distance = sl_points
         if trade_type == mt5.ORDER_TYPE_BUY:
             sl = price - sl_distance
         else:  # SELL
             sl = price + sl_distance
-        sl_distance_final = abs(price - sl) / point if point > 0 else sl_points
+        sl_distance_final = abs(price - sl)
         sl_points = sl_distance_final
         print(f"     → SL đã điều chỉnh: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f})")
     
@@ -894,12 +933,13 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         print(f"  ❌ [ORDER] LỖI VALIDATION: TP distance {tp_distance_final:.1f} pips < yêu cầu {min_tp_required:.1f} pips")
         print(f"     → Điều chỉnh TP lên {min_tp_required:.1f} pips")
         tp_points = min_tp_required
-        tp_distance = tp_points * point
+        # ⚠️ VỚI ETHUSD: tp_distance (USD) = tp_points (pips)
+        tp_distance = tp_points
         if trade_type == mt5.ORDER_TYPE_BUY:
             tp = price + tp_distance
         else:  # SELL
             tp = price - tp_distance
-        tp_distance_final = abs(price - tp) / point if point > 0 else tp_points
+        tp_distance_final = abs(price - tp)
         tp_points = tp_distance_final
         print(f"     → TP đã điều chỉnh: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
     
