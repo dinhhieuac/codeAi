@@ -142,7 +142,9 @@ def load_config(filename=None):
         # Lấy thư mục chứa file bot hiện tại
         bot_dir = os.path.dirname(os.path.abspath(__file__))
         filename = os.path.join(bot_dir, "mt5_account.json")
-    
+    else:
+        bot_dir = os.path.dirname(os.path.abspath(__file__))
+        filename = os.path.join(bot_dir, filename)
     if not os.path.exists(filename):
         print(f"❌ Lỗi: Không tìm thấy tệp cấu hình '{filename}'. Vui lòng tạo file này.")
         return False
