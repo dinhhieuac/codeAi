@@ -17,7 +17,7 @@ MT5_PASSWORD = None
 MT5_SERVER = None
 SYMBOL = None
 MT5_PATH = None
-VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
+VOLUME = 0.1  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 # ⚠️ LƯU Ý: Với ETHUSD, 1 lot = 0.1 ETH (khác với forex: 1 lot = 100,000)
 MAGIC = 20251117
 
@@ -31,23 +31,24 @@ ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trư
 
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 5     # ATR tối thiểu (pips) để vào lệnh (ETHUSD: 5-10 pips phù hợp)
+ATR_MIN_THRESHOLD = 10    # ATR tối thiểu (pips) để vào lệnh (ETHUSD: 10-20 pips phù hợp với biến động lớn)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 1 point = 1 pip cho ETHUSD)
 # Chiến thuật M1: SL/TP theo nến M1
 # ⚠️ VỚI ETHUSD: 1 pip = 1 USD = 1 point (khác với XAUUSD: 1 pip = 10 points)
-SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
-TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M1) × 2.0
-SL_POINTS_MIN = 3    # SL tối thiểu: 3 pips (3 points) - bảo vệ
-SL_POINTS_MAX = 500  # SL tối đa: 500 pips (500 points) - cho phép SL lớn theo ATR
-TP_POINTS_MIN = 5    # TP tối thiểu: 5 pips (5 points) - bảo vệ
-TP_POINTS_MAX = 1000  # TP tối đa: 1000 pips (1000 points) - cho phép TP lớn theo ATR
+# ETHUSD biến động lớn, cần SL/TP đủ xa để tránh bị quét bởi noise
+SL_ATR_MULTIPLIER = 2.5  # SL = ATR(M1) × 2.5 (tăng từ 1.5 để SL đủ xa, tránh bị quét)
+TP_ATR_MULTIPLIER = 3.5  # TP = ATR(M1) × 3.5 (tăng từ 2.0 để tăng RR ratio ~1.4:1)
+SL_POINTS_MIN = 50   # SL tối thiểu: 50 pips (50 USD) - bảo vệ, tránh SL quá gần
+SL_POINTS_MAX = 2000  # SL tối đa: 2000 pips (2000 USD) - cho phép SL lớn theo ATR khi biến động mạnh
+TP_POINTS_MIN = 100   # TP tối thiểu: 100 pips (100 USD) - đảm bảo reward đủ để justify risk
+TP_POINTS_MAX = 4000  # TP tối đa: 4000 pips (4000 USD) - cho phép TP lớn theo ATR
 
 # Fix SL theo giá trị USD cố định
 ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
-BREAK_EVEN_START_POINTS = 5         # Hòa vốn khi lời 5 pips (ETHUSD: 1 pip = 1 USD)
+BREAK_EVEN_START_POINTS = 100       # Hòa vốn khi lời 100 pips (100 USD) - đủ xa để tránh bị quét
 
 # Trailing Stop khi lời 1/2 TP để lock profit
 ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop
@@ -76,14 +77,14 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
 
 CHAT_ID = "1887610382"      
 # Khoảng cách retest EMA20 trên M1 (points)
-# ⚠️ VỚI ETHUSD: 1 pip = 1 point (khác với XAUUSD: 1 pip = 10 points)
-# Giá chạm EMA20 hoặc dưới 3-6 pips (3-6 points)
-RETEST_DISTANCE_MAX = 6   # Tối đa 6 pips (6 points) từ EMA20
+# ⚠️ VỚI ETHUSD: 1 pip = 1 point = 1 USD (khác với XAUUSD: 1 pip = 10 points)
+# ETHUSD biến động lớn, cần khoảng cách phù hợp
+RETEST_DISTANCE_MAX = 10   # Tối đa 10 pips (10 USD) từ EMA20 - tăng từ 6 để phù hợp biến động
 
 # Chiến thuật BREAKOUT (khi giá không retest)
 ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
-BREAKOUT_DISTANCE_MIN = 10  # Khoảng cách tối thiểu từ EMA20: 10 pips (10 points)
-BREAKOUT_DISTANCE_MAX = 30  # Khoảng cách tối đa từ EMA20: 30 pips (30 points)
+BREAKOUT_DISTANCE_MIN = 15  # Khoảng cách tối thiểu từ EMA20: 15 pips (15 USD) - tăng từ 10
+BREAKOUT_DISTANCE_MAX = 50  # Khoảng cách tối đa từ EMA20: 50 pips (50 USD) - tăng từ 30 để phù hợp biến động lớn
 
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
