@@ -906,18 +906,25 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     
     # Tính risk/reward thực tế
     # ⚠️ VỚI ETHUSD: pip_value phụ thuộc vào contract size của broker
-    # Thông thường: 1 lot = 1 ETH, pip_value = $1 cho 1 lot
-    # Với volume 0.1 lot: pip_value = 0.1 × $1 = $0.1 per pip
-    # Risk = volume × sl_pips × pip_value_per_lot
-    # Giả sử pip_value = $1 per lot (cần kiểm tra với broker thực tế)
-    pip_value_per_lot = 1.0  # $1 per lot (cần xác nhận với broker)
+    symbol_info_for_risk = get_symbol_info_full()
+    contract_size = 1.0  # Mặc định: 1 lot = 1 ETH
+    if symbol_info_for_risk is not None:
+        contract_size = getattr(symbol_info_for_risk, 'trade_contract_size', 1.0)
+        # Nếu contract_size = 0.1, nghĩa là 1 lot = 0.1 ETH
+        # Nếu contract_size = 1.0, nghĩa là 1 lot = 1 ETH
+    
+    # Với ETHUSD: 1 pip = 1 USD movement
+    # pip_value = contract_size × 1 USD per pip
+    # Ví dụ: contract_size = 1.0 → 1 lot = 1 ETH → pip_value = $1 per lot per pip
+    #        contract_size = 0.1 → 1 lot = 0.1 ETH → pip_value = $0.1 per lot per pip
+    pip_value_per_lot = contract_size  # $contract_size per lot per pip
     risk_usd = volume * sl_points * pip_value_per_lot
     reward_usd = volume * tp_points * pip_value_per_lot
     
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f}) | TP: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
     print(f"  📊 [ORDER] Validation: SL distance {sl_distance_final:.1f} >= {min_sl_required:.1f} ✓, TP distance {tp_distance_final:.1f} >= {min_tp_required:.1f} ✓")
-    print(f"  💵 [RISK] Volume: {volume} lot | SL: {sl_points:.1f} pips | Risk: ~${risk_usd:.2f} | Reward: ~${reward_usd:.2f} | RR: {reward_usd/risk_usd:.2f}:1")
-    print(f"  ⚠️ [NOTE] Risk tính toán dựa trên pip_value = ${pip_value_per_lot} per lot. Cần xác nhận với broker thực tế.")
+    print(f"  💵 [RISK] Volume: {volume} lot | Contract Size: {contract_size} ETH/lot | SL: {sl_points:.1f} pips | Risk: ~${risk_usd:.2f} | Reward: ~${reward_usd:.2f} | RR: {reward_usd/risk_usd:.2f}:1")
+    print(f"  📊 [RISK DETAIL] pip_value = ${pip_value_per_lot:.2f} per lot per pip → Volume {volume} lot × {sl_points:.1f} pips = ${risk_usd:.2f} risk")
     if stops_level > 0:
         print(f"  📊 [ORDER] Broker stops_level: {stops_level} points, với buffer 10%: {stops_level_with_buffer:.1f} points")
         
