@@ -1160,7 +1160,7 @@ def run_bot():
     logger.info("Khởi động bot...")
     
     # 1. Tải cấu hình
-    if not load_config():
+    if not load_config("btc.json"):
         logger.error("Không thể tải cấu hình. Dừng bot.")
         return
         
