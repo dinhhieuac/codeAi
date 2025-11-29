@@ -754,7 +754,8 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 sl_points = sl_pips
                 tp_points = tp_pips
                 
-                # Giới hạn SL/TP trong khoảng min-max (đã là points = pips)
+                # ⚠️ QUAN TRỌNG: Đảm bảo SL/TP đủ xa (áp dụng min trước, sau đó giới hạn max)
+                # Nếu ATR quá nhỏ, SL/TP sẽ được nâng lên tối thiểu
                 sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
                 tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
                 
@@ -762,7 +763,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 sl_pips_limited = sl_points
                 tp_pips_limited = tp_points
                 
-                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}, giới hạn {SL_POINTS_MIN}-{SL_POINTS_MAX} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}, giới hạn {TP_POINTS_MIN}-{TP_POINTS_MAX} pips)")
+                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} pips → SL: {sl_pips_limited:.1f} pips (ATR×{SL_ATR_MULTIPLIER}={sl_pips:.2f}, giới hạn {SL_POINTS_MIN}-{SL_POINTS_MAX} pips), TP: {tp_pips_limited:.1f} pips (ATR×{TP_ATR_MULTIPLIER}={tp_pips:.2f}, giới hạn {TP_POINTS_MIN}-{TP_POINTS_MAX} pips)")
             else:
                 # Fallback: Dùng giá trị trung bình nếu không tính được ATR
                 sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
@@ -796,39 +797,63 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
             return
     
-    # ⚠️ VALIDATION: Kiểm tra stops level của broker
+    # ⚠️ VALIDATION: Kiểm tra stops level của broker và đảm bảo SL/TP đủ xa
     symbol_info = get_symbol_info_full()
+    stops_level = 0
     if symbol_info is not None:
         stops_level = getattr(symbol_info, 'stops_level', 0)
-        if stops_level > 0:
-            # Tính khoảng cách từ entry đến SL/TP (points)
-            sl_distance_points = abs(price - sl) / point
-            tp_distance_points = abs(price - tp) / point
-            
-            # Kiểm tra xem SL/TP có đủ xa entry không (phải >= stops_level)
-            if sl_distance_points < stops_level:
-                print(f"  ⚠️ [ORDER] SL quá gần entry: {sl_distance_points:.1f} points < stops_level {stops_level} points")
-                print(f"     → Điều chỉnh SL từ {sl:.5f} để đảm bảo khoảng cách >= {stops_level} points")
-                # Điều chỉnh SL để đảm bảo khoảng cách >= stops_level
-                if trade_type == mt5.ORDER_TYPE_BUY:
-                    sl = price - (stops_level * point)
-                else:  # SELL
-                    sl = price + (stops_level * point)
-                # Tính lại sl_points sau khi điều chỉnh
-                sl_points = abs(price - sl) / point
-                print(f"     → SL mới: {sl:.5f} ({sl_points:.1f} pips)")
-            
-            if tp_distance_points < stops_level:
-                print(f"  ⚠️ [ORDER] TP quá gần entry: {tp_distance_points:.1f} points < stops_level {stops_level} points")
-                print(f"     → Điều chỉnh TP từ {tp:.5f} để đảm bảo khoảng cách >= {stops_level} points")
-                # Điều chỉnh TP để đảm bảo khoảng cách >= stops_level
-                if trade_type == mt5.ORDER_TYPE_BUY:
-                    tp = price + (stops_level * point)
-                else:  # SELL
-                    tp = price - (stops_level * point)
-                # Tính lại tp_points sau khi điều chỉnh
-                tp_points = abs(price - tp) / point
-                print(f"     → TP mới: {tp:.5f} ({tp_points:.1f} pips)")
+    
+    # ⚠️ QUAN TRỌNG: Đảm bảo SL/TP >= max(SL_POINTS_MIN, stops_level) trước khi tính distance
+    # Với ETHUSD, stops_level thường là 5-10 points, cần đảm bảo SL/TP đủ xa
+    min_sl_required = max(SL_POINTS_MIN, stops_level) if stops_level > 0 else SL_POINTS_MIN
+    min_tp_required = max(TP_POINTS_MIN, stops_level) if stops_level > 0 else TP_POINTS_MIN
+    
+    if sl_points < min_sl_required:
+        print(f"  ⚠️ [ORDER] SL quá nhỏ: {sl_points:.1f} pips < yêu cầu tối thiểu {min_sl_required:.1f} pips (SL_POINTS_MIN={SL_POINTS_MIN}, stops_level={stops_level})")
+        print(f"     → Điều chỉnh SL từ {sl_points:.1f} lên {min_sl_required:.1f} pips")
+        sl_points = min_sl_required
+        sl_distance = sl_points * point
+        if trade_type == mt5.ORDER_TYPE_BUY:
+            sl = price - sl_distance
+        else:  # SELL
+            sl = price + sl_distance
+        print(f"     → SL mới: {sl:.5f} ({sl_points:.1f} pips)")
+    
+    if tp_points < min_tp_required:
+        print(f"  ⚠️ [ORDER] TP quá nhỏ: {tp_points:.1f} pips < yêu cầu tối thiểu {min_tp_required:.1f} pips (TP_POINTS_MIN={TP_POINTS_MIN}, stops_level={stops_level})")
+        print(f"     → Điều chỉnh TP từ {tp_points:.1f} lên {min_tp_required:.1f} pips")
+        tp_points = min_tp_required
+        tp_distance = tp_points * point
+        if trade_type == mt5.ORDER_TYPE_BUY:
+            tp = price + tp_distance
+        else:  # SELL
+            tp = price - tp_distance
+        print(f"     → TP mới: {tp:.5f} ({tp_points:.1f} pips)")
+    
+    # Kiểm tra lại stops_level sau khi điều chỉnh (double check)
+    if stops_level > 0:
+        sl_distance_points = abs(price - sl) / point
+        tp_distance_points = abs(price - tp) / point
+        
+        if sl_distance_points < stops_level:
+            print(f"  ⚠️ [ORDER] SL vẫn quá gần sau điều chỉnh: {sl_distance_points:.1f} points < stops_level {stops_level} points")
+            print(f"     → Điều chỉnh SL lần cuối để đảm bảo >= {stops_level} points")
+            if trade_type == mt5.ORDER_TYPE_BUY:
+                sl = price - (stops_level * point)
+            else:  # SELL
+                sl = price + (stops_level * point)
+            sl_points = abs(price - sl) / point
+            print(f"     → SL cuối cùng: {sl:.5f} ({sl_points:.1f} pips)")
+        
+        if tp_distance_points < stops_level:
+            print(f"  ⚠️ [ORDER] TP vẫn quá gần sau điều chỉnh: {tp_distance_points:.1f} points < stops_level {stops_level} points")
+            print(f"     → Điều chỉnh TP lần cuối để đảm bảo >= {stops_level} points")
+            if trade_type == mt5.ORDER_TYPE_BUY:
+                tp = price + (stops_level * point)
+            else:  # SELL
+                tp = price - (stops_level * point)
+            tp_points = abs(price - tp) / point
+            print(f"     → TP cuối cùng: {tp:.5f} ({tp_points:.1f} pips)")
     
     print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips) | TP: {tp:.5f} ({tp_points:.1f} pips)")
         
