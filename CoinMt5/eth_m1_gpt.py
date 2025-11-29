@@ -913,11 +913,16 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         # Nếu contract_size = 0.1, nghĩa là 1 lot = 0.1 ETH
         # Nếu contract_size = 1.0, nghĩa là 1 lot = 1 ETH
     
-    # Với ETHUSD: 1 pip = 1 USD movement
-    # pip_value = contract_size × 1 USD per pip
-    # Ví dụ: contract_size = 1.0 → 1 lot = 1 ETH → pip_value = $1 per lot per pip
-    #        contract_size = 0.1 → 1 lot = 0.1 ETH → pip_value = $0.1 per lot per pip
-    pip_value_per_lot = contract_size  # $contract_size per lot per pip
+    # ⚠️ QUAN TRỌNG: Với ETHUSD trên Exness/MT5
+    # - 1 lot = 0.1 ETH (contract_size = 0.1)
+    # - pip_value = $0.1 per lot per pip (vì 1 lot = 0.1 ETH)
+    # - Ví dụ: Volume 0.1 lot, SL 100 pips → Risk = 0.1 × 100 × 0.1 = $1.00 ✓
+    # - Nếu contract_size = 0.1 → pip_value = 0.1 $/lot/pip
+    # - Nếu contract_size = 1.0 → pip_value = 1.0 $/lot/pip
+    if contract_size > 0:
+        pip_value_per_lot = contract_size  # pip_value = contract_size $/lot/pip
+    else:
+        pip_value_per_lot = 0.1  # Mặc định: 1 lot = 0.1 ETH → pip_value = $0.1/lot/pip
     risk_usd = volume * sl_points * pip_value_per_lot
     reward_usd = volume * tp_points * pip_value_per_lot
     
