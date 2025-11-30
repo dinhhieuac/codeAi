@@ -1408,7 +1408,7 @@ def run_bot():
         
         print(f"\n  📊 [TÓM TẮT] Trend={trend} | Momentum={'✅' if has_momentum else '❌'} | Pullback={'✅' if has_pullback else '❌'} | Signal={'✅' if has_signal else '❌'}")
 
-        if open_positions < 1:
+        if open_positions < 5:
             # Không có lệnh nào, tìm tín hiệu vào lệnh
             print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
             
