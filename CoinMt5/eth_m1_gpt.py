@@ -95,8 +95,9 @@ def setup_logging():
     Thiết lập logging để ghi log vào file theo tên bot.
     File log sẽ được tạo trong thư mục XAUUSDMT5/logs/
     """
-    # Tạo thư mục logs nếu chưa có
-    log_dir = "XAUUSDMT5/logs"
+    # Tạo thư mục logs nếu chưa có (trong thư mục chứa bot)
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(bot_dir, "logs")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
@@ -684,7 +685,7 @@ def calculate_atr_from_m1(df_m1, period=14):
     
     return atr_pips
 
-def send_order(trade_type, volume, df_m1=None, deviation=20):
+def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, signal_type=None, adx_current=None, atr_pips=None, deviation=20):
     """
     Gửi lệnh Market Execution với SL/TP theo nến M1 (ATR-based).
     
@@ -692,6 +693,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         trade_type: mt5.ORDER_TYPE_BUY hoặc mt5.ORDER_TYPE_SELL
         volume: Khối lượng giao dịch
         df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
+        h1_trend: Thông tin trend H1 ('BUY', 'SELL', 'SIDEWAYS')
+        m1_signal: Tín hiệu M1 ('BUY', 'SELL', 'NONE')
+        signal_type: Loại tín hiệu ('RETEST', 'BREAKOUT', 'NONE')
+        adx_current: Giá trị ADX hiện tại
+        atr_pips: Giá trị ATR (pips) - nếu đã tính sẵn
         deviation: Độ lệch giá cho phép
     
     Returns:
@@ -1021,14 +1027,22 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 logger.warning(f"🛑 Tạm dừng {ERROR_COOLDOWN_MINUTES} phút do lỗi {error_count} lần liên tiếp")
                 send_telegram(f"<b>🛑 TẠM DỪNG BOT</b>\nĐã lỗi {error_count}/{ERROR_COOLDOWN_COUNT} lần liên tiếp\nTạm dừng {ERROR_COOLDOWN_MINUTES} phút")
         
-        # Ghi log lỗi
+        # Ghi log lỗi với đầy đủ chi tiết
         logger.error("=" * 70)
         logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
         logger.error(f"Retcode: {result.retcode}")
         logger.error(f"Chi tiết lỗi: {error_info}")
         logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips) | TP: {tp:.5f} ({tp_points:.1f} pips)")
-        logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
         logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
+        if h1_trend:
+            logger.error(f"H1 Trend: {h1_trend}")
+        if m1_signal:
+            logger.error(f"M1 Signal: {m1_signal}")
+        if signal_type:
+            logger.error(f"Signal Type: {signal_type}")
+        if adx_current is not None:
+            logger.error(f"ADX: {adx_current:.2f}")
+        logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
         logger.error(f"Error Count: {error_count}/{ERROR_COOLDOWN_COUNT}")
         logger.error("=" * 70)
         
@@ -1055,11 +1069,12 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             error_count = 0
             error_cooldown_start = None
         
-        # Ghi log thành công
+        # Ghi log thành công với đầy đủ chi tiết
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
         atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
         sl_atr_display = f"{sl_points:.1f}"
         tp_atr_display = f"{tp_points:.1f}"
+        rr_ratio = tp_points / sl_points if sl_points > 0 else 0
         
         logger.info("=" * 70)
         logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
@@ -1068,8 +1083,33 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         logger.info(f"Entry: {price:.5f}")
         logger.info(f"SL: {sl:.5f} ({sl_points:.1f} pips)")
         logger.info(f"TP: {tp:.5f} ({tp_points:.1f} pips)")
+        logger.info(f"R:R = {rr_ratio:.2f}:1")
         logger.info(f"Volume: {volume}")
         logger.info(f"ATR: {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)")
+        
+        # Ghi log các chỉ số chi tiết
+        if h1_trend:
+            logger.info(f"H1 Trend: {h1_trend}")
+        if m1_signal:
+            logger.info(f"M1 Signal: {m1_signal}")
+        if signal_type:
+            logger.info(f"Signal Type: {signal_type}")
+        if adx_current is not None:
+            logger.info(f"ADX: {adx_current:.2f}")
+        
+        # Tính risk/reward
+        symbol_info_for_risk = get_symbol_info_full()
+        contract_size = 1.0  # Mặc định: 1 lot = 1 ETH
+        if symbol_info_for_risk is not None:
+            contract_size = getattr(symbol_info_for_risk, 'trade_contract_size', 1.0)
+        if contract_size > 0:
+            pip_value_per_lot = contract_size
+        else:
+            pip_value_per_lot = 0.1
+        risk_usd = volume * sl_points * pip_value_per_lot
+        reward_usd = volume * tp_points * pip_value_per_lot
+        logger.info(f"Risk: ${risk_usd:.2f} | Reward: ${reward_usd:.2f} | Contract Size: {contract_size} ETH/lot")
+        
         logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 70)
         
@@ -1391,7 +1431,18 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
+                    # Ghi log trước khi gửi lệnh
+                    logger = logging.getLogger(__name__)
+                    logger.info("=" * 70)
+                    logger.info(f"🎯 TÍN HIỆU BUY - CHUẨN BỊ GỬI LỆNH")
+                    logger.info(f"H1 Trend: {h1_trend}")
+                    logger.info(f"M1 Signal: {m1_signal} ({signal_type})")
+                    logger.info(f"ADX: {adx_current:.2f}")
+                    if ENABLE_ATR_FILTER and atr_pips is not None:
+                        logger.info(f"ATR: {atr_pips:.2f} pips")
+                    logger.info("=" * 70)
+                    
+                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1, h1_trend=h1_trend, m1_signal=m1_signal, signal_type=signal_type, adx_current=adx_current, atr_pips=atr_pips)
                 
             elif m1_signal == 'SELL' and h1_trend == 'SELL':
                 print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
@@ -1417,7 +1468,18 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
+                    # Ghi log trước khi gửi lệnh
+                    logger = logging.getLogger(__name__)
+                    logger.info("=" * 70)
+                    logger.info(f"🎯 TÍN HIỆU SELL - CHUẨN BỊ GỬI LỆNH")
+                    logger.info(f"H1 Trend: {h1_trend}")
+                    logger.info(f"M1 Signal: {m1_signal} ({signal_type})")
+                    logger.info(f"ADX: {adx_current:.2f}")
+                    if ENABLE_ATR_FILTER and atr_pips is not None:
+                        logger.info(f"ATR: {atr_pips:.2f} pips")
+                    logger.info("=" * 70)
+                    
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1, h1_trend=h1_trend, m1_signal=m1_signal, signal_type=signal_type, adx_current=adx_current, atr_pips=atr_pips)
             
             else:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")

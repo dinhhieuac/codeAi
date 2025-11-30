@@ -22,37 +22,40 @@ VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 MAGIC = 20251118
 
 # Thông số Chỉ báo & Lọc
-# Chiến thuật M1: "BÁM THEO H1 – ĂN 5–10 PHÚT"
-EMA_H1 = 50  # EMA50 trên H1 để xác định trend
-EMA_M1 = 20  # EMA20 trên M1 để tìm điểm retest
+# Chiến thuật M1: Price Action - Momentum + Pullback + Break
 ATR_PERIOD = 14
-ADX_PERIOD = 14  # Chu kỳ tính ADX
-ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
-# Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
-ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 2.0   # ATR tối thiểu (pips) để vào lệnh (BTCUSD M1: ATR thường 2-10 pips, BTC biến động lớn hơn ETH)
+# Thông số Price Action
+TREND_LOOKBACK = 20  # Số nến để xác định trend (đỉnh/đáy)
+MOMENTUM_CANDLE_BODY_RATIO = 0.6  # Tỷ lệ thân nến momentum (thân/tổng nến) >= 60%
+PULLBACK_CANDLES_MAX = 3  # Số nến pullback tối đa (1-3 nến)
+PULLBACK_BODY_RATIO_MAX = 0.4  # Thân nến pullback nhỏ (thân/tổng nến) <= 40%
 
-# Thông số Quản lý Lệnh (Tính bằng points, 1 point = 1 pip cho BTCUSD)
-# Chiến thuật M1: SL/TP theo nến M1
+# Thông số Quản lý Lệnh (Tính bằng USD, 1 pip = 1 USD cho BTCUSD)
+# Chiến thuật M1: Price Action - SL ngắn và bám sát cấu trúc
 # ⚠️ VỚI BTCUSD: 1 pip = 1 USD = 1 point (khác với XAUUSD: 1 pip = 10 points)
-# BTCUSD biến động lớn hơn ETH, cần SL/TP đủ xa để tránh bị quét bởi noise
-SL_ATR_MULTIPLIER = 2.5  # SL = ATR(M1) × 2.5 (tăng từ 1.5 để SL đủ xa, tránh bị quét)
-TP_ATR_MULTIPLIER = 3.5  # TP = ATR(M1) × 3.5 (tăng từ 2.0 để tăng RR ratio ~1.4:1)
-SL_POINTS_MIN = 100   # SL tối thiểu: 100 pips (100 USD) - tăng từ 50 để tránh lỗi retcode 10016
-SL_POINTS_MAX = 10000  # SL tối đa: 10000 pips (100 USD) - Tăng lên để phù hợp với ATR của BTC
-TP_POINTS_MIN = 150   # TP tối thiểu: 150 pips (150 USD) - tăng từ 100 để đảm bảo hợp lệ với broker
-TP_POINTS_MAX = 20000  # TP tối đa: 20000 pips (200 USD) - Tăng lên để phù hợp với ATR của BTC
+# Theo btc.md: SL 4-8 USD (market mạnh: 8-10 USD, market yếu: 4-6 USD)
+SL_USD_MIN = 4.0   # SL tối thiểu: 4 USD
+SL_USD_MAX = 12.0  # SL tối đa: 12 USD (không vượt quá để giữ R:R)
+SL_BUFFER_USD = 3.0  # Buffer cho SL: 2-4 USD (đặt trên đỉnh nến hồi cuối)
 
-# Fix SL theo giá trị USD cố định
-ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
-FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
-ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
-BREAK_EVEN_START_POINTS = 100       # Hòa vốn khi lời 100 pips (100 USD) - đủ xa để tránh bị quét
+# TP theo R:R ratio (0.8R - 1.2R, momentum mạnh: 1.5R)
+TP_RATIO_MIN = 0.8  # TP tối thiểu: 0.8R
+TP_RATIO_MAX = 1.2  # TP tối đa: 1.2R (thông thường)
+TP_RATIO_MOMENTUM = 1.5  # TP khi momentum mạnh: 1.5R
 
-# Trailing Stop khi lời 1/2 TP để lock profit
-ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop
-TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
+# Quản lý lệnh theo R:R
+# Khi đạt 0.5R → dời SL lên -0.1R
+MANAGE_SL_AT_RATIO = 0.5  # Quản lý SL khi đạt 0.5R
+MANAGE_SL_TO_RATIO = -0.1  # Dời SL lên -0.1R
+# Khi đạt 0.8R → dời SL về Entry (BE)
+BREAK_EVEN_AT_RATIO = 0.8  # Hòa vốn khi đạt 0.8R
+# Khi đạt 1R → chốt 50%, phần còn lại trailing
+PARTIAL_CLOSE_AT_RATIO = 1.0  # Chốt 50% khi đạt 1R
+PARTIAL_CLOSE_PERCENT = 0.5  # Chốt 50% volume
+
+ENABLE_BREAK_EVEN = True           # Bật/tắt chức năng di chuyển SL về hòa vốn
+ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop (sau khi chốt 50%)
 TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 
 # Cooldown sau lệnh thua
@@ -75,16 +78,7 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
                                 # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                                 # Hướng dẫn: https://core.telegram.org/bots/tutorial
 
-CHAT_ID = "1887610382"      
-# Khoảng cách retest EMA20 trên M1 (points)
-# ⚠️ VỚI BTCUSD: 1 pip = 1 point = 1 USD (khác với XAUUSD: 1 pip = 10 points)
-# BTCUSD biến động lớn hơn ETH, cần khoảng cách phù hợp
-RETEST_DISTANCE_MAX = 15   # Tối đa 15 pips (15 USD) từ EMA20 - BTC biến động lớn hơn ETH
-
-# Chiến thuật BREAKOUT (khi giá không retest)
-ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
-BREAKOUT_DISTANCE_MIN = 20  # Khoảng cách tối thiểu từ EMA20: 20 pips (20 USD) - BTC biến động lớn hơn ETH
-BREAKOUT_DISTANCE_MAX = 80  # Khoảng cách tối đa từ EMA20: 80 pips (80 USD) - BTC biến động lớn hơn ETH
+CHAT_ID = "1887610382"
 
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
@@ -95,8 +89,9 @@ def setup_logging():
     Thiết lập logging để ghi log vào file theo tên bot.
     File log sẽ được tạo trong thư mục XAUUSDMT5/logs/
     """
-    # Tạo thư mục logs nếu chưa có
-    log_dir = "XAUUSDMT5/logs"
+    # Tạo thư mục logs nếu chưa có (trong thư mục chứa bot)
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(bot_dir, "logs")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
@@ -315,176 +310,296 @@ def calculate_adx(df, period=14):
     
     return adx
 
-def check_h1_trend():
+def check_price_action_trend(df_m1):
     """
-    Kiểm tra xu hướng H1 bằng EMA50
+    Xác định trend bằng Price Action (đỉnh/đáy)
     
-    Chiến thuật: "BÁM THEO H1 – ĂN 5–10 PHÚT"
-    - Giá > EMA50 → CHỈ BUY
-    - Giá < EMA50 → CHỈ SELL
+    Theo btc.md:
+    - Xu hướng giảm rõ rệt: Đỉnh sau thấp hơn đỉnh trước, Đáy sau thấp hơn đáy trước
+    - Xu hướng tăng rõ rệt: Đỉnh sau cao hơn đỉnh trước, Đáy sau cao hơn đáy trước
     
+    Args:
+        df_m1: DataFrame M1
+        
     Returns:
         'BUY', 'SELL', hoặc 'SIDEWAYS'
     """
-    print("  📊 [H1 TREND] Kiểm tra xu hướng H1 bằng EMA50...")
-    
-    df_h1 = get_rates(mt5.TIMEFRAME_H1)
-    if df_h1 is None or len(df_h1) < EMA_H1:
-        print(f"    [H1] ❌ Không đủ dữ liệu để tính EMA50")
+    if df_m1 is None or len(df_m1) < TREND_LOOKBACK:
         return 'SIDEWAYS'
     
-    ema_50_h1 = calculate_ema(df_h1, EMA_H1).iloc[-1]
-    close_h1 = df_h1['close'].iloc[-1]
+    # Lấy TREND_LOOKBACK nến gần nhất
+    recent_df = df_m1.tail(TREND_LOOKBACK)
     
-    print(f"    [H1] Giá: {close_h1:.5f} | EMA50: {ema_50_h1:.5f}")
+    # Tìm các đỉnh và đáy cục bộ
+    highs = recent_df['high']
+    lows = recent_df['low']
     
-    if close_h1 > ema_50_h1:
-        print(f"    [H1] ✅ XU HƯỚNG MUA (Giá > EMA50) → CHỈ BUY")
-        return 'BUY'
-    elif close_h1 < ema_50_h1:
-        print(f"    [H1] ✅ XU HƯỚNG BÁN (Giá < EMA50) → CHỈ SELL")
-        return 'SELL'
-    else:
-        print(f"    [H1] ⚠️ SIDEWAYS (Giá ≈ EMA50)")
-        return 'SIDEWAYS'
+    # Tìm 2 đỉnh gần nhất và 2 đáy gần nhất
+    # Đỉnh: high lớn hơn 2 nến trước và 2 nến sau
+    peaks = []
+    for i in range(2, len(highs) - 2):
+        if highs.iloc[i] > highs.iloc[i-1] and highs.iloc[i] > highs.iloc[i-2] and \
+           highs.iloc[i] > highs.iloc[i+1] and highs.iloc[i] > highs.iloc[i+2]:
+            peaks.append((i, highs.iloc[i]))
+    
+    # Đáy: low nhỏ hơn 2 nến trước và 2 nến sau
+    troughs = []
+    for i in range(2, len(lows) - 2):
+        if lows.iloc[i] < lows.iloc[i-1] and lows.iloc[i] < lows.iloc[i-2] and \
+           lows.iloc[i] < lows.iloc[i+1] and lows.iloc[i] < lows.iloc[i+2]:
+            troughs.append((i, lows.iloc[i]))
+    
+    # Kiểm tra xu hướng
+    if len(peaks) >= 2 and len(troughs) >= 2:
+        # Lấy 2 đỉnh gần nhất
+        peaks_sorted = sorted(peaks, key=lambda x: x[0], reverse=True)[:2]
+        # Lấy 2 đáy gần nhất
+        troughs_sorted = sorted(troughs, key=lambda x: x[0], reverse=True)[:2]
+        
+        peak1_val = peaks_sorted[0][1]
+        peak2_val = peaks_sorted[1][1]
+        trough1_val = troughs_sorted[0][1]
+        trough2_val = troughs_sorted[1][1]
+        
+        # Xu hướng giảm: Đỉnh sau < Đỉnh trước và Đáy sau < Đáy trước
+        if peak1_val < peak2_val and trough1_val < trough2_val:
+            print(f"  📊 [TREND] XU HƯỚNG GIẢM (Đỉnh: {peak1_val:.5f} < {peak2_val:.5f}, Đáy: {trough1_val:.5f} < {trough2_val:.5f})")
+            return 'SELL'
+        # Xu hướng tăng: Đỉnh sau > Đỉnh trước và Đáy sau > Đáy trước
+        elif peak1_val > peak2_val and trough1_val > trough2_val:
+            print(f"  📊 [TREND] XU HƯỚNG TĂNG (Đỉnh: {peak1_val:.5f} > {peak2_val:.5f}, Đáy: {trough1_val:.5f} > {trough2_val:.5f})")
+            return 'BUY'
+    
+    print(f"  📊 [TREND] SIDEWAYS (Không rõ xu hướng)")
+    return 'SIDEWAYS'
 
-def check_m1_retest_ema20(df_m1, h1_trend):
+def check_momentum_candle(df_m1):
     """
-    Kiểm tra điểm vào ở M1 khi giá RETEST lại EMA20
+    Phát hiện nến momentum
     
-    Chiến thuật: "BÁM THEO H1 – ĂN 5–10 PHÚT"
-    - Trend BUY → chờ giá M1 chạm EMA20 (hoặc dưới 3–6 pip) → BUY
-    - Trend SELL → chờ giá M1 chạm EMA20 → SELL
+    Theo btc.md:
+    - Nến thân dài, đóng cửa gần đáy (cho SELL)
+    - Phá vỡ cấu trúc trước đó
+    - Đây là tín hiệu phe bán mạnh
     
     Args:
         df_m1: DataFrame M1
-        h1_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
         
     Returns:
-        'BUY', 'SELL', hoặc 'NONE'
+        Tuple (bool, dict): (has_momentum, info_dict)
+            - has_momentum: True nếu có nến momentum
+            - info_dict: Thông tin nến momentum (index, high, low, close, body_ratio)
     """
-    if h1_trend == 'SIDEWAYS':
-        print("  📈 [M1 RETEST] H1 trend là SIDEWAYS → Không có tín hiệu")
-        return 'NONE'
+    if df_m1 is None or len(df_m1) < 5:
+        return False, None
     
-    if len(df_m1) < EMA_M1:
-        print("  📈 [M1 RETEST] Không đủ dữ liệu để tính EMA20")
-        return 'NONE'
+    # Kiểm tra nến gần nhất (có thể là nến momentum)
+    last_candle = df_m1.iloc[-1]
+    high = last_candle['high']
+    low = last_candle['low']
+    close = last_candle['close']
+    open_price = last_candle['open']
     
-    # Tính EMA20 trên M1
-    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
-    ema_20_current = ema_20_m1.iloc[-1]
+    # Tính thân nến và tổng nến
+    body = abs(close - open_price)
+    total_range = high - low
     
-    # Lấy giá hiện tại
-    tick = mt5.symbol_info_tick(SYMBOL)
-    current_price = tick.bid  # Dùng bid cho cả BUY và SELL (để tính khoảng cách)
+    if total_range == 0:
+        return False, None
     
-    point = get_symbol_info()
-    if point is None:
-        return 'NONE'
+    body_ratio = body / total_range
     
-    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
-    distance_points = abs(current_price - ema_20_current) / point
+    # Kiểm tra nến momentum SELL: thân dài (>= 60%), đóng cửa gần đáy
+    # Đóng cửa gần đáy: (close - low) / total_range <= 0.3
+    close_to_low_ratio = (close - low) / total_range if total_range > 0 else 0
     
-    print(f"  📈 [M1 RETEST] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
-    print(f"    Khoảng cách: {distance_points:.1f} points ({distance_points:.1f} pips)")
+    if body_ratio >= MOMENTUM_CANDLE_BODY_RATIO and close_to_low_ratio <= 0.3:
+        # Kiểm tra phá vỡ cấu trúc: giá phá đáy gần nhất
+        if len(df_m1) >= 10:
+            recent_low = df_m1['low'].iloc[-10:-1].min()
+            if low < recent_low:
+                info = {
+                    'index': len(df_m1) - 1,
+                    'high': high,
+                    'low': low,
+                    'close': close,
+                    'open': open_price,
+                    'body_ratio': body_ratio,
+                    'close_to_low_ratio': close_to_low_ratio
+                }
+                print(f"  🔥 [MOMENTUM] Phát hiện nến momentum SELL:")
+                print(f"     - Thân nến: {body_ratio:.1%} (>= {MOMENTUM_CANDLE_BODY_RATIO:.1%})")
+                print(f"     - Đóng cửa gần đáy: {close_to_low_ratio:.1%} (<= 30%)")
+                print(f"     - Phá đáy gần nhất: {low:.5f} < {recent_low:.5f}")
+                return True, info
     
-    if h1_trend == 'BUY':
-        # Trend BUY → chờ giá M1 chạm EMA20 hoặc dưới 3–6 pip
-        if current_price <= ema_20_current + (RETEST_DISTANCE_MAX * point):
-            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ dưới lên (BUY signal)")
-            return 'BUY'
-        else:
-            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points:.1f} pips) - Chờ retest")
-            return 'NONE'
-    
-    elif h1_trend == 'SELL':
-        # Trend SELL → chờ giá M1 chạm EMA20 hoặc trên 3–6 pip
-        if current_price >= ema_20_current - (RETEST_DISTANCE_MAX * point):
-            print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ trên xuống (SELL signal)")
-            return 'SELL'
-        else:
-            print(f"    ⚠️ [M1 RETEST] Giá còn xa EMA20 ({distance_points:.1f} pips) - Chờ retest")
-            return 'NONE'
-    
-    return 'NONE'
+    return False, None
 
-def check_m1_breakout(df_m1, h1_trend, adx_current):
+def check_pullback(df_m1, momentum_info):
     """
-    Kiểm tra điểm vào BREAKOUT khi giá không retest EMA20
+    Phát hiện pullback (hồi nhỏ) sau nến momentum
     
-    Chiến thuật: ENTRY BREAKOUT (KHI GIÁ KHÔNG RETEST)
-    - ADX > 28
-    - H1 trend SELL → Giá M1 phá đáy gần nhất trong khi còn cách EMA20 > 10–20 point
-    - H1 trend BUY → Giá M1 phá đỉnh gần nhất trong khi còn cách EMA20 > 10–20 point
-    - Không cần retest → Bot follow momentum
+    Theo btc.md:
+    - 1-3 nến hồi nhỏ
+    - Thân nến nhỏ, volume giảm
+    - Không phá đỉnh nến momentum
     
     Args:
         df_m1: DataFrame M1
-        h1_trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
-        adx_current: Giá trị ADX hiện tại
+        momentum_info: Dict thông tin nến momentum
         
     Returns:
-        'BUY', 'SELL', hoặc 'NONE'
+        Tuple (bool, dict): (has_pullback, info_dict)
+            - has_pullback: True nếu có pullback hợp lệ
+            - info_dict: Thông tin pullback (start_index, end_index, candles_count, last_pullback_high)
     """
-    if h1_trend == 'SIDEWAYS':
-        return 'NONE'
+    if momentum_info is None:
+        return False, None
     
-    # Kiểm tra ADX > 28
-    if adx_current <= ADX_BREAKOUT_THRESHOLD:
-        return 'NONE'
+    momentum_index = momentum_info['index']
+    momentum_high = momentum_info['high']
     
-    if len(df_m1) < EMA_M1 + 20:  # Cần ít nhất 20 nến để tìm đáy/đỉnh
-        return 'NONE'
+    # Kiểm tra các nến sau nến momentum (tối đa PULLBACK_CANDLES_MAX)
+    pullback_candles = []
+    start_index = momentum_index + 1
     
-    # Tính EMA20 trên M1
-    ema_20_m1 = calculate_ema(df_m1, EMA_M1)
-    ema_20_current = ema_20_m1.iloc[-1]
+    if len(df_m1) < start_index + 1:
+        return False, None
+    
+    # Kiểm tra từng nến sau momentum
+    for i in range(start_index, min(start_index + PULLBACK_CANDLES_MAX, len(df_m1))):
+        candle = df_m1.iloc[i]
+        high = candle['high']
+        low = candle['low']
+        close = candle['close']
+        open_price = candle['open']
+        
+        # Kiểm tra không phá đỉnh nến momentum
+        if high > momentum_high:
+            # Phá đỉnh → không phải pullback
+            break
+        
+        # Tính thân nến
+        body = abs(close - open_price)
+        total_range = high - low
+        
+        if total_range == 0:
+            continue
+        
+        body_ratio = body / total_range
+        
+        # Kiểm tra thân nến nhỏ (<= 40%)
+        if body_ratio <= PULLBACK_BODY_RATIO_MAX:
+            pullback_candles.append(i)
+        else:
+            # Thân nến lớn → không phải pullback
+            break
+    
+    if 1 <= len(pullback_candles) <= PULLBACK_CANDLES_MAX:
+        last_pullback_high = df_m1.iloc[pullback_candles[-1]]['high']
+        info = {
+            'start_index': start_index,
+            'end_index': pullback_candles[-1],
+            'candles_count': len(pullback_candles),
+            'last_pullback_high': last_pullback_high
+        }
+        print(f"  📉 [PULLBACK] Phát hiện {len(pullback_candles)} nến pullback:")
+        print(f"     - Không phá đỉnh momentum: {last_pullback_high:.5f} <= {momentum_high:.5f}")
+        return True, info
+    
+    return False, None
+
+def check_entry_signal(df_m1, trend, momentum_info, pullback_info):
+    """
+    Kiểm tra điểm vào SELL khi giá phá đáy nến hồi cuối cùng
+    
+    Theo btc.md:
+    - SELL khi giá phá đáy nến hồi cuối cùng
+    - Không đoán đỉnh đáy
+    - Không vào khi nến đang chạy
+    
+    Args:
+        df_m1: DataFrame M1
+        trend: 'BUY', 'SELL', hoặc 'SIDEWAYS'
+        momentum_info: Dict thông tin nến momentum
+        pullback_info: Dict thông tin pullback
+        
+    Returns:
+        Tuple (bool, dict): (has_signal, signal_info)
+            - has_signal: True nếu có tín hiệu vào lệnh
+            - signal_info: Thông tin tín hiệu (entry_price, sl_price, tp_price, sl_usd, tp_usd)
+    """
+    if trend != 'SELL':
+        return False, None
+    
+    if momentum_info is None or pullback_info is None:
+        return False, None
+    
+    # Lấy đáy nến hồi cuối cùng
+    last_pullback_index = pullback_info['end_index']
+    last_pullback_low = df_m1.iloc[last_pullback_index]['low']
+    last_pullback_high = pullback_info['last_pullback_high']
     
     # Lấy giá hiện tại
     tick = mt5.symbol_info_tick(SYMBOL)
-    current_price = tick.bid if h1_trend == 'SELL' else tick.ask
+    current_price = tick.bid
     
-    point = get_symbol_info()
-    if point is None:
-        return 'NONE'
+    # Kiểm tra giá phá đáy nến hồi cuối
+    if current_price < last_pullback_low:
+        # Tính SL: Đặt trên đỉnh nến hồi cuối + buffer
+        sl_price = last_pullback_high + SL_BUFFER_USD
+        sl_usd = sl_price - current_price
+        
+        # Đảm bảo SL trong khoảng 4-12 USD
+        if sl_usd < SL_USD_MIN:
+            sl_usd = SL_USD_MIN
+            sl_price = current_price + sl_usd
+        elif sl_usd > SL_USD_MAX:
+            sl_usd = SL_USD_MAX
+            sl_price = current_price + sl_usd
+        
+        # Tính TP: 0.8R - 1.2R (nếu momentum mạnh thì 1.5R)
+        # Kiểm tra momentum mạnh: 3-5 nến thân lớn liên tục
+        momentum_strong = False
+        if len(df_m1) >= 5:
+            strong_candles = 0
+            for i in range(max(0, len(df_m1) - 5), len(df_m1)):
+                candle = df_m1.iloc[i]
+                body = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
+                if total_range > 0 and body / total_range >= 0.6:
+                    strong_candles += 1
+            if strong_candles >= 3:
+                momentum_strong = True
+        
+        if momentum_strong:
+            tp_ratio = TP_RATIO_MOMENTUM
+        else:
+            tp_ratio = TP_RATIO_MAX  # Dùng 1.2R thông thường
+        
+        tp_usd = sl_usd * tp_ratio
+        tp_price = current_price - tp_usd
+        
+        signal_info = {
+            'entry_price': current_price,
+            'sl_price': sl_price,
+            'tp_price': tp_price,
+            'sl_usd': sl_usd,
+            'tp_usd': tp_usd,
+            'rr_ratio': tp_ratio,
+            'momentum_strong': momentum_strong
+        }
+        
+        print(f"  ✅ [ENTRY SIGNAL] Tín hiệu SELL:")
+        print(f"     - Giá phá đáy nến hồi cuối: {current_price:.5f} < {last_pullback_low:.5f}")
+        print(f"     - SL: {sl_price:.5f} ({sl_usd:.2f} USD) - Trên đỉnh nến hồi cuối + buffer")
+        print(f"     - TP: {tp_price:.5f} ({tp_usd:.2f} USD) - {tp_ratio:.1f}R")
+        if momentum_strong:
+            print(f"     - Momentum mạnh: TP = {tp_ratio:.1f}R")
+        
+        return True, signal_info
     
-    # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
-    if h1_trend == 'SELL':
-        distance_points = (ema_20_current - current_price) / point  # Khoảng cách từ giá đến EMA20 (phía trên)
-    else:  # BUY
-        distance_points = (current_price - ema_20_current) / point  # Khoảng cách từ giá đến EMA20 (phía dưới)
-    
-    # Kiểm tra khoảng cách > 10-20 point
-    if distance_points < BREAKOUT_DISTANCE_MIN or distance_points > BREAKOUT_DISTANCE_MAX:
-        return 'NONE'
-    
-    # Tìm đáy/đỉnh gần nhất (20 nến gần nhất)
-    lookback = 20
-    recent_lows = df_m1['low'].iloc[-lookback:].min()
-    recent_highs = df_m1['high'].iloc[-lookback:].max()
-    
-    print(f"  🚀 [M1 BREAKOUT] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
-    print(f"    Khoảng cách đến EMA20: {distance_points:.1f} points ({distance_points:.1f} pips)")
-    print(f"    Đáy gần nhất: {recent_lows:.5f} | Đỉnh gần nhất: {recent_highs:.5f}")
-    
-    if h1_trend == 'SELL':
-        # SELL: Giá phá đáy gần nhất
-        if current_price < recent_lows:
-            print(f"    ✅ [M1 BREAKOUT] Giá phá đáy gần nhất ({recent_lows:.5f}) → SELL BREAKOUT")
-            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
-            print(f"       - Khoảng cách EMA20: {distance_points:.1f} pips")
-            return 'SELL'
-    
-    elif h1_trend == 'BUY':
-        # BUY: Giá phá đỉnh gần nhất
-        if current_price > recent_highs:
-            print(f"    ✅ [M1 BREAKOUT] Giá phá đỉnh gần nhất ({recent_highs:.5f}) → BUY BREAKOUT")
-            print(f"       - ADX: {adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD} (Momentum mạnh)")
-            print(f"       - Khoảng cách EMA20: {distance_points:.1f} pips")
-            return 'BUY'
-    
-    return 'NONE'
+    return False, None
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
@@ -686,14 +801,18 @@ def calculate_atr_from_m1(df_m1, period=14):
     
     return atr_pips
 
-def send_order(trade_type, volume, df_m1=None, deviation=20):
+def send_order(trade_type, volume, signal_info=None, trend_info=None, momentum_info=None, pullback_info=None, atr_pips=None, deviation=20):
     """
-    Gửi lệnh Market Execution với SL/TP theo nến M1 (ATR-based).
+    Gửi lệnh Market Execution với SL/TP từ Price Action signal.
     
     Args:
         trade_type: mt5.ORDER_TYPE_BUY hoặc mt5.ORDER_TYPE_SELL
         volume: Khối lượng giao dịch
-        df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
+        signal_info: Dict chứa thông tin SL/TP từ Price Action (entry_price, sl_price, tp_price, sl_usd, tp_usd)
+        trend_info: Thông tin trend (str: 'BUY', 'SELL', 'SIDEWAYS')
+        momentum_info: Dict thông tin nến momentum
+        pullback_info: Dict thông tin pullback
+        atr_pips: Giá trị ATR (pips)
         deviation: Độ lệch giá cho phép
     
     Returns:
@@ -704,244 +823,69 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
     point = get_symbol_info()
     if point is None:
         print("❌ Lỗi: Không thể lấy thông tin ký hiệu để gửi lệnh.")
-        return
+        return False
         
     tick_info = mt5.symbol_info_tick(SYMBOL)
     price = tick_info.ask if trade_type == mt5.ORDER_TYPE_BUY else tick_info.bid
     
-    # Tính SL và TP
-    # ⚠️ VỚI BTCUSD: 1 pip = 1 USD = 1 point (khác với XAUUSD: 1 pip = 10 points)
-    atr_pips = None
-    sl_usd_final = None
-    tp_usd_final = None
-    
-    # Chuyển đổi các giới hạn từ Points sang USD (Price)
-    # Ví dụ: SL_POINTS_MIN = 100, point = 0.01 → Min SL = 1.0 USD
-    sl_min_usd = SL_POINTS_MIN * point
-    sl_max_usd = SL_POINTS_MAX * point
-    tp_min_usd = TP_POINTS_MIN * point
-    tp_max_usd = TP_POINTS_MAX * point
-
-    # Kiểm tra nếu bật fix SL theo USD
-    if ENABLE_FIXED_SL_USD and FIXED_SL_USD > 0:
-        # Tính SL từ USD cố định
-        sl_usd_final = FIXED_SL_USD
+    # Sử dụng SL/TP từ signal_info (Price Action)
+    if signal_info is not None:
+        sl = signal_info['sl_price']
+        tp = signal_info['tp_price']
+        sl_usd = signal_info['sl_usd']
+        tp_usd = signal_info['tp_usd']
+        entry_price = signal_info['entry_price']
         
-        print(f"  📊 [ORDER] SL CỐ ĐỊNH: {FIXED_SL_USD} USD")
-        
-        # Tính TP vẫn dựa trên ATR (nếu có) hoặc dùng giá trị mặc định
-        if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1) # ATR trả về giá trị USD
-            if atr_pips is not None:
-                tp_usd = atr_pips * TP_ATR_MULTIPLIER
-                # Clamp TP theo USD
-                tp_usd_final = max(tp_min_usd, min(tp_usd, tp_max_usd))
-                print(f"  📊 [ORDER] TP: {tp_usd_final:.2f} USD (ATR×{TP_ATR_MULTIPLIER}, giới hạn {tp_min_usd:.2f}-{tp_max_usd:.2f} USD)")
-            else:
-                tp_usd_final = (tp_min_usd + tp_max_usd) / 2
-                print(f"  ⚠️ [ORDER] Không tính được ATR cho TP, dùng giá trị mặc định: TP: {tp_usd_final:.2f} USD")
+        # Sử dụng entry_price từ signal_info hoặc giá hiện tại
+        if abs(price - entry_price) > 10 * point:  # Nếu giá lệch quá nhiều, dùng giá hiện tại
+            print(f"  ⚠️ [ORDER] Giá hiện tại ({price:.5f}) lệch nhiều so với entry signal ({entry_price:.5f}), dùng giá hiện tại")
+            # Điều chỉnh SL/TP theo giá mới
+            if trade_type == mt5.ORDER_TYPE_SELL:
+                sl = price + sl_usd
+                tp = price - tp_usd
+            else:  # BUY
+                sl = price - sl_usd
+                tp = price + tp_usd
         else:
-            tp_usd_final = (tp_min_usd + tp_max_usd) / 2
-            print(f"  ⚠️ [ORDER] Không có dữ liệu M1 cho TP, dùng giá trị mặc định: TP: {tp_usd_final:.2f} USD")
+            price = entry_price  # Dùng entry_price từ signal
+        
+        print(f"  📊 [ORDER] Price Action Entry:")
+        print(f"     Entry: {price:.5f} | SL: {sl:.5f} ({sl_usd:.2f} USD) | TP: {tp:.5f} ({tp_usd:.2f} USD)")
+        print(f"     R:R = {tp_usd/sl_usd:.2f}:1")
     else:
-        # Tính SL và TP theo ATR của nến M1
-        if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1) # ATR trả về giá trị USD
-            if atr_pips is not None:
-                # Tính SL/TP theo ATR (đơn vị USD)
-                sl_usd = atr_pips * SL_ATR_MULTIPLIER
-                tp_usd = atr_pips * TP_ATR_MULTIPLIER
-                
-                # Clamp SL/TP theo USD
-                sl_usd_final = max(sl_min_usd, min(sl_usd, sl_max_usd))
-                tp_usd_final = max(tp_min_usd, min(tp_usd, tp_max_usd))
-                
-                print(f"  📊 [ORDER] ATR(M1): {atr_pips:.2f} USD")
-                print(f"     SL: {sl_usd_final:.2f} USD (ATR×{SL_ATR_MULTIPLIER}={sl_usd:.2f}, limit {sl_min_usd:.2f}-{sl_max_usd:.2f})")
-                print(f"     TP: {tp_usd_final:.2f} USD (ATR×{TP_ATR_MULTIPLIER}={tp_usd:.2f}, limit {tp_min_usd:.2f}-{tp_max_usd:.2f})")
-            else:
-                # Fallback: Dùng giá trị trung bình
-                sl_usd_final = (sl_min_usd + sl_max_usd) / 2
-                tp_usd_final = (tp_min_usd + tp_max_usd) / 2
-                print(f"  ⚠️ [ORDER] Không tính được ATR, dùng giá trị mặc định: SL: {sl_usd_final:.2f} USD, TP: {tp_usd_final:.2f} USD")
-        else:
-            # Fallback: Dùng giá trị trung bình
-            sl_usd_final = (sl_min_usd + sl_max_usd) / 2
-            tp_usd_final = (tp_min_usd + tp_max_usd) / 2
-            print(f"  ⚠️ [ORDER] Không có dữ liệu M1, dùng giá trị mặc định: SL: {sl_usd_final:.2f} USD, TP: {tp_usd_final:.2f} USD")
-    
-    # Khoảng cách giá (Distance) chính là giá trị USD tính được
-    sl_distance = sl_usd_final
-    tp_distance = tp_usd_final
-    
-    # Chuyển đổi sl_distance và tp_distance (USD) sang points để validation
-    # Với BTCUSD: 1 pip = 1 USD = 1 point, nên sl_distance (USD) = sl_points (points)
-    sl_points = sl_distance / point if point > 0 else 0
-    tp_points = tp_distance / point if point > 0 else 0
-    
-    if trade_type == mt5.ORDER_TYPE_BUY:
-        # BUY: SL dưới entry, TP trên entry
-        sl = price - sl_distance
-        tp = price + tp_distance
-    else: # SELL
-        # SELL: SL trên entry, TP dưới entry
-        sl = price + sl_distance
-        tp = price - tp_distance
+        print("❌ Lỗi: Không có signal_info để gửi lệnh.")
+        return False
     
     # Kiểm tra logic SL/TP
     if trade_type == mt5.ORDER_TYPE_BUY:
         if sl >= price or tp <= price:
             print(f"  ⚠️ [ORDER] LỖI LOGIC: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f}) và TP ({tp:.5f}) phải > Entry")
-            return
+            return False
     else:  # SELL
         if sl <= price or tp >= price:
             print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f}) và TP ({tp:.5f}) phải < Entry")
-            return
-    
-    # ⚠️ VALIDATION: Kiểm tra stops level của broker và đảm bảo SL/TP đủ xa
-    symbol_info = get_symbol_info_full()
-    stops_level = 0
-    trade_stops_level = 0
-    if symbol_info is not None:
-        # Thử lấy cả stops_level và trade_stops_level (một số broker dùng trade_stops_level)
-        stops_level = getattr(symbol_info, 'stops_level', 0)
-        trade_stops_level = getattr(symbol_info, 'trade_stops_level', 0)
-        # Dùng giá trị lớn hơn để đảm bảo an toàn
-        stops_level = max(stops_level, trade_stops_level)
-        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points (stops_level={getattr(symbol_info, 'stops_level', 0)}, trade_stops_level={trade_stops_level})")
-    
-    # ⚠️ QUAN TRỌNG: Đảm bảo SL/TP >= max(SL_POINTS_MIN, stops_level) trước khi tính distance
-    # Với BTCUSD, stops_level có thể lớn hơn 50, cần đảm bảo SL/TP đủ xa
-    # Tăng thêm buffer 10% để đảm bảo không bị reject
-    stops_level_with_buffer = int(stops_level * 1.1) if stops_level > 0 else 0
-    min_sl_required = max(SL_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else SL_POINTS_MIN
-    min_tp_required = max(TP_POINTS_MIN, stops_level, stops_level_with_buffer) if stops_level > 0 else TP_POINTS_MIN
-    
-    print(f"  📊 [ORDER] Yêu cầu tối thiểu: SL >= {min_sl_required:.1f} pips, TP >= {min_tp_required:.1f} pips")
-    
-    if sl_points < min_sl_required:
-        print(f"  ⚠️ [ORDER] SL quá nhỏ: {sl_points:.1f} pips < yêu cầu tối thiểu {min_sl_required:.1f} pips (SL_POINTS_MIN={SL_POINTS_MIN}, stops_level={stops_level})")
-        print(f"     → Điều chỉnh SL từ {sl_points:.1f} lên {min_sl_required:.1f} pips")
-        sl_points = min_sl_required
-        sl_distance = sl_points * point
-        if trade_type == mt5.ORDER_TYPE_BUY:
-            sl = price - sl_distance
-        else:  # SELL
-            sl = price + sl_distance
-        # Cập nhật lại sl_points từ sl mới để đảm bảo nhất quán
-        sl_points = abs(price - sl) / point if point > 0 else sl_points
-        print(f"     → SL mới: {sl:.5f} ({sl_points:.1f} pips)")
-    
-    if tp_points < min_tp_required:
-        print(f"  ⚠️ [ORDER] TP quá nhỏ: {tp_points:.1f} pips < yêu cầu tối thiểu {min_tp_required:.1f} pips (TP_POINTS_MIN={TP_POINTS_MIN}, stops_level={stops_level})")
-        print(f"     → Điều chỉnh TP từ {tp_points:.1f} lên {min_tp_required:.1f} pips")
-        tp_points = min_tp_required
-        tp_distance = tp_points * point
-        if trade_type == mt5.ORDER_TYPE_BUY:
-            tp = price + tp_distance
-        else:  # SELL
-            tp = price - tp_distance
-        # Cập nhật lại tp_points từ tp mới để đảm bảo nhất quán
-        tp_points = abs(price - tp) / point if point > 0 else tp_points
-        print(f"     → TP mới: {tp:.5f} ({tp_points:.1f} pips)")
-    
-    # Kiểm tra lại stops_level sau khi điều chỉnh (double check)
-    if stops_level > 0:
-        sl_distance_points = abs(price - sl) / point
-        tp_distance_points = abs(price - tp) / point
-        
-        if sl_distance_points < stops_level:
-            print(f"  ⚠️ [ORDER] SL vẫn quá gần sau điều chỉnh: {sl_distance_points:.1f} points < stops_level {stops_level} points")
-            print(f"     → Điều chỉnh SL lần cuối để đảm bảo >= {stops_level} points")
-            if trade_type == mt5.ORDER_TYPE_BUY:
-                sl = price - (stops_level * point)
-            else:  # SELL
-                sl = price + (stops_level * point)
-            sl_points = abs(price - sl) / point
-            print(f"     → SL cuối cùng: {sl:.5f} ({sl_points:.1f} pips)")
-        
-        if tp_distance_points < stops_level:
-            print(f"  ⚠️ [ORDER] TP vẫn quá gần sau điều chỉnh: {tp_distance_points:.1f} points < stops_level {stops_level} points")
-            print(f"     → Điều chỉnh TP lần cuối để đảm bảo >= {stops_level} points")
-            if trade_type == mt5.ORDER_TYPE_BUY:
-                tp = price + (stops_level * point)
-            else:  # SELL
-                tp = price - (stops_level * point)
-            tp_points = abs(price - tp) / point
-            print(f"     → TP cuối cùng: {tp:.5f} ({tp_points:.1f} pips)")
-    
-    # ⚠️ FINAL VALIDATION: Kiểm tra lại lần cuối trước khi gửi
-    # Tính lại sl_points và tp_points từ sl và tp hiện tại để đảm bảo nhất quán
-    sl_distance_final = abs(price - sl) / point if point > 0 else 0
-    tp_distance_final = abs(price - tp) / point if point > 0 else 0
-    sl_points = sl_distance_final
-    tp_points = tp_distance_final
-    
-    # Đảm bảo SL/TP đủ xa (ít nhất min_sl_required cho SL, min_tp_required cho TP)
-    if sl_distance_final < min_sl_required:
-        print(f"  ❌ [ORDER] LỖI VALIDATION: SL distance {sl_distance_final:.1f} pips < yêu cầu {min_sl_required:.1f} pips")
-        print(f"     → Điều chỉnh SL lên {min_sl_required:.1f} pips")
-        sl_points = min_sl_required
-        sl_distance = sl_points * point
-        if trade_type == mt5.ORDER_TYPE_BUY:
-            sl = price - sl_distance
-        else:  # SELL
-            sl = price + sl_distance
-        sl_distance_final = abs(price - sl) / point if point > 0 else sl_points
-        sl_points = sl_distance_final
-        print(f"     → SL đã điều chỉnh: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f})")
-    
-    if tp_distance_final < min_tp_required:
-        print(f"  ❌ [ORDER] LỖI VALIDATION: TP distance {tp_distance_final:.1f} pips < yêu cầu {min_tp_required:.1f} pips")
-        print(f"     → Điều chỉnh TP lên {min_tp_required:.1f} pips")
-        tp_points = min_tp_required
-        tp_distance = tp_points * point
-        if trade_type == mt5.ORDER_TYPE_BUY:
-            tp = price + tp_distance
-        else:  # SELL
-            tp = price - tp_distance
-        tp_distance_final = abs(price - tp) / point if point > 0 else tp_points
-        tp_points = tp_distance_final
-        print(f"     → TP đã điều chỉnh: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
-    
-    # Kiểm tra lại logic SL/TP sau khi điều chỉnh
-    if trade_type == mt5.ORDER_TYPE_BUY:
-        if sl >= price or tp <= price:
-            print(f"  ❌ [ORDER] LỖI LOGIC SAU ĐIỀU CHỈNH: BUY - SL ({sl:.5f}) >= Entry ({price:.5f}) hoặc TP ({tp:.5f}) <= Entry")
             return False
-    else:  # SELL
-        if sl <= price or tp >= price:
-            print(f"  ❌ [ORDER] LỖI LOGIC SAU ĐIỀU CHỈNH: SELL - SL ({sl:.5f}) <= Entry ({price:.5f}) hoặc TP ({tp:.5f}) >= Entry")
-            return False
+    
+    # Tính sl_points và tp_points để hiển thị
+    sl_points = sl_usd  # Với BTCUSD: 1 pip = 1 USD
+    tp_points = tp_usd  # Với BTCUSD: 1 pip = 1 USD
     
     # Tính risk/reward thực tế
-    # ⚠️ VỚI BTCUSD: pip_value phụ thuộc vào contract size của broker
     symbol_info_for_risk = get_symbol_info_full()
     contract_size = 0.01  # Mặc định: 1 lot = 0.01 BTC
     if symbol_info_for_risk is not None:
         contract_size = getattr(symbol_info_for_risk, 'trade_contract_size', 0.01)
-        # Nếu contract_size = 0.01, nghĩa là 1 lot = 0.01 BTC
-        # Nếu contract_size = 1.0, nghĩa là 1 lot = 1 BTC
     
-    # ⚠️ QUAN TRỌNG: Với BTCUSD trên Exness/MT5
-    # - 1 lot = 0.01 BTC (contract_size = 0.01)
-    # - pip_value = $0.01 per lot per pip (vì 1 lot = 0.01 BTC)
-    # - Ví dụ: Volume 0.01 lot, SL 100 pips → Risk = 0.01 × 100 × 0.01 = $0.01 ✓
-    # - Nếu contract_size = 0.01 → pip_value = 0.01 $/lot/pip
-    # - Nếu contract_size = 1.0 → pip_value = 1.0 $/lot/pip
     if contract_size > 0:
         pip_value_per_lot = contract_size  # pip_value = contract_size $/lot/pip
     else:
         pip_value_per_lot = 0.01  # Mặc định: 1 lot = 0.01 BTC → pip_value = $0.01/lot/pip
-    risk_usd = volume * sl_points * pip_value_per_lot
-    reward_usd = volume * tp_points * pip_value_per_lot
     
-    print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips, distance: {sl_distance_final:.1f}) | TP: {tp:.5f} ({tp_points:.1f} pips, distance: {tp_distance_final:.1f})")
-    print(f"  📊 [ORDER] Validation: SL distance {sl_distance_final:.1f} >= {min_sl_required:.1f} ✓, TP distance {tp_distance_final:.1f} >= {min_tp_required:.1f} ✓")
-    print(f"  💵 [RISK] Volume: {volume} lot | Contract Size: {contract_size} BTC/lot | SL: {sl_points:.1f} pips | Risk: ~${risk_usd:.2f} | Reward: ~${reward_usd:.2f} | RR: {reward_usd/risk_usd:.2f}:1")
-    print(f"  📊 [RISK DETAIL] pip_value = ${pip_value_per_lot:.2f} per lot per pip → Volume {volume} lot × {sl_points:.1f} pips = ${risk_usd:.2f} risk")
-    if stops_level > 0:
-        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points, với buffer 10%: {stops_level_with_buffer:.1f} points")
+    risk_usd = volume * sl_usd * pip_value_per_lot
+    reward_usd = volume * tp_usd * pip_value_per_lot
+    
+    print(f"  💰 [ORDER] Entry: {price:.5f} | SL: {sl:.5f} ({sl_usd:.2f} USD) | TP: {tp:.5f} ({tp_usd:.2f} USD)")
+    print(f"  💵 [RISK] Volume: {volume} lot | Contract Size: {contract_size} BTC/lot | SL: {sl_usd:.2f} USD | Risk: ~${risk_usd:.2f} | Reward: ~${reward_usd:.2f} | RR: {tp_usd/sl_usd:.2f}:1")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -968,7 +912,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} - retcode: {result.retcode}"
         print(error_msg)
         print(f"Chi tiết lỗi: {error_info}")
-        print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips) | TP: {tp:.5f} ({tp_points:.1f} pips)")
+        print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_usd:.2f} USD) | TP: {tp:.5f} ({tp_usd:.2f} USD)")
         
         # Tăng đếm lỗi liên tiếp
         if ENABLE_ERROR_COOLDOWN:
@@ -987,21 +931,10 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
         logger.error(f"Retcode: {result.retcode}")
         logger.error(f"Chi tiết lỗi: {error_info}")
-        logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points:.1f} pips) | TP: {tp:.5f} ({tp_points:.1f} pips)")
-        logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
+        logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_usd:.2f} USD) | TP: {tp:.5f} ({tp_usd:.2f} USD)")
         logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
         logger.error(f"Error Count: {error_count}/{ERROR_COOLDOWN_COUNT}")
         logger.error("=" * 70)
-        
-        # Giải thích lỗi retcode 10030 (Invalid stops)
-        if result.retcode == 10030:
-            print(f"  ⚠️ LỖI 10030: Invalid stops - SL/TP không hợp lệ")
-            print(f"     - Có thể SL/TP quá gần hoặc quá xa entry")
-            print(f"     - Hoặc vi phạm stops level của broker")
-            if symbol_info is not None:
-                stops_level = getattr(symbol_info, 'stops_level', 0)
-                print(f"     - Broker stops_level: {stops_level} points ({stops_level:.1f} pips)")
-                logger.error(f"Broker stops_level: {stops_level} points ({stops_level:.1f} pips)")
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
         return False
@@ -1016,21 +949,45 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
             error_count = 0
             error_cooldown_start = None
         
-        # Ghi log thành công
+        # Ghi log thành công với đầy đủ chi tiết
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
-        atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
-        sl_atr_display = f"{sl_points:.1f}"
-        tp_atr_display = f"{tp_points:.1f}"
+        rr_ratio = tp_usd / sl_usd if sl_usd > 0 else 0
         
         logger.info("=" * 70)
         logger.info(f"✅ VÀO LỆNH THÀNH CÔNG: {trade_direction}")
         logger.info(f"Order ID: {result.order}")
         logger.info(f"Symbol: {SYMBOL}")
         logger.info(f"Entry: {price:.5f}")
-        logger.info(f"SL: {sl:.5f} ({sl_points:.1f} pips)")
-        logger.info(f"TP: {tp:.5f} ({tp_points:.1f} pips)")
+        logger.info(f"SL: {sl:.5f} ({sl_usd:.2f} USD)")
+        logger.info(f"TP: {tp:.5f} ({tp_usd:.2f} USD)")
+        logger.info(f"R:R = {rr_ratio:.2f}:1")
         logger.info(f"Volume: {volume}")
-        logger.info(f"ATR: {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)")
+        
+        # Ghi log các chỉ số chi tiết
+        if trend_info:
+            logger.info(f"Trend: {trend_info}")
+        if momentum_info:
+            logger.info(f"Momentum Candle: Index={momentum_info.get('index', 'N/A')}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}, Close to Low={momentum_info.get('close_to_low_ratio', 0):.1%}")
+        if pullback_info:
+            logger.info(f"Pullback: {pullback_info.get('candles_count', 0)} candles, Last High={pullback_info.get('last_pullback_high', 0):.5f}")
+        if atr_pips is not None:
+            logger.info(f"ATR: {atr_pips:.2f} pips")
+        if signal_info and signal_info.get('momentum_strong'):
+            logger.info(f"Momentum Strong: TP = {signal_info.get('rr_ratio', 0):.1f}R")
+        
+        # Tính risk/reward
+        symbol_info_for_risk = get_symbol_info_full()
+        contract_size = 0.01  # Mặc định: 1 lot = 0.01 BTC
+        if symbol_info_for_risk is not None:
+            contract_size = getattr(symbol_info_for_risk, 'trade_contract_size', 0.01)
+        if contract_size > 0:
+            pip_value_per_lot = contract_size
+        else:
+            pip_value_per_lot = 0.01
+        risk_usd = volume * sl_usd * pip_value_per_lot
+        reward_usd = volume * tp_usd * pip_value_per_lot
+        logger.info(f"Risk: ${risk_usd:.2f} | Reward: ${reward_usd:.2f} | Contract Size: {contract_size} BTC/lot")
+        
         logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 70)
         
@@ -1040,11 +997,11 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
 
 📊 <b>Symbol:</b> {SYMBOL}
 💰 <b>Entry:</b> {price:.5f}
-🛑 <b>SL:</b> {sl:.5f} ({sl_points:.1f} pips)
-🎯 <b>TP:</b> {tp:.5f} ({tp_points:.1f} pips)
+🛑 <b>SL:</b> {sl:.5f} ({sl_usd:.2f} USD)
+🎯 <b>TP:</b> {tp:.5f} ({tp_usd:.2f} USD)
+📊 <b>R:R:</b> {rr_ratio:.2f}:1
 📦 <b>Volume:</b> {volume}
 🆔 <b>Order ID:</b> {result.order}
-📈 <b>ATR:</b> {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)
 
 ⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
@@ -1080,21 +1037,36 @@ def manage_positions():
         current_price = current_bid if is_buy else current_ask
         entry_price = pos.price_open
         
-        # Tính profit hiện tại (points)
+        # Tính profit hiện tại (USD)
         if is_buy:
-            profit_points = (current_price - entry_price) / point
+            profit_usd = current_price - entry_price
         else:  # SELL
-            profit_points = (entry_price - current_price) / point
+            profit_usd = entry_price - current_price
         
-        # --- LOGIC HÒA VỐN (BREAK EVEN) ---
-        if ENABLE_BREAK_EVEN and BREAK_EVEN_START_POINTS > 0 and profit_points >= BREAK_EVEN_START_POINTS:
-            # +1 pip (1 point cho BTCUSD) để bù spread và tránh bị dính SL ngay lập tức
-            pips_buffer = 1 * point  # Với BTCUSD: 1 pip = 1 point 
-            new_sl_price = pos.price_open + pips_buffer if is_buy else pos.price_open - pips_buffer
+        # Tính SL ban đầu (từ entry đến SL hiện tại)
+        if is_buy:
+            initial_sl_usd = entry_price - pos.sl if pos.sl > 0 else 0
+        else:  # SELL
+            initial_sl_usd = pos.sl - entry_price if pos.sl > 0 else 0
+        
+        if initial_sl_usd == 0:
+            continue  # Không có SL ban đầu, bỏ qua
+        
+        # Tính R:R ratio hiện tại
+        current_r_ratio = profit_usd / initial_sl_usd if initial_sl_usd > 0 else 0
+        
+        # --- QUẢN LÝ LỆNH THEO R:R (theo btc.md) ---
+        # 1. Khi đạt 0.5R → dời SL lên -0.1R
+        if current_r_ratio >= MANAGE_SL_AT_RATIO and current_r_ratio < BREAK_EVEN_AT_RATIO:
+            # Tính SL mới = Entry - 0.1R
+            new_sl_usd = initial_sl_usd * abs(MANAGE_SL_TO_RATIO)  # 0.1R
+            if is_buy:
+                new_sl_price = entry_price - new_sl_usd
+            else:  # SELL
+                new_sl_price = entry_price + new_sl_usd
             
-            # Chỉ cập nhật nếu SL hiện tại không phải là giá mở cửa (đã di chuyển)
+            # Chỉ cập nhật nếu SL mới tốt hơn SL hiện tại
             if (is_buy and new_sl_price > pos.sl) or (not is_buy and new_sl_price < pos.sl):
-                
                 request = {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "position": pos.ticket,
@@ -1105,30 +1077,59 @@ def manage_positions():
                 }
                 result = mt5.order_send(request)
                 if result.retcode == mt5.TRADE_RETCODE_DONE:
-                    print(f"🎯 Lệnh {pos.ticket} đã di chuyển SL về Hòa Vốn.")
+                    print(f"📊 Lệnh {pos.ticket}: Đạt {current_r_ratio:.2f}R → Dời SL lên -0.1R ({new_sl_price:.5f})")
         
-        # Tính TP distance (points) từ entry đến TP
-        if is_buy:
-            tp_distance_points = (pos.tp - entry_price) / point
-        else:  # SELL
-            tp_distance_points = (entry_price - pos.tp) / point
+        # 2. Khi đạt 0.8R → dời SL về Entry (BE)
+        elif current_r_ratio >= BREAK_EVEN_AT_RATIO and current_r_ratio < PARTIAL_CLOSE_AT_RATIO:
+            if ENABLE_BREAK_EVEN:
+                # +1 pip để bù spread
+                pips_buffer = 1 * point  # Với BTCUSD: 1 pip = 1 point
+                new_sl_price = entry_price + pips_buffer if is_buy else entry_price - pips_buffer
+                
+                # Chỉ cập nhật nếu SL hiện tại chưa ở BE
+                if (is_buy and new_sl_price > pos.sl) or (not is_buy and new_sl_price < pos.sl):
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": pos.ticket,
+                        "sl": new_sl_price,
+                        "tp": pos.tp,
+                        "magic": MAGIC,
+                        "deviation": 20,
+                    }
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"🎯 Lệnh {pos.ticket}: Đạt {current_r_ratio:.2f}R → Dời SL về Hòa Vốn ({new_sl_price:.5f})")
         
-        # --- LOGIC TRAILING STOP (trail SL khi lời 1/2 TP) ---
-        # Chỉ chạy trailing stop nếu được bật
-        if ENABLE_TRAILING_STOP:
-            # Bắt đầu trailing khi profit >= 1/2 TP
-            tp_half_points = tp_distance_points * TRAILING_START_TP_RATIO
+        # 3. Khi đạt 1R → chốt 50%, phần còn lại trailing
+        elif current_r_ratio >= PARTIAL_CLOSE_AT_RATIO:
+            # Kiểm tra xem đã chốt 50% chưa (kiểm tra volume)
+            if pos.volume >= pos.volume_initial * (1 - PARTIAL_CLOSE_PERCENT + 0.01):  # Chưa chốt (volume còn >= 50%)
+                # Chốt 50% volume
+                close_volume = pos.volume * PARTIAL_CLOSE_PERCENT
+                if close_volume >= 0.001:  # Đảm bảo volume tối thiểu
+                    request = {
+                        "action": mt5.TRADE_ACTION_DEAL,
+                        "symbol": SYMBOL,
+                        "volume": close_volume,
+                        "type": mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
+                        "position": pos.ticket,
+                        "deviation": 20,
+                        "magic": MAGIC,
+                        "comment": f"Partial_Close_50pct",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"💰 Lệnh {pos.ticket}: Đạt {current_r_ratio:.2f}R → Chốt 50% ({close_volume:.3f} lot)")
             
-            if profit_points >= tp_half_points and atr_pips is not None:
-                # Tính bước trailing = ATR(pips) × 0.5
-                # ⚠️ VỚI BTCUSD: 1 pip = 1 point
+            # Trailing stop cho phần còn lại (sau khi chốt 50%)
+            if ENABLE_TRAILING_STOP and atr_pips is not None:
                 trailing_step_pips = atr_pips * TRAILING_STEP_ATR_MULTIPLIER
                 trailing_step_points = trailing_step_pips  # Với BTCUSD: 1 pip = 1 point
                 
                 if is_buy:
-                    # TS cho lệnh BUY: SL mới = current_bid - trailing_step
                     new_sl_ts = current_bid - (trailing_step_points * point)
-                    # Chỉ cập nhật nếu SL mới cao hơn SL hiện tại (di chuyển lên)
                     if new_sl_ts > pos.sl and new_sl_ts < current_bid:
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
@@ -1140,11 +1141,9 @@ def manage_positions():
                         }
                         result = mt5.order_send(request)
                         if result.retcode == mt5.TRADE_RETCODE_DONE:
-                            print(f"⏫ Lệnh {pos.ticket} BUY: Trailing Stop cập nhật lên {new_sl_ts:.5f} (Profit: {profit_points:.1f} pips ≥ 1/2 TP: {tp_half_points:.1f} pips)")
+                            print(f"⏫ Lệnh {pos.ticket} BUY: Trailing Stop ({new_sl_ts:.5f}) sau khi chốt 50%")
                 else:  # SELL
-                    # TS cho lệnh SELL: SL mới = current_ask + trailing_step
                     new_sl_ts = current_ask + (trailing_step_points * point)
-                    # Chỉ cập nhật nếu SL mới thấp hơn SL hiện tại (di chuyển xuống)
                     if (new_sl_ts < pos.sl or pos.sl == 0.0) and new_sl_ts > current_ask:
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
@@ -1156,7 +1155,7 @@ def manage_positions():
                         }
                         result = mt5.order_send(request)
                         if result.retcode == mt5.TRADE_RETCODE_DONE:
-                            print(f"⏬ Lệnh {pos.ticket} SELL: Trailing Stop cập nhật xuống {new_sl_ts:.5f} (Profit: {profit_points:.1f} pips ≥ 1/2 TP: {tp_half_points:.1f} pips)")
+                            print(f"⏬ Lệnh {pos.ticket} SELL: Trailing Stop ({new_sl_ts:.5f}) sau khi chốt 50%")
 
 # ==============================================================================
 # 7. CHU TRÌNH CHÍNH (MAIN LOOP)
@@ -1180,12 +1179,15 @@ def run_bot():
     
     last_candle_time = datetime(1970, 1, 1)
 
-    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: BÁM THEO H1 – ĂN 5–10 PHÚT) ---")
-    print("📋 Chiến thuật:")
-    print("   1. Xác định hướng H1 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
-    print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20")
-    print("   3. TP 10–20 pip, SL 8–15 pip")
-    print("   4. Chỉ check tín hiệu khi nến M1 đã đóng\n")
+    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: Price Action - Momentum + Pullback + Break) ---")
+    print("📋 Chiến thuật (theo btc.md):")
+    print("   1. Xác định trend bằng Price Action (đỉnh/đáy)")
+    print("   2. Phát hiện nến momentum (thân dài, đóng cửa gần đáy)")
+    print("   3. Phát hiện pullback (1-3 nến hồi nhỏ)")
+    print("   4. SELL khi giá phá đáy nến hồi cuối cùng")
+    print("   5. SL: 4-8 USD (đặt trên đỉnh nến hồi cuối + buffer)")
+    print("   6. TP: 0.8R-1.2R (momentum mạnh: 1.5R)")
+    print("   7. Quản lý: 0.5R → -0.1R, 0.8R → BE, 1R → chốt 50% + trailing\n")
     
     while True:
         start_time = time.time() # Ghi lại thời gian bắt đầu chu kỳ
@@ -1193,7 +1195,7 @@ def run_bot():
         
         # 2. Lấy dữ liệu M1
         df_m1 = get_rates(mt5.TIMEFRAME_M1)
-        if df_m1 is None or len(df_m1) < EMA_M1 + 1:
+        if df_m1 is None or len(df_m1) < TREND_LOOKBACK + 5:
             print("Đang chờ dữ liệu M1...")
             time.sleep(5)
             continue
@@ -1215,83 +1217,49 @@ def run_bot():
         current_ask = tick.ask
         print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
         
-        # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
-        print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
+        # --- KIỂM TRA TÍN HIỆU VÀ LỌC (Price Action) ---
+        print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích Price Action...")
         
-        # 1. Xác định hướng H1 bằng EMA50
-        print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng H1 (EMA50)")
-        h1_trend = check_h1_trend()
-        print(f"  └─ [BƯỚC 1] Kết quả: {h1_trend}")
+        # 1. Xác định trend bằng Price Action (đỉnh/đáy)
+        print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng (Price Action)")
+        trend = check_price_action_trend(df_m1)
+        print(f"  └─ [BƯỚC 1] Kết quả: {trend}")
         
-        # 2. Kiểm tra ADX (Bộ lọc tránh thị trường đi ngang)
-        print(f"\n  ┌─ [BƯỚC 2] Kiểm tra ADX (Tránh thị trường đi ngang)")
-        adx_values = calculate_adx(df_m1, ADX_PERIOD)
-        adx_current = adx_values.iloc[-1] if not adx_values.empty else 0
-        print(f"    ADX hiện tại: {adx_current:.2f} (Ngưỡng tối thiểu: {ADX_MIN_THRESHOLD}, Breakout: {ADX_BREAKOUT_THRESHOLD})")
-        
-        if adx_current >= ADX_MIN_THRESHOLD:
-            adx_ok = True
-            print(f"    ✅ [ADX] XU HƯỚNG MẠNH (ADX={adx_current:.2f} ≥ {ADX_MIN_THRESHOLD}) - Có thể giao dịch")
+        # 2. Phát hiện nến momentum
+        print(f"\n  ┌─ [BƯỚC 2] Phát hiện nến momentum")
+        has_momentum, momentum_info = check_momentum_candle(df_m1)
+        if has_momentum:
+            print(f"  └─ [BƯỚC 2] Kết quả: ✅ Có nến momentum")
         else:
-            adx_ok = False
-            print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
-        print(f"  └─ [BƯỚC 2] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
+            print(f"  └─ [BƯỚC 2] Kết quả: ⚠️ Chưa có nến momentum")
         
-        # 2.5. Kiểm tra ATR (Bộ lọc biến động thị trường)
-        atr_pips = None
-        atr_ok = True  # Mặc định OK nếu không bật filter
-        if ENABLE_ATR_FILTER:
-            print(f"\n  ┌─ [BƯỚC 2.5] Kiểm tra ATR (Lọc biến động thị trường)")
-            atr_pips = calculate_atr_from_m1(df_m1)
-            if atr_pips is not None:
-                print(f"    ATR hiện tại: {atr_pips:.2f} pips (Ngưỡng tối thiểu: {ATR_MIN_THRESHOLD} pips)")
-                if atr_pips >= ATR_MIN_THRESHOLD:
-                    atr_ok = True
-                    print(f"    ✅ [ATR] BIẾN ĐỘNG ĐỦ LỚN (ATR={atr_pips:.2f} ≥ {ATR_MIN_THRESHOLD} pips) - Có thể giao dịch")
-                else:
-                    atr_ok = False
-                    print(f"    ⚠️ [ATR] BIẾN ĐỘNG QUÁ NHỎ (ATR={atr_pips:.2f} < {ATR_MIN_THRESHOLD} pips) - Tránh giao dịch")
-            else:
-                atr_ok = False
-                print(f"    ⚠️ [ATR] Không tính được ATR - Tránh giao dịch")
-            print(f"  └─ [BƯỚC 2.5] Kết quả: {'OK' if atr_ok else 'BLOCKED'}")
-
-        # 3. Kiểm tra điểm vào ở M1: RETEST hoặc BREAKOUT
-        print(f"\n  ┌─ [BƯỚC 3] Kiểm tra tín hiệu M1 (Retest EMA20 hoặc Breakout)")
-        
-        # Ưu tiên 1: Kiểm tra RETEST EMA20
-        m1_retest_signal = check_m1_retest_ema20(df_m1, h1_trend)
-        
-        # Ưu tiên 2: Nếu không có retest, kiểm tra BREAKOUT (khi ADX > 28)
-        m1_breakout_signal = 'NONE'
-        if m1_retest_signal == 'NONE' and adx_current > ADX_BREAKOUT_THRESHOLD:
-            m1_breakout_signal = check_m1_breakout(df_m1, h1_trend, adx_current)
-        
-        # Kết hợp tín hiệu: Ưu tiên retest, nếu không có thì dùng breakout
-        m1_signal = m1_retest_signal if m1_retest_signal != 'NONE' else m1_breakout_signal
-        
-        if m1_retest_signal != 'NONE':
-            print(f"    ✅ [M1 SIGNAL] RETEST EMA20: {m1_retest_signal}")
-        elif m1_breakout_signal != 'NONE':
-            print(f"    ✅ [M1 SIGNAL] BREAKOUT: {m1_breakout_signal} (ADX={adx_current:.2f} > {ADX_BREAKOUT_THRESHOLD})")
+        # 3. Phát hiện pullback (hồi nhỏ)
+        print(f"\n  ┌─ [BƯỚC 3] Phát hiện pullback (hồi nhỏ)")
+        has_pullback, pullback_info = check_pullback(df_m1, momentum_info)
+        if has_pullback:
+            print(f"  └─ [BƯỚC 3] Kết quả: ✅ Có {pullback_info['candles_count']} nến pullback")
         else:
-            print(f"    ⚠️ [M1 SIGNAL] Chưa có tín hiệu (Retest: {m1_retest_signal}, Breakout: {m1_breakout_signal})")
+            print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Chưa có pullback")
         
-        print(f"  └─ [BƯỚC 3] Kết quả: {m1_signal}")
+        # 4. Kiểm tra điểm vào SELL khi giá phá đáy nến hồi cuối
+        print(f"\n  ┌─ [BƯỚC 4] Kiểm tra điểm vào lệnh")
+        has_signal, signal_info = check_entry_signal(df_m1, trend, momentum_info, pullback_info)
+        if has_signal:
+            print(f"  └─ [BƯỚC 4] Kết quả: ✅ Có tín hiệu SELL")
+        else:
+            print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Chưa có tín hiệu")
 
-        # 4. Kiểm tra vị thế đang mở (chỉ đếm lệnh của cặp BTCUSD)
+        # 5. Kiểm tra vị thế đang mở
         positions = mt5.positions_get(symbol=SYMBOL)
         if positions is None:
             open_positions = 0
         else:
-            # Chỉ đếm lệnh có magic number của bot này
             open_positions = len([pos for pos in positions if pos.magic == MAGIC])
         print(f"\n  📋 [TRẠNG THÁI] Số lệnh đang mở ({SYMBOL}): {open_positions}")
         
-        signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
-        print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
+        print(f"\n  📊 [TÓM TẮT] Trend={trend} | Momentum={'✅' if has_momentum else '❌'} | Pullback={'✅' if has_pullback else '❌'} | Signal={'✅' if has_signal else '❌'}")
 
-        if open_positions <1:
+        if open_positions < 1:
             # Không có lệnh nào, tìm tín hiệu vào lệnh
             print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
             
@@ -1308,40 +1276,25 @@ def run_bot():
                     print(f"     - Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
                     print(f"     - Còn {remaining_minutes:.1f} phút")
                     print(f"{'='*70}\n")
-                    continue  # Bỏ qua chu kỳ này
+                    continue
                 else:
-                    # Hết cooldown, reset
                     print(f"  ✅ [ERROR COOLDOWN] Đã hết thời gian tạm dừng ({minutes_elapsed:.1f} phút đã trôi qua)")
                     error_count = 0
                     error_cooldown_start = None
             
-            # ⚠️ QUAN TRỌNG: Kiểm tra ADX và ATR trước khi vào lệnh
-            # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
-            # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
-            # - ATR: >= ATR_MIN_THRESHOLD (nếu bật ENABLE_ATR_FILTER)
-            if signal_type == "RETEST" and not adx_ok:
-                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
-                print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
-                print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
-            elif ENABLE_ATR_FILTER and not atr_ok:
-                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ATR FILTER:")
-                atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
-                print(f"     - ATR: {atr_display} pips < {ATR_MIN_THRESHOLD} pips (Biến động quá nhỏ)")
-                print(f"     - Không giao dịch khi biến động thị trường quá nhỏ")
-            elif m1_signal == 'BUY' and h1_trend == 'BUY':
-                print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
-                print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
-                print(f"     - M1 Signal: {m1_signal} ({signal_type})")
-                if signal_type == "RETEST":
-                    print(f"       → Giá retest EMA20 từ dưới lên")
-                elif signal_type == "BREAKOUT":
-                    print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
-                print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                if ENABLE_ATR_FILTER and atr_pips is not None:
-                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
+            # Kiểm tra điều kiện vào lệnh SELL
+            if has_signal and trend == 'SELL' and has_momentum and has_pullback:
+                print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU SELL (Price Action)!")
+                print(f"     - Trend: {trend} (Xu hướng giảm)")
+                print(f"     - Momentum: ✅ Có nến momentum")
+                print(f"     - Pullback: ✅ Có {pullback_info['candles_count']} nến hồi nhỏ")
+                print(f"     - Entry: Giá phá đáy nến hồi cuối")
+                print(f"     - SL: {signal_info['sl_usd']:.2f} USD | TP: {signal_info['tp_usd']:.2f} USD ({signal_info['rr_ratio']:.1f}R)")
+                if signal_info['momentum_strong']:
+                    print(f"     - Momentum mạnh: TP = {signal_info['rr_ratio']:.1f}R")
                 print(f"     - Volume: {VOLUME}")
                 
-                # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
+                # Kiểm tra cooldown sau lệnh thua
                 print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
                 cooldown_allowed, cooldown_message = check_last_loss_cooldown()
                 print(f"    {cooldown_message}")
@@ -1350,46 +1303,34 @@ def run_bot():
                 if not cooldown_allowed:
                     print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
                     print(f"     - {cooldown_message}")
-                    print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
-                
-            elif m1_signal == 'SELL' and h1_trend == 'SELL':
-                print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
-                print(f"     - H1 Trend: {h1_trend} (Giá < EMA50)")
-                print(f"     - M1 Signal: {m1_signal} ({signal_type})")
-                if signal_type == "RETEST":
-                    print(f"       → Giá retest EMA20 từ trên xuống")
-                elif signal_type == "BREAKOUT":
-                    print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
-                print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
-                if ENABLE_ATR_FILTER and atr_pips is not None:
-                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
-                print(f"     - Volume: {VOLUME}")
-                
-                # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
-                print(f"\n  ┌─ [COOLDOWN] Kiểm tra cooldown sau lệnh thua")
-                cooldown_allowed, cooldown_message = check_last_loss_cooldown()
-                print(f"    {cooldown_message}")
-                print(f"  └─ [COOLDOWN] Kết quả: {'OK' if cooldown_allowed else 'BLOCKED'}")
-                
-                if not cooldown_allowed:
-                    print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
-                    print(f"     - {cooldown_message}")
-                    print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
-                else:
-                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
-            
+                    # Tính ATR để log
+                    atr_pips_log = calculate_atr_from_m1(df_m1)
+                    # Ghi log trước khi gửi lệnh
+                    logger = logging.getLogger(__name__)
+                    logger.info("=" * 70)
+                    logger.info(f"🎯 TÍN HIỆU SELL - CHUẨN BỊ GỬI LỆNH")
+                    logger.info(f"Trend: {trend}")
+                    if momentum_info:
+                        logger.info(f"Momentum: Index={momentum_info.get('index', 'N/A')}, High={momentum_info.get('high', 0):.5f}, Low={momentum_info.get('low', 0):.5f}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}")
+                    if pullback_info:
+                        logger.info(f"Pullback: {pullback_info.get('candles_count', 0)} candles, Last High={pullback_info.get('last_pullback_high', 0):.5f}")
+                    if atr_pips_log is not None:
+                        logger.info(f"ATR: {atr_pips_log:.2f} pips")
+                    logger.info(f"Entry Signal: {signal_info.get('entry_price', 0):.5f} | SL: {signal_info.get('sl_usd', 0):.2f} USD | TP: {signal_info.get('tp_usd', 0):.2f} USD ({signal_info.get('rr_ratio', 0):.1f}R)")
+                    logger.info("=" * 70)
+                    
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, signal_info, trend_info=trend, momentum_info=momentum_info, pullback_info=pullback_info, atr_pips=atr_pips_log)
             else:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
-                if h1_trend == 'SIDEWAYS':
-                    print(f"     - H1 Trend: {h1_trend} (Không rõ xu hướng)")
-                elif m1_signal == 'NONE':
-                    print(f"     - M1 Signal: {m1_signal} (Chưa có retest hoặc breakout)")
-                elif m1_signal == 'BUY' and h1_trend != 'BUY':
-                    print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
-                elif m1_signal == 'SELL' and h1_trend != 'SELL':
-                    print(f"     - M1 Signal: {m1_signal} nhưng H1 Trend: {h1_trend} (Không đồng ý)")
+                if trend != 'SELL':
+                    print(f"     - Trend: {trend} (Cần xu hướng giảm)")
+                if not has_momentum:
+                    print(f"     - Momentum: ❌ Chưa có nến momentum")
+                if not has_pullback:
+                    print(f"     - Pullback: ❌ Chưa có pullback")
+                if not has_signal:
+                    print(f"     - Signal: ❌ Giá chưa phá đáy nến hồi cuối")
         else:
             print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
         
