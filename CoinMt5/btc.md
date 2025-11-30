@@ -225,3 +225,89 @@ Cập nhật phần logging để dùng `sl_usd` và `tp_usd`:
    - Cập nhật mô tả chiến thuật theo `btc.md`
 
 Bot hiện sử dụng chiến thuật Price Action theo `btc.md` thay vì EMA-based.
+
+Đang kiểm tra tài liệu `btc.md` để xác nhận:
+
+
+[1 tool called]
+
+
+Theo `btc.md`, chiến thuật chỉ mô tả SELL:
+- Xu hướng giảm
+- Nến momentum đóng cửa gần đáy (tín hiệu phe bán)
+- Pullback
+- SELL khi giá phá đáy nến hồi cuối
+
+Bạn có muốn thêm logic BUY tương tự không? Nếu có, tôi sẽ thêm:
+- Xu hướng tăng
+- Nến momentum đóng cửa gần đỉnh (tín hiệu phe mua)
+- Pullback
+- BUY khi giá phá đỉnh nến hồi cuối
+
+Đang thêm logic BUY tương tự:
+
+
+[1 tool called]
+
+
+Cập nhật các hàm để hỗ trợ cả BUY và SELL:
+
+
+[3 tools called]
+
+
+Cập nhật logic trong `run_bot()` để hỗ trợ cả BUY và SELL:
+
+
+[7 tools called]
+
+
+Đang đọc lại phần còn thiếu:
+
+
+[3 tools called]
+
+
+Cập nhật phần print để hiển thị đúng cho cả BUY và SELL:
+
+
+[3 tools called]
+
+
+Cập nhật mô tả chiến thuật ở đầu file:
+
+
+[4 tools called]
+
+
+Đã cập nhật bot để hỗ trợ cả BUY và SELL. Tóm tắt thay đổi:
+
+## Tóm tắt cập nhật:
+
+### 1. **Cập nhật hàm `check_momentum_candle()`**:
+   - Thêm tham số `trend` ('SELL' hoặc 'BUY')
+   - **SELL**: Nến thân dài, đóng cửa gần đáy (<= 30%), phá đáy gần nhất
+   - **BUY**: Nến thân dài, đóng cửa gần đỉnh (<= 30%), phá đỉnh gần nhất
+   - Trả về `direction` trong `info_dict`
+
+### 2. **Cập nhật hàm `check_pullback()`**:
+   - Hỗ trợ cả BUY và SELL
+   - **SELL**: Không phá đỉnh nến momentum
+   - **BUY**: Không phá đáy nến momentum
+   - Trả về `direction` và `last_pullback_high` (SELL) hoặc `last_pullback_low` (BUY)
+
+### 3. **Cập nhật hàm `check_entry_signal()`**:
+   - **SELL**: Giá phá đáy nến hồi cuối → SL trên đỉnh nến hồi cuối + buffer
+   - **BUY**: Giá phá đỉnh nến hồi cuối → SL dưới đáy nến hồi cuối - buffer
+   - Trả về `direction` trong `signal_info`
+
+### 4. **Cập nhật logic trong `run_bot()`**:
+   - Kiểm tra momentum/pullback/signal cho cả BUY và SELL (không chỉ SELL)
+   - Xác định loại lệnh (`ORDER_TYPE_BUY` hoặc `ORDER_TYPE_SELL`) dựa trên `trend`
+   - Cập nhật logging và print messages để hiển thị đúng cho cả BUY và SELL
+
+### 5. **Cập nhật mô tả chiến thuật**:
+   - Mô tả rõ logic cho cả BUY và SELL
+   - Giải thích cách xác định trend, momentum, pullback và điểm vào cho cả hai hướng
+
+Bot hiện có thể vào lệnh cả BUY và SELL dựa trên Price Action, không chỉ SELL như trước.
