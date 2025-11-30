@@ -1,4 +1,3 @@
-from pickle import NONE
 import MetaTrader5 as mt5
 import pandas as pd
 import time
@@ -18,7 +17,7 @@ MT5_PASSWORD = None
 MT5_SERVER = None
 SYMBOL = None
 MT5_PATH = None
-OPEN_POSITION=NONE
+OPEN_POSITION=1
 
 VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 # ⚠️ LƯU Ý: Với BTCUSD, 1 lot = 0.01 BTC (khác với forex: 1 lot = 100,000)
@@ -133,7 +132,7 @@ def load_config(filename=None):
         filename: Đường dẫn đến file config. Nếu None, tự động tìm mt5_account.json 
                   trong thư mục chứa bot.
     """
-    global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
+    global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID, OPEN_POSITION
     
     # Nếu không có filename, tự động tìm file mt5_account.json trong thư mục chứa bot
     if filename is None:
