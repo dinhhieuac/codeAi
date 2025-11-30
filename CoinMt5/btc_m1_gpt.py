@@ -1345,15 +1345,6 @@ def run_bot():
         # Lấy logger để ghi log
         logger = logging.getLogger(__name__)
         
-        # Log thông tin cơ bản
-        logger.info("=" * 70)
-        logger.info(f"📊 PHÂN TÍCH TÍN HIỆU - {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"Symbol: {SYMBOL}")
-        logger.info(f"Price: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={spread:.5f}")
-        if atr_pips_log is not None:
-            logger.info(f"ATR: {atr_pips_log:.2f} pips")
-        logger.info(f"Candle Time: {current_candle_time}")
-        
         # --- KIỂM TRA TÍN HIỆU VÀ LỌC (Price Action) ---
         print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích Price Action...")
         
@@ -1361,9 +1352,6 @@ def run_bot():
         print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng (Price Action)")
         trend = check_price_action_trend(df_m1)
         print(f"  └─ [BƯỚC 1] Kết quả: {trend}")
-        
-        # Log chi tiết trend
-        logger.info(f"[BƯỚC 1] Trend Analysis: {trend}")
         
         # Kiểm tra momentum/pullback/signal cho cả BUY và SELL
         has_momentum = False
@@ -1379,24 +1367,8 @@ def run_bot():
             has_momentum, momentum_info = check_momentum_candle(df_m1, trend)
             if has_momentum:
                 print(f"  └─ [BƯỚC 2] Kết quả: ✅ Có nến momentum")
-                if momentum_info.get('direction') == 'SELL':
-                    logger.info(f"[BƯỚC 2] Momentum: ✅ Có SELL - Index={momentum_info.get('index', 'N/A')}, High={momentum_info.get('high', 0):.5f}, Low={momentum_info.get('low', 0):.5f}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}, Close to Low={momentum_info.get('close_to_low_ratio', 0):.1%}")
-                else:
-                    logger.info(f"[BƯỚC 2] Momentum: ✅ Có BUY - Index={momentum_info.get('index', 'N/A')}, High={momentum_info.get('high', 0):.5f}, Low={momentum_info.get('low', 0):.5f}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}, Close to High={momentum_info.get('close_to_high_ratio', 0):.1%}")
             else:
                 print(f"  └─ [BƯỚC 2] Kết quả: ⚠️ Chưa có nến momentum")
-                # Log chi tiết tại sao không có momentum
-                if len(df_m1) >= 1:
-                    last_candle = df_m1.iloc[-1]
-                    body = abs(last_candle['close'] - last_candle['open'])
-                    total_range = last_candle['high'] - last_candle['low']
-                    body_ratio = body / total_range if total_range > 0 else 0
-                    if trend == 'SELL':
-                        close_to_low_ratio = (last_candle['close'] - last_candle['low']) / total_range if total_range > 0 else 0
-                        logger.info(f"[BƯỚC 2] Momentum: ❌ Không có SELL - Body Ratio={body_ratio:.1%} (cần >= {MOMENTUM_CANDLE_BODY_RATIO:.1%}), Close to Low={close_to_low_ratio:.1%} (cần <= 30%)")
-                    else:
-                        close_to_high_ratio = (last_candle['high'] - last_candle['close']) / total_range if total_range > 0 else 0
-                        logger.info(f"[BƯỚC 2] Momentum: ❌ Không có BUY - Body Ratio={body_ratio:.1%} (cần >= {MOMENTUM_CANDLE_BODY_RATIO:.1%}), Close to High={close_to_high_ratio:.1%} (cần <= 30%)")
             
             # 3. Phát hiện pullback (hồi nhỏ) - chỉ khi có momentum
             if has_momentum:
@@ -1404,17 +1376,11 @@ def run_bot():
                 has_pullback, pullback_info = check_pullback(df_m1, momentum_info)
                 if has_pullback:
                     print(f"  └─ [BƯỚC 3] Kết quả: ✅ Có {pullback_info['candles_count']} nến pullback")
-                    if pullback_info.get('direction') == 'SELL':
-                        logger.info(f"[BƯỚC 3] Pullback: ✅ Có SELL - {pullback_info.get('candles_count', 0)} candles, Last High={pullback_info.get('last_pullback_high', 0):.5f}")
-                    else:
-                        logger.info(f"[BƯỚC 3] Pullback: ✅ Có BUY - {pullback_info.get('candles_count', 0)} candles, Last Low={pullback_info.get('last_pullback_low', 0):.5f}")
                 else:
                     print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Chưa có pullback")
-                    logger.info(f"[BƯỚC 3] Pullback: ❌ Không có - Cần 1-{PULLBACK_CANDLES_MAX} nến hồi nhỏ (thân nến <= {PULLBACK_BODY_RATIO_MAX:.1%}), không phá cấu trúc momentum")
             else:
                 print(f"\n  ┌─ [BƯỚC 3] Phát hiện pullback (hồi nhỏ)")
                 print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Bỏ qua (chưa có momentum)")
-                logger.info(f"[BƯỚC 3] Pullback: ⏸️ Bỏ qua (chưa có momentum)")
             
             # 4. Kiểm tra điểm vào lệnh khi giá phá cấu trúc
             if has_momentum and has_pullback:
@@ -1422,30 +1388,15 @@ def run_bot():
                 has_signal, signal_info = check_entry_signal(df_m1, trend, momentum_info, pullback_info)
                 if has_signal:
                     print(f"  └─ [BƯỚC 4] Kết quả: ✅ Có tín hiệu {trend}")
-                    logger.info(f"[BƯỚC 4] Signal: ✅ Có {signal_info.get('direction', trend)} - Entry={signal_info.get('entry_price', 0):.5f}, SL={signal_info.get('sl_usd', 0):.2f} USD, TP={signal_info.get('tp_usd', 0):.2f} USD, R:R={signal_info.get('rr_ratio', 0):.1f}, Momentum Strong={signal_info.get('momentum_strong', False)}")
                 else:
                     print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Chưa có tín hiệu")
-                    # Log chi tiết tại sao không có signal
-                    tick = mt5.symbol_info_tick(SYMBOL)
-                    if trend == 'SELL':
-                        current_price = tick.bid
-                        if pullback_info:
-                            last_pullback_low = df_m1.iloc[pullback_info['end_index']]['low']
-                            logger.info(f"[BƯỚC 4] Signal: ❌ Không có SELL - Giá hiện tại={current_price:.5f}, Đáy nến hồi cuối={last_pullback_low:.5f} (Cần giá < đáy để vào lệnh)")
-                    else:  # BUY
-                        current_price = tick.ask
-                        if pullback_info:
-                            last_pullback_high = df_m1.iloc[pullback_info['end_index']]['high']
-                            logger.info(f"[BƯỚC 4] Signal: ❌ Không có BUY - Giá hiện tại={current_price:.5f}, Đỉnh nến hồi cuối={last_pullback_high:.5f} (Cần giá > đỉnh để vào lệnh)")
             else:
                 print(f"\n  ┌─ [BƯỚC 4] Kiểm tra điểm vào lệnh {trend}")
                 print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Bỏ qua (chưa có momentum/pullback)")
-                logger.info(f"[BƯỚC 4] Signal: ⏸️ Bỏ qua (Momentum={'✅' if has_momentum else '❌'}, Pullback={'✅' if has_pullback else '❌'})")
         else:
             # Trend không phải SELL hoặc BUY → bỏ qua các bước kiểm tra
             print(f"\n  ┌─ [BƯỚC 2-4] Kiểm tra momentum/pullback/signal")
             print(f"  └─ [BƯỚC 2-4] Kết quả: ⚠️ Bỏ qua (Trend={trend}, cần BUY hoặc SELL)")
-            logger.info(f"[BƯỚC 2-4] Momentum/Pullback/Signal: ⏸️ Bỏ qua - Trend={trend} (Cần BUY hoặc SELL)")
 
         # 5. Kiểm tra vị thế đang mở
         positions = mt5.positions_get(symbol=SYMBOL)
@@ -1474,16 +1425,7 @@ def run_bot():
                     print(f"     - Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
                     print(f"     - Còn {remaining_minutes:.1f} phút")
                     
-                    # Ghi log chi tiết
-                    logger = logging.getLogger(__name__)
-                    logger.warning("=" * 70)
-                    logger.warning(f"🛑 KHÔNG VÀO LỆNH - BỊ CHẶN BỞI ERROR COOLDOWN")
-                    logger.warning(f"Error Count: {error_count}/{ERROR_COOLDOWN_COUNT}")
-                    logger.warning(f"Cooldown Time: {ERROR_COOLDOWN_MINUTES} phút")
-                    logger.warning(f"Time Elapsed: {minutes_elapsed:.1f} phút")
-                    logger.warning(f"Remaining: {remaining_minutes:.1f} phút")
-                    logger.warning(f"Trend: {trend} | Momentum: {'✅' if has_momentum else '❌'} | Pullback: {'✅' if has_pullback else '❌'} | Signal: {'✅' if has_signal else '❌'}")
-                    logger.warning("=" * 70)
+                    # Không ghi log khi bị chặn bởi error cooldown (chỉ in ra console)
                     
                     print(f"{'='*70}\n")
                     continue
@@ -1518,21 +1460,7 @@ def run_bot():
                     print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI COOLDOWN SAU LỆNH THUA:")
                     print(f"     - {cooldown_message}")
                     
-                    # Ghi log chi tiết
-                    logger = logging.getLogger(__name__)
-                    logger.warning("=" * 70)
-                    logger.warning(f"⏸️ KHÔNG VÀO LỆNH - BỊ CHẶN BỞI LOSS COOLDOWN")
-                    logger.warning(f"Cooldown Mode: {LOSS_COOLDOWN_MODE} ({'1 lệnh cuối' if LOSS_COOLDOWN_MODE == 1 else '2 lệnh cuối'})")
-                    logger.warning(f"Cooldown Time: {LOSS_COOLDOWN_MINUTES} phút")
-                    logger.warning(f"Message: {cooldown_message}")
-                    logger.warning(f"Trend: {trend} | Momentum: {'✅' if has_momentum else '❌'} | Pullback: {'✅' if has_pullback else '❌'} | Signal: {'✅' if has_signal else '❌'}")
-                    if momentum_info:
-                        logger.warning(f"Momentum: Index={momentum_info.get('index', 'N/A')}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}")
-                    if pullback_info:
-                        logger.warning(f"Pullback: {pullback_info.get('candles_count', 0)} candles")
-                    if signal_info:
-                        logger.warning(f"Signal: Entry={signal_info.get('entry_price', 0):.5f}, SL={signal_info.get('sl_usd', 0):.2f} USD, TP={signal_info.get('tp_usd', 0):.2f} USD")
-                    logger.warning("=" * 70)
+                    # Không ghi log khi bị chặn bởi loss cooldown (chỉ in ra console)
                 else:
                     # Xác định loại lệnh
                     trade_type = mt5.ORDER_TYPE_SELL if trend == 'SELL' else mt5.ORDER_TYPE_BUY
@@ -1556,71 +1484,7 @@ def run_bot():
                     
                     send_order(trade_type, VOLUME, signal_info, trend_info=trend, momentum_info=momentum_info, pullback_info=pullback_info, atr_pips=atr_pips_log)
             else:
-                # Ghi log chi tiết khi không vào lệnh
-                logger = logging.getLogger(__name__)
-                logger.info("=" * 70)
-                logger.info(f"⚠️ KHÔNG VÀO LỆNH - PHÂN TÍCH CHI TIẾT")
-                logger.info(f"Trend: {trend}")
-                logger.info(f"Momentum: {'✅ Có' if has_momentum else '❌ Không có'}")
-                logger.info(f"Pullback: {'✅ Có' if has_pullback else '❌ Không có'}")
-                logger.info(f"Signal: {'✅ Có' if has_signal else '❌ Không có'}")
-                
-                # Log chi tiết momentum nếu có
-                if momentum_info:
-                    logger.info(f"Momentum Details: Index={momentum_info.get('index', 'N/A')}, High={momentum_info.get('high', 0):.5f}, Low={momentum_info.get('low', 0):.5f}, Body Ratio={momentum_info.get('body_ratio', 0):.1%}, Close to Low={momentum_info.get('close_to_low_ratio', 0):.1%}")
-                else:
-                    logger.info(f"Momentum Details: Không có nến momentum SELL (thân dài >= {MOMENTUM_CANDLE_BODY_RATIO:.1%}, đóng cửa gần đáy <= 30%)")
-                
-                # Log chi tiết pullback nếu có
-                if pullback_info:
-                    if pullback_info.get('direction') == 'SELL':
-                        logger.info(f"Pullback Details: {pullback_info.get('candles_count', 0)} candles, Start Index={pullback_info.get('start_index', 'N/A')}, End Index={pullback_info.get('end_index', 'N/A')}, Last High={pullback_info.get('last_pullback_high', 0):.5f}")
-                    else:
-                        logger.info(f"Pullback Details: {pullback_info.get('candles_count', 0)} candles, Start Index={pullback_info.get('start_index', 'N/A')}, End Index={pullback_info.get('end_index', 'N/A')}, Last Low={pullback_info.get('last_pullback_low', 0):.5f}")
-                elif has_momentum:
-                    logger.info(f"Pullback Details: Không có pullback hợp lệ (cần 1-{PULLBACK_CANDLES_MAX} nến hồi nhỏ, thân nến <= {PULLBACK_BODY_RATIO_MAX:.1%}, không phá cấu trúc momentum)")
-                
-                # Log chi tiết signal nếu có
-                if signal_info:
-                    logger.info(f"Signal Details: Entry={signal_info.get('entry_price', 0):.5f}, SL={signal_info.get('sl_usd', 0):.2f} USD, TP={signal_info.get('tp_usd', 0):.2f} USD, R:R={signal_info.get('rr_ratio', 0):.1f}")
-                elif has_pullback:
-                    tick = mt5.symbol_info_tick(SYMBOL)
-                    if trend == 'SELL':
-                        current_price = tick.bid
-                        if pullback_info:
-                            last_pullback_low = df_m1.iloc[pullback_info['end_index']]['low']
-                            logger.info(f"Signal Details: Giá hiện tại={current_price:.5f}, Đáy nến hồi cuối={last_pullback_low:.5f} (Cần giá < đáy để vào lệnh SELL)")
-                    else:  # BUY
-                        current_price = tick.ask
-                        if pullback_info:
-                            last_pullback_high = df_m1.iloc[pullback_info['end_index']]['high']
-                            logger.info(f"Signal Details: Giá hiện tại={current_price:.5f}, Đỉnh nến hồi cuối={last_pullback_high:.5f} (Cần giá > đỉnh để vào lệnh BUY)")
-                
-                # Tính ATR để log
-                atr_pips_log = calculate_atr_from_m1(df_m1)
-                if atr_pips_log is not None:
-                    logger.info(f"ATR: {atr_pips_log:.2f} pips")
-                
-                # Log lý do cụ thể không vào lệnh
-                reasons = []
-                if trend not in ['SELL', 'BUY']:
-                    reasons.append(f"Trend={trend} (Cần xu hướng rõ ràng: BUY hoặc SELL)")
-                elif not has_momentum:
-                    if trend == 'SELL':
-                        reasons.append("Chưa có nến momentum SELL (thân dài >= 60%, đóng cửa gần đáy <= 30%, phá đáy gần nhất)")
-                    else:
-                        reasons.append("Chưa có nến momentum BUY (thân dài >= 60%, đóng cửa gần đỉnh <= 30%, phá đỉnh gần nhất)")
-                elif not has_pullback:
-                    reasons.append(f"Chưa có pullback sau momentum (cần 1-{PULLBACK_CANDLES_MAX} nến hồi nhỏ, thân nến <= {PULLBACK_BODY_RATIO_MAX:.1%})")
-                elif not has_signal:
-                    if trend == 'SELL':
-                        reasons.append("Giá chưa phá đáy nến hồi cuối cùng")
-                    else:
-                        reasons.append("Giá chưa phá đỉnh nến hồi cuối cùng")
-                
-                logger.info(f"Lý do không vào lệnh: {' | '.join(reasons) if reasons else 'Không xác định'}")
-                logger.info("=" * 70)
-                
+                # Không ghi log khi không vào lệnh (chỉ in ra console)
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
                 if trend not in ['SELL', 'BUY']:
                     print(f"     - Trend: {trend} (Cần xu hướng rõ ràng: BUY hoặc SELL)")
