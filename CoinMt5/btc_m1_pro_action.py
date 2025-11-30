@@ -56,8 +56,15 @@ def setup_logging():
 
 def load_config(filename=None):
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
+    
+    # Lấy đường dẫn thư mục chứa file bot
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    
     if filename is None:
-        filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mt5_account.json")
+        filename = os.path.join(bot_dir, "mt5_account.json")
+    elif not os.path.isabs(filename):
+        # Nếu filename là đường dẫn tương đối, ghép với thư mục bot
+        filename = os.path.join(bot_dir, filename)
     
     if not os.path.exists(filename):
         print(f"❌ Không tìm thấy config: {filename}")
@@ -73,6 +80,8 @@ def load_config(filename=None):
         MT5_PATH = config.get("PATH")
         VOLUME = config.get("VOLUME", VOLUME)
         CHAT_ID = config.get("CHAT_ID", CHAT_ID)
+        
+        print(f"✅ Đã tải config từ: {filename}")
         return True
     except Exception as e:
         print(f"❌ Lỗi đọc config: {e}")
