@@ -1225,29 +1225,54 @@ def run_bot():
         trend = check_price_action_trend(df_m1)
         print(f"  └─ [BƯỚC 1] Kết quả: {trend}")
         
-        # 2. Phát hiện nến momentum
-        print(f"\n  ┌─ [BƯỚC 2] Phát hiện nến momentum")
-        has_momentum, momentum_info = check_momentum_candle(df_m1)
-        if has_momentum:
-            print(f"  └─ [BƯỚC 2] Kết quả: ✅ Có nến momentum")
-        else:
-            print(f"  └─ [BƯỚC 2] Kết quả: ⚠️ Chưa có nến momentum")
+        # ⚠️ CHỈ KIỂM TRA MOMENTUM/PULLBACK/SIGNAL KHI TREND == 'SELL'
+        # Bot hiện tại chỉ hỗ trợ SELL (theo btc.md)
+        has_momentum = False
+        momentum_info = None
+        has_pullback = False
+        pullback_info = None
+        has_signal = False
+        signal_info = None
         
-        # 3. Phát hiện pullback (hồi nhỏ)
-        print(f"\n  ┌─ [BƯỚC 3] Phát hiện pullback (hồi nhỏ)")
-        has_pullback, pullback_info = check_pullback(df_m1, momentum_info)
-        if has_pullback:
-            print(f"  └─ [BƯỚC 3] Kết quả: ✅ Có {pullback_info['candles_count']} nến pullback")
+        if trend == 'SELL':
+            # 2. Phát hiện nến momentum (chỉ cho SELL)
+            print(f"\n  ┌─ [BƯỚC 2] Phát hiện nến momentum (SELL)")
+            has_momentum, momentum_info = check_momentum_candle(df_m1)
+            if has_momentum:
+                print(f"  └─ [BƯỚC 2] Kết quả: ✅ Có nến momentum")
+            else:
+                print(f"  └─ [BƯỚC 2] Kết quả: ⚠️ Chưa có nến momentum")
+            
+            # 3. Phát hiện pullback (hồi nhỏ) - chỉ khi có momentum
+            if has_momentum:
+                print(f"\n  ┌─ [BƯỚC 3] Phát hiện pullback (hồi nhỏ)")
+                has_pullback, pullback_info = check_pullback(df_m1, momentum_info)
+                if has_pullback:
+                    print(f"  └─ [BƯỚC 3] Kết quả: ✅ Có {pullback_info['candles_count']} nến pullback")
+                else:
+                    print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Chưa có pullback")
+            else:
+                print(f"\n  ┌─ [BƯỚC 3] Phát hiện pullback (hồi nhỏ)")
+                print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Bỏ qua (chưa có momentum)")
+            
+            # 4. Kiểm tra điểm vào SELL khi giá phá đáy nến hồi cuối
+            if has_momentum and has_pullback:
+                print(f"\n  ┌─ [BƯỚC 4] Kiểm tra điểm vào lệnh SELL")
+                has_signal, signal_info = check_entry_signal(df_m1, trend, momentum_info, pullback_info)
+                if has_signal:
+                    print(f"  └─ [BƯỚC 4] Kết quả: ✅ Có tín hiệu SELL")
+                else:
+                    print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Chưa có tín hiệu")
+            else:
+                print(f"\n  ┌─ [BƯỚC 4] Kiểm tra điểm vào lệnh SELL")
+                print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Bỏ qua (chưa có momentum/pullback)")
         else:
-            print(f"  └─ [BƯỚC 3] Kết quả: ⚠️ Chưa có pullback")
-        
-        # 4. Kiểm tra điểm vào SELL khi giá phá đáy nến hồi cuối
-        print(f"\n  ┌─ [BƯỚC 4] Kiểm tra điểm vào lệnh")
-        has_signal, signal_info = check_entry_signal(df_m1, trend, momentum_info, pullback_info)
-        if has_signal:
-            print(f"  └─ [BƯỚC 4] Kết quả: ✅ Có tín hiệu SELL")
-        else:
-            print(f"  └─ [BƯỚC 4] Kết quả: ⚠️ Chưa có tín hiệu")
+            # Trend không phải SELL → bỏ qua các bước kiểm tra
+            print(f"\n  ┌─ [BƯỚC 2-4] Kiểm tra momentum/pullback/signal")
+            if trend == 'BUY':
+                print(f"  └─ [BƯỚC 2-4] Kết quả: ⚠️ Bỏ qua (Trend=BUY, bot chỉ hỗ trợ SELL)")
+            else:
+                print(f"  └─ [BƯỚC 2-4] Kết quả: ⚠️ Bỏ qua (Trend={trend}, cần SELL)")
 
         # 5. Kiểm tra vị thế đang mở
         positions = mt5.positions_get(symbol=SYMBOL)
@@ -1324,12 +1349,15 @@ def run_bot():
             else:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
                 if trend != 'SELL':
-                    print(f"     - Trend: {trend} (Cần xu hướng giảm)")
-                if not has_momentum:
-                    print(f"     - Momentum: ❌ Chưa có nến momentum")
-                if not has_pullback:
-                    print(f"     - Pullback: ❌ Chưa có pullback")
-                if not has_signal:
+                    if trend == 'BUY':
+                        print(f"     - Trend: {trend} (Bot chỉ hỗ trợ SELL, bỏ qua BUY trend)")
+                    else:
+                        print(f"     - Trend: {trend} (Cần xu hướng giảm SELL)")
+                elif not has_momentum:
+                    print(f"     - Momentum: ❌ Chưa có nến momentum SELL")
+                elif not has_pullback:
+                    print(f"     - Pullback: ❌ Chưa có pullback sau momentum")
+                elif not has_signal:
                     print(f"     - Signal: ❌ Giá chưa phá đáy nến hồi cuối")
         else:
             print(f"\n  ⏸️ [QUYẾT ĐỊNH] Đang có {open_positions} lệnh mở, bỏ qua tín hiệu mới.")
