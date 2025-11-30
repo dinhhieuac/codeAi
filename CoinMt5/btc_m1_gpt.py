@@ -1,3 +1,4 @@
+from pickle import NONE
 import MetaTrader5 as mt5
 import pandas as pd
 import time
@@ -17,6 +18,8 @@ MT5_PASSWORD = None
 MT5_SERVER = None
 SYMBOL = None
 MT5_PATH = None
+OPEN_POSITION=NONE
+
 VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 # ⚠️ LƯU Ý: Với BTCUSD, 1 lot = 0.01 BTC (khác với forex: 1 lot = 100,000)
 MAGIC = 20251118
@@ -80,7 +83,6 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
 
 CHAT_ID = "1887610382"
 
-OPEN_POSITION=1
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
 # ==============================================================================
@@ -156,7 +158,7 @@ def load_config(filename=None):
         MT5_PATH = config.get("PATH")
         VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
         CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
-        OPEN_POSITION = config.get("OPEN_POSITION", OPEN_POSITION)
+        OPEN_POSITION = config.get("OPEN_POSITION", 1)
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
