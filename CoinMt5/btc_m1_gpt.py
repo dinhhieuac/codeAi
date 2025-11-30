@@ -80,6 +80,7 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
 
 CHAT_ID = "1887610382"
 
+POSITION_OPEN=1
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
 # ==============================================================================
@@ -155,6 +156,7 @@ def load_config(filename=None):
         MT5_PATH = config.get("PATH")
         VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
         CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
+        POSITION_OPEN = config.get("POSITION_OPEN", POSITION_OPEN)
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
@@ -1408,7 +1410,7 @@ def run_bot():
         
         print(f"\n  📊 [TÓM TẮT] Trend={trend} | Momentum={'✅' if has_momentum else '❌'} | Pullback={'✅' if has_pullback else '❌'} | Signal={'✅' if has_signal else '❌'}")
 
-        if open_positions < 5:
+        if open_positions < POSITION_OPEN:
             # Không có lệnh nào, tìm tín hiệu vào lệnh
             print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
             
