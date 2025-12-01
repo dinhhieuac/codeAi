@@ -87,7 +87,7 @@ ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt kỹ thuật "Momentum Confir
 MOMENTUM_BUFFER_POINTS = 20  # Buffer để xác nhận phá vỡ (2 pips = 20 points)
 
 # Spread Filter
-MAX_SPREAD_POINTS = 30  # Spread tối đa cho phép (30 points = 3 pips)
+MAX_SPREAD_POINTS = 200  # Spread tối đa cho phép (200 points = 20 pips) - Đã tăng lên do spread thực tế cao (~160 points)
 
 # --- NEW FILTERS (ANTI-CRASH) ---
 # 1. Bearish Momentum Filter (Chống nến đỏ dài)
