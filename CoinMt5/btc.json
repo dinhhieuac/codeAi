@@ -3,6 +3,8 @@
     "SERVER": "Exness-MT5Trial14",
     "PASSWORD": "@Dinhhieu273",
     "SYMBOL": "BTCUSD",
-    "PATH": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe"
+    "PATH": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
+    "OPEN_POSITION":5
+
 
 }
