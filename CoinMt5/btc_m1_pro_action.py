@@ -234,7 +234,7 @@ def run():
     print(f"Strategy: Săn thanh khoản tại Đỉnh/Đáy {LOOKBACK_PERIOD} nến gần nhất")
     
     last_candle_time = None
-    
+
     while True:
         try:
             # Chỉ chạy khi có nến mới đóng

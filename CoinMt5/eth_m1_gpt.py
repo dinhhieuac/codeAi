@@ -719,12 +719,14 @@ def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, si
     sl_usd_final = None
     tp_usd_final = None
     
-    # Chuyển đổi các giới hạn từ Points sang USD (Price)
-    # Ví dụ: SL_POINTS_MIN = 100, point = 0.01 → Min SL = 1.0 USD
-    sl_min_usd = SL_POINTS_MIN * point
-    sl_max_usd = SL_POINTS_MAX * point
-    tp_min_usd = TP_POINTS_MIN * point
-    tp_max_usd = TP_POINTS_MAX * point
+    # Chuyển đổi các giới hạn từ Pips sang USD (Price)
+    # ⚠️ VỚI ETHUSD: SL_POINTS_MIN = 100 nghĩa là 100 pips = 100 USD (không phải 100 points)
+    # Vì 1 pip = 1 USD movement cho ETHUSD, nên không cần nhân với point
+    # Ví dụ: SL_POINTS_MIN = 100 → Min SL = 100 USD (không phải 100 * 0.01 = 1 USD)
+    sl_min_usd = SL_POINTS_MIN  # SL_POINTS_MIN đã là USD (pips)
+    sl_max_usd = SL_POINTS_MAX  # SL_POINTS_MAX đã là USD (pips)
+    tp_min_usd = TP_POINTS_MIN  # TP_POINTS_MIN đã là USD (pips)
+    tp_max_usd = TP_POINTS_MAX  # TP_POINTS_MAX đã là USD (pips)
 
     # Kiểm tra nếu bật fix SL theo USD
     if ENABLE_FIXED_SL_USD and FIXED_SL_USD > 0:
@@ -814,30 +816,31 @@ def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, si
     # Tăng thêm buffer 10% để đảm bảo không bị reject
     stops_level_with_buffer = int(stops_level * 1.1) if stops_level > 0 else 0
     
-    # Chuyển đổi sl_distance và tp_distance (USD) sang points để validation
+    # Chuyển đổi sl_distance và tp_distance (USD) sang pips để validation
     # ⚠️ VỚI ETHUSD: 1 pip = 1 USD movement
-    # Nếu point = 0.01: 1 point = 0.01 USD → 1 pip = 100 points
-    # Nếu point = 1.0: 1 point = 1 USD → 1 pip = 1 point
-    # Vì sl_distance đã là USD (pips), nên:
-    # - Nếu point = 0.01: sl_points = sl_distance / 0.01 = sl_distance * 100
-    # - Nếu point = 1.0: sl_points = sl_distance / 1.0 = sl_distance
-    # Nhưng để đơn giản và đúng: sl_points (trong pips) = sl_distance (USD)
-    # Vì với ETHUSD: 1 pip = 1 USD movement
+    # sl_distance đã là USD (pips), nên:
     sl_points = sl_distance  # Với ETHUSD: sl_distance (USD) = sl_points (pips)
     tp_points = tp_distance  # Với ETHUSD: tp_distance (USD) = tp_points (pips)
+    
+    # Chuyển đổi stops_level từ points sang pips (USD) để so sánh
+    # ⚠️ stops_level từ broker là points, cần chuyển sang pips
+    # Nếu point = 0.01: stops_level_pips = stops_level * 0.01 (ví dụ: 100 points = 1 pip)
+    # Nếu point = 1.0: stops_level_pips = stops_level * 1.0 (ví dụ: 100 points = 100 pips)
+    stops_level_pips = stops_level * point if stops_level > 0 else 0
+    stops_level_with_buffer_pips = stops_level_with_buffer * point if stops_level_with_buffer > 0 else 0
     
     # ⚠️ ĐIỀU CHỈNH LOGIC: Chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN khi:
     # 1. stops_level yêu cầu (quan trọng nhất - để tránh lỗi retcode 10016)
     # 2. Hoặc khi SL/TP từ ATR quá nhỏ (nhỏ hơn SL_POINTS_MIN/TP_POINTS_MIN)
     # NHƯNG: Nếu ATR nhỏ, không ép SL/TP lên quá cao - chỉ đảm bảo đáp ứng stops_level
     if stops_level > 0:
-        # Nếu có stops_level, ưu tiên đáp ứng stops_level (với buffer)
-        min_sl_required = max(stops_level, stops_level_with_buffer)
-        min_tp_required = max(stops_level, stops_level_with_buffer)
+        # Nếu có stops_level, ưu tiên đáp ứng stops_level (với buffer) - đã chuyển sang pips
+        min_sl_required = max(stops_level_pips, stops_level_with_buffer_pips)
+        min_tp_required = max(stops_level_pips, stops_level_with_buffer_pips)
         # Chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN nếu stops_level nhỏ hơn min
         # (Nếu stops_level đã lớn hơn min, thì dùng stops_level)
-        min_sl_required = max(min_sl_required, min(SL_POINTS_MIN, stops_level_with_buffer) if stops_level_with_buffer > 0 else SL_POINTS_MIN)
-        min_tp_required = max(min_tp_required, min(TP_POINTS_MIN, stops_level_with_buffer) if stops_level_with_buffer > 0 else TP_POINTS_MIN)
+        min_sl_required = max(min_sl_required, min(SL_POINTS_MIN, stops_level_with_buffer_pips) if stops_level_with_buffer_pips > 0 else SL_POINTS_MIN)
+        min_tp_required = max(min_tp_required, min(TP_POINTS_MIN, stops_level_with_buffer_pips) if stops_level_with_buffer_pips > 0 else TP_POINTS_MIN)
     else:
         # Nếu không có stops_level, chỉ áp dụng SL_POINTS_MIN/TP_POINTS_MIN
         # NHƯNG: Nếu ATR nhỏ và SL/TP từ ATR cũng nhỏ, thì chỉ nâng lên một mức hợp lý
@@ -853,7 +856,7 @@ def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, si
     print(f"  📊 [ORDER] Yêu cầu tối thiểu: SL >= {min_sl_required:.1f} pips, TP >= {min_tp_required:.1f} pips")
     print(f"  📊 [ORDER] SL hiện tại: {sl_points:.1f} pips ({sl_distance:.2f} USD), TP hiện tại: {tp_points:.1f} pips ({tp_distance:.2f} USD)")
     if stops_level > 0:
-        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points (với buffer: {stops_level_with_buffer:.1f} points)")
+        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points ({stops_level_pips:.2f} pips) | Với buffer: {stops_level_with_buffer} points ({stops_level_with_buffer_pips:.2f} pips)")
     
     if sl_points < min_sl_required:
         print(f"  ⚠️ [ORDER] SL quá nhỏ: {sl_points:.1f} pips < yêu cầu tối thiểu {min_sl_required:.1f} pips (SL_POINTS_MIN={SL_POINTS_MIN}, stops_level={stops_level})")
@@ -890,25 +893,29 @@ def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, si
         tp_distance_points = abs(price - tp) / point if point > 0 else 0
         
         if sl_distance_points < stops_level:
-            print(f"  ⚠️ [ORDER] SL vẫn quá gần sau điều chỉnh: {sl_distance_points:.1f} points < stops_level {stops_level} points")
-            print(f"     → Điều chỉnh SL lần cuối để đảm bảo >= {stops_level} points")
+            print(f"  ⚠️ [ORDER] SL vẫn quá gần sau điều chỉnh: {sl_distance_points:.1f} points ({sl_points:.2f} pips) < stops_level {stops_level} points ({stops_level_pips:.2f} pips)")
+            print(f"     → Điều chỉnh SL lần cuối để đảm bảo >= {stops_level} points ({stops_level_pips:.2f} pips)")
+            # Điều chỉnh SL để đảm bảo >= stops_level_pips (USD)
             if trade_type == mt5.ORDER_TYPE_BUY:
-                sl = price - (stops_level * point)
+                sl = price - stops_level_pips
             else:  # SELL
-                sl = price + (stops_level * point)
+                sl = price + stops_level_pips
             # Cập nhật lại sl_points (trong pips) từ sl mới
             sl_points = abs(price - sl)  # Với ETHUSD: 1 pip = 1 USD movement
+            sl_distance = sl_points
             print(f"     → SL cuối cùng: {sl:.5f} ({sl_points:.1f} pips)")
         
         if tp_distance_points < stops_level:
-            print(f"  ⚠️ [ORDER] TP vẫn quá gần sau điều chỉnh: {tp_distance_points:.1f} points < stops_level {stops_level} points")
-            print(f"     → Điều chỉnh TP lần cuối để đảm bảo >= {stops_level} points")
+            print(f"  ⚠️ [ORDER] TP vẫn quá gần sau điều chỉnh: {tp_distance_points:.1f} points ({tp_points:.2f} pips) < stops_level {stops_level} points ({stops_level_pips:.2f} pips)")
+            print(f"     → Điều chỉnh TP lần cuối để đảm bảo >= {stops_level} points ({stops_level_pips:.2f} pips)")
+            # Điều chỉnh TP để đảm bảo >= stops_level_pips (USD)
             if trade_type == mt5.ORDER_TYPE_BUY:
-                tp = price + (stops_level * point)
+                tp = price + stops_level_pips
             else:  # SELL
-                tp = price - (stops_level * point)
+                tp = price - stops_level_pips
             # Cập nhật lại tp_points (trong pips) từ tp mới
             tp_points = abs(price - tp)  # Với ETHUSD: 1 pip = 1 USD movement
+            tp_distance = tp_points
             print(f"     → TP cuối cùng: {tp:.5f} ({tp_points:.1f} pips)")
     
     # ⚠️ FINAL VALIDATION: Kiểm tra lại lần cuối trước khi gửi
@@ -986,7 +993,7 @@ def send_order(trade_type, volume, df_m1=None, h1_trend=None, m1_signal=None, si
     print(f"  💵 [RISK] Volume: {volume} lot | Contract Size: {contract_size} ETH/lot | SL: {sl_points:.1f} pips | Risk: ~${risk_usd:.2f} | Reward: ~${reward_usd:.2f} | RR: {reward_usd/risk_usd:.2f}:1")
     print(f"  📊 [RISK DETAIL] pip_value = ${pip_value_per_lot:.2f} per lot per pip → Volume {volume} lot × {sl_points:.1f} pips = ${risk_usd:.2f} risk")
     if stops_level > 0:
-        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points, với buffer 10%: {stops_level_with_buffer:.1f} points")
+        print(f"  📊 [ORDER] Broker stops_level: {stops_level} points ({stops_level_pips:.2f} pips), với buffer 10%: {stops_level_with_buffer} points ({stops_level_with_buffer_pips:.2f} pips)")
         
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
