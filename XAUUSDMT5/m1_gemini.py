@@ -28,6 +28,10 @@ ATR_PERIOD = 14
 ADX_PERIOD = 14  # Chu kỳ tính ADX
 ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 
+# Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
+ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
+ATR_MIN_THRESHOLD = 100    # ATR tối thiểu (pips) để vào lệnh
+
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M1
 SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M1) × 1.5
@@ -51,7 +55,16 @@ TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
 # Cooldown sau lệnh thua
 ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
 LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
-LOSS_COOLDOWN_MODE = 1              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
+LOSS_COOLDOWN_MODE = 2              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
+
+# Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
+ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
+ERROR_COOLDOWN_COUNT = 5            # Số lần lỗi liên tiếp để kích hoạt cooldown
+ERROR_COOLDOWN_MINUTES = 1          # Thời gian tạm dừng sau khi lỗi (phút)
+
+# Biến đếm lỗi (sẽ được reset khi thành công)
+error_count = 0                     # Số lần lỗi liên tiếp hiện tại
+error_cooldown_start = None         # Thời gian bắt đầu cooldown (None nếu không có)
 
 # Telegram Bot Configuration
  # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
@@ -69,11 +82,24 @@ ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
 BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips (100 points)
 BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
 
-# Kỹ thuật "Sniper Entry" theo m1_gemini.md
-ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt kỹ thuật "Momentum Confirmation" (Phá vỡ Đỉnh/Đáy)
-MOMENTUM_BUFFER_POINTS = 50  # Buffer để tránh quét râu (50 points = 5 pips)
-ENABLE_MICRO_RETEST = False  # Bật/tắt kỹ thuật "Micro-Retest" (BUY LIMIT tại 50% thân nến)
-MICRO_RETEST_RATIO = 0.5  # Tỷ lệ retest (0.5 = 50% thân nến)
+# Kỹ thuật "Sniper Entry" - Momentum Confirmation
+ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt kỹ thuật "Momentum Confirmation"
+MOMENTUM_BUFFER_POINTS = 20  # Buffer để xác nhận phá vỡ (2 pips = 20 points)
+
+# Spread Filter
+MAX_SPREAD_POINTS = 30  # Spread tối đa cho phép (30 points = 3 pips)
+
+# --- NEW FILTERS (ANTI-CRASH) ---
+# 1. Bearish Momentum Filter (Chống nến đỏ dài)
+ENABLE_BEARISH_MOMENTUM_FILTER = True
+MOMENTUM_BODY_RATIO = 2.0  # Thân nến > 2 lần trung bình
+
+# 2. Retest Distance Filter (Chống xa bờ)
+MAX_RETEST_DISTANCE_POINTS = 50  # 5 pips (50 points)
+
+# 3. Structure Filter (Chống phá đáy)
+ENABLE_STRUCTURE_FILTER = True
+STRUCTURE_LOOKBACK = 10  # Số nến để tìm đáy gần nhất
 
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
@@ -116,7 +142,7 @@ def setup_logging():
 # 3. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
 
-def load_config(filename="XAUUSDMT5/mt5_account25.json"):
+def load_config(filename="XAUUSDMT5/mt5_account_test.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
     
@@ -471,7 +497,7 @@ def check_momentum_confirmation(df_m1, signal_direction):
     
     Logic:
     - Nến tín hiệu (Signal Candle) đã đóng cửa
-    - Chỉ vào lệnh khi giá của nến tiếp theo vượt qua High/Low của nến tín hiệu + buffer
+    - Chỉ vào lệnh khi giá hiện tại vượt qua High/Low của nến tín hiệu + buffer
     
     Args:
         df_m1: DataFrame M1
@@ -486,16 +512,12 @@ def check_momentum_confirmation(df_m1, signal_direction):
         return True, "Momentum Confirmation đã tắt"
     
     if len(df_m1) < 2:
-        return False, "Không đủ dữ liệu (cần ít nhất 2 nến)"
-    
-    # Lấy nến tín hiệu (nến vừa đóng cửa - index -2, vì nến -1 đang chạy)
-    # Nhưng trong code hiện tại, khi nến mới đóng, nến -1 là nến vừa đóng
-    # Vậy nến tín hiệu là nến -2, nến hiện tại là nến -1
-    if len(df_m1) < 2:
         return False, "Không đủ dữ liệu"
     
-    signal_candle = df_m1.iloc[-2]  # Nến tín hiệu (vừa đóng cửa)
-    current_candle = df_m1.iloc[-1]  # Nến hiện tại (đang chạy)
+    # Nến tín hiệu là nến vừa đóng (index -2 trong df_m1 vì index -1 là nến đang chạy)
+    # Chúng ta so sánh giá hiện tại với High/Low của nến trước đó (Previous Closed Candle)
+    
+    signal_candle = df_m1.iloc[-2]  # Nến trước đó (đã đóng)
     
     point = get_symbol_info()
     if point is None:
@@ -511,80 +533,117 @@ def check_momentum_confirmation(df_m1, signal_direction):
     
     signal_high = signal_candle['high']
     signal_low = signal_candle['low']
-    signal_open = signal_candle['open']
-    signal_close = signal_candle['close']
     
     buffer = MOMENTUM_BUFFER_POINTS * point
     
     if signal_direction == 'BUY':
         # BUY: Giá hiện tại phải vượt qua High của nến tín hiệu + buffer
-        if current_ask > (signal_high + buffer):
-            message = f"✅ Momentum Confirmed: Giá hiện tại ({current_ask:.5f}) > Signal High ({signal_high:.5f}) + Buffer ({buffer:.5f})"
+        confirmation_price = signal_high + buffer
+        if current_ask > confirmation_price:
+            message = f"✅ Momentum Confirmed: Giá ({current_ask:.5f}) > Signal High ({signal_high:.5f}) + Buffer"
             return True, message
         else:
-            distance = (signal_high + buffer) - current_ask
+            distance = confirmation_price - current_ask
             distance_pips = (distance / point) / 10
-            message = f"⏳ Chờ Momentum: Cần giá vượt {signal_high + buffer:.5f} (Còn {distance_pips:.1f} pips)"
+            message = f"⏳ Chờ Momentum BUY: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
             return False, message
     
     elif signal_direction == 'SELL':
         # SELL: Giá hiện tại phải vượt qua Low của nến tín hiệu - buffer
-        if current_bid < (signal_low - buffer):
-            message = f"✅ Momentum Confirmed: Giá hiện tại ({current_bid:.5f}) < Signal Low ({signal_low:.5f}) - Buffer ({buffer:.5f})"
+        confirmation_price = signal_low - buffer
+        if current_bid < confirmation_price:
+            message = f"✅ Momentum Confirmed: Giá ({current_bid:.5f}) < Signal Low ({signal_low:.5f}) - Buffer"
             return True, message
         else:
-            distance = current_bid - (signal_low - buffer)
+            distance = current_bid - confirmation_price
             distance_pips = (distance / point) / 10
-            message = f"⏳ Chờ Momentum: Cần giá vượt {signal_low - buffer:.5f} (Còn {distance_pips:.1f} pips)"
+            message = f"⏳ Chờ Momentum SELL: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
             return False, message
     
     return False, "Signal direction không hợp lệ"
 
-def check_entry_timing(df_m1, signal_direction):
+# ==============================================================================
+# 5.6. CÁC BỘ LỌC BỔ SUNG (ANTI-CRASH FILTERS)
+# ==============================================================================
+
+def check_bearish_momentum(df_m1):
     """
-    Kiểm tra thời điểm vào lệnh "Sniper Entry" - Kết hợp các kỹ thuật:
-    1. Nến tín hiệu đã đóng cửa (đã check ở run_bot)
-    2. Momentum Confirmation (giá vượt qua High/Low của nến tín hiệu)
-    3. Micro-Retest (tùy chọn - BUY LIMIT tại 50% thân nến)
+    Kiểm tra xem nến vừa đóng có phải là nến giảm mạnh (Bearish Momentum) hay không.
+    
+    Logic:
+    - Nến đỏ (Close < Open)
+    - Thân nến > 2 * Trung bình thân nến 10 cây trước đó
+    
+    Returns:
+        Tuple (bool, str): (is_bearish, message)
+            - is_bearish: True nếu là nến giảm mạnh
+    """
+    if not ENABLE_BEARISH_MOMENTUM_FILTER:
+        return False, "Filter OFF"
+        
+    if len(df_m1) < 12:
+        return False, "Not enough data"
+        
+    last_candle = df_m1.iloc[-2] # Nến vừa đóng
+    
+    # Nếu là nến xanh, bỏ qua
+    if last_candle['close'] >= last_candle['open']:
+        return False, "Bullish candle"
+        
+    # Tính thân nến hiện tại
+    current_body = abs(last_candle['close'] - last_candle['open'])
+    
+    # Tính trung bình thân nến 10 cây trước đó (không tính cây vừa đóng)
+    # df_m1.iloc[-12:-2] lấy 10 cây trước cây last_candle
+    prev_candles = df_m1.iloc[-12:-2]
+    avg_body = (prev_candles['close'] - prev_candles['open']).abs().mean()
+    
+    if current_body > MOMENTUM_BODY_RATIO * avg_body:
+        return True, f"⚠️ Bearish Momentum: Body {current_body:.5f} > {MOMENTUM_BODY_RATIO}x Avg ({avg_body:.5f})"
+        
+    return False, "Normal momentum"
+
+def check_structure_break(df_m1, direction):
+    """
+    Kiểm tra xem giá có đang phá vỡ cấu trúc không.
     
     Args:
-        df_m1: DataFrame M1
-        signal_direction: 'BUY' hoặc 'SELL'
+        direction: 'BUY' (kiểm tra phá đáy) hoặc 'SELL' (kiểm tra phá đỉnh)
         
     Returns:
-        Tuple (bool, float, str): (ready, entry_price, message)
-            - ready: True nếu sẵn sàng vào lệnh
-            - entry_price: Giá vào lệnh (None nếu dùng market, giá cụ thể nếu dùng limit)
-            - message: Thông báo chi tiết
+        Tuple (bool, str): (is_breaking, message)
+            - is_breaking: True nếu đang phá cấu trúc (Nguy hiểm)
     """
-    if len(df_m1) < 2:
-        return False, None, "Không đủ dữ liệu"
+    if not ENABLE_STRUCTURE_FILTER:
+        return False, "Filter OFF"
+        
+    if len(df_m1) < STRUCTURE_LOOKBACK + 2:
+        return False, "Not enough data"
+        
+    # Lấy giá hiện tại
+    tick = mt5.symbol_info_tick(SYMBOL)
+    if tick is None:
+        return False, "No tick data"
+        
+    current_price = tick.bid if direction == 'BUY' else tick.ask
     
-    # Lấy nến tín hiệu (nến vừa đóng cửa)
-    signal_candle = df_m1.iloc[-2]
-    signal_high = signal_candle['high']
-    signal_low = signal_candle['low']
-    signal_open = signal_candle['open']
-    signal_close = signal_candle['close']
+    # Lấy nến trong quá khứ (bỏ qua nến đang chạy và nến vừa đóng để tìm cấu trúc vững chắc hơn)
+    # Hoặc lấy bao gồm cả nến vừa đóng
+    past_candles = df_m1.iloc[-(STRUCTURE_LOOKBACK+2):-2]
     
-    # Kiểm tra Momentum Confirmation
-    if ENABLE_MOMENTUM_CONFIRMATION:
-        momentum_confirmed, momentum_msg = check_momentum_confirmation(df_m1, signal_direction)
-        if not momentum_confirmed:
-            return False, None, momentum_msg
+    if direction == 'BUY':
+        # Kiểm tra phá đáy: Giá hiện tại < Đáy thấp nhất gần đây
+        recent_low = past_candles['low'].min()
+        if current_price < recent_low:
+             return True, f"⚠️ Structure Break: Price {current_price:.5f} < Recent Low {recent_low:.5f}"
     
-    # Nếu bật Micro-Retest và chưa có momentum confirmation, tính giá limit
-    if ENABLE_MICRO_RETEST and signal_direction == 'BUY':
-        # Tính giá 50% thân nến
-        body_mid = (signal_open + signal_close) / 2
-        return True, body_mid, f"Micro-Retest: Đặt BUY LIMIT tại {body_mid:.5f} (50% thân nến)"
-    elif ENABLE_MICRO_RETEST and signal_direction == 'SELL':
-        # Tính giá 50% thân nến
-        body_mid = (signal_open + signal_close) / 2
-        return True, body_mid, f"Micro-Retest: Đặt SELL LIMIT tại {body_mid:.5f} (50% thân nến)"
-    
-    # Nếu không dùng Micro-Retest hoặc đã có momentum confirmation → dùng Market
-    return True, None, "Sẵn sàng vào lệnh Market"
+    elif direction == 'SELL':
+        # Kiểm tra phá đỉnh: Giá hiện tại > Đỉnh cao nhất gần đây
+        recent_high = past_candles['high'].max()
+        if current_price > recent_high:
+            return True, f"⚠️ Structure Break: Price {current_price:.5f} > Recent High {recent_high:.5f}"
+            
+    return False, "Structure OK"
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
@@ -786,7 +845,12 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         volume: Khối lượng giao dịch
         df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
         deviation: Độ lệch giá cho phép
+    
+    Returns:
+        bool: True nếu gửi lệnh thành công, False nếu lỗi
     """
+    global error_count, error_cooldown_start
+    
     point = get_symbol_info()
     if point is None:
         print("❌ Lỗi: Không thể lấy thông tin ký hiệu để gửi lệnh.")
@@ -948,6 +1012,18 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         print(f"Chi tiết lỗi: {error_info}")
         print(f"  Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         
+        # Tăng đếm lỗi liên tiếp
+        if ENABLE_ERROR_COOLDOWN:
+            error_count += 1
+            print(f"  ⚠️ [ERROR COUNT] Lỗi liên tiếp: {error_count}/{ERROR_COOLDOWN_COUNT}")
+            
+            # Nếu đạt ngưỡng lỗi, kích hoạt cooldown
+            if error_count >= ERROR_COOLDOWN_COUNT:
+                error_cooldown_start = datetime.now()
+                print(f"  🛑 [ERROR COOLDOWN] Đã lỗi {error_count}/{ERROR_COOLDOWN_COUNT} lần liên tiếp → Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+                logger.warning(f"🛑 Tạm dừng {ERROR_COOLDOWN_MINUTES} phút do lỗi {error_count} lần liên tiếp")
+                send_telegram(f"<b>🛑 TẠM DỪNG BOT</b>\nĐã lỗi {error_count}/{ERROR_COOLDOWN_COUNT} lần liên tiếp\nTạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+        
         # Ghi log lỗi
         logger.error("=" * 70)
         logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}")
@@ -956,6 +1032,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
         logger.error(f"Entry: {price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
         logger.error(f"ATR: {atr_pips:.2f} pips" if atr_pips is not None else "ATR: N/A")
         logger.error(f"Volume: {volume} | Symbol: {SYMBOL}")
+        logger.error(f"Error Count: {error_count}/{ERROR_COOLDOWN_COUNT}")
         logger.error("=" * 70)
         
         # Giải thích lỗi retcode 10030 (Invalid stops)
@@ -969,9 +1046,17 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
                 logger.error(f"Broker stops_level: {stops_level} points ({stops_level/10:.1f} pips)")
         
         send_telegram(f"<b>❌ LỖI GỬI LỆNH</b>\n{error_msg}\nChi tiết: {error_info}\nEntry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
+        return False
     else:
         success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} thành công! Order: {result.order}"
         print(success_msg)
+        
+        # Reset đếm lỗi khi thành công
+        if ENABLE_ERROR_COOLDOWN:
+            if error_count > 0:
+                print(f"  ✅ [ERROR COUNT] Reset đếm lỗi (Trước đó: {error_count} lần)")
+            error_count = 0
+            error_cooldown_start = None
         
         # Ghi log thành công
         trade_direction = "🟢 BUY" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL"
@@ -1006,159 +1091,7 @@ def send_order(trade_type, volume, df_m1=None, deviation=20):
 ⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
         send_telegram(telegram_msg)
-
-def send_order_limit(trade_type, volume, limit_price, df_m1=None, deviation=20):
-    """
-    Gửi lệnh LIMIT với SL/TP theo nến M1 (ATR-based).
-    Sử dụng cho kỹ thuật "Micro-Retest" - đặt lệnh tại 50% thân nến.
-    
-    Args:
-        trade_type: mt5.ORDER_TYPE_BUY hoặc mt5.ORDER_TYPE_SELL
-        volume: Khối lượng giao dịch
-        limit_price: Giá đặt lệnh LIMIT
-        df_m1: DataFrame M1 để tính ATR (nếu None thì dùng giá trị cố định)
-        deviation: Độ lệch giá cho phép
-    """
-    point = get_symbol_info()
-    if point is None:
-        print("❌ Lỗi: Không thể lấy thông tin ký hiệu để gửi lệnh.")
-        return
-        
-    # Tính SL và TP (tương tự send_order)
-    atr_pips = None
-    sl_pips_limited = None
-    tp_pips_limited = None
-    
-    if ENABLE_FIXED_SL_USD and FIXED_SL_USD > 0:
-        sl_pips_fixed = FIXED_SL_USD / 0.01
-        sl_points = sl_pips_fixed * 10
-        sl_pips_limited = sl_pips_fixed
-        
-        if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1)
-            if atr_pips is not None:
-                tp_pips = atr_pips * TP_ATR_MULTIPLIER
-                tp_points = tp_pips * 10
-                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-                tp_pips_limited = tp_points / 10
-            else:
-                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-                tp_pips_limited = tp_points / 10
-        else:
-            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-            tp_pips_limited = tp_points / 10
-    else:
-        if df_m1 is not None:
-            atr_pips = calculate_atr_from_m1(df_m1)
-            if atr_pips is not None:
-                sl_pips = atr_pips * SL_ATR_MULTIPLIER
-                tp_pips = atr_pips * TP_ATR_MULTIPLIER
-                sl_points = sl_pips * 10
-                tp_points = tp_pips * 10
-                sl_points = max(SL_POINTS_MIN, min(sl_points, SL_POINTS_MAX))
-                tp_points = max(TP_POINTS_MIN, min(tp_points, TP_POINTS_MAX))
-                sl_pips_limited = sl_points / 10
-                tp_pips_limited = tp_points / 10
-            else:
-                sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-                tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-        else:
-            sl_points = (SL_POINTS_MIN + SL_POINTS_MAX) // 2
-            tp_points = (TP_POINTS_MIN + TP_POINTS_MAX) // 2
-    
-    sl_distance = sl_points * point
-    tp_distance = tp_points * point
-    
-    # Tính SL/TP dựa trên limit_price
-    if trade_type == mt5.ORDER_TYPE_BUY:
-        sl = limit_price - sl_distance
-        tp = limit_price + tp_distance
-        order_type = mt5.ORDER_TYPE_BUY_LIMIT
-    else:  # SELL
-        sl = limit_price + sl_distance
-        tp = limit_price - tp_distance
-        order_type = mt5.ORDER_TYPE_SELL_LIMIT
-    
-    # Kiểm tra logic SL/TP
-    if trade_type == mt5.ORDER_TYPE_BUY:
-        if sl >= limit_price or tp <= limit_price:
-            print(f"  ⚠️ [ORDER] LỖI LOGIC: BUY LIMIT - SL ({sl:.5f}) phải < Limit ({limit_price:.5f}) và TP ({tp:.5f}) phải > Limit")
-            return
-    else:
-        if sl <= limit_price or tp >= limit_price:
-            print(f"  ⚠️ [ORDER] LỖI LOGIC: SELL LIMIT - SL ({sl:.5f}) phải > Limit ({limit_price:.5f}) và TP ({tp:.5f}) phải < Limit")
-            return
-    
-    print(f"  💰 [ORDER LIMIT] Limit: {limit_price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-    
-    request = {
-        "action": mt5.TRADE_ACTION_PENDING,
-        "symbol": SYMBOL,
-        "volume": volume,
-        "type": order_type,
-        "price": limit_price,
-        "sl": sl,
-        "tp": tp,
-        "deviation": deviation,
-        "magic": MAGIC,
-        "comment": f"Bot_Auto_{'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'}_LIMIT",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
-    }
-    
-    result = mt5.order_send(request)
-    
-    logger = logging.getLogger(__name__)
-    
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        error_info = mt5.last_error()
-        error_msg = f"❌ Lỗi gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} LIMIT - retcode: {result.retcode}"
-        print(error_msg)
-        print(f"Chi tiết lỗi: {error_info}")
-        
-        logger.error("=" * 70)
-        logger.error(f"❌ LỖI GỬI LỆNH {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} LIMIT")
-        logger.error(f"Retcode: {result.retcode}")
-        logger.error(f"Chi tiết lỗi: {error_info}")
-        logger.error(f"Limit: {limit_price:.5f} | SL: {sl:.5f} ({sl_points/10:.1f} pips) | TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-        logger.error("=" * 70)
-        
-        send_telegram(f"<b>❌ LỖI GỬI LỆNH LIMIT</b>\n{error_msg}\nChi tiết: {error_info}")
-    else:
-        success_msg = f"✅ Gửi lệnh {'BUY' if trade_type == mt5.ORDER_TYPE_BUY else 'SELL'} LIMIT thành công! Order: {result.order}"
-        print(success_msg)
-        
-        trade_direction = "🟢 BUY LIMIT" if trade_type == mt5.ORDER_TYPE_BUY else "🔴 SELL LIMIT"
-        atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
-        sl_atr_display = f"{sl_pips_limited:.1f}" if sl_pips_limited is not None else f"{sl_points/10:.1f}"
-        tp_atr_display = f"{tp_pips_limited:.1f}" if tp_pips_limited is not None else f"{tp_points/10:.1f}"
-        
-        logger.info("=" * 70)
-        logger.info(f"✅ ĐẶT LỆNH LIMIT THÀNH CÔNG: {trade_direction}")
-        logger.info(f"Order ID: {result.order}")
-        logger.info(f"Symbol: {SYMBOL}")
-        logger.info(f"Limit Price: {limit_price:.5f}")
-        logger.info(f"SL: {sl:.5f} ({sl_points/10:.1f} pips)")
-        logger.info(f"TP: {tp:.5f} ({tp_points/10:.1f} pips)")
-        logger.info(f"Volume: {volume}")
-        logger.info(f"ATR: {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)")
-        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("=" * 70)
-        
-        telegram_msg = f"""
-<b>{trade_direction} LỆNH MỚI</b>
-
-📊 <b>Symbol:</b> {SYMBOL}
-💰 <b>Limit:</b> {limit_price:.5f}
-🛑 <b>SL:</b> {sl:.5f} ({sl_points/10:.1f} pips)
-🎯 <b>TP:</b> {tp:.5f} ({tp_points/10:.1f} pips)
-📦 <b>Volume:</b> {volume}
-🆔 <b>Order ID:</b> {result.order}
-📈 <b>ATR:</b> {atr_display} pips (SL: {sl_atr_display}p, TP: {tp_atr_display}p)
-
-⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        send_telegram(telegram_msg)
+        return True
 
 def manage_positions():
     """Quản lý các lệnh đang mở (Hòa vốn, Trailing Stop)."""
@@ -1288,17 +1221,12 @@ def run_bot():
     
     last_candle_time = datetime(1970, 1, 1)
 
-    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: SNIPER ENTRY) ---")
+    print("\n--- Bắt đầu Chu Trình Giao Dịch M1 (Chiến thuật: BÁM THEO H1 – ĂN 5–10 PHÚT) ---")
     print("📋 Chiến thuật:")
     print("   1. Xác định hướng H1 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
-    print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20 hoặc BREAKOUT")
-    print("   3. Kỹ thuật 'Sniper Entry':")
-    if ENABLE_MOMENTUM_CONFIRMATION:
-        print("      ✅ Momentum Confirmation: Chỉ vào khi giá vượt qua High/Low của nến tín hiệu")
-    if ENABLE_MICRO_RETEST:
-        print("      ✅ Micro-Retest: Đặt LIMIT tại 50% thân nến tín hiệu")
-    print("   4. Chỉ check tín hiệu khi nến M1 đã đóng (Giây thứ 00-01)")
-    print("   5. TP/SL theo ATR hoặc cố định\n")
+    print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20")
+    print("   3. TP 10–20 pip, SL 8–15 pip")
+    print("   4. Chỉ check tín hiệu khi nến M1 đã đóng\n")
     
     while True:
         start_time = time.time() # Ghi lại thời gian bắt đầu chu kỳ
@@ -1314,10 +1242,17 @@ def run_bot():
         # Nến cuối cùng (vừa đóng)
         current_candle_time = df_m1.index[-1].replace(tzinfo=None)
         
-        # 3. CHỈ XỬ LÝ TÍN HIỆU KHI CÓ NẾN MỚI ĐÓNG
-        # if current_candle_time > last_candle_time:
+    # 3. CHỈ XỬ LÝ TÍN HIỆU KHI CÓ NẾN MỚI ĐÓNG
+    # Lưu ý: Với Momentum Confirmation, ta cần check liên tục mỗi giây ngay cả khi nến chưa đóng mới
+    # nếu như đang có tín hiệu chờ xác nhận.
+    # Tuy nhiên, logic hiện tại:
+    # - Nếu nến mới đóng -> Check tín hiệu -> Nếu có tín hiệu -> Check Confirmation -> Nếu OK -> Vào lệnh.
+    # - Nếu chưa OK -> Vòng lặp sau (1s sau) -> Nến chưa đóng mới -> Vẫn dùng nến cũ (vừa đóng) làm tín hiệu -> Check Confirmation lại.
+    # -> Logic này hoạt động ổn vì df_m1.iloc[-1] vẫn là nến tín hiệu đó cho đến khi nến M1 tiếp theo đóng.
+    
+    # if current_candle_time > last_candle_time:
         # last_candle_time = current_candle_time
-        
+            
         print(f"\n{'='*70}")
         print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 🔔 XỬ LÝ NẾN MỚI M1: {current_candle_time}")
         print(f"{'='*70}")
@@ -1326,7 +1261,9 @@ def run_bot():
         tick = mt5.symbol_info_tick(SYMBOL)
         current_price = tick.bid
         current_ask = tick.ask
-        print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
+        point = get_symbol_info()
+        spread_points = (current_ask - current_price) / point
+        print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={spread_points:.1f} points")
         
         # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
         print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
@@ -1349,6 +1286,25 @@ def run_bot():
             adx_ok = False
             print(f"    ⚠️ [ADX] THỊ TRƯỜNG ĐI NGANG (ADX={adx_current:.2f} < {ADX_MIN_THRESHOLD}) - Tránh giao dịch")
         print(f"  └─ [BƯỚC 2] Kết quả: {'OK' if adx_ok else 'BLOCKED'}")
+        
+        # 2.5. Kiểm tra ATR (Bộ lọc biến động thị trường)
+        atr_pips = None
+        atr_ok = True  # Mặc định OK nếu không bật filter
+        if ENABLE_ATR_FILTER:
+            print(f"\n  ┌─ [BƯỚC 2.5] Kiểm tra ATR (Lọc biến động thị trường)")
+            atr_pips = calculate_atr_from_m1(df_m1)
+            if atr_pips is not None:
+                print(f"    ATR hiện tại: {atr_pips:.2f} pips (Ngưỡng tối thiểu: {ATR_MIN_THRESHOLD} pips)")
+                if atr_pips >= ATR_MIN_THRESHOLD:
+                    atr_ok = True
+                    print(f"    ✅ [ATR] BIẾN ĐỘNG ĐỦ LỚN (ATR={atr_pips:.2f} ≥ {ATR_MIN_THRESHOLD} pips) - Có thể giao dịch")
+                else:
+                    atr_ok = False
+                    print(f"    ⚠️ [ATR] BIẾN ĐỘNG QUÁ NHỎ (ATR={atr_pips:.2f} < {ATR_MIN_THRESHOLD} pips) - Tránh giao dịch")
+            else:
+                atr_ok = False
+                print(f"    ⚠️ [ATR] Không tính được ATR - Tránh giao dịch")
+            print(f"  └─ [BƯỚC 2.5] Kết quả: {'OK' if atr_ok else 'BLOCKED'}")
 
         # 3. Kiểm tra điểm vào ở M1: RETEST hoặc BREAKOUT
         print(f"\n  ┌─ [BƯỚC 3] Kiểm tra tín hiệu M1 (Retest EMA20 hoặc Breakout)")
@@ -1385,17 +1341,47 @@ def run_bot():
         signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
         print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
 
-        if open_positions <=2:
+        if open_positions <1:
             # Không có lệnh nào, tìm tín hiệu vào lệnh
             print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
             
-            # ⚠️ QUAN TRỌNG: Kiểm tra ADX trước khi vào lệnh
+            # Kiểm tra cooldown sau lỗi gửi lệnh
+            global error_count, error_cooldown_start
+            if ENABLE_ERROR_COOLDOWN and error_cooldown_start is not None:
+                time_elapsed = datetime.now() - error_cooldown_start
+                minutes_elapsed = time_elapsed.total_seconds() / 60
+                
+                if minutes_elapsed < ERROR_COOLDOWN_MINUTES:
+                    remaining_minutes = ERROR_COOLDOWN_MINUTES - minutes_elapsed
+                    print(f"  🛑 [QUYẾT ĐỊNH] BỊ CHẶN BỞI ERROR COOLDOWN:")
+                    print(f"     - Đã lỗi {error_count} lần liên tiếp")
+                    print(f"     - Tạm dừng {ERROR_COOLDOWN_MINUTES} phút")
+                    print(f"     - Còn {remaining_minutes:.1f} phút")
+                    print(f"{'='*70}\n")
+                    continue  # Bỏ qua chu kỳ này
+                else:
+                    # Hết cooldown, reset
+                    print(f"  ✅ [ERROR COOLDOWN] Đã hết thời gian tạm dừng ({minutes_elapsed:.1f} phút đã trôi qua)")
+                    error_count = 0
+                    error_cooldown_start = None
+            
+            # ⚠️ QUAN TRỌNG: Kiểm tra ADX và ATR trước khi vào lệnh
             # - RETEST: ADX >= 25 (ADX_MIN_THRESHOLD)
             # - BREAKOUT: ADX > 28 (ADX_BREAKOUT_THRESHOLD) - đã check trong check_m1_breakout
+            # - ATR: >= ATR_MIN_THRESHOLD (nếu bật ENABLE_ATR_FILTER)
             if signal_type == "RETEST" and not adx_ok:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ADX FILTER:")
                 print(f"     - ADX: {adx_current:.2f} < {ADX_MIN_THRESHOLD} (Thị trường đi ngang)")
                 print(f"     - Không giao dịch khi thị trường đi ngang để tránh false signals")
+            elif spread_points > MAX_SPREAD_POINTS:
+                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI SPREAD FILTER:")
+                print(f"     - Spread: {spread_points:.1f} points > {MAX_SPREAD_POINTS} points")
+                print(f"     - Tránh giao dịch khi spread quá cao (tin ra hoặc biến động mạnh)")
+            elif ENABLE_ATR_FILTER and not atr_ok:
+                print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI ATR FILTER:")
+                atr_display = f"{atr_pips:.2f}" if atr_pips is not None else "N/A"
+                print(f"     - ATR: {atr_display} pips < {ATR_MIN_THRESHOLD} pips (Biến động quá nhỏ)")
+                print(f"     - Không giao dịch khi biến động thị trường quá nhỏ")
             elif m1_signal == 'BUY' and h1_trend == 'BUY':
                 print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
                 print(f"     - H1 Trend: {h1_trend} (Giá > EMA50)")
@@ -1405,6 +1391,8 @@ def run_bot():
                 elif signal_type == "BREAKOUT":
                     print(f"       → Giá phá đỉnh gần nhất (Breakout momentum)")
                 print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                if ENABLE_ATR_FILTER and atr_pips is not None:
+                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
                 print(f"     - Volume: {VOLUME}")
                 
                 # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
@@ -1418,22 +1406,43 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    # Kiểm tra thời điểm vào lệnh "Sniper Entry"
-                    print(f"\n  ┌─ [SNIPER ENTRY] Kiểm tra thời điểm vào lệnh")
-                    entry_ready, entry_price, entry_message = check_entry_timing(df_m1, 'BUY')
-                    print(f"    {entry_message}")
-                    print(f"  └─ [SNIPER ENTRY] Kết quả: {'READY' if entry_ready else 'WAITING'}")
+                    # --- NEW FILTERS CHECK (ONLY FOR BUY) ---
+                    # 1. Bearish Momentum Check
+                    is_bearish_momentum, bearish_msg = check_bearish_momentum(df_m1)
                     
-                    if entry_ready:
-                        if entry_price is not None:
-                            # Dùng LIMIT order (Micro-Retest)
-                            print(f"  📌 [ORDER] Sử dụng LIMIT order tại {entry_price:.5f}")
-                            send_order_limit(mt5.ORDER_TYPE_BUY, VOLUME, entry_price, df_m1)
-                        else:
-                            # Dùng MARKET order (Momentum Confirmed)
-                            send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
+                    # 2. Retest Distance Check
+                    # Tính khoảng cách từ EMA20 đến giá hiện tại
+                    ema_20_current = calculate_ema(df_m1, EMA_M1).iloc[-1]
+                    dist_from_ema = (ema_20_current - current_price) / point
+                    is_too_far = dist_from_ema > MAX_RETEST_DISTANCE_POINTS
+                    
+                    # 3. Structure Break Check
+                    is_structure_break, structure_msg = check_structure_break(df_m1, 'BUY')
+                    
+                    if is_bearish_momentum:
+                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI BEARISH MOMENTUM:")
+                        print(f"     - {bearish_msg}")
+                    elif is_too_far:
+                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI RETEST DISTANCE:")
+                        print(f"     - Distance: {dist_from_ema:.1f} points > {MAX_RETEST_DISTANCE_POINTS} points")
+                        print(f"     - Giá rớt quá xa EMA20 (Falling Knife)")
+                    elif is_structure_break:
+                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI STRUCTURE BREAK:")
+                        print(f"     - {structure_msg}")
                     else:
-                        print(f"  ⏳ [QUYẾT ĐỊNH] Chờ xác nhận momentum: {entry_message}")
+                        # --- KIỂM TRA MOMENTUM CONFIRMATION ---
+                        print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum (Tránh bắt dao rơi)")
+                        confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'BUY')
+                        print(f"    {confirm_msg}")
+                        
+                        if confirmed:
+                            print(f"  └─ [CONFIRMATION] Kết quả: ✅ ĐÃ XÁC NHẬN -> VÀO LỆNH")
+                            send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
+                        else:
+                            print(f"  └─ [CONFIRMATION] Kết quả: ⏳ CHỜ XÁC NHẬN (Sẽ check lại ở vòng lặp sau)")
+                            # Lưu trạng thái chờ để check tiếp ở vòng lặp sau (nếu cần logic phức tạp hơn)
+                            # Hiện tại bot sẽ check lại từ đầu ở vòng lặp sau, 
+                            # nhưng vì nến chưa đóng mới nên tín hiệu vẫn còn, và sẽ vào lại block này để check confirmation.
                 
             elif m1_signal == 'SELL' and h1_trend == 'SELL':
                 print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
@@ -1444,6 +1453,8 @@ def run_bot():
                 elif signal_type == "BREAKOUT":
                     print(f"       → Giá phá đáy gần nhất (Breakout momentum)")
                 print(f"     - ADX: {adx_current:.2f} (Xu hướng mạnh)")
+                if ENABLE_ATR_FILTER and atr_pips is not None:
+                    print(f"     - ATR: {atr_pips:.2f} pips (Biến động đủ lớn)")
                 print(f"     - Volume: {VOLUME}")
                 
                 # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
@@ -1457,22 +1468,16 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    # Kiểm tra thời điểm vào lệnh "Sniper Entry"
-                    print(f"\n  ┌─ [SNIPER ENTRY] Kiểm tra thời điểm vào lệnh")
-                    entry_ready, entry_price, entry_message = check_entry_timing(df_m1, 'SELL')
-                    print(f"    {entry_message}")
-                    print(f"  └─ [SNIPER ENTRY] Kết quả: {'READY' if entry_ready else 'WAITING'}")
+                    # --- KIỂM TRA MOMENTUM CONFIRMATION ---
+                    print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum (Tránh bắt dao rơi)")
+                    confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'SELL')
+                    print(f"    {confirm_msg}")
                     
-                    if entry_ready:
-                        if entry_price is not None:
-                            # Dùng LIMIT order (Micro-Retest)
-                            print(f"  📌 [ORDER] Sử dụng LIMIT order tại {entry_price:.5f}")
-                            send_order_limit(mt5.ORDER_TYPE_SELL, VOLUME, entry_price, df_m1)
-                        else:
-                            # Dùng MARKET order (Momentum Confirmed)
-                            send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
+                    if confirmed:
+                        print(f"  └─ [CONFIRMATION] Kết quả: ✅ ĐÃ XÁC NHẬN -> VÀO LỆNH")
+                        send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
                     else:
-                        print(f"  ⏳ [QUYẾT ĐỊNH] Chờ xác nhận momentum: {entry_message}")
+                        print(f"  └─ [CONFIRMATION] Kết quả: ⏳ CHỜ XÁC NHẬN (Sẽ check lại ở vòng lặp sau)")
             
             else:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
@@ -1492,33 +1497,16 @@ def run_bot():
         # 4. QUẢN LÝ LỆNH (CHẠY MỖI VÒNG LẶP ĐỂ BẮT BE/TS KỊP THỜI)
         manage_positions()
         
-        # 5. Kiểm tra Momentum Confirmation liên tục (nếu đang chờ)
-        # Nếu có tín hiệu nhưng chưa có momentum confirmation, check lại mỗi giây
-        if 'm1_signal' in locals() and m1_signal != 'NONE' and 'h1_trend' in locals() and h1_trend == m1_signal and ENABLE_MOMENTUM_CONFIRMATION:
-            entry_ready, entry_price, entry_message = check_entry_timing(df_m1, m1_signal)
-            if entry_ready and entry_price is None:  # Momentum đã confirmed, vào lệnh Market
-                positions = mt5.positions_get(symbol=SYMBOL)
-                open_positions = len([pos for pos in positions if pos.magic == MAGIC]) if positions else 0
-                if open_positions < 1:
-                    print(f"  🎯 [MOMENTUM CONFIRMED] {entry_message}")
-                    if m1_signal == 'BUY':
-                        send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
-                    elif m1_signal == 'SELL':
-                        send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
-        
-        # 6. ĐIỀU CHỈNH THỜI GIAN NGỦ
-        # Nếu đang chờ momentum confirmation, check mỗi 1 giây
-        # Nếu không, check mỗi 10 giây
+        # 5. ĐIỀU CHỈNH THỜI GIAN NGỦ ĐỂ ĐẠT CHU KỲ 10 GIÂY (M1 cần check thường xuyên hơn)
         elapsed_time = time.time() - start_time
-        if 'm1_signal' in locals() and m1_signal != 'NONE' and 'h1_trend' in locals() and h1_trend == m1_signal and ENABLE_MOMENTUM_CONFIRMATION:
-            sleep_time = 1 - elapsed_time  # Check mỗi 1 giây khi chờ momentum
-        else:
-            sleep_time = 10 - elapsed_time  # Check mỗi 10 giây bình thường
-        
+        sleep_time = 2 - elapsed_time  # Check mỗi 10 giây cho M1
+        sleep_time = 1
         if sleep_time > 0:
             time.sleep(sleep_time)
         else:
-            time.sleep(0.1)  # Ngủ tối thiểu 0.1s để tránh loop vô tận
+            # Nếu thời gian xử lý quá 10s, thì không ngủ
+            print(f"⚠️ Chu kỳ xử lý quá dài ({elapsed_time:.2f}s), không ngủ.")
+            time.sleep(1) # Ngủ tối thiểu 1s để tránh loop vô tận
 
 
 # ==============================================================================
