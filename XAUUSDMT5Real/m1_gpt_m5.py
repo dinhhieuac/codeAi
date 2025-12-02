@@ -87,7 +87,7 @@ BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200
 
 # Spread Filter
 ENABLE_SPREAD_FILTER = True  # Bật/tắt lọc spread
-SPREAD_MAX_POINTS = 50  # Spread tối đa: 50 points (5 pips) - XAUUSD thông thường 2-5 pips
+SPREAD_MAX_POINTS = 200  # Spread tối đa: 50 points (5 pips) - XAUUSD thông thường 2-5 pips
 
 # Momentum Candle Filter
 ENABLE_MOMENTUM_FILTER = True  # Bật/tắt lọc nến momentum
