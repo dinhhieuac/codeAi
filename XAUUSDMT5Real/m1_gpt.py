@@ -81,24 +81,7 @@ RETEST_DISTANCE_MAX = 60  # Tối đa 6 pips (60 points) từ EMA20
 ADX_BREAKOUT_THRESHOLD = 28  # ADX > 28 để breakout
 BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips (100 points)
 BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
-# Kỹ thuật "Sniper Entry" - Momentum Confirmation
-ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt kỹ thuật "Momentum Confirmation"
-MOMENTUM_BUFFER_POINTS = 20  # Buffer để xác nhận phá vỡ (2 pips = 20 points)
 
-# Spread Filter
-MAX_SPREAD_POINTS = 200  # Spread tối đa cho phép (200 points = 20 pips)
-
-# --- NEW FILTERS (ANTI-CRASH) ---
-# 1. Bearish Momentum Filter (Chống nến đỏ dài)
-ENABLE_BEARISH_MOMENTUM_FILTER = True
-MOMENTUM_BODY_RATIO = 2.0  # Thân nến > 2 lần trung bình
-
-# 2. Retest Distance Filter (Chống xa bờ)
-MAX_RETEST_DISTANCE_POINTS = 50  # 5 pips (50 points)
-
-# 3. Structure Filter (Chống phá đáy)
-ENABLE_STRUCTURE_FILTER = True
-STRUCTURE_LOOKBACK = 10  # Số nến để tìm đáy gần nhất
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
 # ==============================================================================
@@ -140,7 +123,7 @@ def setup_logging():
 # 3. HÀM TẢI CẤU HÌNH (CONFIG LOADING)
 # ==============================================================================
 
-def load_config(filename="XAUUSDMT5/mt5_account1.json"):
+def load_config(filename="XAUUSDMT5Real/mt5_account.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
     
@@ -484,95 +467,6 @@ def check_m1_breakout(df_m1, h1_trend, adx_current):
             return 'BUY'
     
     return 'NONE'
-
-# ==============================================================================
-# 5.5. HÀM KIỂM TRA "SNIPER ENTRY" - KỸ THUẬT MOMENTUM CONFIRMATION
-# ==============================================================================
-
-def check_momentum_confirmation(df_m1, signal_direction):
-    """
-    Kỹ thuật "Phá vỡ Đỉnh/Đáy" (Momentum Confirmation) - Tránh false breakout
-    """
-    if not ENABLE_MOMENTUM_CONFIRMATION:
-        return True, "Momentum Confirmation đã tắt"
-    
-    if len(df_m1) < 2:
-        return False, "Không đủ dữ liệu"
-    
-    signal_candle = df_m1.iloc[-2]  # Nến trước đó (đã đóng)
-    point = get_symbol_info()
-    if point is None: return False, "Không thể lấy point"
-    
-    tick = mt5.symbol_info_tick(SYMBOL)
-    if tick is None: return False, "Không thể lấy giá hiện tại"
-    
-    current_ask = tick.ask
-    current_bid = tick.bid
-    signal_high = signal_candle['high']
-    signal_low = signal_candle['low']
-    buffer = MOMENTUM_BUFFER_POINTS * point
-    
-    if signal_direction == 'BUY':
-        confirmation_price = signal_high + buffer
-        if current_ask > confirmation_price:
-            return True, f"✅ Momentum Confirmed: Giá ({current_ask:.5f}) > Signal High ({signal_high:.5f}) + Buffer"
-        else:
-            distance = confirmation_price - current_ask
-            distance_pips = (distance / point) / 10
-            return False, f"⏳ Chờ Momentum BUY: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
-    
-    elif signal_direction == 'SELL':
-        confirmation_price = signal_low - buffer
-        if current_bid < confirmation_price:
-            return True, f"✅ Momentum Confirmed: Giá ({current_bid:.5f}) < Signal Low ({signal_low:.5f}) - Buffer"
-        else:
-            distance = current_bid - confirmation_price
-            distance_pips = (distance / point) / 10
-            return False, f"⏳ Chờ Momentum SELL: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
-    
-    return False, "Signal direction không hợp lệ"
-
-# ==============================================================================
-# 5.6. CÁC BỘ LỌC BỔ SUNG (ANTI-CRASH FILTERS)
-# ==============================================================================
-
-def check_bearish_momentum(df_m1):
-    """Kiểm tra xem nến vừa đóng có phải là nến giảm mạnh (Bearish Momentum) hay không."""
-    if not ENABLE_BEARISH_MOMENTUM_FILTER: return False, "Filter OFF"
-    if len(df_m1) < 12: return False, "Not enough data"
-        
-    last_candle = df_m1.iloc[-2]
-    if last_candle['close'] >= last_candle['open']: return False, "Bullish candle"
-        
-    current_body = abs(last_candle['close'] - last_candle['open'])
-    prev_candles = df_m1.iloc[-12:-2]
-    avg_body = (prev_candles['close'] - prev_candles['open']).abs().mean()
-    
-    if current_body > MOMENTUM_BODY_RATIO * avg_body:
-        return True, f"⚠️ Bearish Momentum: Body {current_body:.5f} > {MOMENTUM_BODY_RATIO}x Avg ({avg_body:.5f})"
-    return False, "Normal momentum"
-
-def check_structure_break(df_m1, direction):
-    """Kiểm tra xem giá có đang phá vỡ cấu trúc không."""
-    if not ENABLE_STRUCTURE_FILTER: return False, "Filter OFF"
-    if len(df_m1) < STRUCTURE_LOOKBACK + 2: return False, "Not enough data"
-        
-    tick = mt5.symbol_info_tick(SYMBOL)
-    if tick is None: return False, "No tick data"
-    current_price = tick.bid if direction == 'BUY' else tick.ask
-    
-    past_candles = df_m1.iloc[-(STRUCTURE_LOOKBACK+2):-2]
-    
-    if direction == 'BUY':
-        recent_low = past_candles['low'].min()
-        if current_price < recent_low:
-             return True, f"⚠️ Structure Break: Price {current_price:.5f} < Recent Low {recent_low:.5f}"
-    elif direction == 'SELL':
-        recent_high = past_candles['high'].max()
-        if current_price > recent_high:
-            return True, f"⚠️ Structure Break: Price {current_price:.5f} > Recent High {recent_high:.5f}"
-            
-    return False, "Structure OK"
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
@@ -1183,9 +1077,7 @@ def run_bot():
         tick = mt5.symbol_info_tick(SYMBOL)
         current_price = tick.bid
         current_ask = tick.ask
-        point = get_symbol_info()
-        spread_points = (current_ask - current_price) / point
-        print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={spread_points:.1f} points")
+        print(f"  💰 Giá hiện tại: BID={current_price:.5f} | ASK={current_ask:.5f} | Spread={(current_ask-current_price):.5f}")
         
         # --- KIỂM TRA TÍN HIỆU VÀ LỌC ---
         print(f"\n  🔍 [KIỂM TRA TÍN HIỆU] Bắt đầu phân tích...")
@@ -1263,7 +1155,7 @@ def run_bot():
         signal_type = "RETEST" if m1_retest_signal != 'NONE' else ("BREAKOUT" if m1_breakout_signal != 'NONE' else "NONE")
         print(f"\n  📊 [TÓM TẮT] H1 Trend={h1_trend} | M1 Signal={m1_signal} ({signal_type}) | ADX={adx_current:.2f}")
 
-        if open_positions <2:
+        if open_positions <1:
             # Không có lệnh nào, tìm tín hiệu vào lệnh
             print(f"\n  🎯 [QUYẾT ĐỊNH] Không có lệnh đang mở, kiểm tra điều kiện vào lệnh...")
             
@@ -1324,38 +1216,7 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    # --- NEW FILTERS CHECK (ANTI-CRASH) ---
-                    is_bearish_momentum, bearish_msg = check_bearish_momentum(df_m1)
-                    
-                    ema_20_current = calculate_ema(df_m1, EMA_M1).iloc[-1]
-                    dist_from_ema = (ema_20_current - current_price) / point
-                    is_too_far = dist_from_ema > MAX_RETEST_DISTANCE_POINTS
-                    
-                    is_structure_break, structure_msg = check_structure_break(df_m1, 'BUY')
-                    
-                    if spread_points > MAX_SPREAD_POINTS:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI SPREAD FILTER:")
-                        print(f"     - Spread: {spread_points:.1f} > {MAX_SPREAD_POINTS}")
-                    elif is_bearish_momentum:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI BEARISH MOMENTUM:")
-                        print(f"     - {bearish_msg}")
-                    elif is_too_far:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI RETEST DISTANCE:")
-                        print(f"     - Distance: {dist_from_ema:.1f} > {MAX_RETEST_DISTANCE_POINTS}")
-                    elif is_structure_break:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI STRUCTURE BREAK:")
-                        print(f"     - {structure_msg}")
-                    else:
-                        # --- MOMENTUM CONFIRMATION ---
-                        print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum (Tránh bắt dao rơi)")
-                        confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'BUY')
-                        print(f"    {confirm_msg}")
-                        
-                        if confirmed:
-                            print(f"  └─ [CONFIRMATION] Kết quả: ✅ ĐÃ XÁC NHẬN -> VÀO LỆNH")
-                            send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
-                        else:
-                            print(f"  └─ [CONFIRMATION] Kết quả: ⏳ CHỜ XÁC NHẬN")
+                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1)
                 
             elif m1_signal == 'SELL' and h1_trend == 'SELL':
                 print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
@@ -1381,20 +1242,7 @@ def run_bot():
                     print(f"     - {cooldown_message}")
                     print(f"     - Chờ đủ {LOSS_COOLDOWN_MINUTES} phút sau lệnh thua cuối cùng")
                 else:
-                    if spread_points > MAX_SPREAD_POINTS:
-                        print(f"  ⚠️ [QUYẾT ĐỊNH] BỊ CHẶN BỞI SPREAD FILTER:")
-                        print(f"     - Spread: {spread_points:.1f} > {MAX_SPREAD_POINTS}")
-                    else:
-                        # --- MOMENTUM CONFIRMATION ---
-                        print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum")
-                        confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'SELL')
-                        print(f"    {confirm_msg}")
-                        
-                        if confirmed:
-                            print(f"  └─ [CONFIRMATION] Kết quả: ✅ ĐÃ XÁC NHẬN -> VÀO LỆNH")
-                            send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
-                        else:
-                            print(f"  └─ [CONFIRMATION] Kết quả: ⏳ CHỜ XÁC NHẬN")
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1)
             
             else:
                 print(f"  ⚠️ [QUYẾT ĐỊNH] Chưa đủ điều kiện vào lệnh:")
