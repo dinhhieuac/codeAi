@@ -59,6 +59,10 @@ ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
 LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
 LOSS_COOLDOWN_MODE = 2              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
 
+# Cooldown sau 3 lệnh thua liên tiếp
+ENABLE_LOSS_COOLDOWN_3LOSS = True   # Bật/tắt cooldown sau 3 lệnh thua liên tiếp
+LOSS_COOLDOWN_3LOSS_MINUTES = 60   # Thời gian chờ sau 3 lệnh thua liên tiếp (phút): 60 = 1h, 300 = 5h
+
 # Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
 ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
 ERROR_COOLDOWN_COUNT = 5            # Số lần lỗi liên tiếp để kích hoạt cooldown
@@ -729,9 +733,10 @@ def check_spread_filter(spread_points):
 
 def check_last_loss_cooldown():
     """
-    Kiểm tra cooldown sau lệnh thua với 2 mode:
+    Kiểm tra cooldown sau lệnh thua với các mode:
     - Mode 1: Nếu lệnh cuối cùng thua → nghỉ LOSS_COOLDOWN_MINUTES phút
     - Mode 2: Nếu 2 lệnh cuối cùng đều thua → nghỉ LOSS_COOLDOWN_MINUTES phút
+    - Mode 3 (nếu bật): Nếu 3 lệnh cuối cùng đều thua → nghỉ LOSS_COOLDOWN_3LOSS_MINUTES phút
     
     Returns:
         Tuple (bool, str): (allowed, message)
@@ -763,6 +768,43 @@ def check_last_loss_cooldown():
         
         # Sắp xếp theo thời gian (mới nhất trước)
         closed_deals.sort(key=lambda x: x.time, reverse=True)
+        
+        # MODE 3: Kiểm tra 3 lệnh cuối cùng đều thua (nếu bật) - ƯU TIÊN CAO NHẤT
+        # Mode này chạy độc lập với mode 1 và 2, ưu tiên cao hơn
+        if ENABLE_LOSS_COOLDOWN_3LOSS:
+            # Cần ít nhất 3 lệnh để check
+            if len(closed_deals) >= 3:
+                # Lấy 3 lệnh cuối cùng
+                last_deal = closed_deals[0]
+                second_last_deal = closed_deals[1]
+                third_last_deal = closed_deals[2]
+                
+                last_deal_profit = last_deal.profit
+                second_last_deal_profit = second_last_deal.profit
+                third_last_deal_profit = third_last_deal.profit
+                last_deal_time = datetime.fromtimestamp(last_deal.time)
+                
+                # Kiểm tra nếu cả 3 lệnh cuối cùng đều thua
+                if last_deal_profit < 0 and second_last_deal_profit < 0 and third_last_deal_profit < 0:
+                    # Tính thời gian đã trôi qua từ khi đóng lệnh cuối cùng
+                    time_elapsed = datetime.now() - last_deal_time
+                    minutes_elapsed = time_elapsed.total_seconds() / 60
+                    
+                    if minutes_elapsed < LOSS_COOLDOWN_3LOSS_MINUTES:
+                        remaining_minutes = LOSS_COOLDOWN_3LOSS_MINUTES - minutes_elapsed
+                        hours_remaining = remaining_minutes / 60
+                        if hours_remaining >= 1:
+                            message = f"⏸️ Cooldown (3 lệnh thua): Còn {hours_remaining:.1f} giờ ({remaining_minutes:.1f} phút) - 3 lệnh cuối đều thua: {last_deal_profit:.2f} USD, {second_last_deal_profit:.2f} USD, {third_last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')}"
+                        else:
+                            message = f"⏸️ Cooldown (3 lệnh thua): Còn {remaining_minutes:.1f} phút - 3 lệnh cuối đều thua: {last_deal_profit:.2f} USD, {second_last_deal_profit:.2f} USD, {third_last_deal_profit:.2f} USD, đóng lúc {last_deal_time.strftime('%H:%M:%S')}"
+                        return False, message
+                    else:
+                        hours_elapsed = minutes_elapsed / 60
+                        if hours_elapsed >= 1:
+                            message = f"✅ Đã qua cooldown sau 3 lệnh thua ({hours_elapsed:.1f} giờ đã trôi qua)"
+                        else:
+                            message = f"✅ Đã qua cooldown sau 3 lệnh thua ({minutes_elapsed:.1f} phút đã trôi qua)"
+                        return True, message
         
         # MODE 1: Kiểm tra 1 lệnh cuối cùng thua
         if LOSS_COOLDOWN_MODE == 1:
