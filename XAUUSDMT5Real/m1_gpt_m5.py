@@ -87,7 +87,7 @@ BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200
 
 # Spread Filter
 ENABLE_SPREAD_FILTER = True  # Bật/tắt lọc spread
-SPREAD_MAX_POINTS = 25  # Spread tối đa: 20-25 points (2-2.5 pips)
+SPREAD_MAX_POINTS = 50  # Spread tối đa: 50 points (5 pips) - XAUUSD thông thường 2-5 pips
 
 # Momentum Candle Filter
 ENABLE_MOMENTUM_FILTER = True  # Bật/tắt lọc nến momentum
@@ -701,7 +701,7 @@ def check_spread_filter(spread_points):
     """
     Kiểm tra Spread Filter
     
-    Spread > 20-25 points → bỏ lệnh M1
+    Spread > 50 points (5 pips) → bỏ lệnh M1
     
     Args:
         spread_points: Spread hiện tại (points)
@@ -714,10 +714,14 @@ def check_spread_filter(spread_points):
     if not ENABLE_SPREAD_FILTER:
         return True, "Spread filter đã tắt"
     
-    if spread_points > SPREAD_MAX_POINTS:
-        return False, f"Spread quá lớn ({spread_points:.1f} points > {SPREAD_MAX_POINTS} points)"
+    # Chuyển đổi sang pips để hiển thị rõ ràng (1 pip = 10 points cho XAUUSD)
+    spread_pips = spread_points / 10
+    max_pips = SPREAD_MAX_POINTS / 10
     
-    return True, f"Spread OK ({spread_points:.1f} points <= {SPREAD_MAX_POINTS} points)"
+    if spread_points > SPREAD_MAX_POINTS:
+        return False, f"Spread quá lớn ({spread_points:.1f} points = {spread_pips:.1f} pips > {SPREAD_MAX_POINTS} points = {max_pips:.1f} pips)"
+    
+    return True, f"Spread OK ({spread_points:.1f} points = {spread_pips:.1f} pips <= {SPREAD_MAX_POINTS} points = {max_pips:.1f} pips)"
 
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
