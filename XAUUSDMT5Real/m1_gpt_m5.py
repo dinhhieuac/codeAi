@@ -973,10 +973,7 @@ def calculate_atr_from_m5(df_m5, period=14):
     # Nhưng ATR được tính bằng giá (ví dụ: 2.9394), không phải USD profit
     # Cần chuyển: ATR(pips) = ATR(price) / 0.01 = ATR(price) × 100
     atr_pips = atr_price / 0.01  # = atr_price × 100
-
-    symbol = mt5.symbol_info(SYMBOL)
-    pip = symbol.point * 10     # Exness XAUUSDm: 1 pip = 10 points
-    atr_pips = atr_price / pip     # = atr_price × 100  / 10 = atr_price / 10
+    
     
     return atr_pips
 
