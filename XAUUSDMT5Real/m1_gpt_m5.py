@@ -31,8 +31,8 @@ ADX_M5_BREAKOUT_THRESHOLD = 35  # ADX(M5) > 35 để breakout (thay vì ADX M1)
 
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40-60 pips
-ATR_MAX_THRESHOLD = 200   # ATR tối đa: 200-250 pips (tránh tin mạnh)
+ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40 pips ($0.4)
+ATR_MAX_THRESHOLD = 1000   # ATR tối đa: 1000 pips ($10) - Chỉ tránh tin cực mạnh
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M5
