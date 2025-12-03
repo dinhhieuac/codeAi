@@ -46,7 +46,24 @@ TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP l
 # Fix SL theo giá trị USD cố định
 ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
-ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
+SL_MAX_USD = 5.0    # SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR
+
+# ... (rest of config)
+
+# ... (inside send_order)
+
+                # Chuyển đổi sang USD rồi sang Points để chính xác
+                sl_usd = sl_pips * 0.01
+                tp_usd = tp_pips * 0.01
+                
+                # Giới hạn SL theo USD (Max $5)
+                if sl_usd > SL_MAX_USD:
+                    print(f"  ⚠️ [ORDER] SL quá lớn ({sl_usd:.2f} USD), giới hạn về {SL_MAX_USD} USD")
+                    sl_usd = SL_MAX_USD
+                    sl_pips = sl_usd / 0.01 # Cập nhật lại pips để hiển thị đúng
+                
+                sl_points = sl_usd / point
+                tp_points = tp_usd / point
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
 # Trailing Stop khi lời 1/2 TP để lock profit
@@ -1063,6 +1080,12 @@ def send_order(trade_type, volume, df_m1=None, df_m5=None, m5_trend=None, m1_sig
                 # Chuyển đổi sang USD rồi sang Points để chính xác
                 sl_usd = sl_pips * 0.01
                 tp_usd = tp_pips * 0.01
+                
+                # Giới hạn SL theo USD (Max $5)
+                if sl_usd > SL_MAX_USD:
+                    print(f"  ⚠️ [ORDER] SL quá lớn ({sl_usd:.2f} USD), giới hạn về {SL_MAX_USD} USD")
+                    sl_usd = SL_MAX_USD
+                    sl_pips = sl_usd / 0.01 # Cập nhật lại pips để hiển thị đúng
                 
                 sl_points = sl_usd / point
                 tp_points = tp_usd / point
