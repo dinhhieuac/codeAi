@@ -49,6 +49,7 @@ FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
 SL_MAX_USD = 5.0    # SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR
 
 
+ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
 BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
 
 # Trailing Stop khi lời 1/2 TP để lock profit
