@@ -31,8 +31,8 @@ ADX_M5_BREAKOUT_THRESHOLD = 35  # ADX(M5) > 35 để breakout (thay vì ADX M1)
 
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40-60 pips
-ATR_MAX_THRESHOLD = 200   # ATR tối đa: 200-250 pips (tránh tin mạnh)
+ATR_MIN_THRESHOLD = 4.0    # ATR tối thiểu: 4 pips ($0.4)
+ATR_MAX_THRESHOLD = 50.0   # ATR tối đa: 50 pips ($5.0) - Nới rộng để chấp nhận biến động mạnh hơn
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M5
@@ -95,7 +95,7 @@ SPREAD_MAX_POINTS = 200  # Spread tối đa: 50 points (5 pips) - XAUUSD thông 
 
 # Momentum Candle Filter
 ENABLE_MOMENTUM_FILTER = True  # Bật/tắt lọc nến momentum
-MOMENTUM_CANDLE_MAX_PIPS = 50  # Không trade sau nến > 40-60 pips
+MOMENTUM_CANDLE_MAX_PIPS = 50  # Không trade sau nến > 50 pips ($5)
 
 # Bad Candle Filter
 ENABLE_BAD_CANDLE_FILTER = True  # Bật/tắt lọc nến xấu
@@ -969,11 +969,9 @@ def calculate_atr_from_m5(df_m5, period=14):
     atr_price = tr.rolling(window=period).mean().iloc[-1]
     
     # Chuyển ATR từ giá trị thực sang pips
-    # Với XAUUSD: 1 pip = 0.01 USD (lot 0.01) → ATR(pips) = ATR(USD) / 0.01 = ATR(USD) × 100
-    # Nhưng ATR được tính bằng giá (ví dụ: 2.9394), không phải USD profit
-    # Cần chuyển: ATR(pips) = ATR(price) / 0.01 = ATR(price) × 100
-    atr_pips = atr_price / 0.01  # = atr_price × 100
-    
+    # Với XAUUSD: 1 pip = 0.1 USD (Standard Pip)
+    # ATR(pips) = ATR(price) / 0.1 = ATR(price) * 10
+    atr_pips = atr_price / 0.1  # = atr_price * 10
     
     return atr_pips
 
