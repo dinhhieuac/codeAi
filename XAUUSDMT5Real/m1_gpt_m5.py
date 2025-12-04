@@ -40,7 +40,7 @@ MOMENTUM_BUFFER_POINTS = 0  # Buffer khoảng cách (points) để xác nhận p
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
 ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40 pips ($0.4)
-ATR_MAX_THRESHOLD = 1000   # ATR tối đa: 1000 pips ($10) - Chỉ tránh tin cực mạnh
+ATR_MAX_THRESHOLD = 200   # ATR tối đa: 200 pips ($2) - Tránh tin mạnh (theo yêu cầu m1_gpt.md)
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M5
@@ -111,6 +111,29 @@ MOMENTUM_CANDLE_MAX_PIPS = 50  # Không trade sau nến > 50 pips ($5)
 # Bad Candle Filter
 ENABLE_BAD_CANDLE_FILTER = True  # Bật/tắt lọc nến xấu
 BAD_CANDLE_SHADOW_RATIO = 0.6  # Bóng > 60% thân → bỏ
+
+# Time Filter (Tránh giờ tin tức)
+ENABLE_TIME_FILTER = False  # Bật/tắt lọc giờ tin tức (Mặc định: OFF)
+TIME_FILTER_BUFFER_MINUTES = 15  # Tránh giao dịch 15 phút trước/sau tin tức
+# Danh sách giờ tin tức quan trọng (UTC): [hour, minute]
+# NFP: Thứ 6 đầu tháng, 12:30 UTC
+# FOMC: Thường 18:00 hoặc 19:00 UTC
+# CPI: Thường 12:30 UTC
+IMPORTANT_NEWS_HOURS = [
+    (12, 30),  # NFP, CPI (12:30 UTC)
+    (18, 0),   # FOMC (18:00 UTC)
+    (19, 0),   # FOMC (19:00 UTC)
+]
+
+# RSI Filter (Tránh quá mua/quá bán)
+ENABLE_RSI_FILTER = True  # Bật/tắt lọc RSI
+RSI_PERIOD = 14  # Chu kỳ tính RSI
+RSI_OVERBOUGHT = 70  # RSI > 70 → Quá mua (không BUY)
+RSI_OVERSOLD = 30  # RSI < 30 → Quá bán (không SELL)
+
+# Volume Confirmation (Xác nhận volume tăng)
+ENABLE_VOLUME_CONFIRMATION = True  # Bật/tắt xác nhận volume
+VOLUME_INCREASE_RATIO = 1.2  # Volume phải tăng ít nhất 20% so với nến trước
 
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
@@ -909,6 +932,153 @@ def check_spread_filter(spread_points):
     
     return True, f"Spread OK ({spread_points:.1f} points = {spread_pips:.1f} pips <= {SPREAD_MAX_POINTS} points = {max_pips:.1f} pips)"
 
+def check_time_filter():
+    """
+    Kiểm tra Time Filter (Tránh giờ tin tức)
+    
+    Tránh giao dịch trong vùng TIME_FILTER_BUFFER_MINUTES phút trước/sau tin tức quan trọng.
+    
+    Returns:
+        Tuple (bool, str): (time_ok, reason)
+            - time_ok: True nếu OK (không trong giờ tin tức), False nếu trong giờ tin tức
+            - reason: Lý do
+    """
+    if not ENABLE_TIME_FILTER:
+        return True, "Time filter đã tắt"
+    
+    # Lấy thời gian hiện tại (UTC)
+    now_utc = datetime.utcnow()
+    current_hour = now_utc.hour
+    current_minute = now_utc.minute
+    current_time_minutes = current_hour * 60 + current_minute
+    
+    # Kiểm tra từng giờ tin tức
+    for news_hour, news_minute in IMPORTANT_NEWS_HOURS:
+        news_time_minutes = news_hour * 60 + news_minute
+        
+        # Tính khoảng cách (phút)
+        time_diff = abs(current_time_minutes - news_time_minutes)
+        
+        # Nếu trong vùng buffer → chặn
+        if time_diff <= TIME_FILTER_BUFFER_MINUTES:
+            # Tính thời gian còn lại
+            if current_time_minutes < news_time_minutes:
+                remaining = news_time_minutes - current_time_minutes
+                return False, f"Trong vùng tin tức (Còn {remaining} phút đến tin tức lúc {news_hour:02d}:{news_minute:02d} UTC)"
+            else:
+                elapsed = current_time_minutes - news_time_minutes
+                return False, f"Trong vùng tin tức (Đã qua {elapsed} phút sau tin tức lúc {news_hour:02d}:{news_minute:02d} UTC)"
+    
+    return True, f"Không trong giờ tin tức (Hiện tại: {current_hour:02d}:{current_minute:02d} UTC)"
+
+def calculate_rsi(prices, period=14):
+    """
+    Tính Relative Strength Index (RSI)
+    
+    Args:
+        prices: Series giá đóng cửa (close prices)
+        period: Chu kỳ tính RSI (mặc định: 14)
+        
+    Returns:
+        Series RSI với giá trị từ 0-100
+    """
+    # Tính độ thay đổi giá (delta)
+    delta = prices.diff()
+    
+    # Tách thành gain (tăng) và loss (giảm)
+    gain = (delta.where(delta > 0, 0)).fillna(0)
+    loss = (-delta.where(delta < 0, 0)).fillna(0)
+    
+    # Tính trung bình gain và loss trong chu kỳ
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    
+    # Tính Relative Strength (RS) = avg_gain / avg_loss
+    # Tránh chia cho 0
+    rs = avg_gain / (avg_loss + 1e-10)
+    
+    # Tính RSI = 100 - (100 / (1 + RS))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def check_rsi_filter(df_m5, direction):
+    """
+    Kiểm tra RSI Filter (Tránh quá mua/quá bán)
+    
+    - RSI > 70 → Quá mua (không BUY)
+    - RSI < 30 → Quá bán (không SELL)
+    
+    Args:
+        df_m5: DataFrame M5 (để tính RSI trên timeframe trend)
+        direction: 'BUY' hoặc 'SELL'
+        
+    Returns:
+        Tuple (bool, str): (rsi_ok, reason)
+            - rsi_ok: True nếu OK, False nếu quá mua/quá bán
+            - reason: Lý do
+    """
+    if not ENABLE_RSI_FILTER:
+        return True, "RSI filter đã tắt"
+    
+    if df_m5 is None or len(df_m5) < RSI_PERIOD:
+        return True, "Không đủ dữ liệu để tính RSI"
+    
+    # Tính RSI trên M5
+    rsi_values = calculate_rsi(df_m5['close'], RSI_PERIOD)
+    rsi_current = rsi_values.iloc[-1]
+    
+    if pd.isna(rsi_current):
+        return True, "RSI chưa tính được (thiếu dữ liệu)"
+    
+    if direction == 'BUY':
+        if rsi_current > RSI_OVERBOUGHT:
+            return False, f"RSI quá mua ({rsi_current:.2f} > {RSI_OVERBOUGHT}) - Không BUY"
+        else:
+            return True, f"RSI OK ({rsi_current:.2f} <= {RSI_OVERBOUGHT})"
+    
+    elif direction == 'SELL':
+        if rsi_current < RSI_OVERSOLD:
+            return False, f"RSI quá bán ({rsi_current:.2f} < {RSI_OVERSOLD}) - Không SELL"
+        else:
+            return True, f"RSI OK ({rsi_current:.2f} >= {RSI_OVERSOLD})"
+    
+    return True, "RSI OK"
+
+def check_volume_confirmation(df_m1):
+    """
+    Kiểm tra Volume Confirmation (Xác nhận volume tăng)
+    
+    Volume của nến hiện tại phải tăng ít nhất VOLUME_INCREASE_RATIO so với nến trước.
+    
+    Args:
+        df_m1: DataFrame M1
+        
+    Returns:
+        Tuple (bool, str): (volume_ok, reason)
+            - volume_ok: True nếu volume tăng, False nếu không
+            - reason: Lý do
+    """
+    if not ENABLE_VOLUME_CONFIRMATION:
+        return True, "Volume confirmation đã tắt"
+    
+    if len(df_m1) < 2:
+        return True, "Không đủ dữ liệu để so sánh volume"
+    
+    # Lấy volume của nến cuối và nến trước
+    last_volume = df_m1.iloc[-1]['tick_volume']
+    prev_volume = df_m1.iloc[-2]['tick_volume']
+    
+    if prev_volume == 0:
+        return True, "Volume nến trước = 0 (không so sánh được)"
+    
+    # Tính tỷ lệ tăng
+    volume_ratio = last_volume / prev_volume
+    
+    if volume_ratio >= VOLUME_INCREASE_RATIO:
+        return True, f"Volume tăng ({volume_ratio:.2f}x >= {VOLUME_INCREASE_RATIO}x) - OK"
+    else:
+        return False, f"Volume không tăng đủ ({volume_ratio:.2f}x < {VOLUME_INCREASE_RATIO}x) - Cần volume tăng ít nhất {VOLUME_INCREASE_RATIO}x"
+
 # ==============================================================================
 # 6. HÀM KIỂM TRA COOLDOWN SAU LỆNH THUA
 # ==============================================================================
@@ -1586,7 +1756,8 @@ def run_bot():
     print("   1. Xác định hướng M5 bằng EMA50 (Giá > EMA50 → CHỈ BUY, Giá < EMA50 → CHỈ SELL)")
     print("   2. Chọn điểm vào ở M1 khi giá RETEST lại EMA20 (vùng 10-20 pips)")
     print("   3. ATR Filter: 40-200 pips (tránh tin mạnh)")
-    print("   4. Các filter: Bad Candle, Momentum, Structure, Spread\n")
+    print("   4. Các filter: Bad Candle, Momentum, Structure, Spread")
+    print("   5. Filter bổ sung: Time Filter (OFF), RSI Filter, Volume Confirmation\n")
     
     while True:
         start_time = time.time() # Ghi lại thời gian bắt đầu chu kỳ
@@ -1722,9 +1893,16 @@ def run_bot():
         bad_candle_ok = True
         momentum_ok = True
         structure_ok = True
+        time_ok = True
+        rsi_ok = True
+        volume_ok = True
         
         if m1_signal != 'NONE':
             print(f"\n  ┌─ [BƯỚC 3.5] Kiểm tra các filter bổ sung")
+            
+            # Time Filter (Tránh giờ tin tức)
+            time_ok, time_reason = check_time_filter()
+            print(f"    Time Filter: {'❌ ' + time_reason if not time_ok else '✅ ' + time_reason}")
             
             # Bad Candle Filter
             is_bad, bad_reason = check_bad_candle(df_m1)
@@ -1742,7 +1920,19 @@ def run_bot():
                 structure_ok, structure_reason = check_m1_structure(df_m1, m1_signal)
                 print(f"    Structure: {'❌ ' + structure_reason if not structure_ok else '✅ ' + structure_reason}")
             
-            print(f"  └─ [BƯỚC 3.5] Kết quả: {'OK' if (bad_candle_ok and momentum_ok and structure_ok) else 'BLOCKED'}")
+            # RSI Filter (Tránh quá mua/quá bán)
+            if m1_signal in ['BUY', 'SELL']:
+                rsi_ok, rsi_reason = check_rsi_filter(df_m5, m1_signal)
+                print(f"    RSI: {'❌ ' + rsi_reason if not rsi_ok else '✅ ' + rsi_reason}")
+            
+            # Volume Confirmation (Chỉ check cho Retest)
+            if signal_type == "RETEST":
+                volume_ok, volume_reason = check_volume_confirmation(df_m1)
+                print(f"    Volume: {'❌ ' + volume_reason if not volume_ok else '✅ ' + volume_reason}")
+            else:
+                volume_ok = True  # Breakout đã check volume trong hàm check_m1_breakout
+            
+            print(f"  └─ [BƯỚC 3.5] Kết quả: {'OK' if (bad_candle_ok and momentum_ok and structure_ok and time_ok and rsi_ok and volume_ok) else 'BLOCKED'}")
 
         # 4. Kiểm tra vị thế đang mở (chỉ đếm lệnh của cặp XAUUSD)
         positions = mt5.positions_get(symbol=SYMBOL)
@@ -1796,6 +1986,10 @@ def run_bot():
                 elif atr_pips and atr_pips > ATR_MAX_THRESHOLD:
                     filter_reasons.append(f"ATR={atr_display} pips > {ATR_MAX_THRESHOLD} pips (tin mạnh)")
             
+            if not time_ok:
+                filters_passed = False
+                filter_reasons.append("Time Filter (Trong giờ tin tức)")
+            
             if not bad_candle_ok:
                 filters_passed = False
                 filter_reasons.append("Bad Candle")
@@ -1807,6 +2001,14 @@ def run_bot():
             if not structure_ok:
                 filters_passed = False
                 filter_reasons.append("M1 Structure")
+            
+            if not rsi_ok:
+                filters_passed = False
+                filter_reasons.append("RSI Filter (Quá mua/quá bán)")
+            
+            if signal_type == "RETEST" and not volume_ok:
+                filters_passed = False
+                filter_reasons.append("Volume Confirmation (Volume không tăng)")
             
             if not filters_passed:
                 print(f"\n  ⚠️ [QUYẾT ĐỊNH] KHÔNG VÀO LỆNH - BỊ CHẶN BỞI FILTER:")
