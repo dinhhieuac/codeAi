@@ -496,13 +496,18 @@ def check_m1_retest_ema20(df_m1, m5_trend):
     if m5_trend == 'BUY':
         # Trend BUY → giá phải trong vùng retest (gần EMA20)
         if RETEST_DISTANCE_MIN <= distance_points <= RETEST_DISTANCE_MAX:
-            # QUAN TRỌNG: Chỉ BUY khi nến hiện tại là NẾN XANH (đã bật lên) hoặc giá > EMA20
-            # Để tránh mua khi giá đang cắm đầu xuống
-            if is_green_candle or current_price > ema_20_current:
-                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật lên (Nến xanh/Trên EMA)")
+            # QUAN TRỌNG: Chỉ BUY khi CẢ HAI điều kiện:
+            # 1. Nến hiện tại là NẾN XANH (đã bật lên)
+            # 2. Giá > EMA20 (xác nhận momentum tăng)
+            # Để tránh mua khi giá đang cắm đầu xuống hoặc pullback
+            if is_green_candle and current_price > ema_20_current:
+                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật lên (Nến xanh VÀ Trên EMA)")
                 return 'BUY'
             else:
-                print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng đang giảm (Nến đỏ) - Chờ nến xanh")
+                if not is_green_candle:
+                    print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng nến đỏ - Chờ nến xanh")
+                elif current_price <= ema_20_current:
+                    print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng giá <= EMA20 - Chờ giá vượt EMA20")
                 return 'NONE'
         else:
             print(f"    ⚠️ [M1 RETEST] Giá ngoài vùng retest ({distance_points/10:.1f} pips) - Chờ retest")
@@ -511,12 +516,18 @@ def check_m1_retest_ema20(df_m1, m5_trend):
     elif m5_trend == 'SELL':
         # Trend SELL → giá phải trong vùng retest (gần EMA20)
         if RETEST_DISTANCE_MIN <= distance_points <= RETEST_DISTANCE_MAX:
-            # QUAN TRỌNG: Chỉ SELL khi nến hiện tại là NẾN ĐỎ (đã bật xuống) hoặc giá < EMA20
-            if is_red_candle or current_price < ema_20_current:
-                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật xuống (Nến đỏ/Dưới EMA)")
+            # QUAN TRỌNG: Chỉ SELL khi CẢ HAI điều kiện:
+            # 1. Nến hiện tại là NẾN ĐỎ (đã bật xuống)
+            # 2. Giá < EMA20 (xác nhận momentum giảm)
+            # Để tránh bán khi giá đang tăng hoặc pullback
+            if is_red_candle and current_price < ema_20_current:
+                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật xuống (Nến đỏ VÀ Dưới EMA)")
                 return 'SELL'
             else:
-                print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng đang tăng (Nến xanh) - Chờ nến đỏ")
+                if not is_red_candle:
+                    print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng nến xanh - Chờ nến đỏ")
+                elif current_price >= ema_20_current:
+                    print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng giá >= EMA20 - Chờ giá xuống dưới EMA20")
                 return 'NONE'
         else:
             print(f"    ⚠️ [M1 RETEST] Giá ngoài vùng retest ({distance_points/10:.1f} pips) - Chờ retest")
@@ -694,6 +705,7 @@ def check_momentum_candle(df_m1, direction):
     Không BUY ngay sau 1 nến tăng mạnh > 40-60 pips
     Không SELL ngay sau 1 nến giảm mạnh > 40-60 pips
     QUAN TRỌNG: Không BUY sau nến bearish lớn, không SELL sau nến bullish lớn
+    CẢI THIỆN: Check 2-3 nến gần nhất để tránh vào sau nhiều nến momentum liên tiếp
     
     Args:
         df_m1: DataFrame M1
@@ -707,16 +719,17 @@ def check_momentum_candle(df_m1, direction):
     if not ENABLE_MOMENTUM_FILTER:
         return False, "Momentum filter đã tắt"
     
-    if len(df_m1) < 2:
-        return False, "Không đủ dữ liệu"
+    if len(df_m1) < 3:
+        return False, "Không đủ dữ liệu (cần ít nhất 3 nến)"
     
     point = get_symbol_info()
     if point is None:
         return False, "Không lấy được point"
     
-    # Lấy nến cuối cùng (vừa đóng) và nến trước đó
+    # Lấy 3 nến gần nhất để kiểm tra
     last_candle = df_m1.iloc[-1]
     prev_candle = df_m1.iloc[-2] if len(df_m1) >= 2 else None
+    prev2_candle = df_m1.iloc[-3] if len(df_m1) >= 3 else None
     
     # Kiểm tra nến cuối cùng
     last_open = last_candle['open']
@@ -728,28 +741,68 @@ def check_momentum_candle(df_m1, direction):
         if last_close > last_open and last_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
             return True, f"Nến cuối tăng quá mạnh ({last_candle_size_pips:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Chờ pullback"
         
-        # BUY: QUAN TRỌNG - Kiểm tra nến bearish lớn trước đó (không nên BUY sau nến bearish lớn)
+        # BUY: Kiểm tra 2-3 nến bearish lớn gần nhất (không nên BUY sau nến bearish lớn)
+        bearish_count = 0
+        bearish_sizes = []
+        
         if prev_candle is not None:
             prev_open = prev_candle['open']
             prev_close = prev_candle['close']
             prev_candle_size_pips = abs(prev_close - prev_open) / point / 10
             
             if prev_close < prev_open and prev_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
-                return True, f"Nến trước đó là bearish lớn ({prev_candle_size_pips:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Không BUY sau nến giảm mạnh"
+                bearish_count += 1
+                bearish_sizes.append(prev_candle_size_pips)
+        
+        if prev2_candle is not None:
+            prev2_open = prev2_candle['open']
+            prev2_close = prev2_candle['close']
+            prev2_candle_size_pips = abs(prev2_close - prev2_open) / point / 10
+            
+            if prev2_close < prev2_open and prev2_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
+                bearish_count += 1
+                bearish_sizes.append(prev2_candle_size_pips)
+        
+        # Nếu có 2/3 nến bearish lớn liên tiếp → chặn
+        if bearish_count >= 2:
+            sizes_str = ", ".join([f"{s:.1f}" for s in bearish_sizes])
+            return True, f"Có {bearish_count} nến bearish lớn liên tiếp ({sizes_str} pips) - Không BUY sau nhiều nến giảm mạnh"
+        elif bearish_count == 1:
+            return True, f"Nến trước đó là bearish lớn ({bearish_sizes[0]:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Không BUY sau nến giảm mạnh"
     
     elif direction == 'SELL':
         # SELL: Kiểm tra nến giảm mạnh (nến cuối cùng)
         if last_close < last_open and last_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
             return True, f"Nến cuối giảm quá mạnh ({last_candle_size_pips:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Chờ pullback"
         
-        # SELL: QUAN TRỌNG - Kiểm tra nến bullish lớn trước đó (không nên SELL sau nến bullish lớn)
+        # SELL: Kiểm tra 2-3 nến bullish lớn gần nhất (không nên SELL sau nến bullish lớn)
+        bullish_count = 0
+        bullish_sizes = []
+        
         if prev_candle is not None:
             prev_open = prev_candle['open']
             prev_close = prev_candle['close']
             prev_candle_size_pips = abs(prev_close - prev_open) / point / 10
             
             if prev_close > prev_open and prev_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
-                return True, f"Nến trước đó là bullish lớn ({prev_candle_size_pips:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Không SELL sau nến tăng mạnh"
+                bullish_count += 1
+                bullish_sizes.append(prev_candle_size_pips)
+        
+        if prev2_candle is not None:
+            prev2_open = prev2_candle['open']
+            prev2_close = prev2_candle['close']
+            prev2_candle_size_pips = abs(prev2_close - prev2_open) / point / 10
+            
+            if prev2_close > prev2_open and prev2_candle_size_pips > MOMENTUM_CANDLE_MAX_PIPS:
+                bullish_count += 1
+                bullish_sizes.append(prev2_candle_size_pips)
+        
+        # Nếu có 2/3 nến bullish lớn liên tiếp → chặn
+        if bullish_count >= 2:
+            sizes_str = ", ".join([f"{s:.1f}" for s in bullish_sizes])
+            return True, f"Có {bullish_count} nến bullish lớn liên tiếp ({sizes_str} pips) - Không SELL sau nhiều nến tăng mạnh"
+        elif bullish_count == 1:
+            return True, f"Nến trước đó là bullish lớn ({bullish_sizes[0]:.1f} pips > {MOMENTUM_CANDLE_MAX_PIPS} pips) - Không SELL sau nến tăng mạnh"
     
     return False, "Không có nến momentum"
 
@@ -770,8 +823,9 @@ def check_m1_structure(df_m1, direction):
             - structure_ok: True nếu cấu trúc OK, False nếu không phù hợp
             - reason: Lý do
     """
+    # CẢI THIỆN: Yêu cầu ít nhất 20 nến để có đủ dữ liệu phân tích
     if len(df_m1) < 20:
-        return True, "Không đủ dữ liệu để kiểm tra cấu trúc"
+        return False, "Không đủ dữ liệu để kiểm tra cấu trúc (cần ít nhất 20 nến)"
     
     # Tìm 2 đỉnh và 2 đáy gần nhất (10 nến gần nhất)
     lookback = 10
@@ -801,11 +855,14 @@ def check_m1_structure(df_m1, direction):
             else:
                 return False, f"Cấu trúc BUY không OK (Đỉnh sau {last_peak:.5f} <= đỉnh trước {prev_peak:.5f})"
         
-        # Nếu không có đỉnh, kiểm tra xu hướng giá
+        # Nếu không có đủ đỉnh, kiểm tra xu hướng giá
         if len(recent_data) >= 3:
             recent_closes = recent_data['close'].iloc[-3:].values
             if recent_closes[-1] < recent_closes[-2] < recent_closes[-3]:
                 return False, "M1 đang giảm (3 nến cuối giảm) - Không BUY"
+        
+        # CẢI THIỆN: Nếu không có đủ đỉnh để xác định → chặn
+        return False, f"Cấu trúc BUY không rõ ràng (chỉ có {len(peaks)} đỉnh, cần ít nhất 2 đỉnh)"
     
     elif direction == 'SELL':
         # SELL: Cần đáy sau thấp hơn đáy trước (lower lows)
@@ -817,13 +874,14 @@ def check_m1_structure(df_m1, direction):
             else:
                 return False, f"Cấu trúc SELL không OK (Đáy sau {last_trough:.5f} >= đáy trước {prev_trough:.5f})"
         
-        # Nếu không có đáy, kiểm tra xu hướng giá
+        # Nếu không có đủ đáy, kiểm tra xu hướng giá
         if len(recent_data) >= 3:
             recent_closes = recent_data['close'].iloc[-3:].values
             if recent_closes[-1] > recent_closes[-2] > recent_closes[-3]:
                 return False, "M1 đang tăng (3 nến cuối tăng) - Không SELL"
-    
-    return True, "Cấu trúc OK (không đủ dữ liệu để xác định)"
+        
+        # CẢI THIỆN: Nếu không có đủ đáy để xác định → chặn
+        return False, f"Cấu trúc SELL không rõ ràng (chỉ có {len(troughs)} đáy, cần ít nhất 2 đáy)"
 
 def check_spread_filter(spread_points):
     """
