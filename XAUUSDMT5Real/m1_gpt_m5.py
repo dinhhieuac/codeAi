@@ -22,12 +22,20 @@ MAGIC = 20251117
 
 # Thông số Chỉ báo & Lọc
 # Chiến thuật M1: "BÁM THEO M5 – ĂN 5–10 PHÚT"
+EMA_H1 = 50  # EMA50 trên H1 để xác định xu hướng dài hạn
 EMA_M5 = 50  # EMA50 trên M5 để xác định trend (thay H1)
 EMA_M1 = 20  # EMA20 trên M1 để tìm điểm retest
 ATR_PERIOD = 14
 ADX_PERIOD = 14  # Chu kỳ tính ADX
-ADX_MIN_THRESHOLD = 25  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
+ADX_MIN_THRESHOLD = 20  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
 ADX_M5_BREAKOUT_THRESHOLD = 35  # ADX(M5) > 35 để breakout (thay vì ADX M1)
+
+# H1 Trend Filter
+ENABLE_H1_TREND_FILTER = True  # Bật/tắt lọc theo trend H1 (Chỉ trade khi M5 cùng chiều H1)
+
+# Momentum Confirmation (Sniper Entry)
+ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt xác nhận momentum (chờ phá đỉnh/đáy nến tín hiệu)
+MOMENTUM_BUFFER_POINTS = 0  # Buffer khoảng cách (points) để xác nhận phá vỡ (0 = phá qua là vào)
 
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
@@ -320,6 +328,38 @@ def calculate_adx(df, period=14):
     
     return adx
 
+def check_h1_trend():
+    """
+    Kiểm tra xu hướng H1 bằng EMA50
+    
+    Returns:
+        'BUY', 'SELL', hoặc 'SIDEWAYS'
+    """
+    if not ENABLE_H1_TREND_FILTER:
+        return 'SIDEWAYS' # Nếu tắt filter thì coi như không có trend cản trở
+        
+    print("  📊 [H1 TREND] Kiểm tra xu hướng H1 bằng EMA50...")
+    
+    df_h1 = get_rates(mt5.TIMEFRAME_H1)
+    if df_h1 is None or len(df_h1) < EMA_H1:
+        print(f"    [H1] ❌ Không đủ dữ liệu để tính EMA50")
+        return 'SIDEWAYS'
+    
+    ema_50_h1 = calculate_ema(df_h1, EMA_H1).iloc[-1]
+    close_h1 = df_h1['close'].iloc[-1]
+    
+    print(f"    [H1] Giá: {close_h1:.5f} | EMA50: {ema_50_h1:.5f}")
+    
+    if close_h1 > ema_50_h1:
+        print(f"    [H1] ✅ XU HƯỚNG MUA (Giá > EMA50)")
+        return 'BUY'
+    elif close_h1 < ema_50_h1:
+        print(f"    [H1] ✅ XU HƯỚNG BÁN (Giá < EMA50)")
+        return 'SELL'
+    else:
+        print(f"    [H1] ⚠️ SIDEWAYS (Giá ≈ EMA50)")
+        return 'SIDEWAYS'
+
 def check_m5_trend():
     """
     Kiểm tra xu hướng M5 bằng EMA50
@@ -352,6 +392,59 @@ def check_m5_trend():
     else:
         print(f"    [M5] ⚠️ SIDEWAYS (Giá ≈ EMA50)")
         return 'SIDEWAYS'
+
+def check_momentum_confirmation(df_m1, signal_direction):
+    """
+    Kiểm tra xác nhận Momentum (Sniper Entry)
+    
+    - BUY: Giá hiện tại > Đỉnh nến tín hiệu + Buffer
+    - SELL: Giá hiện tại < Đáy nến tín hiệu - Buffer
+    
+    Args:
+        df_m1: DataFrame M1
+        signal_direction: 'BUY' hoặc 'SELL'
+        
+    Returns:
+        Tuple (bool, str): (confirmed, message)
+    """
+    if not ENABLE_MOMENTUM_CONFIRMATION:
+        return True, "Momentum confirmation đã tắt"
+        
+    if len(df_m1) < 2:
+        return False, "Không đủ dữ liệu M1"
+        
+    # Nến tín hiệu là nến vừa đóng (iloc[-1])
+    signal_candle = df_m1.iloc[-1]
+    signal_high = signal_candle['high']
+    signal_low = signal_candle['low']
+    
+    # Lấy giá hiện tại (Realtime)
+    tick = mt5.symbol_info_tick(SYMBOL)
+    current_ask = tick.ask
+    current_bid = tick.bid
+    point = get_symbol_info()
+    
+    buffer_points = MOMENTUM_BUFFER_POINTS * point
+    
+    if signal_direction == 'BUY':
+        confirmation_price = signal_high + buffer_points
+        if current_ask > confirmation_price:
+            return True, f"✅ Momentum Confirmed: Giá ({current_ask:.5f}) > Đỉnh nến tín hiệu ({signal_high:.5f})"
+        else:
+            distance = confirmation_price - current_ask
+            distance_pips = (distance / point) / 10
+            return False, f"⏳ Waiting for Momentum: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
+            
+    elif signal_direction == 'SELL':
+        confirmation_price = signal_low - buffer_points
+        if current_bid < confirmation_price:
+            return True, f"✅ Momentum Confirmed: Giá ({current_bid:.5f}) < Đáy nến tín hiệu ({signal_low:.5f})"
+        else:
+            distance = current_bid - confirmation_price
+            distance_pips = (distance / point) / 10
+            return False, f"⏳ Waiting for Momentum: Cần phá {confirmation_price:.5f} (Còn {distance_pips:.1f} pips)"
+            
+    return False, "Invalid direction"
 
 def check_m1_retest_ema20(df_m1, m5_trend):
     """
