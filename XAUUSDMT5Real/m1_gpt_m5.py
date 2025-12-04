@@ -54,7 +54,7 @@ TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP l
 # Fix SL theo giá trị USD cố định
 ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
 FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
-SL_MAX_USD = 5.0    # SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR
+SL_MAX_USD = 10.0    # SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR
 
 
 ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
