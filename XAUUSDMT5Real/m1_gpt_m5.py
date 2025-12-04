@@ -1576,9 +1576,86 @@ def run_bot():
             continue
         
         # 1. Xác định hướng M5 bằng EMA50
-        print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng M5 (EMA50)")
+        print(f"\n  ┌─ [BƯỚC 1] Kiểm tra xu hướng (M5 & H1)")
         m5_trend = check_m5_trend()
+        
+        # Kiểm tra H1 Trend (nếu bật)
+        h1_trend = 'SIDEWAYS'
+        if ENABLE_H1_TREND_FILTER:
+            h1_trend = check_h1_trend()
+            
+            # Nếu H1 khác M5 thì coi như không đồng thuận -> SIDEWAYS (để chặn lệnh)
+            if m5_trend != 'SIDEWAYS' and h1_trend != 'SIDEWAYS' and m5_trend != h1_trend:
+                print(f"    ⚠️ [TREND] M5 ({m5_trend}) ngược chiều H1 ({h1_trend}) → Chặn giao dịch")
+                m5_trend = 'SIDEWAYS' # Chặn tín hiệu
+            elif h1_trend == 'SIDEWAYS':
+                 print(f"    ⚠️ [TREND] H1 là SIDEWAYS → Chặn giao dịch")
+                 m5_trend = 'SIDEWAYS'
+            else:
+                print(f"    ✅ [TREND] Đồng thuận xu hướng: M5 ({m5_trend}) == H1 ({h1_trend})")
+        
         print(f"  └─ [BƯỚC 1] Kết quả: {m5_trend}")
+
+        # ... (ADX check) ...
+
+        # ... (ATR check) ...
+        
+        # ... (Signal check) ...
+
+        # ... (Filter check) ...
+        
+        # ... (Inside decision block) ...
+            
+            if not filters_passed:
+                # ... (Log failure) ...
+                pass
+            elif m1_signal == 'BUY' and m5_trend == 'BUY':
+                print(f"  ✅ [QUYẾT ĐỊNH] 🚀 TÍN HIỆU MUA MẠNH!")
+                # ... (Log details) ...
+                
+                # Kiểm tra Momentum Confirmation (Sniper Entry)
+                print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum Confirmation (Sniper Entry)")
+                confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'BUY')
+                print(f"    {confirm_msg}")
+                print(f"  └─ [CONFIRMATION] Kết quả: {'OK' if confirmed else 'WAITING'}")
+                
+                if not confirmed:
+                    print(f"  ⏳ [QUYẾT ĐỊNH] CHỜ XÁC NHẬN MOMENTUM - Chưa vào lệnh")
+                    time.sleep(1)
+                    continue
+
+                # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
+                # ... (Cooldown check) ...
+                
+                if not cooldown_allowed:
+                    # ...
+                    pass
+                else:
+                    send_order(mt5.ORDER_TYPE_BUY, VOLUME, df_m1=df_m1, df_m5=df_m5, m5_trend=m5_trend, m1_signal=m1_signal, signal_type=signal_type, adx_m5_current=adx_m5_current, atr_pips=atr_pips, spread_points=spread_points)
+                
+            elif m1_signal == 'SELL' and m5_trend == 'SELL':
+                print(f"  ✅ [QUYẾT ĐỊNH] 🔻 TÍN HIỆU BÁN MẠNH!")
+                # ... (Log details) ...
+                
+                # Kiểm tra Momentum Confirmation (Sniper Entry)
+                print(f"\n  ┌─ [CONFIRMATION] Kiểm tra Momentum Confirmation (Sniper Entry)")
+                confirmed, confirm_msg = check_momentum_confirmation(df_m1, 'SELL')
+                print(f"    {confirm_msg}")
+                print(f"  └─ [CONFIRMATION] Kết quả: {'OK' if confirmed else 'WAITING'}")
+                
+                if not confirmed:
+                    print(f"  ⏳ [QUYẾT ĐỊNH] CHỜ XÁC NHẬN MOMENTUM - Chưa vào lệnh")
+                    time.sleep(1)
+                    continue
+
+                # Kiểm tra cooldown sau lệnh thua (chỉ check khi có tín hiệu)
+                # ... (Cooldown check) ...
+                
+                if not cooldown_allowed:
+                    # ...
+                    pass
+                else:
+                    send_order(mt5.ORDER_TYPE_SELL, VOLUME, df_m1=df_m1, df_m5=df_m5, m5_trend=m5_trend, m1_signal=m1_signal, signal_type=signal_type, adx_m5_current=adx_m5_current, atr_pips=atr_pips, spread_points=spread_points)
         
         # Lấy dữ liệu M5 cho ADX
         df_m5 = get_rates(mt5.TIMEFRAME_M5)
