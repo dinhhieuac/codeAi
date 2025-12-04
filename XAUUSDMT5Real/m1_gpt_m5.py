@@ -83,9 +83,9 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
 
 CHAT_ID = "1887610382"      
 # Khoảng cách retest EMA20 trên M1 (points)
-# Giá chạm EMA20 trong vùng 10-20 pips (100-200 points)
-RETEST_DISTANCE_MIN = 100  # Tối thiểu 10 pips (100 points) từ EMA20
-RETEST_DISTANCE_MAX = 200  # Tối đa 20 pips (200 points) từ EMA20
+# Giá chạm EMA20 trong vùng 0-30 pips (0-300 points)
+RETEST_DISTANCE_MIN = 0  # Tối thiểu 0 pips (chạm EMA)
+RETEST_DISTANCE_MAX = 300  # Tối đa 30 pips (300 points) từ EMA20
 
 # Chiến thuật BREAKOUT (khi giá không retest) - CHỈ DÙNG KHI ĐIỀU KIỆN NGHIÊM NGẶT
 ENABLE_BREAKOUT = False  # Tắt breakout mặc định (M1 nhiễu)
@@ -391,31 +391,39 @@ def check_m1_retest_ema20(df_m1, m5_trend):
     # Tính khoảng cách từ giá hiện tại đến EMA20 (points)
     distance_points = abs(current_price - ema_20_current) / point
     
+    # Lấy thông tin nến hiện tại để confirm (tránh bắt dao rơi)
+    current_candle = df_m1.iloc[-1]
+    is_green_candle = current_candle['close'] > current_candle['open']
+    is_red_candle = current_candle['close'] < current_candle['open']
+    
     print(f"  📈 [M1 RETEST] Giá hiện tại: {current_price:.5f} | EMA20: {ema_20_current:.5f}")
     print(f"    Khoảng cách: {distance_points:.1f} points ({distance_points/10:.1f} pips)")
     print(f"    Vùng retest: {RETEST_DISTANCE_MIN/10:.1f}-{RETEST_DISTANCE_MAX/10:.1f} pips")
     
     if m5_trend == 'BUY':
-        # Trend BUY → giá phải trong vùng retest 10-20 pips từ EMA20
+        # Trend BUY → giá phải trong vùng retest (gần EMA20)
         if RETEST_DISTANCE_MIN <= distance_points <= RETEST_DISTANCE_MAX:
-            if current_price <= ema_20_current:  # Giá dưới hoặc bằng EMA20
-                print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ dưới lên (BUY signal)")
+            # QUAN TRỌNG: Chỉ BUY khi nến hiện tại là NẾN XANH (đã bật lên) hoặc giá > EMA20
+            # Để tránh mua khi giá đang cắm đầu xuống
+            if is_green_candle or current_price > ema_20_current:
+                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật lên (Nến xanh/Trên EMA)")
                 return 'BUY'
             else:
-                print(f"    ⚠️ [M1 RETEST] Giá trên EMA20 nhưng trong vùng retest - Chờ giá xuống")
+                print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng đang giảm (Nến đỏ) - Chờ nến xanh")
                 return 'NONE'
         else:
             print(f"    ⚠️ [M1 RETEST] Giá ngoài vùng retest ({distance_points/10:.1f} pips) - Chờ retest")
             return 'NONE'
     
     elif m5_trend == 'SELL':
-        # Trend SELL → giá phải trong vùng retest 10-20 pips từ EMA20
+        # Trend SELL → giá phải trong vùng retest (gần EMA20)
         if RETEST_DISTANCE_MIN <= distance_points <= RETEST_DISTANCE_MAX:
-            if current_price >= ema_20_current:  # Giá trên hoặc bằng EMA20
-                print(f"    ✅ [M1 RETEST] Giá đang retest EMA20 từ trên xuống (SELL signal)")
+            # QUAN TRỌNG: Chỉ SELL khi nến hiện tại là NẾN ĐỎ (đã bật xuống) hoặc giá < EMA20
+            if is_red_candle or current_price < ema_20_current:
+                print(f"    ✅ [M1 RETEST] Giá trong vùng retest & có tín hiệu bật xuống (Nến đỏ/Dưới EMA)")
                 return 'SELL'
             else:
-                print(f"    ⚠️ [M1 RETEST] Giá dưới EMA20 nhưng trong vùng retest - Chờ giá lên")
+                print(f"    ⚠️ [M1 RETEST] Giá trong vùng retest nhưng đang tăng (Nến xanh) - Chờ nến đỏ")
                 return 'NONE'
         else:
             print(f"    ⚠️ [M1 RETEST] Giá ngoài vùng retest ({distance_points/10:.1f} pips) - Chờ retest")
