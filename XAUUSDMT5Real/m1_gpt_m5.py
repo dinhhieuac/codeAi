@@ -1745,9 +1745,26 @@ def run_bot():
                 elif m1_signal == 'NONE':
                     print(f"     - M1 Signal: {m1_signal} (Chưa có retest hoặc breakout)")
                     if m1_retest_signal == 'NONE':
-                        print(f"       → Retest: Không có (giá ngoài vùng 10-20 pips từ EMA20)")
+                        # Lấy lại thông tin để log chi tiết
+                        ema_20_m1 = calculate_ema(df_m1, EMA_M1)
+                        ema_20_current = ema_20_m1.iloc[-1]
+                        distance_points = abs(current_price - ema_20_current) / point
+                        current_candle = df_m1.iloc[-1]
+                        is_green = current_candle['close'] > current_candle['open']
+                        is_red = current_candle['close'] < current_candle['open']
+                        
+                        print(f"       → Retest: Không thỏa mãn")
+                        print(f"         * Khoảng cách: {distance_points/10:.1f} pips (Yêu cầu: {RETEST_DISTANCE_MIN/10}-{RETEST_DISTANCE_MAX/10} pips)")
+                        if not (RETEST_DISTANCE_MIN <= distance_points <= RETEST_DISTANCE_MAX):
+                             print(f"         * LÝ DO: Giá ngoài vùng retest")
+                        else:
+                             if m5_trend == 'BUY' and not (is_green or current_price > ema_20_current):
+                                 print(f"         * LÝ DO: Trend BUY nhưng nến ĐỎ (đang giảm) - Cần nến XANH")
+                             elif m5_trend == 'SELL' and not (is_red or current_price < ema_20_current):
+                                 print(f"         * LÝ DO: Trend SELL nhưng nến XANH (đang tăng) - Cần nến ĐỎ")
+                    
                     if m1_breakout_signal == 'NONE':
-                        print(f"       → Breakout: Không có hoặc không đủ điều kiện")
+                        print(f"       → Breakout: Không có hoặc không đủ điều kiện (ADX, Volume, Spread)")
                 elif m1_signal == 'BUY' and m5_trend != 'BUY':
                     print(f"     - M1 Signal: {m1_signal} nhưng M5 Trend: {m5_trend} (Không đồng ý)")
                     print(f"       → Cần M5 Trend = BUY để vào lệnh BUY")
