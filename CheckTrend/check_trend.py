@@ -1,3 +1,4 @@
+from threading import Thread
 import MetaTrader5 as mt5
 import pandas as pd
 import json
@@ -32,10 +33,10 @@ CHAT_ID = config.get("CHAT_ID", "1887610382")
 
 # Danh sách các cặp cần check (thử nhiều biến thể)
 SYMBOLS_CONFIG = {
-    "XAUUSD": ["XAUUSDm", "XAUUSD", "GOLD", "XAU/USD"],
-    "ETHUSD": ["ETHUSD", "ETHUSDm", "ETH/USD"],
-    "BTCUSD": ["BTCUSD", "BTCUSDm", "BTC/USD"],
-    "BNBUSD": ["BNBUSD", "BNBUSDm", "BNB/USD"]
+    "XAUUSD": ["XAUUSDm", "XAUUSD", "GOLD", "XAU/USD", "GOLDm"],
+    "ETHUSD": ["ETHUSD", "ETHUSDm", "ETH/USD", "ETHUSDT", "ETHUSDTm", "ETH"],
+    "BTCUSD": ["BTCUSD", "BTCUSDm", "BTC/USD", "BTCUSDT", "BTCUSDTm", "BTC"],
+    "BNBUSD": ["BNBUSD", "BNBUSDm", "BNB/USD", "BNBUSDT", "BNBUSDTm", "BNB"]
 }
 
 # ==============================================================================
@@ -578,8 +579,18 @@ def format_all_symbols_message(all_results):
 
 def find_symbol(base_name):
     """Tìm symbol thực tế trong MT5"""
-    # Danh sách các biến thể để thử
-    variants = [
+    print(f"  🔍 Đang tìm symbol cho: {base_name}")
+    
+    # Danh sách các biến thể để thử (theo thứ tự ưu tiên)
+    variants = []
+    
+    # Thêm các biến thể từ SYMBOLS_CONFIG nếu có
+    if base_name in SYMBOLS_CONFIG:
+        variants.extend(SYMBOLS_CONFIG[base_name])
+        print(f"  📝 Sẽ thử {len(SYMBOLS_CONFIG[base_name])} biến thể từ config: {', '.join(SYMBOLS_CONFIG[base_name][:3])}...")
+    
+    # Thêm các biến thể mặc định
+    default_variants = [
         base_name + "m",  # XAUUSDm
         base_name,         # XAUUSD
         base_name.upper(),  # XAUUSD
@@ -588,20 +599,46 @@ def find_symbol(base_name):
         base_name.replace("USD", "USDm"),  # XAUUSDm (nếu chưa có m)
     ]
     
+    # Thêm các biến thể USDT cho crypto
+    if "BTC" in base_name or "ETH" in base_name or "BNB" in base_name:
+        default_variants.extend([
+            base_name.replace("USD", "USDT"),  # BTCUSDT
+            base_name.replace("USD", "USDT") + "m",  # BTCUSDTm
+        ])
+    
+    variants.extend(default_variants)
+    
+    # Loại bỏ trùng lặp nhưng giữ thứ tự
+    seen = set()
+    unique_variants = []
+    for v in variants:
+        if v not in seen:
+            seen.add(v)
+            unique_variants.append(v)
+    
+    print(f"  📝 Tổng cộng {len(unique_variants)} biến thể để thử")
+    
     # Thử từng biến thể
-    for variant in variants:
+    for variant in unique_variants:
         symbol_info = mt5.symbol_info(variant)
         if symbol_info is not None:
+            print(f"  ✅ Symbol {variant} tồn tại!")
             # Kiểm tra symbol có được enable không
             if not symbol_info.visible:
-                print(f"⚠️ Symbol {variant} tồn tại nhưng chưa được enable, đang enable...")
+                print(f"  ⚠️ Symbol {variant} chưa được enable, đang enable...")
                 if mt5.symbol_select(variant, True):
-                    print(f"✅ Đã enable symbol {variant}")
+                    print(f"  ✅ Đã enable symbol {variant}")
                 else:
-                    print(f"❌ Không thể enable symbol {variant}")
+                    print(f"  ❌ Không thể enable symbol {variant}, bỏ qua...")
                     continue
             
-            print(f"✅ Tìm thấy symbol: {variant}")
+            # Test lấy dữ liệu
+            test_rates = mt5.copy_rates_from_pos(variant, mt5.TIMEFRAME_H1, 0, 1)
+            if test_rates is None or len(test_rates) == 0:
+                print(f"  ⚠️ Symbol {variant} tồn tại nhưng không lấy được dữ liệu, thử tiếp...")
+                continue
+            
+            print(f"  ✅ Tìm thấy và có thể lấy dữ liệu: {variant}")
             return variant
     
     # Nếu không tìm thấy, thử tìm trong danh sách tất cả symbols
@@ -786,6 +823,8 @@ def main():
             print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol_base}")
         
         print("\n" + "="*70)
+
+        
     
     # Gửi tổng hợp tất cả các cặp
     print("\n" + "="*70)
