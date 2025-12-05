@@ -42,9 +42,38 @@ SYMBOLS_CONFIG = {
 # 2. KẾT NỐI MT5
 # ==============================================================================
 
-if not mt5.initialize(path=MT5_PATH,login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
-    print("MT5 Init Failed")
-    quit()
+def initialize_mt5():
+    """Khởi tạo và kết nối MT5."""
+    
+    print("\n--- Bắt đầu kết nối MT5 ---")
+    
+    # 1. Thử kết nối với PATH và thông tin đăng nhập (khởi chạy MT5 nếu cần)
+    if not mt5.initialize(path=MT5_PATH, 
+                           login=MT5_LOGIN, 
+                           password=MT5_PASSWORD, 
+                           server=MT5_SERVER):
+        
+        # 2. Nếu thất bại, thử lại mà không dùng PATH (dùng phiên MT5 đang chạy)
+        print(f"Lần 1 thất bại ({mt5.last_error()}). Thử lại không dùng PATH...")
+        if not mt5.initialize(login=MT5_LOGIN, 
+                               password=MT5_PASSWORD, 
+                               server=MT5_SERVER):
+            print(f"❌ KHỞI TẠO THẤT BẠI. Lỗi: {mt5.last_error()}")
+            print("Vui lòng kiểm tra: 1. Đường dẫn PATH, 2. Thông tin đăng nhập, 3. Server Name.")
+            return False
+        else:
+            print("✅ Kết nối MT5 thành công (Sử dụng phiên MT5 đang chạy sẵn).")
+    else:
+        print(f"✅ Đăng nhập tài khoản {MT5_LOGIN} trên server {MT5_SERVER} thành công.")
+    
+    # Kiểm tra kết nối bằng cách lấy thông tin tài khoản
+    account_info = mt5.account_info()
+    if account_info is None:
+        print(f"❌ Không thể lấy thông tin tài khoản. Lỗi: {mt5.last_error()}")
+        return False
+    
+    print(f"✅ Tài khoản: {account_info.login}, Server: {account_info.server}, Currency: {account_info.currency}")
+    return True
 
 # ==============================================================================
 # 3. HÀM TÍNH TOÁN CHỈ BÁO
@@ -689,15 +718,11 @@ def main():
     print(f"📊 BOT CHECK TREND - TẤT CẢ CẶP")
     print(f"{'='*70}\n")
     
-    # Kiểm tra kết nối MT5
-    account_info = mt5.account_info()
-    if account_info is None:
-        print("❌ Lỗi: Không thể lấy thông tin tài khoản MT5")
-        print("   Kiểm tra: MT5 có đang chạy và kết nối đúng không?")
+    # Khởi tạo và kết nối MT5
+    if not initialize_mt5():
+        print("\n❌ Không thể kết nối MT5. Dừng bot.")
         mt5.shutdown()
         return
-    
-    print(f"✅ Đã kết nối MT5: Account {account_info.login} trên {account_info.server}")
     
     # Liệt kê symbols có sẵn cho các cặp cần check
     search_terms = ["XAU", "GOLD", "ETH", "BTC", "BNB"]
