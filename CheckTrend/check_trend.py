@@ -576,19 +576,37 @@ def find_symbol(base_name):
             return variant
     
     # Nếu không tìm thấy, thử tìm trong danh sách tất cả symbols
-    print(f"⚠️ Không tìm thấy {base_name}, đang tìm trong danh sách symbols...")
+    print(f"  ⚠️ Không tìm thấy trong biến thể, đang tìm trong danh sách symbols...")
     all_symbols = mt5.symbols_get()
     if all_symbols:
+        matches = []
         for sym in all_symbols:
             sym_name = sym.name
             # Tìm symbol có chứa base_name (không phân biệt hoa thường)
-            if base_name.upper() in sym_name.upper() or sym_name.upper() in base_name.upper():
-                print(f"✅ Tìm thấy symbol tương tự: {sym_name}")
-                if not sym.visible:
-                    mt5.symbol_select(sym_name, True)
-                return sym_name
+            if base_name.upper() in sym_name.upper():
+                matches.append((sym_name, sym.visible))
+        
+        if matches:
+            print(f"  📌 Tìm thấy {len(matches)} symbol tương tự:")
+            for sym_name, is_visible in matches[:5]:  # Chỉ hiển thị 5 đầu tiên
+                status = "✅ Enabled" if is_visible else "❌ Disabled"
+                print(f"     - {sym_name} ({status})")
+            
+            # Thử symbol đầu tiên
+            for sym_name, is_visible in matches:
+                if not is_visible:
+                    if mt5.symbol_select(sym_name, True):
+                        print(f"  ✅ Đã enable {sym_name}")
+                    else:
+                        continue
+                
+                # Test lấy dữ liệu
+                test_rates = mt5.copy_rates_from_pos(sym_name, mt5.TIMEFRAME_H1, 0, 1)
+                if test_rates is not None and len(test_rates) > 0:
+                    print(f"  ✅ Tìm thấy và có thể lấy dữ liệu: {sym_name}")
+                    return sym_name
     
-    print(f"❌ Không tìm thấy symbol cho {base_name}")
+    print(f"  ❌ Không tìm thấy symbol cho {base_name}")
     return None
 
 def analyze_symbol(symbol_base):
@@ -637,10 +655,53 @@ def analyze_symbol(symbol_base):
     
     return (analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions, symbol)
 
+def list_available_symbols(search_terms=None):
+    """Liệt kê các symbol có sẵn trong MT5"""
+    print(f"\n{'='*70}")
+    print("📋 ĐANG TÌM CÁC SYMBOL CÓ SẴN TRONG MT5...")
+    print(f"{'='*70}")
+    
+    all_symbols = mt5.symbols_get()
+    if not all_symbols:
+        print("❌ Không lấy được danh sách symbols từ MT5")
+        return []
+    
+    print(f"✅ Tìm thấy {len(all_symbols)} symbols trong MT5")
+    
+    if search_terms:
+        print(f"\n🔍 Tìm symbols chứa: {', '.join(search_terms)}")
+        found_symbols = []
+        for term in search_terms:
+            matches = [s.name for s in all_symbols if term.upper() in s.name.upper()]
+            if matches:
+                found_symbols.extend(matches)
+                print(f"\n  📌 Symbols chứa '{term}':")
+                for sym in matches[:10]:  # Chỉ hiển thị 10 đầu tiên
+                    symbol_info = mt5.symbol_info(sym)
+                    status = "✅ Enabled" if symbol_info.visible else "❌ Disabled"
+                    print(f"     - {sym} ({status})")
+        return list(set(found_symbols))
+    
+    return [s.name for s in all_symbols]
+
 def main():
     print(f"\n{'='*70}")
     print(f"📊 BOT CHECK TREND - TẤT CẢ CẶP")
     print(f"{'='*70}\n")
+    
+    # Kiểm tra kết nối MT5
+    account_info = mt5.account_info()
+    if account_info is None:
+        print("❌ Lỗi: Không thể lấy thông tin tài khoản MT5")
+        print("   Kiểm tra: MT5 có đang chạy và kết nối đúng không?")
+        mt5.shutdown()
+        return
+    
+    print(f"✅ Đã kết nối MT5: Account {account_info.login} trên {account_info.server}")
+    
+    # Liệt kê symbols có sẵn cho các cặp cần check
+    search_terms = ["XAU", "GOLD", "ETH", "BTC", "BNB"]
+    available_symbols = list_available_symbols(search_terms)
     
     all_results = {}
     
