@@ -234,8 +234,16 @@ def check_false_break(df, support_resistance_level):
 
 def analyze_timeframe(symbol, timeframe, timeframe_name):
     """Phân tích xu hướng cho một khung thời gian"""
-    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 200)
-    if rates is None or len(rates) == 0:
+    try:
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 200)
+        if rates is None:
+            print(f"  ⚠️ {timeframe_name}: Không lấy được dữ liệu từ MT5 (rates = None)")
+            return None
+        if len(rates) == 0:
+            print(f"  ⚠️ {timeframe_name}: Dữ liệu rỗng (len = 0)")
+            return None
+    except Exception as e:
+        print(f"  ❌ {timeframe_name}: Lỗi khi lấy dữ liệu: {e}")
         return None
     
     df = pd.DataFrame(rates)
@@ -469,12 +477,13 @@ def format_all_symbols_message(all_results):
     
     for symbol, result in all_results.items():
         if result is None:
-            msg += f"<b>❌ {symbol}</b>: Không lấy được dữ liệu\n\n"
+            msg += f"<b>❌ {symbol}</b>: Không lấy được dữ liệu\n"
+            msg += f"   ⚠️ Kiểm tra: Symbol có tồn tại và được enable trong MT5 không?\n\n"
             continue
         
-        analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
+        analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions, actual_symbol = result
         
-        msg += f"<b>📊 {symbol}</b>\n"
+        msg += f"<b>📊 {symbol} ({actual_symbol})</b>\n"
         msg += "=" * 40 + "\n\n"
         
         # Phân tích từng khung thời gian (giống format_telegram_message)
