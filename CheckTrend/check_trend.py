@@ -24,12 +24,14 @@ if not config:
 MT5_LOGIN = config.get("ACCOUNT_NUMBER")
 MT5_PASSWORD = config.get("PASSWORD")
 MT5_SERVER = config.get("SERVER")
-SYMBOL = config.get("SYMBOL", "XAUUSDm")
 MT5_PATH = config.get("PATH")
 
 # Telegram Configuration
 TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN", "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g")
 CHAT_ID = config.get("CHAT_ID", "1887610382")
+
+# Danh sách các cặp cần check
+SYMBOLS = ["XAUUSDm", "ETHUSD", "BTCUSD", "BNBUSD"]  # Có thể thử thêm "XAUUSD", "ETHUSDm", etc. nếu cần
 
 # ==============================================================================
 # 2. KẾT NỐI MT5
@@ -454,28 +456,99 @@ def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, anal
     
     return msg
 
+def format_all_symbols_message(all_results):
+    """Định dạng tin nhắn Telegram cho tất cả các cặp"""
+    msg = f"<b>📊 TREND ANALYSIS - TẤT CẢ CẶP</b>\n"
+    msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    msg += "=" * 50 + "\n\n"
+    
+    for symbol, result in all_results.items():
+        if result is None:
+            msg += f"<b>❌ {symbol}</b>: Không lấy được dữ liệu\n\n"
+            continue
+        
+        analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
+        
+        # Tóm tắt xu hướng chính (H1)
+        if analysis_h1:
+            trend_emoji = "🟢" if analysis_h1['trend'] == 'BULLISH' else "🔴" if analysis_h1['trend'] == 'BEARISH' else "🟡"
+            strength_emoji = "💪" if analysis_h1['trend_strength'] == 'STRONG' else "⚡" if analysis_h1['trend_strength'] == 'MODERATE' else "💤"
+            
+            msg += f"<b>💰 {symbol} ({trend_emoji} {analysis_h1['trend']} {strength_emoji})</b>\n"
+            msg += f"📊 Giá: {analysis_h1['price']:.5f} | ADX: {analysis_h1['adx']:.2f} | ATR: {analysis_h1['atr_pips']:.2f} pips\n"
+            
+            # Xu hướng các khung
+            trends = []
+            if analysis_m15:
+                trends.append(f"M15:{analysis_m15['trend'][:1]}")
+            if analysis_h1:
+                trends.append(f"H1:{analysis_h1['trend'][:1]}")
+            if analysis_h4:
+                trends.append(f"H4:{analysis_h4['trend'][:1]}")
+            if analysis_d1:
+                trends.append(f"D1:{analysis_d1['trend'][:1]}")
+            
+            msg += f"📈 {' | '.join(trends)}\n"
+            
+            # Gợi ý chính
+            if suggestions:
+                main_suggestion = suggestions[0] if suggestions else ""
+                if "BUY" in main_suggestion or "SELL" in main_suggestion:
+                    msg += f"💡 {main_suggestion}\n"
+            
+            # Cảnh báo
+            warnings = []
+            if analysis_h1 and analysis_h1['atr_breakout']:
+                warnings.append("ATR breakout")
+            if analysis_h1 and analysis_h1['volume_spike']:
+                warnings.append("Volume spike")
+            if warnings:
+                msg += f"⚠️ {' | '.join(warnings)}\n"
+            
+            msg += "\n"
+    
+    return msg
+
 # ==============================================================================
 # 7. MAIN
 # ==============================================================================
 
-def main():
+def analyze_symbol(symbol):
+    """Phân tích một cặp tiền tệ"""
     print(f"\n{'='*70}")
-    print(f"📊 BOT CHECK TREND - {SYMBOL}")
-    print(f"{'='*70}\n")
+    print(f"📊 Đang phân tích: {symbol}")
+    print(f"{'='*70}")
+    
+    # Kiểm tra symbol có tồn tại không
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        print(f"❌ Symbol {symbol} không tồn tại, thử tìm symbol tương tự...")
+        # Thử các biến thể
+        variants = [symbol.replace("m", ""), symbol + "m", symbol.upper(), symbol.lower()]
+        found = False
+        for variant in variants:
+            if mt5.symbol_info(variant) is not None:
+                symbol = variant
+                print(f"✅ Tìm thấy: {symbol}")
+                found = True
+                break
+        if not found:
+            print(f"❌ Không tìm thấy symbol {symbol}")
+            return None
     
     # Phân tích các khung thời gian
     print("Đang phân tích các khung thời gian...")
-    analysis_m15 = analyze_timeframe(SYMBOL, mt5.TIMEFRAME_M15, "M15")
-    analysis_h1 = analyze_timeframe(SYMBOL, mt5.TIMEFRAME_H1, "H1")
-    analysis_h4 = analyze_timeframe(SYMBOL, mt5.TIMEFRAME_H4, "H4")
-    analysis_d1 = analyze_timeframe(SYMBOL, mt5.TIMEFRAME_D1, "D1")
+    analysis_m15 = analyze_timeframe(symbol, mt5.TIMEFRAME_M15, "M15")
+    analysis_h1 = analyze_timeframe(symbol, mt5.TIMEFRAME_H1, "H1")
+    analysis_h4 = analyze_timeframe(symbol, mt5.TIMEFRAME_H4, "H4")
+    analysis_d1 = analyze_timeframe(symbol, mt5.TIMEFRAME_D1, "D1")
     
     # Gợi ý vào lệnh
     suggestions = get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1)
     
     # In ra console
     print("\n" + "="*70)
-    print("KẾT QUẢ PHÂN TÍCH:")
+    print(f"KẾT QUẢ PHÂN TÍCH: {symbol}")
     print("="*70)
     
     for analysis in [analysis_m15, analysis_h1, analysis_h4, analysis_d1]:
@@ -496,16 +569,49 @@ def main():
     for suggestion in suggestions:
         print(f"  {suggestion}")
     
-    # Gửi Telegram
-    telegram_msg = format_telegram_message(SYMBOL, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
-    if send_telegram(telegram_msg):
-        print("\n✅ Đã gửi log về Telegram")
+    return (analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
+
+def main():
+    print(f"\n{'='*70}")
+    print(f"📊 BOT CHECK TREND - TẤT CẢ CẶP")
+    print(f"{'='*70}\n")
+    
+    all_results = {}
+    
+    # Phân tích từng cặp
+    for symbol in SYMBOLS:
+        result = analyze_symbol(symbol)
+        all_results[symbol] = result
+    
+    # Gửi Telegram cho từng cặp (chi tiết)
+    print("\n" + "="*70)
+    print("GỬI LOG VỀ TELEGRAM...")
+    print("="*70)
+    
+    for symbol in SYMBOLS:
+        result = all_results.get(symbol)
+        if result:
+            analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
+            telegram_msg = format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
+            if send_telegram(telegram_msg):
+                print(f"✅ Đã gửi log {symbol} về Telegram")
+            else:
+                print(f"⚠️ Không thể gửi Telegram cho {symbol}")
+        else:
+            print(f"⚠️ Không có dữ liệu để gửi cho {symbol}")
+    
+    # Gửi tổng hợp tất cả các cặp
+    summary_msg = format_all_symbols_message(all_results)
+    if send_telegram(summary_msg):
+        print("\n✅ Đã gửi tổng hợp tất cả cặp về Telegram")
     else:
-        print("\n⚠️ Không thể gửi Telegram")
+        print("\n⚠️ Không thể gửi tổng hợp Telegram")
     
     print("\n" + "="*70)
-
-mt5.shutdown()
+    print("HOÀN TẤT!")
+    print("="*70)
+    
+    mt5.shutdown()
 
 if __name__ == "__main__":
     main()
