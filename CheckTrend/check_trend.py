@@ -961,7 +961,7 @@ def main():
             if send_telegram(telegram_msg):
                 print(f"✅ Đã gửi log {symbol_base} ({actual_symbol}) về Telegram")
             else:
-                print(f"❌ Không thể gửi Telegram cho {symbol_base} sau {3} lần thử")
+                print(f"❌ Không thể gửi Telegram cho {symbol_base} sau 3 lần thử")
         else:
             print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol_base}")
         
@@ -971,22 +971,6 @@ def main():
         if symbol_base != list(SYMBOLS_CONFIG.keys())[-1]:  # Không sleep sau cặp cuối cùng
             print("⏳ Đợi 10 giây trước khi check cặp tiếp theo...")
             time.sleep(10)
-
-        
-    
-    # Gửi tổng hợp tất cả các cặp
-    print("\n" + "="*70)
-    print("GỬI TỔNG HỢP TẤT CẢ CẶP...")
-    print("="*70)
-    print("⏳ Đợi 10 giây trước khi gửi tổng hợp...")
-    time.sleep(10)
-    
-    summary_msg = format_all_symbols_message(all_results)
-    print("\n📤 Đang gửi tổng hợp tất cả cặp về Telegram...")
-    if send_telegram(summary_msg):
-        print("\n✅ Đã gửi tổng hợp tất cả cặp về Telegram")
-    else:
-        print("\n❌ Không thể gửi tổng hợp Telegram sau 3 lần thử")
     
     print("\n" + "="*70)
     print("HOÀN TẤT!")
