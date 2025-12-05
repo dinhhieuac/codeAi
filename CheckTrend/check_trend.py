@@ -10,7 +10,7 @@ from datetime import datetime
 # ==============================================================================
 
 # Load Config
-def load_config(filename="XAUUSDMT5/mt5_account.json"):
+def load_config(filename="CheckTrend/mt5_account.json"):
     if not os.path.exists(filename):
         return None
     with open(filename, 'r') as f:
@@ -35,7 +35,7 @@ CHAT_ID = config.get("CHAT_ID", "1887610382")
 # 2. KẾT NỐI MT5
 # ==============================================================================
 
-if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
+if not mt5.initialize(path=MT5_PATH,login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
     print("MT5 Init Failed")
     quit()
 
