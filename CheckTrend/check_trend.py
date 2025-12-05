@@ -457,7 +457,7 @@ def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, anal
     return msg
 
 def format_all_symbols_message(all_results):
-    """Định dạng tin nhắn Telegram cho tất cả các cặp"""
+    """Định dạng tin nhắn Telegram cho tất cả các cặp (chi tiết đầy đủ)"""
     msg = f"<b>📊 TREND ANALYSIS - TẤT CẢ CẶP</b>\n"
     msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     msg += "=" * 50 + "\n\n"
@@ -469,43 +469,63 @@ def format_all_symbols_message(all_results):
         
         analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
         
-        # Tóm tắt xu hướng chính (H1)
-        if analysis_h1:
-            trend_emoji = "🟢" if analysis_h1['trend'] == 'BULLISH' else "🔴" if analysis_h1['trend'] == 'BEARISH' else "🟡"
-            strength_emoji = "💪" if analysis_h1['trend_strength'] == 'STRONG' else "⚡" if analysis_h1['trend_strength'] == 'MODERATE' else "💤"
-            
-            msg += f"<b>💰 {symbol} ({trend_emoji} {analysis_h1['trend']} {strength_emoji})</b>\n"
-            msg += f"📊 Giá: {analysis_h1['price']:.5f} | ADX: {analysis_h1['adx']:.2f} | ATR: {analysis_h1['atr_pips']:.2f} pips\n"
-            
-            # Xu hướng các khung
-            trends = []
-            if analysis_m15:
-                trends.append(f"M15:{analysis_m15['trend'][:1]}")
-            if analysis_h1:
-                trends.append(f"H1:{analysis_h1['trend'][:1]}")
-            if analysis_h4:
-                trends.append(f"H4:{analysis_h4['trend'][:1]}")
-            if analysis_d1:
-                trends.append(f"D1:{analysis_d1['trend'][:1]}")
-            
-            msg += f"📈 {' | '.join(trends)}\n"
-            
-            # Gợi ý chính
-            if suggestions:
-                main_suggestion = suggestions[0] if suggestions else ""
-                if "BUY" in main_suggestion or "SELL" in main_suggestion:
-                    msg += f"💡 {main_suggestion}\n"
-            
-            # Cảnh báo
-            warnings = []
-            if analysis_h1 and analysis_h1['atr_breakout']:
-                warnings.append("ATR breakout")
-            if analysis_h1 and analysis_h1['volume_spike']:
-                warnings.append("Volume spike")
-            if warnings:
-                msg += f"⚠️ {' | '.join(warnings)}\n"
-            
+        msg += f"<b>📊 {symbol}</b>\n"
+        msg += "=" * 40 + "\n\n"
+        
+        # Phân tích từng khung thời gian (giống format_telegram_message)
+        timeframes = [
+            ("M15", analysis_m15),
+            ("H1", analysis_h1),
+            ("H4", analysis_h4),
+            ("D1", analysis_d1)
+        ]
+        
+        for tf_name, analysis in timeframes:
+            if analysis:
+                trend_emoji = "🟢" if analysis['trend'] == 'BULLISH' else "🔴" if analysis['trend'] == 'BEARISH' else "🟡"
+                strength_emoji = "💪" if analysis['trend_strength'] == 'STRONG' else "⚡" if analysis['trend_strength'] == 'MODERATE' else "💤"
+                
+                msg += f"<b>{tf_name} ({trend_emoji} {analysis['trend']} {strength_emoji})</b>\n"
+                msg += f"💰 Giá: {analysis['price']:.5f}\n"
+                msg += f"📈 EMA50: {analysis['ema50']:.5f} | EMA200: {analysis['ema200']:.5f}\n"
+                msg += f"📊 ADX: {analysis['adx']:.2f} | ATR: {analysis['atr_pips']:.2f} pips\n"
+                msg += f"📉 RSI: {analysis['rsi']:.2f} | Spread: {analysis['spread_pips']:.2f} pips\n"
+                
+                if analysis['ema_aligned']:
+                    msg += f"✅ {analysis['ema_alignment_msg']}\n"
+                else:
+                    msg += f"⚠️ {analysis['ema_alignment_msg']}\n"
+                
+                if analysis['volume_spike']:
+                    msg += f"⚠️ {analysis['volume_msg']}\n"
+                
+                if analysis['atr_breakout']:
+                    msg += f"⚠️ {analysis['atr_msg']}\n"
+                
+                msg += "\n"
+        
+        # Gợi ý vào lệnh
+        if suggestions:
+            msg += "<b>💡 GỢI Ý VÀO LỆNH:</b>\n"
+            for suggestion in suggestions:
+                msg += f"{suggestion}\n"
             msg += "\n"
+        
+        # Cảnh báo
+        warnings = []
+        if analysis_h1 and analysis_h1['atr_breakout']:
+            warnings.append("⚠️ CẢNH BÁO: ATR breakout - Có thể có tin mạnh")
+        if analysis_h1 and analysis_h1['volume_spike']:
+            warnings.append("⚠️ CẢNH BÁO: Volume spike - Có thể false breakout")
+        if analysis_d1 and analysis_d1['trend'] == 'SIDEWAYS':
+            warnings.append("⚠️ CẢNH BÁO: D1 SIDEWAYS - Tránh giao dịch ngược trend lớn")
+        
+        if warnings:
+            msg += "<b>⚠️ CẢNH BÁO:</b>\n"
+            for warning in warnings:
+                msg += f"{warning}\n"
+        
+        msg += "\n" + "=" * 50 + "\n\n"
     
     return msg
 
@@ -578,29 +598,67 @@ def main():
     
     all_results = {}
     
-    # Phân tích từng cặp
-    for symbol in SYMBOLS:
-        result = analyze_symbol(symbol)
-        all_results[symbol] = result
-    
-    # Gửi Telegram cho từng cặp (chi tiết)
+    # Phân tích và gửi Telegram từng cặp ngay sau khi phân tích xong
     print("\n" + "="*70)
-    print("GỬI LOG VỀ TELEGRAM...")
+    print("PHÂN TÍCH VÀ GỬI TELEGRAM TỪNG CẶP...")
     print("="*70)
     
     for symbol in SYMBOLS:
-        result = all_results.get(symbol)
+        # Phân tích cặp này
+        result = analyze_symbol(symbol)
+        all_results[symbol] = result
+        
+        # Gửi Telegram ngay sau khi phân tích xong
         if result:
             analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
+            
+            # Đưa ra kết luận
+            print("\n" + "="*70)
+            print(f"📋 KẾT LUẬN: {symbol}")
+            print("="*70)
+            
+            # Kết luận dựa trên H1 (khung chính)
+            if analysis_h1:
+                trend_emoji = "🟢" if analysis_h1['trend'] == 'BULLISH' else "🔴" if analysis_h1['trend'] == 'BEARISH' else "🟡"
+                strength_emoji = "💪" if analysis_h1['trend_strength'] == 'STRONG' else "⚡" if analysis_h1['trend_strength'] == 'MODERATE' else "💤"
+                
+                print(f"📊 Xu hướng chính (H1): {trend_emoji} {analysis_h1['trend']} {strength_emoji}")
+                print(f"💰 Giá: {analysis_h1['price']:.5f}")
+                print(f"📈 ADX: {analysis_h1['adx']:.2f} | ATR: {analysis_h1['atr_pips']:.2f} pips")
+                
+                # Đánh giá tổng thể
+                if analysis_h1['trend'] == 'BULLISH' and analysis_h1['trend_strength'] == 'STRONG':
+                    print("✅ KẾT LUẬN: Xu hướng TĂNG MẠNH - Có thể BUY")
+                elif analysis_h1['trend'] == 'BEARISH' and analysis_h1['trend_strength'] == 'STRONG':
+                    print("✅ KẾT LUẬN: Xu hướng GIẢM MẠNH - Có thể SELL")
+                elif analysis_h1['trend'] == 'BULLISH':
+                    print("⚠️ KẾT LUẬN: Xu hướng TĂNG YẾU - Cẩn thận khi BUY")
+                elif analysis_h1['trend'] == 'BEARISH':
+                    print("⚠️ KẾT LUẬN: Xu hướng GIẢM YẾU - Cẩn thận khi SELL")
+                else:
+                    print("⚠️ KẾT LUẬN: SIDEWAYS - Tránh giao dịch")
+                
+                # Cảnh báo
+                if analysis_h1['atr_breakout']:
+                    print("⚠️ CẢNH BÁO: ATR breakout - Có thể có tin mạnh")
+                if analysis_h1['volume_spike']:
+                    print("⚠️ CẢNH BÁO: Volume spike - Có thể false breakout")
+            
+            # Gửi Telegram
             telegram_msg = format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
             if send_telegram(telegram_msg):
-                print(f"✅ Đã gửi log {symbol} về Telegram")
+                print(f"\n✅ Đã gửi log {symbol} về Telegram")
             else:
-                print(f"⚠️ Không thể gửi Telegram cho {symbol}")
+                print(f"\n⚠️ Không thể gửi Telegram cho {symbol}")
         else:
-            print(f"⚠️ Không có dữ liệu để gửi cho {symbol}")
+            print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol}")
+        
+        print("\n" + "="*70)
     
     # Gửi tổng hợp tất cả các cặp
+    print("\n" + "="*70)
+    print("GỬI TỔNG HỢP TẤT CẢ CẶP...")
+    print("="*70)
     summary_msg = format_all_symbols_message(all_results)
     if send_telegram(summary_msg):
         print("\n✅ Đã gửi tổng hợp tất cả cặp về Telegram")
@@ -610,8 +668,8 @@ def main():
     print("\n" + "="*70)
     print("HOÀN TẤT!")
     print("="*70)
-    
-    mt5.shutdown()
+
+mt5.shutdown()
 
 if __name__ == "__main__":
     main()
