@@ -30,8 +30,13 @@ MT5_PATH = config.get("PATH")
 TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN", "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g")
 CHAT_ID = config.get("CHAT_ID", "1887610382")
 
-# Danh sách các cặp cần check
-SYMBOLS = ["XAUUSDm", "ETHUSD", "BTCUSD", "BNBUSD"]  # Có thể thử thêm "XAUUSD", "ETHUSDm", etc. nếu cần
+# Danh sách các cặp cần check (thử nhiều biến thể)
+SYMBOLS_CONFIG = {
+    "XAUUSD": ["XAUUSDm", "XAUUSD", "GOLD", "XAU/USD"],
+    "ETHUSD": ["ETHUSD", "ETHUSDm", "ETH/USD"],
+    "BTCUSD": ["BTCUSD", "BTCUSDm", "BTC/USD"],
+    "BNBUSD": ["BNBUSD", "BNBUSDm", "BNB/USD"]
+}
 
 # ==============================================================================
 # 2. KẾT NỐI MT5
@@ -533,28 +538,60 @@ def format_all_symbols_message(all_results):
 # 7. MAIN
 # ==============================================================================
 
-def analyze_symbol(symbol):
+def find_symbol(base_name):
+    """Tìm symbol thực tế trong MT5"""
+    # Danh sách các biến thể để thử
+    variants = [
+        base_name + "m",  # XAUUSDm
+        base_name,         # XAUUSD
+        base_name.upper(),  # XAUUSD
+        base_name.lower(),  # xauusd
+        base_name.replace("USD", "/USD"),  # XAU/USD
+        base_name.replace("USD", "USDm"),  # XAUUSDm (nếu chưa có m)
+    ]
+    
+    # Thử từng biến thể
+    for variant in variants:
+        symbol_info = mt5.symbol_info(variant)
+        if symbol_info is not None:
+            # Kiểm tra symbol có được enable không
+            if not symbol_info.visible:
+                print(f"⚠️ Symbol {variant} tồn tại nhưng chưa được enable, đang enable...")
+                if mt5.symbol_select(variant, True):
+                    print(f"✅ Đã enable symbol {variant}")
+                else:
+                    print(f"❌ Không thể enable symbol {variant}")
+                    continue
+            
+            print(f"✅ Tìm thấy symbol: {variant}")
+            return variant
+    
+    # Nếu không tìm thấy, thử tìm trong danh sách tất cả symbols
+    print(f"⚠️ Không tìm thấy {base_name}, đang tìm trong danh sách symbols...")
+    all_symbols = mt5.symbols_get()
+    if all_symbols:
+        for sym in all_symbols:
+            sym_name = sym.name
+            # Tìm symbol có chứa base_name (không phân biệt hoa thường)
+            if base_name.upper() in sym_name.upper() or sym_name.upper() in base_name.upper():
+                print(f"✅ Tìm thấy symbol tương tự: {sym_name}")
+                if not sym.visible:
+                    mt5.symbol_select(sym_name, True)
+                return sym_name
+    
+    print(f"❌ Không tìm thấy symbol cho {base_name}")
+    return None
+
+def analyze_symbol(symbol_base):
     """Phân tích một cặp tiền tệ"""
     print(f"\n{'='*70}")
-    print(f"📊 Đang phân tích: {symbol}")
+    print(f"📊 Đang phân tích: {symbol_base}")
     print(f"{'='*70}")
     
-    # Kiểm tra symbol có tồn tại không
-    symbol_info = mt5.symbol_info(symbol)
-    if symbol_info is None:
-        print(f"❌ Symbol {symbol} không tồn tại, thử tìm symbol tương tự...")
-        # Thử các biến thể
-        variants = [symbol.replace("m", ""), symbol + "m", symbol.upper(), symbol.lower()]
-        found = False
-        for variant in variants:
-            if mt5.symbol_info(variant) is not None:
-                symbol = variant
-                print(f"✅ Tìm thấy: {symbol}")
-                found = True
-                break
-        if not found:
-            print(f"❌ Không tìm thấy symbol {symbol}")
-            return None
+    # Tìm symbol thực tế
+    symbol = find_symbol(symbol_base)
+    if symbol is None:
+        return None
     
     # Phân tích các khung thời gian
     print("Đang phân tích các khung thời gian...")
@@ -589,7 +626,7 @@ def analyze_symbol(symbol):
     for suggestion in suggestions:
         print(f"  {suggestion}")
     
-    return (analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
+    return (analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions, symbol)
 
 def main():
     print(f"\n{'='*70}")
@@ -603,18 +640,18 @@ def main():
     print("PHÂN TÍCH VÀ GỬI TELEGRAM TỪNG CẶP...")
     print("="*70)
     
-    for symbol in SYMBOLS:
+    for symbol_base in SYMBOLS_CONFIG.keys():
         # Phân tích cặp này
-        result = analyze_symbol(symbol)
-        all_results[symbol] = result
+        result = analyze_symbol(symbol_base)
+        all_results[symbol_base] = result
         
         # Gửi Telegram ngay sau khi phân tích xong
         if result:
-            analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions = result
+            analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions, actual_symbol = result
             
             # Đưa ra kết luận
             print("\n" + "="*70)
-            print(f"📋 KẾT LUẬN: {symbol}")
+            print(f"📋 KẾT LUẬN: {symbol_base} ({actual_symbol})")
             print("="*70)
             
             # Kết luận dựa trên H1 (khung chính)
@@ -644,14 +681,14 @@ def main():
                 if analysis_h1['volume_spike']:
                     print("⚠️ CẢNH BÁO: Volume spike - Có thể false breakout")
             
-            # Gửi Telegram
-            telegram_msg = format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
+            # Gửi Telegram (dùng actual_symbol để hiển thị)
+            telegram_msg = format_telegram_message(actual_symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
             if send_telegram(telegram_msg):
-                print(f"\n✅ Đã gửi log {symbol} về Telegram")
+                print(f"\n✅ Đã gửi log {symbol_base} ({actual_symbol}) về Telegram")
             else:
-                print(f"\n⚠️ Không thể gửi Telegram cho {symbol}")
+                print(f"\n⚠️ Không thể gửi Telegram cho {symbol_base}")
         else:
-            print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol}")
+            print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol_base}")
         
         print("\n" + "="*70)
     
