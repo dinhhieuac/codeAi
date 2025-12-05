@@ -40,7 +40,7 @@ MOMENTUM_BUFFER_POINTS = 0  # Buffer khoảng cách (points) để xác nhận p
 # Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
 ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
 ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40 pips ($0.4)
-ATR_MAX_THRESHOLD = 200   # ATR tối đa: 200 pips ($2) - Tránh tin mạnh (theo yêu cầu m1_gpt.md)
+ATR_MAX_THRESHOLD = 500   # ATR tối đa: 500 pips ($5) - Nới rộng để phù hợp với biến động $3-$4 hiện tại
 
 # Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
 # Chiến thuật M1: SL/TP theo nến M5
