@@ -4,6 +4,7 @@ import pandas as pd
 import json
 import os
 import requests
+import time
 from datetime import datetime
 
 # ==============================================================================
@@ -420,23 +421,42 @@ def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
 # 6. GỬI TELEGRAM
 # ==============================================================================
 
-def send_telegram(message):
-    """Gửi tin nhắn qua Telegram"""
+def send_telegram(message, max_retries=3):
+    """Gửi tin nhắn qua Telegram với retry logic"""
     if not CHAT_ID or not TELEGRAM_TOKEN:
+        print("⚠️ Thiếu CHAT_ID hoặc TELEGRAM_TOKEN")
         return False
     
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        }
-        response = requests.post(url, data=data, timeout=10)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"⚠️ Lỗi gửi Telegram: {e}")
-        return False
+    for attempt in range(max_retries):
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            data = {
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            response = requests.post(url, data=data, timeout=15)
+            
+            if response.status_code == 200:
+                return True
+            else:
+                print(f"⚠️ Lỗi gửi Telegram (lần {attempt + 1}/{max_retries}): Status {response.status_code}")
+                if response.status_code == 429:  # Rate limit
+                    retry_after = int(response.headers.get('Retry-After', 10))
+                    print(f"⏳ Rate limit, đợi {retry_after} giây...")
+                    time.sleep(retry_after)
+                elif attempt < max_retries - 1:
+                    time.sleep(2)  # Đợi 2 giây trước khi retry
+        except requests.exceptions.Timeout:
+            print(f"⚠️ Timeout khi gửi Telegram (lần {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+        except Exception as e:
+            print(f"⚠️ Lỗi gửi Telegram (lần {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+    
+    return False
 
 def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions):
     """Định dạng tin nhắn Telegram"""
@@ -815,14 +835,20 @@ def main():
             
             # Gửi Telegram (dùng actual_symbol để hiển thị)
             telegram_msg = format_telegram_message(actual_symbol, analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions)
+            print(f"\n📤 Đang gửi Telegram cho {symbol_base} ({actual_symbol})...")
             if send_telegram(telegram_msg):
-                print(f"\n✅ Đã gửi log {symbol_base} ({actual_symbol}) về Telegram")
+                print(f"✅ Đã gửi log {symbol_base} ({actual_symbol}) về Telegram")
             else:
-                print(f"\n⚠️ Không thể gửi Telegram cho {symbol_base}")
+                print(f"❌ Không thể gửi Telegram cho {symbol_base} sau {3} lần thử")
         else:
             print(f"\n⚠️ Không có dữ liệu để gửi cho {symbol_base}")
         
         print("\n" + "="*70)
+        
+        # Sleep 10 giây trước khi check cặp tiếp theo
+        if symbol_base != list(SYMBOLS_CONFIG.keys())[-1]:  # Không sleep sau cặp cuối cùng
+            print("⏳ Đợi 10 giây trước khi check cặp tiếp theo...")
+            time.sleep(10)
 
         
     
@@ -830,11 +856,15 @@ def main():
     print("\n" + "="*70)
     print("GỬI TỔNG HỢP TẤT CẢ CẶP...")
     print("="*70)
+    print("⏳ Đợi 10 giây trước khi gửi tổng hợp...")
+    time.sleep(10)
+    
     summary_msg = format_all_symbols_message(all_results)
+    print("\n📤 Đang gửi tổng hợp tất cả cặp về Telegram...")
     if send_telegram(summary_msg):
         print("\n✅ Đã gửi tổng hợp tất cả cặp về Telegram")
     else:
-        print("\n⚠️ Không thể gửi tổng hợp Telegram")
+        print("\n❌ Không thể gửi tổng hợp Telegram sau 3 lần thử")
     
     print("\n" + "="*70)
     print("HOÀN TẤT!")
