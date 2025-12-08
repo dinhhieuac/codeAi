@@ -91,8 +91,8 @@ TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Toke
 
 CHAT_ID = "1887610382"      
 # Khoảng cách retest EMA20 trên M1 (points)
-# Giá chạm EMA20 trong vùng 10-20 pips (100-200 points) - Theo yêu cầu m1_gpt.md
-RETEST_DISTANCE_MIN = 100  # Tối thiểu 10 pips (100 points)
+# Giá chạm EMA20 trong vùng 0-20 pips (0-200 points) - Theo yêu cầu m1_gpt.md
+RETEST_DISTANCE_MIN = 0   # Tối thiểu 0 pips (chạm hoặc gần chạm)
 RETEST_DISTANCE_MAX = 200  # Tối đa 20 pips (200 points) từ EMA20
 
 # Chiến thuật BREAKOUT (khi giá không retest) - CHỈ DÙNG KHI ĐIỀU KIỆN NGHIÊM NGẶT
