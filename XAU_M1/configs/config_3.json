@@ -6,6 +6,7 @@
     "symbol": "XAUUSD",
     "volume": 0.03,
     "magic": 100003,
+    "max_positions": 10,
     "telegram_token": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
     "telegram_chat_id": "1887610382",
     "parameters": {

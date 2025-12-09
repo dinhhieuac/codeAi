@@ -14,10 +14,11 @@ def strategy_3_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
+    max_positions = config.get('max_positions', 1)
     
     positions = mt5.positions_get(symbol=symbol)
-    if positions:
-        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+    if positions and len(positions) >= max_positions:
+        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
         return error_count
 
     # 1. Get Data

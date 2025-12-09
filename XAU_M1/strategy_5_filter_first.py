@@ -57,9 +57,10 @@ def strategy_5_logic(config, error_count=0):
                 print(f"🏃 Trailing SL for Ticket {pos.ticket}")
         return error_count
 
-    # If positions exist BUT they are not mine -> Block new entry
-    if positions:
-        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+    # If positions exist BUT they are not mine -> Block new entry checking global limit
+    max_positions = config.get('max_positions', 1)
+    if positions and len(positions) >= max_positions:
+        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
         return error_count
 
     # --- ENTRY MODE ---
