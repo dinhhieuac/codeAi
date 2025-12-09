@@ -111,7 +111,10 @@ def strategy_5_logic(config):
             send_telegram(f"✅ <b>Strat 5 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
 
 if __name__ == "__main__":
-    config = load_config("configs/config_5.json")
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_5.json")
+    config = load_config(config_path)
     if config and connect_mt5(config):
         print("✅ Strategy 5: Filter First - Started")
         try:
