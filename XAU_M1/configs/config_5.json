@@ -1,13 +1,13 @@
 {
-    "account": 10000005,
-    "password": "PASSWORD_5",
-    "server": "Exness-Real1",
-    "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "account": 272736909,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial14",
+    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
     "symbol": "XAUUSD",
-    "volume": 0.01,
+    "volume": 0.05,
     "magic": 100005,
-    "telegram_token": "",
-    "telegram_chat_id": "",
+    "telegram_token": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
+    "telegram_chat_id": "1887610382",
     "parameters": {
         "donchian_period": 20
     }
