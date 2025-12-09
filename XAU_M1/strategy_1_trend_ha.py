@@ -12,18 +12,16 @@ from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, sen
 # Initialize Database
 db = Database("trades.db")
 
-def strategy_1_logic(config):
+def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
     
-    # Check if we already have an open position
+    # Check if we already have an open position (GLOBAL CHECK)
     positions = mt5.positions_get(symbol=symbol)
     if positions:
-        for pos in positions:
-            if pos.magic == magic:
-                print(f"⚠️ Position already open: {pos.ticket}. Waiting...")
-                return
+        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+        return error_count
 
     # 1. Get Data (M1 and M5 for trend)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
@@ -122,8 +120,12 @@ def strategy_1_logic(config):
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Strategy_1_Trend_HA", symbol, signal, volume, price, sl, tp, result.comment)
             send_telegram(f"✅ <b>Strat 1 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            return 0 # Reset error count
         else:
             print(f"❌ Order Failed: {result.retcode}")
+            return error_count + 1
+    
+    return error_count
 
 if __name__ == "__main__":
     import os
@@ -131,11 +133,21 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "configs", "config_1.json")
     config = load_config(config_path)
+    
+    consecutive_errors = 0
+    
     if config and connect_mt5(config):
         print("✅ Strategy 1: Trend HA - Started")
         try:
             while True:
-                strategy_1_logic(config)
+                consecutive_errors = strategy_1_logic(config, consecutive_errors)
+                
+                if consecutive_errors >= 5:
+                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 1."
+                    print(msg)
+                    send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+                    break
+                    
                 time.sleep(1) # Scan every second
         except KeyboardInterrupt:
             print("🛑 Bot Stopped")

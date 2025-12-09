@@ -46,15 +46,15 @@ def calculate_ut_bot(df, sensitivity=2, period=10):
 
     return df
 
-def strategy_4_logic(config):
+def strategy_4_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
     
     positions = mt5.positions_get(symbol=symbol)
     if positions:
-        for pos in positions:
-            if pos.magic == magic: return
+        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+        return error_count
 
     # 1. Get Data
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
@@ -129,17 +129,33 @@ def strategy_4_logic(config):
             print(f"✅ Order Success: {result.order}")
             db.log_order(result.order, "Strategy_4_UT_Bot", symbol, signal, volume, price, sl, tp, result.comment)
             send_telegram(f"✅ <b>Strat 4 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            return 0
+        else:
+             print(f"❌ Order Failed: {result.retcode}")
+             return error_count + 1
+             
+    return error_count
 
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "configs", "config_4.json")
     config = load_config(config_path)
+    
+    consecutive_errors = 0
+    
     if config and connect_mt5(config):
         print("✅ Strategy 4: UT Bot - Started")
         try:
             while True:
-                strategy_4_logic(config)
+                consecutive_errors = strategy_4_logic(config, consecutive_errors)
+                
+                if consecutive_errors >= 5:
+                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 4."
+                    print(msg)
+                    send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+                    break
+                    
                 time.sleep(1)
         except KeyboardInterrupt:
             mt5.shutdown()

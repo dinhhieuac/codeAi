@@ -11,16 +11,15 @@ from utils import load_config, connect_mt5, get_data, send_telegram
 # Initialize Database
 db = Database("trades.db")
 
-def strategy_2_logic(config):
+def strategy_2_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
     
     positions = mt5.positions_get(symbol=symbol)
     if positions:
-        for pos in positions:
-            if pos.magic == magic:
-                return
+        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+        return error_count
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
@@ -101,19 +100,33 @@ def strategy_2_logic(config):
             print(f"✅ Order Scussess: {result.order}")
             db.log_order(result.order, "Strategy_2_EMA_ATR", symbol, signal, volume, price, sl, tp, result.comment)
             send_telegram(f"✅ <b>Strat 2 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            return 0
         else:
             print(f"❌ Order Failed: {result.retcode}")
+            return error_count + 1
+            
+    return error_count
 
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "configs", "config_2.json")
     config = load_config(config_path)
+    
+    consecutive_errors = 0
+    
     if config and connect_mt5(config):
         print("✅ Strategy 2: EMA ATR - Started")
         try:
             while True:
-                strategy_2_logic(config)
+                consecutive_errors = strategy_2_logic(config, consecutive_errors)
+                
+                if consecutive_errors >= 5:
+                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 2."
+                    print(msg)
+                    send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+                    break
+                    
                 time.sleep(1)
         except KeyboardInterrupt:
             mt5.shutdown()

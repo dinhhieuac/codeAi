@@ -10,7 +10,7 @@ from utils import load_config, connect_mt5, get_data, send_telegram
 
 db = Database("trades.db")
 
-def strategy_5_logic(config):
+def strategy_5_logic(config, error_count=0):
     # This strategy requires separate logic for Opening and Managing
     # For Scalping M1: We look for a breakout of the last 15 candles high/low
     
@@ -21,7 +21,6 @@ def strategy_5_logic(config):
     positions = mt5.positions_get(symbol=symbol)
     my_positions = [p for p in positions if p.magic == magic]
     
-    # --- MANAGEMENT MODE (FILTER FIRST LOGIC) ---
     if my_positions:
         pos = my_positions[0]
         current_price = mt5.symbol_info_tick(symbol).bid if pos.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
@@ -56,13 +55,18 @@ def strategy_5_logic(config):
                 }
                 mt5.order_send(request)
                 print(f"🏃 Trailing SL for Ticket {pos.ticket}")
-        return
+        return error_count
+
+    # If positions exist BUT they are not mine -> Block new entry
+    if positions:
+        print(f"⚠️ Market has open positions ({len(positions)}). Waiting...")
+        return error_count
 
     # --- ENTRY MODE ---
     
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 20)
-    if df is None: return
+    if df is None: return error_count
 
     last = df.iloc[-1]
     
@@ -114,17 +118,33 @@ def strategy_5_logic(config):
             print(f"✅ Order Success: {result.order}")
             db.log_order(result.order, "Strategy_5_Filter_First", symbol, signal, volume, price, sl, tp, result.comment)
             send_telegram(f"✅ <b>Strat 5 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            return 0
+        else:
+            print(f"❌ Order Failed: {result.retcode}")
+            return error_count + 1
+
+    return error_count
 
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "configs", "config_5.json")
     config = load_config(config_path)
+    
+    consecutive_errors = 0
+    
     if config and connect_mt5(config):
         print("✅ Strategy 5: Filter First - Started")
         try:
             while True:
-                strategy_5_logic(config)
+                consecutive_errors = strategy_5_logic(config, consecutive_errors)
+                
+                if consecutive_errors >= 5:
+                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 5."
+                    print(msg)
+                    send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+                    break
+                    
                 time.sleep(1)
         except KeyboardInterrupt:
             mt5.shutdown()
