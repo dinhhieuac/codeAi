@@ -101,7 +101,10 @@ def strategy_3_logic(config):
             print(f"❌ Order Failed: {result.retcode}")
 
 if __name__ == "__main__":
-    config = load_config("configs/config_3.json")
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_3.json")
+    config = load_config(config_path)
     if config and connect_mt5(config):
         print("✅ Strategy 3: PA Volume - Started")
         try:

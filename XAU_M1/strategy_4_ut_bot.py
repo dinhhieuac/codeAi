@@ -122,7 +122,10 @@ def strategy_4_logic(config):
             send_telegram(f"✅ <b>Strat 4 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
 
 if __name__ == "__main__":
-    config = load_config("configs/config_4.json")
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_4.json")
+    config = load_config(config_path)
     if config and connect_mt5(config):
         print("✅ Strategy 4: UT Bot - Started")
         try:

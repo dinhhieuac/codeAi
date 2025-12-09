@@ -106,8 +106,11 @@ def strategy_1_logic(config):
             print(f"❌ Order Failed: {result.retcode}")
 
 if __name__ == "__main__":
+    import os
     # Load separate config for this strategy
-    config = load_config("configs/config_1.json")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_1.json")
+    config = load_config(config_path)
     if config and connect_mt5(config):
         print("✅ Strategy 1: Trend HA - Started")
         try:
