@@ -24,7 +24,8 @@ def strategy_2_logic(config, error_count=0):
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
-    if df is None: return
+    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10) # Added for Auto M5 SL
+    if df is None or df_m5 is None: return error_count
 
     # 2. Indicators
     # EMA 14 and 28
@@ -68,16 +69,46 @@ def strategy_2_logic(config, error_count=0):
     # 4. Execute
     if signal:
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
+        
+        # --- SL/TP Logic ---
+        sl_mode = config['parameters'].get('sl_mode', 'atr') # Default to ATR for Strat 2
+        reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         atr_val = last['atr']
         
-        # Dynamic SL/TP based on ATR
-        sl_dist = atr_val * 2.0
-        tp_dist = atr_val * 3.0 # R:R 1:1.5
+        sl = 0.0
+        tp = 0.0
         
-        sl = price - sl_dist if signal == "BUY" else price + sl_dist
-        tp = price + tp_dist if signal == "BUY" else price - tp_dist
-        
-        print(f"🚀 Strat 2 SIGNAL: {signal} @ {price} | ATR: {atr_val:.2f}")
+        if sl_mode == 'auto_m5':
+             # Auto M5 Logic
+            prev_m5_high = df_m5.iloc[-2]['high']
+            prev_m5_low = df_m5.iloc[-2]['low']
+            buffer = 20 * mt5.symbol_info(symbol).point
+            
+            if signal == "BUY":
+                sl = prev_m5_low - buffer
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (price - sl) < min_dist: sl = price - min_dist
+                risk_dist = price - sl
+                tp = price + (risk_dist * reward_ratio)
+                
+            elif signal == "SELL":
+                sl = prev_m5_high + buffer
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (sl - price) < min_dist: sl = price + min_dist
+                risk_dist = sl - price
+                tp = price - (risk_dist * reward_ratio)
+            
+            print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f} (R:R {reward_ratio})")
+            
+        else:
+            # Dynamic SL/TP based on ATR (Original)
+            sl_dist = atr_val * 2.0
+            tp_dist = atr_val * 3.0 # R:R 1:1.5
+            sl = price - sl_dist if signal == "BUY" else price + sl_dist
+            tp = price + tp_dist if signal == "BUY" else price - tp_dist
+            print(f"   📏 ATR SL: {sl:.2f} | TP: {tp:.2f} (ATR: {atr_val:.2f})")
+            
+        print(f"🚀 Strat 2 SIGNAL: {signal} @ {price}")
 
         db.log_signal("Strategy_2_EMA_ATR", symbol, signal, price, sl, tp, 
                       {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val})
@@ -123,10 +154,13 @@ if __name__ == "__main__":
                 consecutive_errors = strategy_2_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 2."
+                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-                    break
+                    time.sleep(120)
+                    consecutive_errors = 0
+                    print("▶️ Resuming...")
+                    continue
                     
                 time.sleep(1)
         except KeyboardInterrupt:

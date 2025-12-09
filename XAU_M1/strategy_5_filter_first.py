@@ -90,13 +90,47 @@ def strategy_5_logic(config, error_count=0):
         
     if signal:
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
-        pip = mt5.symbol_info(symbol).point * 10
         
-        # Initial Scalp SL/TP
-        sl = price - (15 * pip) if signal == "BUY" else price + (15 * pip)
-        tp = 0.0 # Open TP for running
+        # --- SL/TP Logic based on Config ---
+        # Strat 5 typically uses trailing, but initial SL is needed.
+        sl_mode = config['parameters'].get('sl_mode', 'fixed')
+        reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         
-        print(f"🚀 Strat 5 SIGNAL: {signal} (Breakout) @ {price}")
+        sl = 0.0
+        tp = 0.0 # Strat 5 might want open TP for trailing, but lets set one if requested.
+        
+        if sl_mode == 'auto_m5':
+            df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10)
+            if df_m5 is not None:
+                prev_m5_high = df_m5.iloc[-2]['high']
+                prev_m5_low = df_m5.iloc[-2]['low']
+                buffer = 20 * mt5.symbol_info(symbol).point
+                
+                if signal == "BUY":
+                    sl = prev_m5_low - buffer
+                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    if (price - sl) < min_dist: sl = price - min_dist
+                    risk_dist = price - sl
+                    tp = price + (risk_dist * reward_ratio)
+                    
+                elif signal == "SELL":
+                    sl = prev_m5_high + buffer
+                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    if (sl - price) < min_dist: sl = price + min_dist
+                    risk_dist = sl - price
+                    tp = price - (risk_dist * reward_ratio)
+                print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
+            else:
+                 sl = price - 2.0 if signal == "BUY" else price + 2.0
+                 tp = price + 5.0 if signal == "BUY" else price - 5.0
+
+        else:
+             # Default Strat 5 SL (Tight or recent swing)
+             sl = price - 2.0 if signal == "BUY" else price + 2.0
+             tp = price + 5.0 if signal == "BUY" else price - 5.0
+             print(f"   📏 Default SL: {sl:.2f} | TP: {tp:.2f}")
+
+        print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
         db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout"})
 
@@ -141,10 +175,13 @@ if __name__ == "__main__":
                 consecutive_errors = strategy_5_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 5."
+                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-                    break
+                    time.sleep(120)
+                    consecutive_errors = 0
+                    print("▶️ Resuming...")
+                    continue
                     
                 time.sleep(1)
         except KeyboardInterrupt:

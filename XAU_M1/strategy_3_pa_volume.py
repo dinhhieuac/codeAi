@@ -23,7 +23,8 @@ def strategy_3_logic(config, error_count=0):
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 50)
-    if df is None: return
+    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10) # Added for Auto SL
+    if df is None or df_m5 is None: return error_count
 
     # 2. Indicators
     # SMA 9
@@ -40,7 +41,9 @@ def strategy_3_logic(config, error_count=0):
     # Check Price proximity to SMA 9 (e.g., within 2 pips)
     pip_val = mt5.symbol_info(symbol).point * 10
     dist_to_sma = abs(last['close'] - last['sma9'])
-    is_near_sma = dist_to_sma < (2 * pip_val) # Close enough to SMA
+    is_near_sma = False
+    if dist_to_sma <= 2 * pip_val:
+        is_near_sma = True
     
     # Check Volume Spike (Current Volume > 1.5 * Avg Volume)
     is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.5)
@@ -48,8 +51,8 @@ def strategy_3_logic(config, error_count=0):
     # Check Rejection (Pinbar)
     # Bullish Pinbar: Lower shadow is long, close near high
     body_size = abs(last['close'] - last['open'])
-    lower_shadow = last['open'] - last['low'] if last['close'] > last['open'] else last['close'] - last['low']
-    upper_shadow = last['high'] - last['close'] if last['close'] > last['open'] else last['high'] - last['open']
+    upper_shadow = last['high'] - max(last['close'], last['open'])
+    lower_shadow = min(last['close'], last['open']) - last['low']
     
     is_bullish_pinbar = (lower_shadow > 2 * body_size) and (upper_shadow < body_size)
     is_bearish_pinbar = (upper_shadow > 2 * body_size) and (lower_shadow < body_size)
@@ -75,15 +78,43 @@ def strategy_3_logic(config, error_count=0):
     if signal:
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
-        # Tight SL behind the pinbar tail
-        sl = last['low'] - pip_val if signal == "BUY" else last['high'] + pip_val
-        sl_dist = abs(price - sl)
+        # --- SL/TP Logic based on Config ---
+        sl_mode = config['parameters'].get('sl_mode', 'fixed')
+        reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         
-        # TP 2 times risk
-        tp_dist = sl_dist * 2
-        tp = price + tp_dist if signal == "BUY" else price - tp_dist
+        sl = 0.0
+        tp = 0.0
+        
+        if sl_mode == 'auto_m5':
+            # Auto M5 Logic
+            prev_m5_high = df_m5.iloc[-2]['high']
+            prev_m5_low = df_m5.iloc[-2]['low']
+            buffer = 20 * mt5.symbol_info(symbol).point
+            
+            if signal == "BUY":
+                sl = prev_m5_low - buffer
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (price - sl) < min_dist: sl = price - min_dist
+                risk_dist = price - sl
+                tp = price + (risk_dist * reward_ratio)
+                
+            elif signal == "SELL":
+                sl = prev_m5_high + buffer
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (sl - price) < min_dist: sl = price + min_dist
+                risk_dist = sl - price
+                tp = price - (risk_dist * reward_ratio)
+            print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
 
-        print(f"🚀 Strat 3 SIGNAL: {signal} (Pinbar Vol) @ {price}")
+        else:
+            # Default Pinbar SL logic (Below Low / Above High of Pinbar)
+            sl = last['low'] - (20 * mt5.symbol_info(symbol).point) if signal == "BUY" else last['high'] + (20 * mt5.symbol_info(symbol).point)
+            
+            risk = abs(price - sl)
+            tp = price + (risk * 2) if signal == "BUY" else price - (risk * 2)
+            print(f"   📏 Pinbar SL: {sl:.2f} | TP: {tp:.2f}")
+
+        print(f"🚀 Strat 3 SIGNAL: {signal} @ {price}")
         
         db.log_signal("Strategy_3_PA_Volume", symbol, signal, price, sl, tp, 
                       {"vol": int(last['tick_volume']), "vol_ma": int(last['vol_ma']), "pattern": "Pinbar"})
@@ -129,10 +160,13 @@ if __name__ == "__main__":
                 consecutive_errors = strategy_3_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 3."
+                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-                    break
+                    time.sleep(120)
+                    consecutive_errors = 0
+                    print("▶️ Resuming...")
+                    continue
                     
                 time.sleep(1)
         except KeyboardInterrupt:

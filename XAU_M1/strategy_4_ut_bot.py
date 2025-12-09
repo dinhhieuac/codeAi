@@ -99,17 +99,49 @@ def strategy_4_logic(config, error_count=0):
     if signal:
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
-        # UT Bot uses the ATR line as SL usually
-        sl = last['x_atr_trailing_stop']
+        # --- SL/TP Logic based on Config ---
+        sl_mode = config['parameters'].get('sl_mode', 'fixed')
+        reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         
-        # Calculate R:R 1:1.5 or 1:2
-        risk = abs(price - sl)
-        tp = price + (risk * 2) if signal == "BUY" else price - (risk * 2)
+        sl = 0.0
+        tp = 0.0
         
-        print(f"🚀 Strat 4 SIGNAL: {signal} (UT Bot) @ {price} | Trend: {trend}")
-        
+        if sl_mode == 'auto_m5':
+            # Fetch M5 explicitly here since this Strat uses H1 and M1
+            df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10)
+            if df_m5 is not None:
+                prev_m5_high = df_m5.iloc[-2]['high']
+                prev_m5_low = df_m5.iloc[-2]['low']
+                buffer = 20 * mt5.symbol_info(symbol).point
+                
+                if signal == "BUY":
+                    sl = prev_m5_low - buffer
+                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    if (price - sl) < min_dist: sl = price - min_dist
+                    risk_dist = price - sl
+                    tp = price + (risk_dist * reward_ratio)
+                    
+                elif signal == "SELL":
+                    sl = prev_m5_high + buffer
+                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    if (sl - price) < min_dist: sl = price + min_dist
+                    risk_dist = sl - price
+                    tp = price - (risk_dist * reward_ratio)
+                print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
+            else:
+                 # Fallback if no M5 data
+                 sl = price - 2.0 if signal == "BUY" else price + 2.0
+                 tp = price + 3.0 if signal == "BUY" else price - 3.0
+
+        else:
+            # Fixed 20/30 pips approx (2.0/3.0) for UT Bot default
+            sl = price - 2.0 if signal == "BUY" else price + 2.0
+            tp = price + 3.0 if signal == "BUY" else price - 3.0
+            print(f"   📏 Fixed SL: {sl:.2f} | TP: {tp:.2f}")
+
+        print(f"🚀 Strat 4 SIGNAL: {signal} @ {price}")
         db.log_signal("Strategy_4_UT_Bot", symbol, signal, price, sl, tp, 
-                      {"trend": trend, "ut_stop": last['x_atr_trailing_stop']})
+                      {"trend": trend, "ut_pos": last['pos']})
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -152,10 +184,13 @@ if __name__ == "__main__":
                 consecutive_errors = strategy_4_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 4."
+                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-                    break
+                    time.sleep(120)
+                    consecutive_errors = 0
+                    print("▶️ Resuming...")
+                    continue
                     
                 time.sleep(1)
         except KeyboardInterrupt:

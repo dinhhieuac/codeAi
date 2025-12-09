@@ -89,17 +89,55 @@ def strategy_1_logic(config, error_count=0):
     if signal:
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
         
-        # Calculate SL/TP
-        # SL: Recent Swing Low/High or fixed pips. Let's use config pips.
-        sl_pips = config['parameters']['sl_pips'] * mt5.symbol_info(symbol).point * 10 
-        tp_pips = config['parameters']['tp_pips'] * mt5.symbol_info(symbol).point * 10
+        # SL/TP Calculation Logic
+        sl_mode = config['parameters'].get('sl_mode', 'fixed')
+        reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         
-        sl = price - sl_pips if signal == "BUY" else price + sl_pips
-        tp = price + tp_pips if signal == "BUY" else price - tp_pips
+        sl = 0.0
+        tp = 0.0
         
+        if sl_mode == 'auto_m5':
+            # Use previous M5 candle High/Low
+            # df_m5 is already fetched. row -2 is the completed candle
+            prev_m5_high = df_m5.iloc[-2]['high']
+            prev_m5_low = df_m5.iloc[-2]['low']
+            
+            # Add a small buffer (e.g., 20 points / 2 pips) to avoid noise
+            buffer = 20 * mt5.symbol_info(symbol).point
+            
+            if signal == "BUY":
+                sl = prev_m5_low - buffer
+                # Check if SL is too close (safety) - min 10 pips
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (price - sl) < min_dist:
+                    sl = price - min_dist
+                    
+                risk_dist = price - sl
+                tp = price + (risk_dist * reward_ratio)
+                
+            elif signal == "SELL":
+                sl = prev_m5_high + buffer
+                # Check min dist
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (sl - price) < min_dist:
+                    sl = price + min_dist
+                    
+                risk_dist = sl - price
+                tp = price - (risk_dist * reward_ratio)
+                
+            print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low) | TP: {tp:.2f} (R:R {reward_ratio})")
+            
+        else:
+            # Fixed Pips (Legacy)
+            sl_pips = config['parameters']['sl_pips'] * mt5.symbol_info(symbol).point * 10 
+            tp_pips = config['parameters']['tp_pips'] * mt5.symbol_info(symbol).point * 10
+            
+            sl = price - sl_pips if signal == "BUY" else price + sl_pips
+            tp = price + tp_pips if signal == "BUY" else price - tp_pips
+            
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "ma_high": last_ha['sma55_high']})
+                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode})
 
         # Send Order
         request = {
@@ -144,10 +182,13 @@ if __name__ == "__main__":
                 consecutive_errors = strategy_1_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "🛑 CRITICAL: 5 Consecutive Order Failures. Stopping Strategy 1."
+                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-                    break
+                    time.sleep(120) # Pause for 2 minutes
+                    consecutive_errors = 0 # Reset counter
+                    print("▶️ Resuming...")
+                    continue
                     
                 time.sleep(1) # Scan every second
         except KeyboardInterrupt:
