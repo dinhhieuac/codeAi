@@ -4,19 +4,22 @@ import sys
 import os
 
 def main():
+    # Get the directory where main.py is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
     # List of strategy scripts to run
     scripts = [
-        "strategy_1_trend_ha.py",
-        "strategy_2_ema_atr.py",
-        "strategy_3_pa_volume.py",
-        "strategy_4_ut_bot.py",
-        "strategy_5_filter_first.py"
+        os.path.join(base_dir, "strategy_1_trend_ha.py"),
+        os.path.join(base_dir, "strategy_2_ema_atr.py"),
+        os.path.join(base_dir, "strategy_3_pa_volume.py"),
+        os.path.join(base_dir, "strategy_4_ut_bot.py"),
+        os.path.join(base_dir, "strategy_5_filter_first.py")
     ]
 
     processes = []
     
     print("🚀 Starting all 5 XAU_M1 Bots...")
-    print(f"📂 Working Directory: {os.getcwd()}")
+    print(f"📂 Execution Directory: {base_dir}")
 
     try:
         for script in scripts:
