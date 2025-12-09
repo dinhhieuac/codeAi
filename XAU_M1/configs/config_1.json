@@ -1,0 +1,15 @@
+{
+    "account": 10000001,
+    "password": "PASSWORD_1",
+    "server": "Exness-Real1",
+    "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100001,
+    "telegram_token": "",
+    "telegram_chat_id": "",
+    "parameters": {
+        "sl_pips": 20,
+        "tp_pips": 30
+    }
+}

@@ -1,0 +1,14 @@
+{
+    "account": 10000005,
+    "password": "PASSWORD_5",
+    "server": "Exness-Real1",
+    "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100005,
+    "telegram_token": "",
+    "telegram_chat_id": "",
+    "parameters": {
+        "donchian_period": 20
+    }
+}
