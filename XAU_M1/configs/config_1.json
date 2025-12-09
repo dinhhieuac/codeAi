@@ -1,8 +1,8 @@
 {
-    "account": 10000001,
-    "password": "PASSWORD_1",
-    "server": "Exness-Real1",
-    "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+    "account": 272736909,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial14",
+    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
     "symbol": "XAUUSD",
     "volume": 0.01,
     "magic": 100001,
