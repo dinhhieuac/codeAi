@@ -47,13 +47,23 @@ def strategy_2_logic(config):
     # 3. Logic: Crossover
     signal = None
     
+    print(f"📊 [Strat 2 Analysis] EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | ATR: {last['atr']:.3f}")
+    
     # BUY: EMA 14 crosses ABOVE EMA 28
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
         signal = "BUY"
+        print("   ✅ Crossover: EMA 14 crossed ABOVE EMA 28")
         
     # SELL: EMA 14 crosses BELOW EMA 28
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
         signal = "SELL"
+        print("   ✅ Crossover: EMA 14 crossed BELOW EMA 28")
+    else:
+        diff = last['ema14'] - last['ema28']
+        if diff > 0:
+            print(f"   ❌ No Cross (Already Bullish, Gap: {diff:.3f})")
+        else:
+            print(f"   ❌ No Cross (Already Bearish, Gap: {diff:.3f})")
         
     # 4. Execute
     if signal:

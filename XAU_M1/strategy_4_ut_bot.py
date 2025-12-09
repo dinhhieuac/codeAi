@@ -75,15 +75,24 @@ def strategy_4_logic(config):
     # 3. Signals
     signal = None
     
+    print(f"📊 [Strat 4 Analysis] Trend H1: {trend}")
+    print(f"   UT Bot Pos: {last['pos']} (Prev: {prev['pos']})")
+    
     # BUY: UT Bot matches H1 Trend
     # UT Bot Signal flips from -1 to 1 (Buy Signal)
-    if trend == "BULLISH" and prev['pos'] == -1 and last['pos'] == 1:
-        signal = "BUY"
-        
+    if trend == "BULLISH":
+        if prev['pos'] == -1 and last['pos'] == 1:
+            signal = "BUY"
+        else:
+            print("   ❌ No Signal: Waiting for UT Bot BUY flip (-1 -> 1)")
+
     # SELL: UT Bot matches H1 Trend
     # UT Bot Signal flips from 1 to -1 (Sell Signal)
-    elif trend == "BEARISH" and prev['pos'] == 1 and last['pos'] == -1:
-        signal = "SELL"
+    elif trend == "BEARISH":
+        if prev['pos'] == 1 and last['pos'] == -1:
+            signal = "SELL"
+        else:
+            print("   ❌ No Signal: Waiting for UT Bot SELL flip (1 -> -1)")
         
     # 4. Execute
     if signal:

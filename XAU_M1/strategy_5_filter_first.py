@@ -72,11 +72,16 @@ def strategy_5_logic(config):
     
     signal = None
     
+    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f}")
+    print(f"   Hi 20: {high_20:.2f} | Lo 20: {low_20:.2f}")
+    
     # Price breaks High 20
     if last['close'] > high_20:
         signal = "BUY"
     elif last['close'] < low_20:
         signal = "SELL"
+    else:
+        print("   ❌ No Breakout (Inside Channel)")
         
     if signal:
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid

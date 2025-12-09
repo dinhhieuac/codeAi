@@ -50,21 +50,41 @@ def strategy_1_logic(config):
     signal = None
     price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
     
+    price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
+    
+    # Detailed Logging
+    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend}")
+    print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
+    print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
+    
     # BUY SETUP
     if current_trend == "BULLISH":
-        # HA Green (Close > Open) and HA Close > SMA 55 High
-        if last_ha['ha_close'] > last_ha['ha_open'] and last_ha['ha_close'] > last_ha['sma55_high']:
-            # Check if previous candle was NOT valid to ensure fresh breakout
-            if prev_ha['ha_close'] <= prev_ha['sma55_high']: 
+        is_green = last_ha['ha_close'] > last_ha['ha_open']
+        is_above_channel = last_ha['ha_close'] > last_ha['sma55_high']
+        is_fresh_breakout = prev_ha['ha_close'] <= prev_ha['sma55_high']
+        
+        if is_green and is_above_channel:
+            if is_fresh_breakout:
                 signal = "BUY"
+            else:
+                print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already above).")
+        else:
+            print(f"   ❌ Condition Fail: Green? {is_green} | Above Channel? {is_above_channel}")
 
     # SELL SETUP
     elif current_trend == "BEARISH":
-        # HA Red (Close < Open) and HA Close < SMA 55 Low
-        if last_ha['ha_close'] < last_ha['ha_open'] and last_ha['ha_close'] < last_ha['sma55_low']:
-            # Check if previous candle was NOT valid
-            if prev_ha['ha_close'] >= prev_ha['sma55_low']:
+        is_red = last_ha['ha_close'] < last_ha['ha_open']
+        is_below_channel = last_ha['ha_close'] < last_ha['sma55_low']
+        is_fresh_breakout = prev_ha['ha_close'] >= prev_ha['sma55_low']
+        
+        if is_red and is_below_channel:
+            if is_fresh_breakout:
                 signal = "SELL"
+            else:
+                print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already below).")
+        else:
+            print(f"   ❌ Condition Fail: Red? {is_red} | Below Channel? {is_below_channel}")
+
     
     # 4. Execute Trade
     if signal:

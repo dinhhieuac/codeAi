@@ -54,12 +54,21 @@ def strategy_3_logic(config):
     is_bearish_pinbar = (upper_shadow > 2 * body_size) and (lower_shadow < body_size)
     
     # BUY Signal
-    if is_near_sma and is_high_volume and is_bullish_pinbar and last['close'] > last['sma9']:
-        signal = "BUY"
-        
-    # SELL Signal
-    elif is_near_sma and is_high_volume and is_bearish_pinbar and last['close'] < last['sma9']:
-        signal = "SELL"
+    
+    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | SMA9: {last['sma9']:.2f}")
+    print(f"   Volume: {last['tick_volume']} (Avg: {last['vol_ma']:.1f}) | High Vol? {is_high_volume}")
+    print(f"   Dist to SMA: {dist_to_sma:.3f} (Max: {2*pip_val:.3f}) | Near SMA? {is_near_sma}")
+    print(f"   Bull Pinbar? {is_bullish_pinbar} | Bear Pinbar? {is_bearish_pinbar}")
+    
+    if is_near_sma and is_high_volume:
+        if is_bullish_pinbar and last['close'] > last['sma9']:
+            signal = "BUY"
+        elif is_bearish_pinbar and last['close'] < last['sma9']:
+            signal = "SELL"
+        else:
+            print("   ❌ Condition Fail: No valid Pinbar rejection found")
+    else:
+        print("   ❌ Condition Fail: Volume too low or Not near SMA")
     
     # 4. Execute
     if signal:
