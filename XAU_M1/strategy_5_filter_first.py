@@ -86,19 +86,23 @@ def strategy_5_logic(config, error_count=0):
     # 3. Logic: Donchian Breakout
     signal = None
     
-    # BUY: Close > Upper Band
-    # SELL: Close < Lower Band
+    # BUY: Close > Upper Band + Buffer
+    # SELL: Close < Lower Band - Buffer
+    
+    buffer = 50 * mt5.symbol_info(symbol).point # 0.5 pips / 50 points
     
     print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | RSI: {last['rsi']:.1f}")
     
-    if last['close'] > last['upper']:
+    if last['close'] > (last['upper'] + buffer):
         if last['rsi'] > 50:
             signal = "BUY"
+            print("   ✅ Valid Breakout BUY")
         else:
             print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
-    elif last['close'] < last['lower']:
+    elif last['close'] < (last['lower'] - buffer):
         if last['rsi'] < 50:
             signal = "SELL"
+            print("   ✅ Valid Breakout SELL")
         else:
             print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
         

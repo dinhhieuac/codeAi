@@ -85,3 +85,34 @@ def calculate_heiken_ashi(df):
     ha_df['ha_low'] = ha_df[['low', 'ha_open', 'ha_close']].min(axis=1)
     
     return ha_df
+
+def calculate_adx(df, period=14):
+    """Calculate ADX Indicator"""
+    df = df.copy()
+    df['up'] = df['high'].diff()
+    df['down'] = -df['low'].diff()
+    
+    df['dm_plus'] = np.where((df['up'] > df['down']) & (df['up'] > 0), df['up'], 0)
+    df['dm_minus'] = np.where((df['down'] > df['up']) & (df['down'] > 0), df['down'], 0)
+    
+    df['tr'] = np.maximum(df['high'] - df['low'], 
+                          np.maximum(abs(df['high'] - df['close'].shift(1)), 
+                                     abs(df['low'] - df['close'].shift(1))))
+    
+    df['tr_s'] = df['tr'].rolling(window=period).sum()
+    df['dm_plus_s'] = df['dm_plus'].rolling(window=period).sum()
+    df['dm_minus_s'] = df['dm_minus'].rolling(window=period).sum()
+    
+    df['di_plus'] = 100 * (df['dm_plus_s'] / df['tr_s'])
+    df['di_minus'] = 100 * (df['dm_minus_s'] / df['tr_s'])
+    
+    df['dx'] = 100 * abs(df['di_plus'] - df['di_minus']) / (df['di_plus'] + df['di_minus'])
+    df['adx'] = df['dx'].rolling(window=period).mean()
+    
+    return df
+
+def is_doji(row, threshold=0.1):
+    """Check if candle is a Doji (Body < 10% of Range)"""
+    body = abs(row['close'] - row['open'])
+    rng = row['high'] - row['low']
+    return body <= (rng * threshold) if rng > 0 else True

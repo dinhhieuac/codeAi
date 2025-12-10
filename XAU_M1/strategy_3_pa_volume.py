@@ -51,18 +51,21 @@ def strategy_3_logic(config, error_count=0):
     is_near_sma = False
     pip_val = mt5.symbol_info(symbol).point * 10 
     dist_to_sma = abs(last['close'] - last['sma9'])
-    if dist_to_sma <= 2 * pip_val:
+    if dist_to_sma <= 5 * pip_val: # Relaxed to 0.5 pips
         is_near_sma = True
         
     is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.5)
     
-    # Pinbar Detection
+    # Pinbar Detection (Standard: Wick > 2 * Body)
     body_size = abs(last['close'] - last['open'])
     upper_shadow = last['high'] - max(last['close'], last['open'])
     lower_shadow = min(last['close'], last['open']) - last['low']
     
-    is_bullish_pinbar = (lower_shadow > 2 * body_size) and (upper_shadow < body_size)
-    is_bearish_pinbar = (upper_shadow > 2 * body_size) and (lower_shadow < body_size)
+    # Add minimal body size check to avoid absolute dojis being noise
+    min_body = 0.1 * pip_val # very small body allowed
+    
+    is_bullish_pinbar = (lower_shadow > 2 * body_size) and (upper_shadow < body_size * 1.5)
+    is_bearish_pinbar = (upper_shadow > 2 * body_size) and (lower_shadow < body_size * 1.5)
     
     # BUY Signal
     

@@ -7,7 +7,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji
 
 # Initialize Database
 # Initialize Database
@@ -68,13 +68,17 @@ def strategy_1_logic(config, error_count=0):
         is_green = last_ha['ha_close'] > last_ha['ha_open']
         is_above_channel = last_ha['ha_close'] > last_ha['sma55_high']
         is_fresh_breakout = prev_ha['ha_close'] <= prev_ha['sma55_high']
-        
+        is_solid_candle = not is_doji(last_ha, threshold=0.2) # Require body > 20% of range for HA
+
         if is_green and is_above_channel:
             if is_fresh_breakout:
-                if last_ha['rsi'] > 50:
-                    signal = "BUY"
-                else:
-                    print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= 50")
+                if is_solid_candle:
+                    if last_ha['rsi'] > 50:
+                        signal = "BUY"
+                    else:
+                        print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= 50")
+                else: 
+                     print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
             else:
                 print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already above).")
         else:
@@ -85,13 +89,17 @@ def strategy_1_logic(config, error_count=0):
         is_red = last_ha['ha_close'] < last_ha['ha_open']
         is_below_channel = last_ha['ha_close'] < last_ha['sma55_low']
         is_fresh_breakout = prev_ha['ha_close'] >= prev_ha['sma55_low']
-        
+        is_solid_candle = not is_doji(last_ha, threshold=0.2)
+
         if is_red and is_below_channel:
             if is_fresh_breakout:
-                if last_ha['rsi'] < 50:
-                    signal = "SELL"
+                if is_solid_candle:
+                    if last_ha['rsi'] < 50:
+                        signal = "SELL"
+                    else:
+                        print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= 50")
                 else:
-                    print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= 50")
+                    print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
             else:
                 print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already below).")
         else:

@@ -7,7 +7,7 @@ import pandas as pd
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram
+from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx
 
 # Initialize Database
 db = Database()
@@ -68,6 +68,16 @@ def strategy_4_logic(config, error_count=0):
     df_h1['ema50'] = df_h1['close'].ewm(span=50).mean()
     trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
     
+    # RSI Calculation (M1)
+    delta = df_m1['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df_m1['rsi'] = 100 - (100 / (1 + rs))
+    
+    # ADX Calculation (M1)
+    df_m1 = calculate_adx(df_m1)
+
     # UT Bot on M1
     df_ut = calculate_ut_bot(df_m1, sensitivity=2, period=10)
     last = df_ut.iloc[-1]
@@ -83,9 +93,12 @@ def strategy_4_logic(config, error_count=0):
     
     signal = None
     
-    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} | UT Pos: {last['pos']} (Prev: {prev['pos']}) | RSI: {last['rsi']:.1f}")
+    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}")
     
-    if ut_signal == "BUY" and trend == "BULLISH":
+    # Filter: Only trade valid breakouts if ADX > 20 (Trend Strength)
+    if last['adx'] < 20: 
+        print(f"   ❌ Filtered: Low ADX ({last['adx']:.1f} < 20) - Choppy Market")
+    elif ut_signal == "BUY" and trend == "BULLISH":
         if last['rsi'] > 50:
             signal = "BUY"
         else:

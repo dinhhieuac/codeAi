@@ -59,7 +59,10 @@ def strategy_2_logic(config, error_count=0):
     
     # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
-        if last['rsi'] > 50:
+        # Extension Check
+        if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
+            print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+        elif last['rsi'] > 50:
             signal = "BUY"
             print("   ✅ Crossover: EMA 14 > EMA 28 AND RSI > 50 (Strong Uptrend)")
         else:
@@ -67,7 +70,10 @@ def strategy_2_logic(config, error_count=0):
         
     # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
-        if last['rsi'] < 50:
+        # Extension Check
+        if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
+             print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+        elif last['rsi'] < 50:
             signal = "SELL"
             print("   ✅ Crossover: EMA 14 < EMA 28 AND RSI < 50 (Strong Downtrend)")
         else:
