@@ -173,7 +173,7 @@ def strategy_5_logic(config, error_count=0):
             "magic": magic,
             "comment": "Strat5_FilterFirst",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
         }
         
         result = mt5.order_send(request)
