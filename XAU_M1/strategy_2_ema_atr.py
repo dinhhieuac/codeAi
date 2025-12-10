@@ -41,24 +41,37 @@ def strategy_2_logic(config, error_count=0):
         )
     )
     df['atr'] = df['tr'].rolling(window=14).mean()
+
+    # RSI 14 (Added Filter)
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
     
     last = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # 3. Logic: Crossover
+    # 3. Logic: Crossover + RSI Filter
     signal = None
     
-    print(f"📊 [Strat 2 Analysis] EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | ATR: {last['atr']:.3f}")
+    print(f"📊 [Strat 2 Analysis] EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | ATR: {last['atr']:.3f} | RSI: {last['rsi']:.1f}")
     
-    # BUY: EMA 14 crosses ABOVE EMA 28
+    # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
-        signal = "BUY"
-        print("   ✅ Crossover: EMA 14 crossed ABOVE EMA 28")
+        if last['rsi'] > 50:
+            signal = "BUY"
+            print("   ✅ Crossover: EMA 14 > EMA 28 AND RSI > 50 (Strong Uptrend)")
+        else:
+            print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= 50")
         
-    # SELL: EMA 14 crosses BELOW EMA 28
+    # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
-        signal = "SELL"
-        print("   ✅ Crossover: EMA 14 crossed BELOW EMA 28")
+        if last['rsi'] < 50:
+            signal = "SELL"
+            print("   ✅ Crossover: EMA 14 < EMA 28 AND RSI < 50 (Strong Downtrend)")
+        else:
+             print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= 50")
     else:
         diff = last['ema14'] - last['ema28']
         if diff > 0:
@@ -68,6 +81,20 @@ def strategy_2_logic(config, error_count=0):
         
     # 4. Execute
     if signal:
+        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        # Get all open positions for this specific strategy
+        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if strat_positions:
+            # Sort by open time descending (newest first)
+            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            last_trade_time = strat_positions[0].time
+            current_server_time = mt5.symbol_info_tick(symbol).time
+            
+            # If last trade was less than 60 seconds ago, SKIP
+            if (current_server_time - last_trade_time) < 60:
+                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+                return error_count
+
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
         # --- SL/TP Logic ---
@@ -111,7 +138,7 @@ def strategy_2_logic(config, error_count=0):
         print(f"🚀 Strat 2 SIGNAL: {signal} @ {price}")
 
         db.log_signal("Strategy_2_EMA_ATR", symbol, signal, price, sl, tp, 
-                      {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val})
+                      {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val, "rsi": last['rsi']})
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
