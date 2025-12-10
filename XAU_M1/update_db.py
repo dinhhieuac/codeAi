@@ -16,6 +16,17 @@ def update_trades_for_strategy(db, config, strategy_name):
         print(f"❌ Could not connect for {strategy_name}")
         return
 
+    # Verify Strict Account Match
+    current_account = mt5.account_info()
+    if current_account is None:
+        print(f"❌ Failed to retrieve account info.")
+        return
+
+    if current_account.login != config['account']:
+        print(f"⚠️ CRITICAL: Account Mismatch! Configured: {config['account']} but Active: {current_account.login}")
+        print(f"🛑 Aborting update for {strategy_name} to protect data.")
+        return
+
     # 2. Get Pending Orders from DB for this strategy
     # We look for orders where profit is NULL (meaning not closed/updated yet)
     conn = sqlite3.connect(db.db_path)
