@@ -168,7 +168,8 @@ def strategy_1_logic(config, error_count=0):
             
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode, "rsi": last_ha['rsi']})
+                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode, "rsi": last_ha['rsi']}, 
+                      account_id=config['account'])
 
         # Send Order
         request = {
@@ -188,7 +189,7 @@ def strategy_1_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "Strategy_1_Trend_HA", symbol, signal, volume, price, sl, tp, result.comment)
+            db.log_order(result.order, "Strategy_1_Trend_HA", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
             send_telegram(f"✅ <b>Strat 1 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
             return 0 # Reset error count
         else:

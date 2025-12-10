@@ -76,12 +76,15 @@ def view_data():
         if not recent_orders:
              print(" (No orders found)")
         else:
+            print(f"{'Ticket':<10} | {'Account':<10} | {'Time':<20} | {'Strat':<18} | {'Type':<4} | {'Price':<8} | {'Profit'}")
+            print("-" * 110)
             for order in recent_orders:
-                strat = (order['strategy_name'][:18] + '..') if len(order['strategy_name']) > 18 else order['strategy_name']
+                strat = (order['strategy_name'][:16] + '..') if len(order['strategy_name']) > 16 else order['strategy_name']
+                acct = str(order.get('account_id', '0'))
                 
                 type_str = order.get('order_type', '???')
                 profit_str = f"{order['profit']:.2f}" if order['profit'] is not None else "---"
-                print(f"{order['ticket']:<10} | {order['open_time']:<20} | {strat:<20} | {type_str:<4} | {order['open_price']:<8} | {profit_str}")
+                print(f"{order['ticket']:<10} | {acct:<10} | {order['open_time']:<20} | {strat:<18} | {type_str:<4} | {order['open_price']:<8} | {profit_str}")
 
 
     except Exception as e:

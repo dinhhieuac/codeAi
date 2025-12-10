@@ -144,7 +144,8 @@ def strategy_2_logic(config, error_count=0):
         print(f"🚀 Strat 2 SIGNAL: {signal} @ {price}")
 
         db.log_signal("Strategy_2_EMA_ATR", symbol, signal, price, sl, tp, 
-                      {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val, "rsi": last['rsi']})
+                      {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val, "rsi": last['rsi']},
+                      account_id=config['account'])
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -163,7 +164,7 @@ def strategy_2_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Scussess: {result.order}")
-            db.log_order(result.order, "Strategy_2_EMA_ATR", symbol, signal, volume, price, sl, tp, result.comment)
+            db.log_order(result.order, "Strategy_2_EMA_ATR", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
             send_telegram(f"✅ <b>Strat 2 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
             return 0
         else:

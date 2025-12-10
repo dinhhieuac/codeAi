@@ -12,6 +12,7 @@ class Database:
         
         self.db_path = db_path
         self._create_tables()
+        self._migrate_tables()
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
@@ -30,7 +31,8 @@ class Database:
                 sl REAL,
                 tp REAL,
                 indicators TEXT,
-                status TEXT
+                status TEXT,
+                account_id INTEGER DEFAULT 0
             )
         ''')
 
@@ -48,14 +50,37 @@ class Database:
                 open_time DATETIME,
                 close_price REAL,
                 profit REAL,
-                comment TEXT
+                comment TEXT,
+                account_id INTEGER DEFAULT 0
             )
         ''')
         
         conn.commit()
         conn.close()
 
-    def log_signal(self, strategy_name, symbol, signal_type, price, sl, tp, indicators, status="PENDING"):
+    def _migrate_tables(self):
+        """Add account_id column to existing tables if missing"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Check orders table
+        cursor.execute("PRAGMA table_info(orders)")
+        columns = [info[1] for info in cursor.fetchall()]
+        if 'account_id' not in columns:
+            print("📦 Migrating DB: Adding account_id to orders table...")
+            cursor.execute("ALTER TABLE orders ADD COLUMN account_id INTEGER DEFAULT 0")
+            
+        # Check signals table
+        cursor.execute("PRAGMA table_info(signals)")
+        columns = [info[1] for info in cursor.fetchall()]
+        if 'account_id' not in columns:
+            print("📦 Migrating DB: Adding account_id to signals table...")
+            cursor.execute("ALTER TABLE signals ADD COLUMN account_id INTEGER DEFAULT 0")
+            
+        conn.commit()
+        conn.close()
+
+    def log_signal(self, strategy_name, symbol, signal_type, price, sl, tp, indicators, status="PENDING", account_id=0):
         """Log a trading signal"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -65,22 +90,22 @@ class Database:
             indicators = json.dumps(indicators)
             
         cursor.execute('''
-            INSERT INTO signals (strategy_name, symbol, signal_type, price, sl, tp, indicators, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (strategy_name, symbol, signal_type, price, sl, tp, indicators, status))
+            INSERT INTO signals (strategy_name, symbol, signal_type, price, sl, tp, indicators, status, account_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (strategy_name, symbol, signal_type, price, sl, tp, indicators, status, account_id))
         
         conn.commit()
         conn.close()
 
-    def log_order(self, ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment=""):
+    def log_order(self, ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment="", account_id=0):
         """Log an executed order"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
-        ''', (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment))
+            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment, account_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+        ''', (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment, account_id))
         
         conn.commit()
         conn.close()

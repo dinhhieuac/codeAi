@@ -160,7 +160,7 @@ def strategy_5_logic(config, error_count=0):
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
-        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": last['rsi']})
+        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": last['rsi']}, account_id=config['account'])
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -179,7 +179,7 @@ def strategy_5_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Success: {result.order}")
-            db.log_order(result.order, "Strategy_5_Filter_First", symbol, signal, volume, price, sl, tp, result.comment)
+            db.log_order(result.order, "Strategy_5_Filter_First", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
             send_telegram(f"✅ <b>Strat 5 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
             return 0
         else:

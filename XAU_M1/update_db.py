@@ -28,15 +28,15 @@ def update_trades_for_strategy(db, config, strategy_name):
         return
 
     # 2. Get Pending Orders from DB for this strategy
-    # We look for orders where profit is NULL (meaning not closed/updated yet)
+    # Filter by strategy AND account_id (so we don't mix updates)
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL", (strategy_name,))
+    cursor.execute("SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?", (strategy_name, config['account']))
     tickets = [row[0] for row in cursor.fetchall()]
     conn.close()
 
     if not tickets:
-        print(f"ℹ️ No pending trades for {strategy_name}")
+        print(f"ℹ️ No pending trades for {strategy_name} (Account {config['account']})")
         return
 
     print(f"🔍 Checking {len(tickets)} pending trades for {strategy_name}...")
