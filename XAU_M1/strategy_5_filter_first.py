@@ -125,7 +125,7 @@ def strategy_5_logic(config, error_count=0):
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
-        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": last['rsi']}, account_id=config['account'])
+        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": float(last['rsi'])}, account_id=config['account'])
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

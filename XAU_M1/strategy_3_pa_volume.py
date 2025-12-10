@@ -147,7 +147,7 @@ def strategy_3_logic(config, error_count=0):
         print(f"🚀 Strat 3 SIGNAL: {signal} @ {price}")
         
         db.log_signal("Strategy_3_PA_Volume", symbol, signal, price, sl, tp, 
-                      {"vol": int(last['tick_volume']), "vol_ma": int(last['vol_ma']), "pinbar": True, "rsi": last['rsi']},
+                      {"vol": int(last['tick_volume']), "vol_ma": int(last['vol_ma']), "pinbar": True, "rsi": float(last['rsi'])},
                       account_id=config['account'])
 
         request = {

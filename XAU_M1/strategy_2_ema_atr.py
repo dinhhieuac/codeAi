@@ -150,7 +150,7 @@ def strategy_2_logic(config, error_count=0):
         print(f"🚀 Strat 2 SIGNAL: {signal} @ {price}")
 
         db.log_signal("Strategy_2_EMA_ATR", symbol, signal, price, sl, tp, 
-                      {"ema14": last['ema14'], "ema28": last['ema28'], "atr": atr_val, "rsi": last['rsi']},
+                      {"ema14": float(last['ema14']), "ema28": float(last['ema28']), "atr": float(atr_val), "rsi": float(last['rsi'])},
                       account_id=config['account'])
         
         request = {

@@ -172,7 +172,7 @@ def strategy_4_logic(config, error_count=0):
 
         print(f"🚀 Strat 4 SIGNAL: {signal} @ {price}")
         db.log_signal("Strategy_4_UT_Bot", symbol, signal, price, sl, tp, 
-                      {"trend": trend, "ut_pos": last['pos'], "rsi": last['rsi']},
+                      {"trend": trend, "ut_pos": int(last['pos']), "rsi": float(last['rsi'])},
                       account_id=config['account'])
 
         request = {

@@ -172,7 +172,7 @@ def strategy_1_logic(config, error_count=0):
             
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode, "rsi": last_ha['rsi']}, 
+                      {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi'])}, 
                       account_id=config['account'])
 
         # Send Order
