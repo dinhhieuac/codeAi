@@ -190,7 +190,20 @@ def strategy_1_logic(config, error_count=0):
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Strategy_1_Trend_HA", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
-            send_telegram(f"✅ <b>Strat 1 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            
+            # Detailed Telegram Message
+            msg = (
+                f"✅ <b>Strat 1: Trend HA Executed</b>\n"
+                f"🆔 <b>Ticket:</b> {result.order}\n"
+                f"👤 <b>Account:</b> {config['account']}\n"
+                f"💱 <b>Symbol:</b> {symbol} ({signal})\n"
+                f"💵 <b>Price:</b> {price}\n"
+                f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
+                f"📊 <b>Indicators:</b>\n"
+                f"• Trend: {current_trend}\n"
+                f"• RSI: {last_ha['rsi']:.1f}"
+            )
+            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0 # Reset error count
         else:
             print(f"❌ Order Failed: {result.retcode}")

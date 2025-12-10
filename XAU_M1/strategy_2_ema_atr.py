@@ -165,7 +165,20 @@ def strategy_2_logic(config, error_count=0):
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Scussess: {result.order}")
             db.log_order(result.order, "Strategy_2_EMA_ATR", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
-            send_telegram(f"✅ <b>Strat 2 Executed:</b> {signal} {symbol} @ {price}", config['telegram_token'], config['telegram_chat_id'])
+            
+            msg = (
+                f"✅ <b>Strat 2: EMA ATR Executed</b>\n"
+                f"🆔 <b>Ticket:</b> {result.order}\n"
+                f"👤 <b>Account:</b> {config['account']}\n"
+                f"💱 <b>Symbol:</b> {symbol} ({signal})\n"
+                f"💵 <b>Price:</b> {price}\n"
+                f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
+                f"📊 <b>Indicators:</b>\n"
+                f"• EMA14: {last['ema14']:.2f}\n"
+                f"• EMA28: {last['ema28']:.2f}\n"
+                f"• RSI: {last['rsi']:.1f}"
+            )
+            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0
         else:
             print(f"❌ Order Failed: {result.retcode}")
