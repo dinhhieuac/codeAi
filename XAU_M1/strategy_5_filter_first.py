@@ -8,7 +8,8 @@ sys.path.append('..')
 from db import Database
 from utils import load_config, connect_mt5, get_data, send_telegram
 
-db = Database("trades.db")
+# Initialize Database
+db = Database()
 
 def strategy_5_logic(config, error_count=0):
     # This strategy requires separate logic for Opening and Managing

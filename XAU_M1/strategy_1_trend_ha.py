@@ -10,7 +10,8 @@ from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram
 
 # Initialize Database
-db = Database("trades.db")
+# Initialize Database
+db = Database()
 
 def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']

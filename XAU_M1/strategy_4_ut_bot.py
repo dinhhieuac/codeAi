@@ -9,7 +9,8 @@ sys.path.append('..')
 from db import Database
 from utils import load_config, connect_mt5, get_data, send_telegram
 
-db = Database("trades.db")
+# Initialize Database
+db = Database()
 
 def calculate_ut_bot(df, sensitivity=2, period=10):
     """
