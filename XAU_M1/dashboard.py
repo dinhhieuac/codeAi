@@ -23,7 +23,7 @@ def index():
     cur = get_db().cursor()
     
     # Fetch Orders
-    cur.execute("SELECT * FROM orders ORDER BY executed_at DESC")
+    cur.execute("SELECT * FROM orders ORDER BY open_time DESC")
     orders = cur.fetchall()
     
     # Calculate Stats
@@ -34,7 +34,7 @@ def index():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     
     # Fetch Recent Signals
-    cur.execute("SELECT * FROM signals ORDER BY created_at DESC LIMIT 50")
+    cur.execute("SELECT * FROM signals ORDER BY timestamp DESC LIMIT 50")
     signals = cur.fetchall()
 
     return render_template('index.html', 
