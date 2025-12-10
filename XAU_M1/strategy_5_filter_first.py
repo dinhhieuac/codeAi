@@ -67,7 +67,7 @@ def strategy_5_logic(config, error_count=0):
     # --- ENTRY MODE ---
     
     # 1. Get Data
-    df = get_data(symbol, mt5.TIMEFRAME_M1, 20)
+    df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
     if df is None: return error_count
 
     # Donchian Channel 20 (Breakout)

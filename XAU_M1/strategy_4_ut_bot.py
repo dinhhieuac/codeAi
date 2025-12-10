@@ -61,7 +61,7 @@ def strategy_4_logic(config, error_count=0):
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
     df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 50) # Trend Filter
     
-    if df_m1 is None or df_h1 is None: return
+    if df_m1 is None or df_h1 is None: return error_count
 
     # 2. Indicators
     # Trend Filter (H1 MACD or just simple MA)
