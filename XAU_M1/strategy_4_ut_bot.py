@@ -74,10 +74,17 @@ def strategy_4_logic(config, error_count=0):
     prev = df_ut.iloc[-2]
     
     # 3. Signals
+    ut_signal = None
+    # Check for crossover (Flip from -1 to 1 or 1 to -1)
+    if prev['pos'] == -1 and last['pos'] == 1:
+        ut_signal = "BUY"
+    elif prev['pos'] == 1 and last['pos'] == -1:
+        ut_signal = "SELL"
+    
     signal = None
     
-    print(f"📊 [Strat 4 Analysis] Trend H1: {trend}")
-    print(f"   UT Bot Pos: {last['pos']} (Prev: {prev['pos']})")
+    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} | UT Pos: {last['pos']} (Prev: {prev['pos']}) | RSI: {last['rsi']:.1f}")
+    
     if ut_signal == "BUY" and trend == "BULLISH":
         if last['rsi'] > 50:
             signal = "BUY"
@@ -146,7 +153,7 @@ def strategy_4_logic(config, error_count=0):
 
         print(f"🚀 Strat 4 SIGNAL: {signal} @ {price}")
         db.log_signal("Strategy_4_UT_Bot", symbol, signal, price, sl, tp, 
-                      {"trend": trend, "ut_pos": last_ut['pos'], "rsi": last['rsi']})
+                      {"trend": trend, "ut_pos": last['pos'], "rsi": last['rsi']})
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
