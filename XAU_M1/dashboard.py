@@ -3,7 +3,8 @@ import sqlite3
 import os
 
 app = Flask(__name__)
-DB_PATH = 'trades.db'
+# Use absolute path to ensure we always find the correct trades.db
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trades.db')
 
 def get_db():
     db = getattr(g, '_database', None)

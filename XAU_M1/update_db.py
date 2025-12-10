@@ -76,7 +76,8 @@ def update_trades_for_strategy(db, config, strategy_name):
                 print(f"❓ Trade {ticket} not in Open Positions and not in History (Manual Check Needed or date range issue)")
 
 def main():
-    db = Database("trades.db")
+    # Pass None so db.py uses the internal absolute path logic
+    db = Database(None)
     
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
