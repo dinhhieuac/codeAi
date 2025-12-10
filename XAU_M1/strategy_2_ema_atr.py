@@ -15,11 +15,10 @@ def strategy_2_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
-    max_positions = config.get('max_positions', 1)
-    
-    positions = mt5.positions_get(symbol=symbol)
-    if positions and len(positions) >= max_positions:
-        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
+    # 2. Check Global Max Positions
+    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    if positions and len(positions) >= config.get('max_positions', 1):
+        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
         return error_count
 
     # 1. Get Data

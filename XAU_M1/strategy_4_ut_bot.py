@@ -50,11 +50,10 @@ def strategy_4_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
-    max_positions = config.get('max_positions', 1)
     
-    positions = mt5.positions_get(symbol=symbol)
-    if positions and len(positions) >= max_positions:
-        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
+    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    if positions and len(positions) >= config.get('max_positions', 1):
+        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
         return error_count
 
     # 1. Get Data
@@ -78,25 +77,30 @@ def strategy_4_logic(config, error_count=0):
     
     print(f"📊 [Strat 4 Analysis] Trend H1: {trend}")
     print(f"   UT Bot Pos: {last['pos']} (Prev: {prev['pos']})")
-    
-    # BUY: UT Bot matches H1 Trend
-    # UT Bot Signal flips from -1 to 1 (Buy Signal)
-    if trend == "BULLISH":
-        if prev['pos'] == -1 and last['pos'] == 1:
+    if ut_signal == "BUY" and trend == "BULLISH":
+        if last['rsi'] > 50:
             signal = "BUY"
         else:
-            print("   ❌ No Signal: Waiting for UT Bot BUY flip (-1 -> 1)")
-
-    # SELL: UT Bot matches H1 Trend
-    # UT Bot Signal flips from 1 to -1 (Sell Signal)
-    elif trend == "BEARISH":
-        if prev['pos'] == 1 and last['pos'] == -1:
-            signal = "SELL"
-        else:
-            print("   ❌ No Signal: Waiting for UT Bot SELL flip (1 -> -1)")
-        
+            print(f"   ❌ Filtered: Buy Signal but RSI {last['rsi']:.1f} <= 50")
+            
+    elif ut_signal == "SELL" and trend == "BEARISH":
+         if last['rsi'] < 50:
+             signal = "SELL"
+         else:
+            print(f"   ❌ Filtered: Sell Signal but RSI {last['rsi']:.1f} >= 50")
+            
     # 4. Execute
     if signal:
+        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if strat_positions:
+            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            last_trade_time = strat_positions[0].time
+            current_server_time = mt5.symbol_info_tick(symbol).time
+            if (current_server_time - last_trade_time) < 60:
+                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+                return error_count
+
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
         # --- SL/TP Logic based on Config ---
@@ -141,7 +145,7 @@ def strategy_4_logic(config, error_count=0):
 
         print(f"🚀 Strat 4 SIGNAL: {signal} @ {price}")
         db.log_signal("Strategy_4_UT_Bot", symbol, signal, price, sl, tp, 
-                      {"trend": trend, "ut_pos": last['pos']})
+                      {"trend": trend, "ut_pos": last_ut['pos'], "rsi": last['rsi']})
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

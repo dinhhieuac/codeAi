@@ -6,13 +6,15 @@
     "symbol": "XAUUSD",
     "volume": 0.01,
     "magic": 100001,
-    "max_positions": 10,
+    "max_positions": 1,
     "telegram_token": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
     "telegram_chat_id": "1887610382",
     "parameters": {
         "sl_mode": "auto_m5",
         "reward_ratio": 1.5,
         "sl_pips": 20,
-        "tp_pips": 30
+        "tp_pips": 30,
+        "rsi_period": 14,
+        "rsi_threshold": 50
     }
 }

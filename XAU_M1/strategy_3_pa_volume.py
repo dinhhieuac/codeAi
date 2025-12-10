@@ -16,9 +16,10 @@ def strategy_3_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
-    positions = mt5.positions_get(symbol=symbol)
-    if positions and len(positions) >= max_positions:
-        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
+    # 2. Check Global Max Positions
+    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    if positions and len(positions) >= config.get('max_positions', 1):
+        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
         return error_count
 
     # 1. Get Data
@@ -33,23 +34,28 @@ def strategy_3_logic(config, error_count=0):
     # Volume MA (to detect spikes)
     df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
     
+    # RSI 14 (Added Filter)
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
     last = df.iloc[-1]
     
     # 3. Logic: Rejection Candle + Volume Spike near SMA 9
     signal = None
     
-    # Check Price proximity to SMA 9 (e.g., within 2 pips)
-    pip_val = mt5.symbol_info(symbol).point * 10
-    dist_to_sma = abs(last['close'] - last['sma9'])
+    # SMA 9 Filter: Price must be near SMA 9
     is_near_sma = False
+    pip_val = mt5.symbol_info(symbol).point * 10 
+    dist_to_sma = abs(last['close'] - last['sma9'])
     if dist_to_sma <= 2 * pip_val:
         is_near_sma = True
-    
-    # Check Volume Spike (Current Volume > 1.5 * Avg Volume)
+        
     is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.5)
     
-    # Check Rejection (Pinbar)
-    # Bullish Pinbar: Lower shadow is long, close near high
+    # Pinbar Detection
     body_size = abs(last['close'] - last['open'])
     upper_shadow = last['high'] - max(last['close'], last['open'])
     lower_shadow = min(last['close'], last['open']) - last['low']
@@ -59,16 +65,23 @@ def strategy_3_logic(config, error_count=0):
     
     # BUY Signal
     
-    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | SMA9: {last['sma9']:.2f}")
+    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | SMA9: {last['sma9']:.2f} | RSI: {last['rsi']:.1f}")
     print(f"   Volume: {last['tick_volume']} (Avg: {last['vol_ma']:.1f}) | High Vol? {is_high_volume}")
     print(f"   Dist to SMA: {dist_to_sma:.3f} (Max: {2*pip_val:.3f}) | Near SMA? {is_near_sma}")
     print(f"   Bull Pinbar? {is_bullish_pinbar} | Bear Pinbar? {is_bearish_pinbar}")
     
+    signal = None
     if is_near_sma and is_high_volume:
         if is_bullish_pinbar and last['close'] > last['sma9']:
-            signal = "BUY"
+            if last['rsi'] > 50:
+                 signal = "BUY"
+            else:
+                 print(f"   ❌ Filtered: Valid Buy Setup but RSI {last['rsi']:.1f} <= 50")
         elif is_bearish_pinbar and last['close'] < last['sma9']:
-            signal = "SELL"
+            if last['rsi'] < 50:
+                signal = "SELL"
+            else:
+                 print(f"   ❌ Filtered: Valid Sell Setup but RSI {last['rsi']:.1f} >= 50")
         else:
             print("   ❌ Condition Fail: No valid Pinbar rejection found")
     else:
@@ -76,6 +89,16 @@ def strategy_3_logic(config, error_count=0):
     
     # 4. Execute
     if signal:
+        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if strat_positions:
+            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            last_trade_time = strat_positions[0].time
+            current_server_time = mt5.symbol_info_tick(symbol).time
+            if (current_server_time - last_trade_time) < 60:
+                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+                return error_count
+
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
         # --- SL/TP Logic based on Config ---
@@ -117,7 +140,7 @@ def strategy_3_logic(config, error_count=0):
         print(f"🚀 Strat 3 SIGNAL: {signal} @ {price}")
         
         db.log_signal("Strategy_3_PA_Volume", symbol, signal, price, sl, tp, 
-                      {"vol": int(last['tick_volume']), "vol_ma": int(last['vol_ma']), "pattern": "Pinbar"})
+                      {"vol": int(last['tick_volume']), "vol_ma": int(last['vol_ma']), "pinbar": True, "rsi": last['rsi']})
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

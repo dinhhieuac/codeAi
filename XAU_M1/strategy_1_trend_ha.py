@@ -18,10 +18,10 @@ def strategy_1_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
-    # Check if we already have an open position (GLOBAL CHECK)
-    positions = mt5.positions_get(symbol=symbol)
-    if positions and len(positions) >= max_positions:
-        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
+    # 2. Check Global Max Positions
+    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    if positions and len(positions) >= config.get('max_positions', 1):
+        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
         return error_count
 
     # 1. Get Data (M1 and M5 for trend)
@@ -42,6 +42,14 @@ def strategy_1_logic(config, error_count=0):
     
     # Heiken Ashi
     ha_df = calculate_heiken_ashi(df_m1)
+    
+    # RSI 14 (Added Filter)
+    delta = df_m1['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    ha_df['rsi'] = 100 - (100 / (1 + rs))
+
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
 
@@ -49,10 +57,8 @@ def strategy_1_logic(config, error_count=0):
     signal = None
     price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
     
-    price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
-    
     # Detailed Logging
-    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend}")
+    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
     
@@ -64,7 +70,10 @@ def strategy_1_logic(config, error_count=0):
         
         if is_green and is_above_channel:
             if is_fresh_breakout:
-                signal = "BUY"
+                if last_ha['rsi'] > 50:
+                    signal = "BUY"
+                else:
+                    print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= 50")
             else:
                 print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already above).")
         else:
@@ -78,7 +87,10 @@ def strategy_1_logic(config, error_count=0):
         
         if is_red and is_below_channel:
             if is_fresh_breakout:
-                signal = "SELL"
+                if last_ha['rsi'] < 50:
+                    signal = "SELL"
+                else:
+                    print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= 50")
             else:
                 print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already below).")
         else:
@@ -87,6 +99,16 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
+        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if strat_positions:
+            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            last_trade_time = strat_positions[0].time
+            current_server_time = mt5.symbol_info_tick(symbol).time
+            if (current_server_time - last_trade_time) < 60:
+                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+                return error_count
+
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
         
         # SL/TP Calculation Logic
@@ -137,7 +159,7 @@ def strategy_1_logic(config, error_count=0):
             
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode})
+                      {"trend": current_trend, "ha_close": last_ha['ha_close'], "sl_mode": sl_mode, "rsi": last_ha['rsi']})
 
         # Send Order
         request = {

@@ -57,10 +57,10 @@ def strategy_5_logic(config, error_count=0):
                 print(f"🏃 Trailing SL for Ticket {pos.ticket}")
         return error_count
 
-    # If positions exist BUT they are not mine -> Block new entry checking global limit
-    max_positions = config.get('max_positions', 1)
-    if positions and len(positions) >= max_positions:
-        print(f"⚠️ Market has open positions ({len(positions)} >= {max_positions}). Waiting...")
+    # 2. Check Global Max Positions
+    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    if positions and len(positions) >= config.get('max_positions', 1):
+        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
         return error_count
 
     # --- ENTRY MODE ---
@@ -69,26 +69,49 @@ def strategy_5_logic(config, error_count=0):
     df = get_data(symbol, mt5.TIMEFRAME_M1, 20)
     if df is None: return error_count
 
+    # Donchian Channel 20 (Breakout)
+    df['upper'] = df['high'].rolling(window=20).max().shift(1) # Previous 20 highs
+    df['lower'] = df['low'].rolling(window=20).min().shift(1)   # Previous 20 lows
+    
+    # RSI 14 (Added Filter)
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
     last = df.iloc[-1]
     
-    # Donchian Channel 20 (Breakout)
-    high_20 = df['high'].rolling(window=20).max().iloc[-2] # Previous 20 highs
-    low_20 = df['low'].rolling(window=20).min().iloc[-2]   # Previous 20 lows
-    
+    # 3. Logic: Donchian Breakout
     signal = None
     
-    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f}")
-    print(f"   Hi 20: {high_20:.2f} | Lo 20: {low_20:.2f}")
+    # BUY: Close > Upper Band
+    # SELL: Close < Lower Band
     
-    # Price breaks High 20
-    if last['close'] > high_20:
-        signal = "BUY"
-    elif last['close'] < low_20:
-        signal = "SELL"
-    else:
-        print("   ❌ No Breakout (Inside Channel)")
+    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | RSI: {last['rsi']:.1f}")
+    
+    if last['close'] > last['upper']:
+        if last['rsi'] > 50:
+            signal = "BUY"
+        else:
+            print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
+    elif last['close'] < last['lower']:
+        if last['rsi'] < 50:
+            signal = "SELL"
+        else:
+            print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
         
     if signal:
+        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if strat_positions:
+            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            last_trade_time = strat_positions[0].time
+            current_server_time = mt5.symbol_info_tick(symbol).time
+            if (current_server_time - last_trade_time) < 60:
+                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+                return error_count
+
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
         # --- SL/TP Logic based on Config ---
@@ -132,7 +155,7 @@ def strategy_5_logic(config, error_count=0):
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
-        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout"})
+        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": last['rsi']})
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
