@@ -4,8 +4,12 @@ import os
 import json
 
 class Database:
-    def __init__(self, db_path="trades.db"):
+    def __init__(self, db_path=None):
         """Initialize database connection"""
+        if db_path is None:
+            # Default to trades.db in the same directory as this script
+            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trades.db")
+        
         self.db_path = db_path
         self._create_tables()
 

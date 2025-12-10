@@ -4,7 +4,7 @@
     "server": "Exness-MT5Trial14",
     "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
     "symbol": "XAUUSD",
-    "magic_number": 3000,
+    "magic": 3000,
     "volume": 0.01,
     "max_positions": 1,
     "telegram_token": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
