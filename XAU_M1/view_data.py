@@ -3,16 +3,9 @@ import os
 import sys
 from datetime import datetime
 
-# Determine DB Path (Prioritize root trades.db if it exists and is larger)
+# Determine DB Path (Always use local trades.db)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_INTERNAL = os.path.join(SCRIPT_DIR, 'trades.db')       # XAU_M1/trades.db
-DB_EXTERNAL = os.path.join(os.path.dirname(SCRIPT_DIR), 'trades.db') # md5/trades.db
-
-DB_PATH = DB_INTERNAL
-if os.path.exists(DB_EXTERNAL):
-    # If external exists and is larger (or internal doesn't exist), use it
-    if not os.path.exists(DB_INTERNAL) or os.path.getsize(DB_EXTERNAL) > os.path.getsize(DB_INTERNAL):
-        DB_PATH = DB_EXTERNAL
+DB_PATH = os.path.join(SCRIPT_DIR, 'trades.db')
 
 def dict_factory(cursor, row):
     d = {}
