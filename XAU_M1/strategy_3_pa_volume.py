@@ -6,7 +6,7 @@ import numpy as np
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position
 
 # Initialize Database
 db = Database()
@@ -17,11 +17,14 @@ def strategy_3_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
-    # 2. Check Global Max Positions
+    # 2. Check Global Max Positions & Manage Existing
     positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions and len(positions) >= config.get('max_positions', 1):
-        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
-        return error_count
+    if positions:
+        for pos in positions:
+            manage_position(pos.ticket, symbol, magic, config)
+            
+        if len(positions) >= max_positions:
+            return error_count
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 50)

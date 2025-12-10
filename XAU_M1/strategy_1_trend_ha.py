@@ -7,9 +7,8 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position
 
-# Initialize Database
 # Initialize Database
 db = Database()
 
@@ -19,11 +18,16 @@ def strategy_1_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
-    # 2. Check Global Max Positions
+    # 2. Check Global Max Positions & Manage Existing
     positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions and len(positions) >= config.get('max_positions', 1):
-        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
-        return error_count
+    if positions:
+        # Manage Trailing SL for all open positions of this strategy
+        for pos in positions:
+            manage_position(pos.ticket, symbol, magic, config)
+            
+        if len(positions) >= max_positions:
+            # Silent return to avoid spam
+            return error_count
 
     # 1. Get Data (M1 and M5 for trend)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)

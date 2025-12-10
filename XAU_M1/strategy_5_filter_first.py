@@ -6,7 +6,7 @@ import numpy as np
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position
 
 # Initialize Database
 db = Database()
@@ -18,51 +18,16 @@ def strategy_5_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
+    max_positions = config.get('max_positions', 1)
     
-    positions = mt5.positions_get(symbol=symbol)
-    my_positions = [p for p in positions if p.magic == magic]
-    
-    if my_positions:
-        pos = my_positions[0]
-        current_price = mt5.symbol_info_tick(symbol).bid if pos.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
-        
-        profit_pips = (current_price - pos.price_open) / mt5.symbol_info(symbol).point if pos.type == mt5.ORDER_TYPE_BUY else (pos.price_open - current_price) / mt5.symbol_info(symbol).point
-        
-        # 1. Quick Breakeven (10 pips)
-        if profit_pips > 100 and pos.sl != pos.price_open: # 10 pips (100 points)
-            request = {
-                "action": mt5.TRADE_ACTION_SLTP,
-                "position": pos.ticket,
-                "symbol": symbol,
-                "sl": pos.price_open, # Breakeven
-                "tp": pos.tp
-            }
-            mt5.order_send(request)
-            print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket}")
-            
-        # 2. Trailing Stop for Swing (if profit > 30 pips)
-        if profit_pips > 300: 
-            # Simple trail: current price - 20 pips
-            new_sl = current_price - (200 * mt5.symbol_info(symbol).point) if pos.type == mt5.ORDER_TYPE_BUY else current_price + (200 * mt5.symbol_info(symbol).point)
-            
-            # Update only if better
-            if (pos.type == mt5.ORDER_TYPE_BUY and new_sl > pos.sl) or (pos.type == mt5.ORDER_TYPE_SELL and new_sl < pos.sl):
-                request = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": pos.ticket,
-                    "symbol": symbol,
-                    "sl": new_sl,
-                    "tp": pos.tp
-                }
-                mt5.order_send(request)
-                print(f"🏃 Trailing SL for Ticket {pos.ticket}")
-        return error_count
-
-    # 2. Check Global Max Positions
+    # 2. Check Global Max Positions & Manage Existing
     positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions and len(positions) >= config.get('max_positions', 1):
-        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
-        return error_count
+    if positions:
+        for pos in positions:
+            manage_position(pos.ticket, symbol, magic, config)
+            
+        if len(positions) >= max_positions:
+            return error_count
 
     # --- ENTRY MODE ---
     

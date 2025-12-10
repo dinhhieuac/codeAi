@@ -7,12 +7,13 @@ import pandas as pd
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx
+from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx, manage_position
 
 # Initialize Database
 db = Database()
 
 def calculate_ut_bot(df, sensitivity=2, period=10):
+    # ... (Keep existing implementation)
     """
     Approximate UT Bot Logic:
     ATR Trailing Stop logic basically.
@@ -51,11 +52,16 @@ def strategy_4_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
+    max_positions = config.get('max_positions', 1)
     
+    # 2. Check Global Max Positions & Manage Existing
     positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions and len(positions) >= config.get('max_positions', 1):
-        print(f"⚠️ Max Positions Reached for Strategy {magic}: {len(positions)}/{config.get('max_positions', 1)}")
-        return error_count
+    if positions:
+        for pos in positions:
+            manage_position(pos.ticket, symbol, magic, config)
+            
+        if len(positions) >= max_positions:
+            return error_count
 
     # 1. Get Data
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
