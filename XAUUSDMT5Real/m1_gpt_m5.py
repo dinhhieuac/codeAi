@@ -197,133 +197,152 @@ def load_config(filename="XAUUSDMT5Real/mt5_account.json"):
     if not os.path.exists(filename):
         print(f"❌ Lỗi: Không tìm thấy tệp cấu hình '{filename}'. Vui lòng tạo file này.")
         return False
-        
+    
     try:
         with open(filename, 'r') as f:
             config = json.load(f)
         
+        def get_value(key, default=None):
+            """Helper function để lấy value từ config object (hỗ trợ cả cấu trúc mới và cũ)"""
+            val = config.get(key, default)
+            if isinstance(val, dict) and "value" in val:
+                return val["value"]
+            return val if val is not None else default
+        
+        def get_nested_value(section, key, default=None):
+            """Helper function để lấy value từ nested config object"""
+            if section not in config:
+                return default
+            val = config[section].get(key, default)
+            if isinstance(val, dict) and "value" in val:
+                return val["value"]
+            return val if val is not None else default
+        
         # MT5 Account Info
-        MT5_LOGIN = config.get("ACCOUNT_NUMBER")
-        MT5_PASSWORD = config.get("PASSWORD")
-        MT5_SERVER = config.get("SERVER")
-        SYMBOL = config.get("SYMBOL", "XAUUSDm") 
-        MT5_PATH = config.get("PATH")
-        VOLUME = config.get("VOLUME", VOLUME)
-        MAGIC = config.get("MAGIC", MAGIC)
+        MT5_LOGIN = get_value("ACCOUNT_NUMBER")
+        MT5_PASSWORD = get_value("PASSWORD")
+        MT5_SERVER = get_value("SERVER")
+        SYMBOL = get_value("SYMBOL", "XAUUSDm") 
+        MT5_PATH = get_value("PATH")
+        VOLUME = get_value("VOLUME", VOLUME)
+        MAGIC = get_value("MAGIC", MAGIC)
         
         # Telegram
-        CHAT_ID = config.get("CHAT_ID", CHAT_ID)
-        TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN)
+        CHAT_ID = get_value("CHAT_ID", CHAT_ID)
+        TELEGRAM_TOKEN = get_value("TELEGRAM_TOKEN", TELEGRAM_TOKEN)
         
         # Indicators
         if "INDICATORS" in config:
             ind = config["INDICATORS"]
-            EMA_H1 = ind.get("EMA_H1", EMA_H1)
-            EMA_M5 = ind.get("EMA_M5", EMA_M5)
-            EMA_M1 = ind.get("EMA_M1", EMA_M1)
-            ATR_PERIOD = ind.get("ATR_PERIOD", ATR_PERIOD)
-            ADX_PERIOD = ind.get("ADX_PERIOD", ADX_PERIOD)
-            ADX_MIN_THRESHOLD = ind.get("ADX_MIN_THRESHOLD", ADX_MIN_THRESHOLD)
-            ADX_M5_BREAKOUT_THRESHOLD = ind.get("ADX_M5_BREAKOUT_THRESHOLD", ADX_M5_BREAKOUT_THRESHOLD)
-            RSI_PERIOD = ind.get("RSI_PERIOD", RSI_PERIOD)
-            RSI_OVERBOUGHT = ind.get("RSI_OVERBOUGHT", RSI_OVERBOUGHT)
-            RSI_OVERSOLD = ind.get("RSI_OVERSOLD", RSI_OVERSOLD)
+            EMA_H1 = get_nested_value("INDICATORS", "EMA_H1", EMA_H1)
+            EMA_M5 = get_nested_value("INDICATORS", "EMA_M5", EMA_M5)
+            EMA_M1 = get_nested_value("INDICATORS", "EMA_M1", EMA_M1)
+            ATR_PERIOD = get_nested_value("INDICATORS", "ATR_PERIOD", ATR_PERIOD)
+            ADX_PERIOD = get_nested_value("INDICATORS", "ADX_PERIOD", ADX_PERIOD)
+            ADX_MIN_THRESHOLD = get_nested_value("INDICATORS", "ADX_MIN_THRESHOLD", ADX_MIN_THRESHOLD)
+            ADX_M5_BREAKOUT_THRESHOLD = get_nested_value("INDICATORS", "ADX_M5_BREAKOUT_THRESHOLD", ADX_M5_BREAKOUT_THRESHOLD)
+            RSI_PERIOD = get_nested_value("INDICATORS", "RSI_PERIOD", RSI_PERIOD)
+            RSI_OVERBOUGHT = get_nested_value("INDICATORS", "RSI_OVERBOUGHT", RSI_OVERBOUGHT)
+            RSI_OVERSOLD = get_nested_value("INDICATORS", "RSI_OVERSOLD", RSI_OVERSOLD)
         
         # Trend Filters
         if "TREND_FILTERS" in config:
-            ENABLE_H1_TREND_FILTER = config["TREND_FILTERS"].get("ENABLE_H1_TREND_FILTER", ENABLE_H1_TREND_FILTER)
+            ENABLE_H1_TREND_FILTER = get_nested_value("TREND_FILTERS", "ENABLE_H1_TREND_FILTER", ENABLE_H1_TREND_FILTER)
         
         # Momentum Confirmation
         if "MOMENTUM_CONFIRMATION" in config:
-            ENABLE_MOMENTUM_CONFIRMATION = config["MOMENTUM_CONFIRMATION"].get("ENABLE_MOMENTUM_CONFIRMATION", ENABLE_MOMENTUM_CONFIRMATION)
-            MOMENTUM_BUFFER_POINTS = config["MOMENTUM_CONFIRMATION"].get("MOMENTUM_BUFFER_POINTS", MOMENTUM_BUFFER_POINTS)
+            ENABLE_MOMENTUM_CONFIRMATION = get_nested_value("MOMENTUM_CONFIRMATION", "ENABLE_MOMENTUM_CONFIRMATION", ENABLE_MOMENTUM_CONFIRMATION)
+            MOMENTUM_BUFFER_POINTS = get_nested_value("MOMENTUM_CONFIRMATION", "MOMENTUM_BUFFER_POINTS", MOMENTUM_BUFFER_POINTS)
         
         # ATR Filter
         if "ATR_FILTER" in config:
-            ENABLE_ATR_FILTER = config["ATR_FILTER"].get("ENABLE_ATR_FILTER", ENABLE_ATR_FILTER)
-            ATR_MIN_THRESHOLD = config["ATR_FILTER"].get("ATR_MIN_THRESHOLD", ATR_MIN_THRESHOLD)
-            ATR_MAX_THRESHOLD = config["ATR_FILTER"].get("ATR_MAX_THRESHOLD", ATR_MAX_THRESHOLD)
+            ENABLE_ATR_FILTER = get_nested_value("ATR_FILTER", "ENABLE_ATR_FILTER", ENABLE_ATR_FILTER)
+            ATR_MIN_THRESHOLD = get_nested_value("ATR_FILTER", "ATR_MIN_THRESHOLD", ATR_MIN_THRESHOLD)
+            ATR_MAX_THRESHOLD = get_nested_value("ATR_FILTER", "ATR_MAX_THRESHOLD", ATR_MAX_THRESHOLD)
         
         # Order Management
         if "ORDER_MANAGEMENT" in config:
-            om = config["ORDER_MANAGEMENT"]
-            SL_ATR_MULTIPLIER = om.get("SL_ATR_MULTIPLIER", SL_ATR_MULTIPLIER)
-            TP_ATR_MULTIPLIER = om.get("TP_ATR_MULTIPLIER", TP_ATR_MULTIPLIER)
-            SL_POINTS_MIN = om.get("SL_POINTS_MIN", SL_POINTS_MIN)
-            SL_POINTS_MAX = om.get("SL_POINTS_MAX", SL_POINTS_MAX)
-            TP_POINTS_MIN = om.get("TP_POINTS_MIN", TP_POINTS_MIN)
-            TP_POINTS_MAX = om.get("TP_POINTS_MAX", TP_POINTS_MAX)
-            ENABLE_FIXED_SL_USD = om.get("ENABLE_FIXED_SL_USD", ENABLE_FIXED_SL_USD)
-            FIXED_SL_USD = om.get("FIXED_SL_USD", FIXED_SL_USD)
-            SL_MAX_USD = om.get("SL_MAX_USD", SL_MAX_USD)
+            SL_ATR_MULTIPLIER = get_nested_value("ORDER_MANAGEMENT", "SL_ATR_MULTIPLIER", SL_ATR_MULTIPLIER)
+            TP_ATR_MULTIPLIER = get_nested_value("ORDER_MANAGEMENT", "TP_ATR_MULTIPLIER", TP_ATR_MULTIPLIER)
+            SL_POINTS_MIN = get_nested_value("ORDER_MANAGEMENT", "SL_POINTS_MIN", SL_POINTS_MIN)
+            SL_POINTS_MAX = get_nested_value("ORDER_MANAGEMENT", "SL_POINTS_MAX", SL_POINTS_MAX)
+            TP_POINTS_MIN = get_nested_value("ORDER_MANAGEMENT", "TP_POINTS_MIN", TP_POINTS_MIN)
+            TP_POINTS_MAX = get_nested_value("ORDER_MANAGEMENT", "TP_POINTS_MAX", TP_POINTS_MAX)
+            ENABLE_FIXED_SL_USD = get_nested_value("ORDER_MANAGEMENT", "ENABLE_FIXED_SL_USD", ENABLE_FIXED_SL_USD)
+            FIXED_SL_USD = get_nested_value("ORDER_MANAGEMENT", "FIXED_SL_USD", FIXED_SL_USD)
+            SL_MAX_USD = get_nested_value("ORDER_MANAGEMENT", "SL_MAX_USD", SL_MAX_USD)
         
         # Break Even
         if "BREAK_EVEN" in config:
-            ENABLE_BREAK_EVEN = config["BREAK_EVEN"].get("ENABLE_BREAK_EVEN", ENABLE_BREAK_EVEN)
-            BREAK_EVEN_START_POINTS = config["BREAK_EVEN"].get("BREAK_EVEN_START_POINTS", BREAK_EVEN_START_POINTS)
+            ENABLE_BREAK_EVEN = get_nested_value("BREAK_EVEN", "ENABLE_BREAK_EVEN", ENABLE_BREAK_EVEN)
+            BREAK_EVEN_START_POINTS = get_nested_value("BREAK_EVEN", "BREAK_EVEN_START_POINTS", BREAK_EVEN_START_POINTS)
         
         # Trailing Stop
         if "TRAILING_STOP" in config:
-            ENABLE_TRAILING_STOP = config["TRAILING_STOP"].get("ENABLE_TRAILING_STOP", ENABLE_TRAILING_STOP)
-            TRAILING_START_TP_RATIO = config["TRAILING_STOP"].get("TRAILING_START_TP_RATIO", TRAILING_START_TP_RATIO)
-            TRAILING_STEP_ATR_MULTIPLIER = config["TRAILING_STOP"].get("TRAILING_STEP_ATR_MULTIPLIER", TRAILING_STEP_ATR_MULTIPLIER)
+            ENABLE_TRAILING_STOP = get_nested_value("TRAILING_STOP", "ENABLE_TRAILING_STOP", ENABLE_TRAILING_STOP)
+            TRAILING_START_TP_RATIO = get_nested_value("TRAILING_STOP", "TRAILING_START_TP_RATIO", TRAILING_START_TP_RATIO)
+            TRAILING_STEP_ATR_MULTIPLIER = get_nested_value("TRAILING_STOP", "TRAILING_STEP_ATR_MULTIPLIER", TRAILING_STEP_ATR_MULTIPLIER)
         
         # Loss Cooldown
         if "LOSS_COOLDOWN" in config:
-            ENABLE_LOSS_COOLDOWN = config["LOSS_COOLDOWN"].get("ENABLE_LOSS_COOLDOWN", ENABLE_LOSS_COOLDOWN)
-            LOSS_COOLDOWN_MINUTES = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_MINUTES", LOSS_COOLDOWN_MINUTES)
-            LOSS_COOLDOWN_MODE = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_MODE", LOSS_COOLDOWN_MODE)
-            ENABLE_LOSS_COOLDOWN_3LOSS = config["LOSS_COOLDOWN"].get("ENABLE_LOSS_COOLDOWN_3LOSS", ENABLE_LOSS_COOLDOWN_3LOSS)
-            LOSS_COOLDOWN_3LOSS_MINUTES = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_3LOSS_MINUTES", LOSS_COOLDOWN_3LOSS_MINUTES)
+            ENABLE_LOSS_COOLDOWN = get_nested_value("LOSS_COOLDOWN", "ENABLE_LOSS_COOLDOWN", ENABLE_LOSS_COOLDOWN)
+            LOSS_COOLDOWN_MINUTES = get_nested_value("LOSS_COOLDOWN", "LOSS_COOLDOWN_MINUTES", LOSS_COOLDOWN_MINUTES)
+            LOSS_COOLDOWN_MODE = get_nested_value("LOSS_COOLDOWN", "LOSS_COOLDOWN_MODE", LOSS_COOLDOWN_MODE)
+            ENABLE_LOSS_COOLDOWN_3LOSS = get_nested_value("LOSS_COOLDOWN", "ENABLE_LOSS_COOLDOWN_3LOSS", ENABLE_LOSS_COOLDOWN_3LOSS)
+            LOSS_COOLDOWN_3LOSS_MINUTES = get_nested_value("LOSS_COOLDOWN", "LOSS_COOLDOWN_3LOSS_MINUTES", LOSS_COOLDOWN_3LOSS_MINUTES)
         
         # Error Cooldown
         if "ERROR_COOLDOWN" in config:
-            ENABLE_ERROR_COOLDOWN = config["ERROR_COOLDOWN"].get("ENABLE_ERROR_COOLDOWN", ENABLE_ERROR_COOLDOWN)
-            ERROR_COOLDOWN_COUNT = config["ERROR_COOLDOWN"].get("ERROR_COOLDOWN_COUNT", ERROR_COOLDOWN_COUNT)
-            ERROR_COOLDOWN_MINUTES = config["ERROR_COOLDOWN"].get("ERROR_COOLDOWN_MINUTES", ERROR_COOLDOWN_MINUTES)
+            ENABLE_ERROR_COOLDOWN = get_nested_value("ERROR_COOLDOWN", "ENABLE_ERROR_COOLDOWN", ENABLE_ERROR_COOLDOWN)
+            ERROR_COOLDOWN_COUNT = get_nested_value("ERROR_COOLDOWN", "ERROR_COOLDOWN_COUNT", ERROR_COOLDOWN_COUNT)
+            ERROR_COOLDOWN_MINUTES = get_nested_value("ERROR_COOLDOWN", "ERROR_COOLDOWN_MINUTES", ERROR_COOLDOWN_MINUTES)
         
         # Retest
         if "RETEST" in config:
-            RETEST_DISTANCE_MIN = config["RETEST"].get("RETEST_DISTANCE_MIN", RETEST_DISTANCE_MIN)
-            RETEST_DISTANCE_MAX = config["RETEST"].get("RETEST_DISTANCE_MAX", RETEST_DISTANCE_MAX)
+            RETEST_DISTANCE_MIN = get_nested_value("RETEST", "RETEST_DISTANCE_MIN", RETEST_DISTANCE_MIN)
+            RETEST_DISTANCE_MAX = get_nested_value("RETEST", "RETEST_DISTANCE_MAX", RETEST_DISTANCE_MAX)
         
         # Breakout
         if "BREAKOUT" in config:
-            ENABLE_BREAKOUT = config["BREAKOUT"].get("ENABLE_BREAKOUT", ENABLE_BREAKOUT)
-            BREAKOUT_DISTANCE_MIN = config["BREAKOUT"].get("BREAKOUT_DISTANCE_MIN", BREAKOUT_DISTANCE_MIN)
-            BREAKOUT_DISTANCE_MAX = config["BREAKOUT"].get("BREAKOUT_DISTANCE_MAX", BREAKOUT_DISTANCE_MAX)
+            ENABLE_BREAKOUT = get_nested_value("BREAKOUT", "ENABLE_BREAKOUT", ENABLE_BREAKOUT)
+            BREAKOUT_DISTANCE_MIN = get_nested_value("BREAKOUT", "BREAKOUT_DISTANCE_MIN", BREAKOUT_DISTANCE_MIN)
+            BREAKOUT_DISTANCE_MAX = get_nested_value("BREAKOUT", "BREAKOUT_DISTANCE_MAX", BREAKOUT_DISTANCE_MAX)
         
         # Spread Filter
         if "SPREAD_FILTER" in config:
-            ENABLE_SPREAD_FILTER = config["SPREAD_FILTER"].get("ENABLE_SPREAD_FILTER", ENABLE_SPREAD_FILTER)
-            SPREAD_MAX_POINTS = config["SPREAD_FILTER"].get("SPREAD_MAX_POINTS", SPREAD_MAX_POINTS)
+            ENABLE_SPREAD_FILTER = get_nested_value("SPREAD_FILTER", "ENABLE_SPREAD_FILTER", ENABLE_SPREAD_FILTER)
+            SPREAD_MAX_POINTS = get_nested_value("SPREAD_FILTER", "SPREAD_MAX_POINTS", SPREAD_MAX_POINTS)
         
         # Momentum Filter
         if "MOMENTUM_FILTER" in config:
-            ENABLE_MOMENTUM_FILTER = config["MOMENTUM_FILTER"].get("ENABLE_MOMENTUM_FILTER", ENABLE_MOMENTUM_FILTER)
-            MOMENTUM_CANDLE_MAX_PIPS = config["MOMENTUM_FILTER"].get("MOMENTUM_CANDLE_MAX_PIPS", MOMENTUM_CANDLE_MAX_PIPS)
+            ENABLE_MOMENTUM_FILTER = get_nested_value("MOMENTUM_FILTER", "ENABLE_MOMENTUM_FILTER", ENABLE_MOMENTUM_FILTER)
+            MOMENTUM_CANDLE_MAX_PIPS = get_nested_value("MOMENTUM_FILTER", "MOMENTUM_CANDLE_MAX_PIPS", MOMENTUM_CANDLE_MAX_PIPS)
         
         # Bad Candle Filter
         if "BAD_CANDLE_FILTER" in config:
-            ENABLE_BAD_CANDLE_FILTER = config["BAD_CANDLE_FILTER"].get("ENABLE_BAD_CANDLE_FILTER", ENABLE_BAD_CANDLE_FILTER)
-            BAD_CANDLE_SHADOW_RATIO = config["BAD_CANDLE_FILTER"].get("BAD_CANDLE_SHADOW_RATIO", BAD_CANDLE_SHADOW_RATIO)
+            ENABLE_BAD_CANDLE_FILTER = get_nested_value("BAD_CANDLE_FILTER", "ENABLE_BAD_CANDLE_FILTER", ENABLE_BAD_CANDLE_FILTER)
+            BAD_CANDLE_SHADOW_RATIO = get_nested_value("BAD_CANDLE_FILTER", "BAD_CANDLE_SHADOW_RATIO", BAD_CANDLE_SHADOW_RATIO)
         
         # Time Filter
         if "TIME_FILTER" in config:
-            ENABLE_TIME_FILTER = config["TIME_FILTER"].get("ENABLE_TIME_FILTER", ENABLE_TIME_FILTER)
-            TIME_FILTER_BUFFER_MINUTES = config["TIME_FILTER"].get("TIME_FILTER_BUFFER_MINUTES", TIME_FILTER_BUFFER_MINUTES)
+            ENABLE_TIME_FILTER = get_nested_value("TIME_FILTER", "ENABLE_TIME_FILTER", ENABLE_TIME_FILTER)
+            TIME_FILTER_BUFFER_MINUTES = get_nested_value("TIME_FILTER", "TIME_FILTER_BUFFER_MINUTES", TIME_FILTER_BUFFER_MINUTES)
             if "IMPORTANT_NEWS_HOURS" in config["TIME_FILTER"]:
+                news_hours = config["TIME_FILTER"]["IMPORTANT_NEWS_HOURS"]
+                # Hỗ trợ cả cấu trúc mới (có "value") và cũ
+                if isinstance(news_hours, dict) and "value" in news_hours:
+                    news_hours = news_hours["value"]
                 # Chuyển đổi list of lists thành list of tuples
-                IMPORTANT_NEWS_HOURS = [tuple(hour) for hour in config["TIME_FILTER"]["IMPORTANT_NEWS_HOURS"]]
+                IMPORTANT_NEWS_HOURS = [tuple(hour) for hour in news_hours]
         
         # Volume Confirmation
         if "VOLUME_CONFIRMATION" in config:
-            ENABLE_VOLUME_CONFIRMATION = config["VOLUME_CONFIRMATION"].get("ENABLE_VOLUME_CONFIRMATION", ENABLE_VOLUME_CONFIRMATION)
-            VOLUME_INCREASE_RATIO = config["VOLUME_CONFIRMATION"].get("VOLUME_INCREASE_RATIO", VOLUME_INCREASE_RATIO)
+            ENABLE_VOLUME_CONFIRMATION = get_nested_value("VOLUME_CONFIRMATION", "ENABLE_VOLUME_CONFIRMATION", ENABLE_VOLUME_CONFIRMATION)
+            VOLUME_INCREASE_RATIO = get_nested_value("VOLUME_CONFIRMATION", "VOLUME_INCREASE_RATIO", VOLUME_INCREASE_RATIO)
         
         # RSI Filter
         if "RSI_FILTER" in config:
-            ENABLE_RSI_FILTER = config["RSI_FILTER"].get("ENABLE_RSI_FILTER", ENABLE_RSI_FILTER)
+            ENABLE_RSI_FILTER = get_nested_value("RSI_FILTER", "ENABLE_RSI_FILTER", ENABLE_RSI_FILTER)
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):

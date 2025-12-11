@@ -1,121 +1,332 @@
 {
-    "ACCOUNT_NUMBER": 213341144,
-    "SERVER": "Exness-MT5Real28",
-    "PASSWORD": "@Dinhhieu273",
-    "SYMBOL": "XAUUSDm",
-    "PATH": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
-    "VOLUME": 0.01,
-    "MAGIC": 20251117,
-    "CHAT_ID": "1887610382",
-    "TELEGRAM_TOKEN": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
+    "_COMMENT": "File cấu hình cho bot M1 GPT M5 - Tất cả tham số có thể được chỉnh sửa tại đây",
+    
+    "ACCOUNT_NUMBER": {
+        "value": 213341144,
+        "description": "Số tài khoản MT5 để đăng nhập"
+    },
+    "SERVER": {
+        "value": "Exness-MT5Real28",
+        "description": "Tên server MT5 (ví dụ: Exness-MT5Real28, Exness-MT5Demo)"
+    },
+    "PASSWORD": {
+        "value": "@Dinhhieu273",
+        "description": "Mật khẩu đăng nhập MT5"
+    },
+    "SYMBOL": {
+        "value": "XAUUSDm",
+        "description": "Ký hiệu giao dịch (ví dụ: XAUUSDm, XAUUSD, GOLD)"
+    },
+    "PATH": {
+        "value": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+        "description": "Đường dẫn đến file terminal64.exe của MT5 (để tự động khởi động MT5 nếu chưa chạy)"
+    },
+    "VOLUME": {
+        "value": 0.01,
+        "description": "Khối lượng giao dịch mặc định (lot size). Ví dụ: 0.01 = 0.01 lot"
+    },
+    "MAGIC": {
+        "value": 20251117,
+        "description": "Magic number để đánh dấu lệnh của bot này (tránh nhầm lẫn với bot khác)"
+    },
+    "CHAT_ID": {
+        "value": "1887610382",
+        "description": "Chat ID Telegram để nhận thông báo (lấy từ @userinfobot)"
+    },
+    "TELEGRAM_TOKEN": {
+        "value": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
+        "description": "Token của Telegram Bot (lấy từ @BotFather)"
+    },
     
     "INDICATORS": {
-        "EMA_H1": 50,
-        "EMA_M5": 50,
-        "EMA_M1": 20,
-        "ATR_PERIOD": 14,
-        "ADX_PERIOD": 14,
-        "ADX_MIN_THRESHOLD": 20,
-        "ADX_M5_BREAKOUT_THRESHOLD": 35,
-        "RSI_PERIOD": 14,
-        "RSI_OVERBOUGHT": 70,
-        "RSI_OVERSOLD": 30
+        "_description": "Cấu hình các chỉ báo kỹ thuật",
+        "EMA_H1": {
+            "value": 50,
+            "description": "Chu kỳ EMA trên H1 để xác định xu hướng dài hạn (EMA50)"
+        },
+        "EMA_M5": {
+            "value": 50,
+            "description": "Chu kỳ EMA trên M5 để xác định trend chính (EMA50). Giá > EMA50 = BUY, Giá < EMA50 = SELL"
+        },
+        "EMA_M1": {
+            "value": 20,
+            "description": "Chu kỳ EMA trên M1 để tìm điểm retest (EMA20). Bot sẽ tìm điểm vào khi giá retest EMA20"
+        },
+        "ATR_PERIOD": {
+            "value": 14,
+            "description": "Chu kỳ tính ATR (Average True Range) - đo lường biến động thị trường"
+        },
+        "ADX_PERIOD": {
+            "value": 14,
+            "description": "Chu kỳ tính ADX (Average Directional Index) - đo lường sức mạnh xu hướng"
+        },
+        "ADX_MIN_THRESHOLD": {
+            "value": 20,
+            "description": "ADX tối thiểu để giao dịch. ADX < 20 = thị trường đi ngang, tránh giao dịch"
+        },
+        "ADX_M5_BREAKOUT_THRESHOLD": {
+            "value": 35,
+            "description": "ADX(M5) tối thiểu để breakout. Chỉ vào lệnh breakout khi ADX(M5) > 35"
+        },
+        "RSI_PERIOD": {
+            "value": 14,
+            "description": "Chu kỳ tính RSI (Relative Strength Index) - đo lường quá mua/quá bán"
+        },
+        "RSI_OVERBOUGHT": {
+            "value": 70,
+            "description": "Ngưỡng RSI quá mua. RSI > 70 = quá mua, không nên BUY"
+        },
+        "RSI_OVERSOLD": {
+            "value": 30,
+            "description": "Ngưỡng RSI quá bán. RSI < 30 = quá bán, không nên SELL"
+        }
     },
     
     "TREND_FILTERS": {
-        "ENABLE_H1_TREND_FILTER": true
+        "_description": "Bộ lọc xu hướng",
+        "ENABLE_H1_TREND_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc theo trend H1. Nếu bật: Chỉ trade khi M5 cùng chiều H1 (tránh trade ngược trend lớn)"
+        }
     },
     
     "MOMENTUM_CONFIRMATION": {
-        "ENABLE_MOMENTUM_CONFIRMATION": true,
-        "MOMENTUM_BUFFER_POINTS": 0
+        "_description": "Xác nhận momentum (Sniper Entry) - Chờ giá phá đỉnh/đáy nến tín hiệu mới vào lệnh",
+        "ENABLE_MOMENTUM_CONFIRMATION": {
+            "value": true,
+            "description": "Bật/tắt xác nhận momentum. Nếu bật: Chờ giá phá đỉnh (BUY) hoặc đáy (SELL) nến tín hiệu mới vào lệnh"
+        },
+        "MOMENTUM_BUFFER_POINTS": {
+            "value": 0,
+            "description": "Buffer khoảng cách (points) để xác nhận phá vỡ. 0 = phá qua là vào ngay, > 0 = cần phá thêm buffer"
+        }
     },
     
     "ATR_FILTER": {
-        "ENABLE_ATR_FILTER": true,
-        "ATR_MIN_THRESHOLD": 40,
-        "ATR_MAX_THRESHOLD": 500
+        "_description": "Bộ lọc ATR - Chỉ vào lệnh khi thị trường có biến động phù hợp",
+        "ENABLE_ATR_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc ATR. Nếu bật: Chỉ vào lệnh khi ATR trong khoảng MIN-MAX"
+        },
+        "ATR_MIN_THRESHOLD": {
+            "value": 40,
+            "description": "ATR tối thiểu (pips). ATR < 40 pips = thị trường quá yên tĩnh, tránh giao dịch"
+        },
+        "ATR_MAX_THRESHOLD": {
+            "value": 500,
+            "description": "ATR tối đa (pips). ATR > 500 pips = có thể có tin mạnh, tránh giao dịch"
+        }
     },
     
     "ORDER_MANAGEMENT": {
-        "SL_ATR_MULTIPLIER": 1.5,
-        "TP_ATR_MULTIPLIER": 2.0,
-        "SL_POINTS_MIN": 50,
-        "SL_POINTS_MAX": 50000,
-        "TP_POINTS_MIN": 80,
-        "TP_POINTS_MAX": 50000,
-        "ENABLE_FIXED_SL_USD": false,
-        "FIXED_SL_USD": 5.0,
-        "SL_MAX_USD": 10.0
+        "_description": "Quản lý lệnh - Tính toán SL/TP",
+        "SL_ATR_MULTIPLIER": {
+            "value": 1.5,
+            "description": "Hệ số nhân ATR cho SL. SL = ATR(M5) × 1.5 (pips)"
+        },
+        "TP_ATR_MULTIPLIER": {
+            "value": 2.0,
+            "description": "Hệ số nhân ATR cho TP. TP = ATR(M5) × 2.0 (pips). Risk:Reward = 1:1.33"
+        },
+        "SL_POINTS_MIN": {
+            "value": 50,
+            "description": "SL tối thiểu (points). 50 points = 5 pips - Bảo vệ khỏi SL quá nhỏ"
+        },
+        "SL_POINTS_MAX": {
+            "value": 50000,
+            "description": "SL tối đa (points). 50000 points = 5000 pips - Cho phép SL lớn theo ATR"
+        },
+        "TP_POINTS_MIN": {
+            "value": 80,
+            "description": "TP tối thiểu (points). 80 points = 8 pips - Bảo vệ khỏi TP quá nhỏ"
+        },
+        "TP_POINTS_MAX": {
+            "value": 50000,
+            "description": "TP tối đa (points). 50000 points = 5000 pips - Cho phép TP lớn theo ATR"
+        },
+        "ENABLE_FIXED_SL_USD": {
+            "value": false,
+            "description": "Bật/tắt fix SL theo USD cố định. Nếu bật: SL sẽ cố định = FIXED_SL_USD (USD), không tính theo ATR"
+        },
+        "FIXED_SL_USD": {
+            "value": 5.0,
+            "description": "SL cố định tính bằng USD (chỉ dùng khi ENABLE_FIXED_SL_USD = true). Ví dụ: 5.0 = 5 USD"
+        },
+        "SL_MAX_USD": {
+            "value": 10.0,
+            "description": "SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR. Nếu SL > 10 USD thì giới hạn về 10 USD"
+        }
     },
     
     "BREAK_EVEN": {
-        "ENABLE_BREAK_EVEN": false,
-        "BREAK_EVEN_START_POINTS": 100
+        "_description": "Hòa vốn - Di chuyển SL về giá mở cửa khi lời",
+        "ENABLE_BREAK_EVEN": {
+            "value": false,
+            "description": "Bật/tắt chức năng di chuyển SL về hòa vốn. Nếu bật: Khi lời >= BREAK_EVEN_START_POINTS, SL sẽ được di chuyển về giá mở cửa"
+        },
+        "BREAK_EVEN_START_POINTS": {
+            "value": 100,
+            "description": "Điểm bắt đầu hòa vốn (points). 100 points = 10 pips. Khi lời >= 10 pips, SL sẽ được di chuyển về hòa vốn"
+        }
     },
     
     "TRAILING_STOP": {
-        "ENABLE_TRAILING_STOP": true,
-        "TRAILING_START_TP_RATIO": 0.5,
-        "TRAILING_STEP_ATR_MULTIPLIER": 0.5
+        "_description": "Trailing Stop - Di chuyển SL theo giá để lock profit",
+        "ENABLE_TRAILING_STOP": {
+            "value": true,
+            "description": "Bật/tắt chức năng Trailing Stop. Nếu bật: SL sẽ được di chuyển theo giá khi lời >= 1/2 TP"
+        },
+        "TRAILING_START_TP_RATIO": {
+            "value": 0.5,
+            "description": "Tỷ lệ TP để bắt đầu trailing. 0.5 = 1/2 TP. Khi lời >= 1/2 TP, trailing stop sẽ bắt đầu hoạt động"
+        },
+        "TRAILING_STEP_ATR_MULTIPLIER": {
+            "value": 0.5,
+            "description": "Bước trailing = ATR × 0.5. SL sẽ được di chuyển theo bước này khi giá di chuyển theo hướng có lợi"
+        }
     },
     
     "LOSS_COOLDOWN": {
-        "ENABLE_LOSS_COOLDOWN": true,
-        "LOSS_COOLDOWN_MINUTES": 10,
-        "LOSS_COOLDOWN_MODE": 2,
-        "ENABLE_LOSS_COOLDOWN_3LOSS": true,
-        "LOSS_COOLDOWN_3LOSS_MINUTES": 60
+        "_description": "Cooldown sau lệnh thua - Tạm dừng giao dịch sau khi thua",
+        "ENABLE_LOSS_COOLDOWN": {
+            "value": true,
+            "description": "Bật/tắt cooldown sau lệnh thua. Nếu bật: Bot sẽ tạm dừng giao dịch sau khi thua lệnh"
+        },
+        "LOSS_COOLDOWN_MINUTES": {
+            "value": 10,
+            "description": "Thời gian chờ sau lệnh thua (phút). Bot sẽ không vào lệnh mới trong khoảng thời gian này"
+        },
+        "LOSS_COOLDOWN_MODE": {
+            "value": 2,
+            "description": "Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua. Mode 2 nghiêm ngặt hơn"
+        },
+        "ENABLE_LOSS_COOLDOWN_3LOSS": {
+            "value": true,
+            "description": "Bật/tắt cooldown sau 3 lệnh thua liên tiếp. Nếu bật: Khi có 3 lệnh thua liên tiếp, cooldown sẽ dài hơn"
+        },
+        "LOSS_COOLDOWN_3LOSS_MINUTES": {
+            "value": 60,
+            "description": "Thời gian chờ sau 3 lệnh thua liên tiếp (phút). 60 = 1 giờ, 300 = 5 giờ"
+        }
     },
     
     "ERROR_COOLDOWN": {
-        "ENABLE_ERROR_COOLDOWN": true,
-        "ERROR_COOLDOWN_COUNT": 5,
-        "ERROR_COOLDOWN_MINUTES": 1
+        "_description": "Cooldown sau lỗi gửi lệnh - Tạm dừng khi gửi lệnh lỗi nhiều lần",
+        "ENABLE_ERROR_COOLDOWN": {
+            "value": true,
+            "description": "Bật/tắt tạm dừng sau lỗi gửi lệnh. Nếu bật: Khi gửi lệnh lỗi nhiều lần liên tiếp, bot sẽ tạm dừng"
+        },
+        "ERROR_COOLDOWN_COUNT": {
+            "value": 5,
+            "description": "Số lần lỗi liên tiếp để kích hoạt cooldown. Ví dụ: 5 = sau 5 lần lỗi liên tiếp sẽ tạm dừng"
+        },
+        "ERROR_COOLDOWN_MINUTES": {
+            "value": 1,
+            "description": "Thời gian tạm dừng sau khi lỗi (phút). Bot sẽ không gửi lệnh mới trong khoảng thời gian này"
+        }
     },
     
     "RETEST": {
-        "RETEST_DISTANCE_MIN": 0,
-        "RETEST_DISTANCE_MAX": 200
+        "_description": "Chiến thuật Retest - Chờ giá retest EMA20 để vào lệnh",
+        "RETEST_DISTANCE_MIN": {
+            "value": 0,
+            "description": "Khoảng cách tối thiểu từ EMA20 (points). 0 = chạm hoặc gần chạm EMA20. 10 points = 1 pip"
+        },
+        "RETEST_DISTANCE_MAX": {
+            "value": 200,
+            "description": "Khoảng cách tối đa từ EMA20 (points). 200 points = 20 pips. Giá trong vùng 0-20 pips từ EMA20 sẽ được coi là retest"
+        }
     },
     
     "BREAKOUT": {
-        "ENABLE_BREAKOUT": false,
-        "BREAKOUT_DISTANCE_MIN": 100,
-        "BREAKOUT_DISTANCE_MAX": 200
+        "_description": "Chiến thuật Breakout - Vào lệnh khi giá phá vỡ (chỉ dùng khi điều kiện nghiêm ngặt)",
+        "ENABLE_BREAKOUT": {
+            "value": false,
+            "description": "Bật/tắt chiến thuật breakout. Mặc định tắt vì M1 nhiễu. Chỉ bật khi thị trường có xu hướng rất mạnh"
+        },
+        "BREAKOUT_DISTANCE_MIN": {
+            "value": 100,
+            "description": "Khoảng cách tối thiểu từ EMA20 để breakout (points). 100 points = 10 pips"
+        },
+        "BREAKOUT_DISTANCE_MAX": {
+            "value": 200,
+            "description": "Khoảng cách tối đa từ EMA20 để breakout (points). 200 points = 20 pips"
+        }
     },
     
     "SPREAD_FILTER": {
-        "ENABLE_SPREAD_FILTER": true,
-        "SPREAD_MAX_POINTS": 200
+        "_description": "Bộ lọc Spread - Tránh giao dịch khi spread quá lớn",
+        "ENABLE_SPREAD_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc spread. Nếu bật: Chỉ vào lệnh khi spread <= SPREAD_MAX_POINTS"
+        },
+        "SPREAD_MAX_POINTS": {
+            "value": 200,
+            "description": "Spread tối đa cho phép (points). 200 points = 20 pips. XAUUSD thông thường 2-5 pips (20-50 points)"
+        }
     },
     
     "MOMENTUM_FILTER": {
-        "ENABLE_MOMENTUM_FILTER": true,
-        "MOMENTUM_CANDLE_MAX_PIPS": 50
+        "_description": "Bộ lọc Momentum Candle - Tránh trade sau nến quá lớn",
+        "ENABLE_MOMENTUM_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc nến momentum. Nếu bật: Không trade sau nến > MOMENTUM_CANDLE_MAX_PIPS pips"
+        },
+        "MOMENTUM_CANDLE_MAX_PIPS": {
+            "value": 50,
+            "description": "Kích thước nến tối đa (pips). Nếu nến > 50 pips ($5), bot sẽ không trade ngay sau đó (chờ pullback)"
+        }
     },
     
     "BAD_CANDLE_FILTER": {
-        "ENABLE_BAD_CANDLE_FILTER": true,
-        "BAD_CANDLE_SHADOW_RATIO": 0.6
+        "_description": "Bộ lọc Bad Candle - Tránh trade nến xấu (Doji, Pin Bar, Spinning Top)",
+        "ENABLE_BAD_CANDLE_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc nến xấu. Nếu bật: Bot sẽ bỏ qua tín hiệu từ nến có bóng quá lớn hoặc Doji"
+        },
+        "BAD_CANDLE_SHADOW_RATIO": {
+            "value": 0.6,
+            "description": "Tỷ lệ bóng so với thân nến. 0.6 = 60%. Nếu bóng > 60% thân → bỏ tín hiệu"
+        }
     },
     
     "TIME_FILTER": {
-        "ENABLE_TIME_FILTER": false,
-        "TIME_FILTER_BUFFER_MINUTES": 15,
-        "IMPORTANT_NEWS_HOURS": [
-            [12, 30],
-            [18, 0],
-            [19, 0]
-        ]
+        "_description": "Bộ lọc thời gian - Tránh giao dịch trong giờ tin tức quan trọng",
+        "ENABLE_TIME_FILTER": {
+            "value": false,
+            "description": "Bật/tắt lọc giờ tin tức. Nếu bật: Bot sẽ không giao dịch trong vùng TIME_FILTER_BUFFER_MINUTES phút trước/sau tin tức"
+        },
+        "TIME_FILTER_BUFFER_MINUTES": {
+            "value": 15,
+            "description": "Vùng buffer tránh tin tức (phút). Bot sẽ không giao dịch 15 phút trước và sau giờ tin tức"
+        },
+        "IMPORTANT_NEWS_HOURS": {
+            "value": [
+                [12, 30],
+                [18, 0],
+                [19, 0]
+            ],
+            "description": "Danh sách giờ tin tức quan trọng (UTC): [hour, minute]. 12:30 = NFP/CPI, 18:00/19:00 = FOMC"
+        }
     },
     
     "VOLUME_CONFIRMATION": {
-        "ENABLE_VOLUME_CONFIRMATION": true,
-        "VOLUME_INCREASE_RATIO": 1.2
+        "_description": "Xác nhận Volume - Chỉ vào lệnh khi volume tăng",
+        "ENABLE_VOLUME_CONFIRMATION": {
+            "value": true,
+            "description": "Bật/tắt xác nhận volume. Nếu bật: Chỉ vào lệnh khi volume nến hiện tại tăng >= VOLUME_INCREASE_RATIO so với nến trước"
+        },
+        "VOLUME_INCREASE_RATIO": {
+            "value": 1.2,
+            "description": "Tỷ lệ tăng volume tối thiểu. 1.2 = 20%. Volume nến hiện tại phải >= 1.2x volume nến trước"
+        }
     },
     
     "RSI_FILTER": {
-        "ENABLE_RSI_FILTER": true
+        "_description": "Bộ lọc RSI - Tránh quá mua/quá bán",
+        "ENABLE_RSI_FILTER": {
+            "value": true,
+            "description": "Bật/tắt lọc RSI. Nếu bật: Không BUY khi RSI > 70 (quá mua), không SELL khi RSI < 30 (quá bán)"
+        }
     }
 }
