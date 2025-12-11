@@ -33,7 +33,13 @@ def strategy_5_logic(config, error_count=0):
     
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
-    if df is None: return error_count
+    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200) # For Trend Filter
+    
+    if df is None or df_m5 is None: return error_count
+
+    # Trend Filter (M5 EMA 200)
+    df_m5['ema200'] = df_m5['close'].rolling(window=200).mean()
+    m5_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
 
     # Donchian Channel 20 (Breakout)
     df['upper'] = df['high'].rolling(window=20).max().shift(1) # Previous 20 highs
@@ -56,31 +62,43 @@ def strategy_5_logic(config, error_count=0):
     
     buffer = 50 * mt5.symbol_info(symbol).point # 0.5 pips / 50 points
     
-    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | RSI: {last['rsi']:.1f}")
+    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f}")
     
     if last['close'] > (last['upper'] + buffer):
-        if last['rsi'] > 50:
-            signal = "BUY"
-            print("   ✅ Valid Breakout BUY")
+        if m5_trend == "BULLISH":
+            if last['rsi'] > 50:
+                signal = "BUY"
+                print("   ✅ Valid Breakout BUY")
+            else:
+                print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
         else:
-            print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
+             print(f"   ❌ Filtered: Breakout BUY but M5 Trend is BEARISH")
+             
     elif last['close'] < (last['lower'] - buffer):
-        if last['rsi'] < 50:
-            signal = "SELL"
-            print("   ✅ Valid Breakout SELL")
+        if m5_trend == "BEARISH":
+            if last['rsi'] < 50:
+                signal = "SELL"
+                print("   ✅ Valid Breakout SELL")
+            else:
+                print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
         else:
-            print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
+            print(f"   ❌ Filtered: Breakout SELL but M5 Trend is BULLISH")
         
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
-        if strat_positions:
-            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            last_trade_time = strat_positions[0].time
-            current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count
+        # --- SPAM FILTER & COOLDOWN ---
+        # 1. 5-Minute Cooldown logic
+        history = mt5.history_deals_get(position_id=0) # Get all deals? No, need specific history lookup
+        # Better: check last closed time from DB or MT5 history for this magic.
+        # Simple method: Check if we have traded recently within this session (approx) 
+        # OR just use the last_trade_time from helper if we kept state, but we don't.
+        # Let's rely on standard Last Trade check but increase time to 300s (5 mins)
+        
+        deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
+        if deals:
+             my_deals = [d for d in deals if d.magic == magic]
+             if my_deals:
+                 print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
+                 return error_count
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
@@ -93,30 +111,25 @@ def strategy_5_logic(config, error_count=0):
         tp = 0.0 # Strat 5 might want open TP for trailing, but lets set one if requested.
         
         if sl_mode == 'auto_m5':
-            df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10)
-            if df_m5 is not None:
-                prev_m5_high = df_m5.iloc[-2]['high']
-                prev_m5_low = df_m5.iloc[-2]['low']
-                buffer = 20 * mt5.symbol_info(symbol).point
+            # Use fetched M5 data
+            prev_m5_high = df_m5.iloc[-2]['high']
+            prev_m5_low = df_m5.iloc[-2]['low']
+            buffer_sl = 20 * mt5.symbol_info(symbol).point
+            
+            if signal == "BUY":
+                sl = prev_m5_low - buffer_sl
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (price - sl) < min_dist: sl = price - min_dist
+                risk_dist = price - sl
+                tp = price + (risk_dist * reward_ratio)
                 
-                if signal == "BUY":
-                    sl = prev_m5_low - buffer
-                    min_dist = 100 * mt5.symbol_info(symbol).point
-                    if (price - sl) < min_dist: sl = price - min_dist
-                    risk_dist = price - sl
-                    tp = price + (risk_dist * reward_ratio)
-                    
-                elif signal == "SELL":
-                    sl = prev_m5_high + buffer
-                    min_dist = 100 * mt5.symbol_info(symbol).point
-                    if (sl - price) < min_dist: sl = price + min_dist
-                    risk_dist = sl - price
-                    tp = price - (risk_dist * reward_ratio)
-                print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
-            else:
-                 sl = price - 2.0 if signal == "BUY" else price + 2.0
-                 tp = price + 5.0 if signal == "BUY" else price - 5.0
-
+            elif signal == "SELL":
+                sl = prev_m5_high + buffer_sl
+                min_dist = 100 * mt5.symbol_info(symbol).point
+                if (sl - price) < min_dist: sl = price + min_dist
+                risk_dist = sl - price
+                tp = price - (risk_dist * reward_ratio)
+            print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
         else:
              # Default Strat 5 SL (Tight or recent swing)
              sl = price - 2.0 if signal == "BUY" else price + 2.0
@@ -125,7 +138,7 @@ def strategy_5_logic(config, error_count=0):
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
-        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": float(last['rsi'])}, account_id=config['account'])
+        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": float(last['rsi']), "trend": m5_trend}, account_id=config['account'])
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

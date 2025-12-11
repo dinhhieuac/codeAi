@@ -30,10 +30,15 @@ def strategy_2_logic(config, error_count=0):
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
-    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10) # Added for Auto M5 SL
-    if df is None or df_m5 is None: return error_count
+    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 100) # H1 Trend Filter
+    
+    if df is None or df_h1 is None: return error_count
 
-    # 2. Indicators
+    # H1 Trend
+    df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
+    h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
+
+    # 2. Indicators (M1)
     # EMA 14 and 28
     df['ema14'] = df['close'].ewm(span=14, adjust=False).mean()
     df['ema28'] = df['close'].ewm(span=28, adjust=False).mean()
@@ -58,32 +63,39 @@ def strategy_2_logic(config, error_count=0):
     last = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # 3. Logic: Crossover + RSI Filter
+    # 3. Logic: Crossover + RSI Filter + H1 Trend
     signal = None
     
-    print(f"📊 [Strat 2 Analysis] EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | ATR: {last['atr']:.3f} | RSI: {last['rsi']:.1f}")
+    print(f"📊 [Strat 2 Analysis] H1 Trend: {h1_trend} | EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | RSI: {last['rsi']:.1f}")
     
-    # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50
+    # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50 AND H1 Bullish
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
-        # Extension Check
-        if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-            print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-        elif last['rsi'] > 50:
-            signal = "BUY"
-            print("   ✅ Crossover: EMA 14 > EMA 28 AND RSI > 50 (Strong Uptrend)")
+        if h1_trend == "BULLISH":
+            # Extension Check
+            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
+                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+            elif last['rsi'] > 50:
+                signal = "BUY"
+                print("   ✅ Crossover: EMA 14 > EMA 28 (Bullish)")
+            else:
+                print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= 50")
         else:
-            print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= 50")
+             print(f"   ❌ Filtered: Crossover BUY but H1 Trend is BEARISH")
         
-    # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50
+    # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50 AND H1 Bearish
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
-        # Extension Check
-        if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-             print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-        elif last['rsi'] < 50:
-            signal = "SELL"
-            print("   ✅ Crossover: EMA 14 < EMA 28 AND RSI < 50 (Strong Downtrend)")
+        if h1_trend == "BEARISH":
+            # Extension Check
+            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
+                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+            elif last['rsi'] < 50:
+                signal = "SELL"
+                print("   ✅ Crossover: EMA 14 < EMA 28 (Bearish)")
+            else:
+                print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= 50")
         else:
-             print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= 50")
+             print(f"   ❌ Filtered: Crossover SELL but H1 Trend is BULLISH")
+
     else:
         diff = last['ema14'] - last['ema28']
         if diff > 0:
@@ -94,18 +106,13 @@ def strategy_2_logic(config, error_count=0):
     # 4. Execute
     if signal:
         # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        # Get all open positions for this specific strategy
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
-        if strat_positions:
-            # Sort by open time descending (newest first)
-            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            last_trade_time = strat_positions[0].time
-            current_server_time = mt5.symbol_info_tick(symbol).time
-            
-            # If last trade was less than 60 seconds ago, SKIP
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count
+        # Get all deals from history to check Cooldown
+        deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
+        if deals:
+             my_deals = [d for d in deals if d.magic == magic]
+             if my_deals:
+                 print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
+                 return error_count
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         

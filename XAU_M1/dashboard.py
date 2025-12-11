@@ -38,6 +38,45 @@ def index():
     cur.execute("SELECT * FROM signals ORDER BY timestamp DESC LIMIT 50")
     signals = cur.fetchall()
 
+    # --- ADVANCED STATS PER STRATEGY ---
+    cur.execute("SELECT DISTINCT strategy_name FROM orders")
+    strategies = [row['strategy_name'] for row in cur.fetchall()]
+    
+    bot_stats = []
+    
+    for strat in strategies:
+        # Get trades for this strategy
+        s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
+        
+        s_total = len(s_orders)
+        if s_total == 0: continue
+        
+        s_wins = [o for o in s_orders if o['profit'] > 0]
+        s_losses = [o for o in s_orders if o['profit'] < 0]
+        
+        s_gross_profit = sum([o['profit'] for o in s_wins])
+        s_gross_loss = abs(sum([o['profit'] for o in s_losses]))
+        s_net_profit = sum([o['profit'] for o in s_orders])
+        
+        s_avg_win = (s_gross_profit / len(s_wins)) if s_wins else 0.0
+        s_avg_loss = (s_gross_loss / len(s_losses)) if s_losses else 0.0 # Positive number for display
+        
+        pf = (s_gross_profit / s_gross_loss) if s_gross_loss > 0 else 99.9
+        win_rate = (len(s_wins) / s_total) * 100
+        
+        bot_stats.append({
+            "name": strat.replace("Strategy_", "").replace("_", " "),
+            "trades": s_total,
+            "win_rate": win_rate,
+            "pf": pf,
+            "avg_win": s_avg_win,
+            "avg_loss": -s_avg_loss, # Make negative for display
+            "net_profit": s_net_profit
+        })
+        
+    # Sort by Net Profit
+    bot_stats = sorted(bot_stats, key=lambda x: x['net_profit'], reverse=True)
+
     return render_template('index.html', 
                            orders=orders, 
                            signals=signals, 
@@ -45,7 +84,8 @@ def index():
                            total_profit=total_profit,
                            win_rate=win_rate,
                            wins=wins,
-                           losses=losses)
+                           losses=losses,
+                           bot_stats=bot_stats)
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5000")

@@ -118,15 +118,13 @@ def strategy_4_logic(config, error_count=0):
             
     # 4. Execute
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
-        if strat_positions:
-            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            last_trade_time = strat_positions[0].time
-            current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count
+        # --- SPAM FILTER: Check Cooldown (5 Mins) ---
+        deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
+        if deals:
+             my_deals = [d for d in deals if d.magic == magic]
+             if my_deals:
+                 print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
+                 return error_count
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         

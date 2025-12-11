@@ -1,4 +1,5 @@
 import sqlite3
+import pandas as pd
 import os
 
 # Connect to DB
@@ -32,23 +33,36 @@ try:
         print("No closed trades found.")
     else:
         # Header
-        print(f"{'Strategy':<25} | {'Trades':<6} | {'Win%':<6} | {'PnL ($)':<10}")
-        print("-" * 60)
+        print(f"{'Strategy':<25} | {'Trades':<6} | {'Win%':<6} | {'PF':<5} | {'Avg Win':<8} | {'Avg Loss':<8} | {'PnL ($)':<10}")
+        print("-" * 100)
         
         for row in rows:
             strategy_raw, total, wins, losses, profit = row
             
-            # Handle potential None values
+            # Additional Queries for Advanced Stats
+            cursor.execute("SELECT AVG(profit) FROM orders WHERE strategy_name=? AND profit > 0", (strategy_raw,))
+            avg_win = cursor.fetchone()[0] or 0.0
+            
+            cursor.execute("SELECT AVG(profit) FROM orders WHERE strategy_name=? AND profit < 0", (strategy_raw,))
+            avg_loss = cursor.fetchone()[0] or 0.0 # Will be negative
+            
+            cursor.execute("SELECT SUM(profit) FROM orders WHERE strategy_name=? AND profit > 0", (strategy_raw,))
+            gross_profit = cursor.fetchone()[0] or 0.0
+            
+            cursor.execute("SELECT SUM(profit) FROM orders WHERE strategy_name=? AND profit < 0", (strategy_raw,))
+            gross_loss = abs(cursor.fetchone()[0] or 0.0)
+            
+            # Metrics
             total = total or 0
             wins = wins or 0
             profit = profit or 0.0
-            
             win_rate = (wins / total * 100) if total > 0 else 0
+            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 99.9 # Infinite
             
             name = strategy_raw.replace("Strategy_", "").replace("_", " ")
             name = (name[:22] + '..') if len(name) > 22 else name
             
-            print(f"{name:<25} | {total:<6} | {win_rate:5.1f}% | ${profit:<9.2f}")
+            print(f"{name:<25} | {total:<6} | {win_rate:5.1f}% | {profit_factor:<5.2f} | ${avg_win:<7.2f} | ${avg_loss:<7.2f} | ${profit:<9.2f}")
             
     print("==================================================\n")
 
