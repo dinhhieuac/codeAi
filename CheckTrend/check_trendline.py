@@ -832,12 +832,22 @@ def send_telegram(message, max_retries=3):
     
     return success_count == len(message_parts)
 
+def escape_html(text):
+    """Escape các ký tự đặc biệt trong HTML"""
+    if text is None:
+        return ""
+    text = str(text)
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    return text
+
 def format_telegram_message(symbol, analysis):
     """Định dạng tin nhắn Telegram"""
     if analysis is None:
         return f"❌ {symbol}: Không lấy được dữ liệu"
     
-    msg = f"<b>📊 TRENDLINE ANALYSIS - {symbol}</b>\n"
+    msg = f"<b>📊 TRENDLINE ANALYSIS - {escape_html(symbol)}</b>\n"
     msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     msg += "=" * 50 + "\n\n"
     
@@ -854,7 +864,7 @@ def format_telegram_message(symbol, analysis):
         temp_df = pd.DataFrame({'close': [analysis['current_price']]})
         is_broken, break_msg = check_trendline_break(temp_df, tl, 0.001)
         if is_broken:
-            msg += f"⚠️ {break_msg}\n"
+            msg += f"⚠️ {escape_html(break_msg)}\n"
     else:
         msg += "⚠️ Không tìm thấy trendline rõ ràng\n"
     msg += "\n"
@@ -864,7 +874,7 @@ def format_telegram_message(symbol, analysis):
     if analysis['patterns']:
         for pattern in analysis['patterns']:
             signal_emoji = "🟢" if pattern['signal'] == 'BULLISH' else "🔴"
-            msg += f"{signal_emoji} {pattern['type']} ({pattern['pattern']}) - {pattern['signal']}\n"
+            msg += f"{signal_emoji} {escape_html(pattern['type'])} ({escape_html(pattern['pattern'])}) - {escape_html(pattern['signal'])}\n"
     else:
         msg += "⚠️ Không phát hiện mô hình rõ ràng\n"
     msg += "\n"
@@ -874,13 +884,16 @@ def format_telegram_message(symbol, analysis):
     if analysis['fib_levels']:
         fib = analysis['fib_levels']
         closest_level, distance = find_current_fib_level(analysis['current_price'], fib)
-        msg += f"📍 Level gần nhất: {closest_level}\n"
+        if closest_level:
+            msg += f"📍 Level gần nhất: {escape_html(closest_level)}\n"
         msg += f"💰 Entry levels (0.382-0.618):\n"
         for level in ['0.382', '0.5', '0.618']:
-            msg += f"   • {level}: {fib[level]:.5f}\n"
+            if level in fib:
+                msg += f"   • {escape_html(level)}: {fib[level]:.5f}\n"
         msg += f"🎯 TP levels:\n"
         for level in ['1.0', '1.272', '1.618']:
-            msg += f"   • {level}: {fib[level]:.5f}\n"
+            if level in fib:
+                msg += f"   • {escape_html(level)}: {fib[level]:.5f}\n"
     else:
         msg += "⚠️ Không tính được Fibonacci\n"
     msg += "\n"
@@ -905,21 +918,21 @@ def format_telegram_message(symbol, analysis):
     signal_emoji = "🟢" if decision['signal'] == 'BUY' else "🔴" if decision['signal'] == 'SELL' else "🟡"
     confidence_emoji = "💪" if decision['confidence'] == 'HIGH' else "⚡" if decision['confidence'] == 'MEDIUM' else "💤"
     
-    msg += f"{signal_emoji} <b>Signal: {decision['signal']}</b> {confidence_emoji} ({decision['confidence']})\n\n"
+    msg += f"{signal_emoji} <b>Signal: {escape_html(decision['signal'])}</b> {confidence_emoji} ({escape_html(decision['confidence'])})\n\n"
     
     msg += "<b>Lý do:</b>\n"
     for reason in decision['reasons']:
-        msg += f"• {reason}\n"
+        msg += f"• {escape_html(reason)}\n"
     
     if decision['entry_levels']:
         msg += "\n<b>💰 Entry Levels:</b>\n"
         for level in decision['entry_levels']:
-            msg += f"• {level}\n"
+            msg += f"• {escape_html(level)}\n"
     
     if decision['tp_levels']:
         msg += "\n<b>🎯 Take Profit Levels:</b>\n"
         for level in decision['tp_levels'][:3]:
-            msg += f"• {level}\n"
+            msg += f"• {escape_html(level)}\n"
     
     return msg
 
