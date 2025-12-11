@@ -259,6 +259,136 @@ def check_false_break(df, support_resistance_level):
     
     return False, "Không có false break"
 
+def detect_rsi_divergence(df, rsi, lookback=30):
+    """Phát hiện RSI Divergence (Bullish/Bearish)"""
+    if len(df) < lookback or len(rsi) < lookback:
+        return None, "Không đủ dữ liệu"
+    
+    recent_df = df.iloc[-lookback:]
+    recent_rsi = rsi.iloc[-lookback:]
+    
+    # Tìm 2 đỉnh gần nhất trong giá
+    peaks = []
+    for i in range(2, len(recent_df) - 2):
+        if (recent_df.iloc[i]['high'] > recent_df.iloc[i-1]['high'] and 
+            recent_df.iloc[i]['high'] > recent_df.iloc[i+1]['high']):
+            peaks.append((i, recent_df.iloc[i]['high'], recent_rsi.iloc[i]))
+    
+    # Tìm 2 đáy gần nhất trong giá
+    troughs = []
+    for i in range(2, len(recent_df) - 2):
+        if (recent_df.iloc[i]['low'] < recent_df.iloc[i-1]['low'] and 
+            recent_df.iloc[i]['low'] < recent_df.iloc[i+1]['low']):
+            troughs.append((i, recent_df.iloc[i]['low'], recent_rsi.iloc[i]))
+    
+    # Kiểm tra Bearish Divergence (giá tạo higher high, RSI tạo lower high)
+    if len(peaks) >= 2:
+        last_peak_idx, last_peak_price, last_peak_rsi = peaks[-1]
+        prev_peak_idx, prev_peak_price, prev_peak_rsi = peaks[-2]
+        
+        if (last_peak_price > prev_peak_price and last_peak_rsi < prev_peak_rsi):
+            return "BEARISH", f"Bearish Divergence: Giá tạo HH ({prev_peak_price:.5f} → {last_peak_price:.5f}), RSI tạo LH ({prev_peak_rsi:.2f} → {last_peak_rsi:.2f})"
+    
+    # Kiểm tra Bullish Divergence (giá tạo lower low, RSI tạo higher low)
+    if len(troughs) >= 2:
+        last_trough_idx, last_trough_price, last_trough_rsi = troughs[-1]
+        prev_trough_idx, prev_trough_price, prev_trough_rsi = troughs[-2]
+        
+        if (last_trough_price < prev_trough_price and last_trough_rsi > prev_trough_rsi):
+            return "BULLISH", f"Bullish Divergence: Giá tạo LL ({prev_trough_price:.5f} → {last_trough_price:.5f}), RSI tạo HL ({prev_trough_rsi:.2f} → {last_trough_rsi:.2f})"
+    
+    return None, "Không có divergence"
+
+def detect_pinbar(df, lookback=10):
+    """Phát hiện Pinbar (rejection candle)"""
+    if len(df) < lookback:
+        lookback = len(df)
+    
+    recent_df = df.iloc[-lookback:]
+    pinbars = []
+    
+    for i in range(len(recent_df)):
+        candle = recent_df.iloc[i]
+        body = abs(candle['close'] - candle['open'])
+        total_range = candle['high'] - candle['low']
+        
+        if total_range == 0:
+            continue
+        
+        body_ratio = body / total_range
+        
+        # Pinbar: body nhỏ (< 30% range), bóng dài (> 60% range)
+        upper_shadow = candle['high'] - max(candle['open'], candle['close'])
+        lower_shadow = min(candle['open'], candle['close']) - candle['low']
+        upper_shadow_ratio = upper_shadow / total_range if total_range > 0 else 0
+        lower_shadow_ratio = lower_shadow / total_range if total_range > 0 else 0
+        
+        # Bullish Pinbar: bóng dưới dài (> 60%), body nhỏ
+        if body_ratio < 0.3 and lower_shadow_ratio > 0.6:
+            pinbars.append({
+                'index': i,
+                'type': 'BULLISH',
+                'price': candle['close'],
+                'body_ratio': body_ratio,
+                'shadow_ratio': lower_shadow_ratio
+            })
+        
+        # Bearish Pinbar: bóng trên dài (> 60%), body nhỏ
+        elif body_ratio < 0.3 and upper_shadow_ratio > 0.6:
+            pinbars.append({
+                'index': i,
+                'type': 'BEARISH',
+                'price': candle['close'],
+                'body_ratio': body_ratio,
+                'shadow_ratio': upper_shadow_ratio
+            })
+    
+    # Trả về pinbar gần nhất
+    if pinbars:
+        return pinbars[-1], f"Phát hiện {pinbars[-1]['type']} Pinbar (body: {pinbars[-1]['body_ratio']:.1%}, shadow: {pinbars[-1]['shadow_ratio']:.1%})"
+    
+    return None, "Không có pinbar"
+
+def detect_engulfing(df, lookback=10):
+    """Phát hiện Engulfing Pattern (Bullish/Bearish)"""
+    if len(df) < 2:
+        return None, "Không đủ dữ liệu"
+    
+    recent_df = df.iloc[-lookback:] if len(df) >= lookback else df
+    
+    for i in range(1, len(recent_df)):
+        prev_candle = recent_df.iloc[i-1]
+        curr_candle = recent_df.iloc[i]
+        
+        prev_body = abs(prev_candle['close'] - prev_candle['open'])
+        curr_body = abs(curr_candle['close'] - curr_candle['open'])
+        
+        # Bullish Engulfing: nến trước bearish, nến sau bullish và nhấn chìm nến trước
+        if (prev_candle['close'] < prev_candle['open'] and  # Nến trước bearish
+            curr_candle['close'] > curr_candle['open'] and  # Nến sau bullish
+            curr_candle['open'] < prev_candle['close'] and  # Open nến sau < close nến trước
+            curr_candle['close'] > prev_candle['open'] and  # Close nến sau > open nến trước
+            curr_body > prev_body * 1.1):  # Body nến sau lớn hơn 10%
+            return {
+                'index': i,
+                'type': 'BULLISH',
+                'price': curr_candle['close']
+            }, f"Bullish Engulfing: Nến xanh nhấn chìm nến đỏ trước đó"
+        
+        # Bearish Engulfing: nến trước bullish, nến sau bearish và nhấn chìm nến trước
+        elif (prev_candle['close'] > prev_candle['open'] and  # Nến trước bullish
+              curr_candle['close'] < curr_candle['open'] and  # Nến sau bearish
+              curr_candle['open'] > prev_candle['close'] and  # Open nến sau > close nến trước
+              curr_candle['close'] < prev_candle['open'] and  # Close nến sau < open nến trước
+              curr_body > prev_body * 1.1):  # Body nến sau lớn hơn 10%
+            return {
+                'index': i,
+                'type': 'BEARISH',
+                'price': curr_candle['close']
+            }, f"Bearish Engulfing: Nến đỏ nhấn chìm nến xanh trước đó"
+    
+    return None, "Không có engulfing pattern"
+
 # ==============================================================================
 # 4. PHÂN TÍCH XU HƯỚNG THEO KHUNG THỜI GIAN
 # ==============================================================================
@@ -336,6 +466,33 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
     # Kiểm tra ATR breakout
     atr_breakout, atr_msg = check_atr_breakout(df, atr)
     
+    # Phát hiện RSI Divergence (chỉ cho H1)
+    rsi_divergence = None
+    rsi_divergence_msg = None
+    if timeframe_name == "H1":
+        rsi_div_type, rsi_div_msg = detect_rsi_divergence(df, rsi, lookback=30)
+        if rsi_div_type:
+            rsi_divergence = rsi_div_type
+            rsi_divergence_msg = rsi_div_msg
+    
+    # Phát hiện Pinbar (chỉ cho M15)
+    pinbar = None
+    pinbar_msg = None
+    if timeframe_name == "M15":
+        pinbar_data, pinbar_msg = detect_pinbar(df, lookback=10)
+        if pinbar_data:
+            pinbar = pinbar_data
+            pinbar_msg = pinbar_msg
+    
+    # Phát hiện Engulfing (chỉ cho M15)
+    engulfing = None
+    engulfing_msg = None
+    if timeframe_name == "M15":
+        engulfing_data, engulfing_msg = detect_engulfing(df, lookback=10)
+        if engulfing_data:
+            engulfing = engulfing_data
+            engulfing_msg = engulfing_msg
+    
     # Tính point để chuyển đổi ATR sang pips
     symbol_info = mt5.symbol_info(symbol)
     point = symbol_info.point if symbol_info else 0.001
@@ -367,6 +524,12 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
         'volume_msg': volume_msg,
         'atr_breakout': atr_breakout,
         'atr_msg': atr_msg,
+        'rsi_divergence': rsi_divergence,
+        'rsi_divergence_msg': rsi_divergence_msg,
+        'pinbar': pinbar,
+        'pinbar_msg': pinbar_msg,
+        'engulfing': engulfing,
+        'engulfing_msg': engulfing_msg,
         'peaks': peaks,
         'troughs': troughs,
         'df': df,  # Lưu dataframe để tính toán điểm vào
@@ -377,63 +540,117 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
 # 5. TÍNH TOÁN ĐIỂM VÀO CỤ THỂ
 # ==============================================================================
 
-def find_supply_demand_zones(df, lookback=50):
-    """Tìm vùng supply (kháng cự) và demand (hỗ trợ) trên H4"""
+def find_supply_demand_zones(df, lookback=100):
+    """Tìm vùng supply (kháng cự) và demand (hỗ trợ) trên H4 - Cải thiện với reaction và freshness"""
     supply_zones = []  # Vùng kháng cự (cho SELL)
     demand_zones = []  # Vùng hỗ trợ (cho BUY)
     
     if len(df) < lookback:
         lookback = len(df)
     
-    recent_data = df.iloc[-lookback:]
+    recent_data = df.iloc[-lookback:].copy()
+    recent_data = recent_data.reset_index(drop=True)
     
-    # Tìm các vùng supply (đỉnh với volume cao)
-    for i in range(5, len(recent_data) - 5):
-        # Kiểm tra đỉnh
+    # Tính ATR để filter peaks/troughs nhỏ
+    atr = calculate_atr(df, 14)
+    atr_value = atr.iloc[-1] if not pd.isna(atr.iloc[-1]) else 0
+    min_zone_size = atr_value * 0.5  # Zone phải lớn hơn 0.5 ATR
+    
+    # Tìm các vùng supply (đỉnh với volume cao và có reaction)
+    for i in range(7, len(recent_data) - 7):
+        # Kiểm tra đỉnh (so sánh với nhiều nến hơn)
         is_peak = True
-        for j in range(i-3, i+4):
-            if j != i and recent_data.iloc[j]['high'] >= recent_data.iloc[i]['high']:
-                is_peak = False
-                break
+        for j in range(i-5, i+6):
+            if j != i and j >= 0 and j < len(recent_data):
+                if recent_data.iloc[j]['high'] >= recent_data.iloc[i]['high']:
+                    is_peak = False
+                    break
         
         if is_peak:
             high_price = recent_data.iloc[i]['high']
+            low_price = recent_data.iloc[i]['low']
+            zone_size = high_price - low_price
+            
+            # Filter theo kích thước zone
+            if zone_size < min_zone_size:
+                continue
+            
             volume = recent_data.iloc[i]['tick_volume']
-            # Supply zone: đỉnh với volume cao
             avg_volume = recent_data['tick_volume'].mean()
+            
+            # Supply zone: đỉnh với volume cao
             if volume > avg_volume * 1.2:
+                # Kiểm tra reaction: giá có quay lại test vùng này không (trong 20 nến sau)
+                reaction_count = 0
+                for j in range(i+1, min(i+21, len(recent_data))):
+                    if recent_data.iloc[j]['high'] >= high_price * 0.999 and recent_data.iloc[j]['high'] <= high_price * 1.001:
+                        reaction_count += 1
+                
+                # Tính freshness: số nến từ zone đến hiện tại
+                freshness = len(recent_data) - i
+                
                 supply_zones.append({
                     'price': high_price,
+                    'zone_low': low_price,
+                    'zone_size': zone_size,
                     'volume': volume,
-                    'index': i
+                    'volume_ratio': volume / avg_volume if avg_volume > 0 else 0,
+                    'index': i,
+                    'reaction_count': reaction_count,
+                    'freshness': freshness,  # Càng nhỏ càng fresh
+                    'is_fresh': freshness < 30  # Fresh nếu < 30 nến
                 })
     
-    # Tìm các vùng demand (đáy với volume cao)
-    for i in range(5, len(recent_data) - 5):
-        # Kiểm tra đáy
+    # Tìm các vùng demand (đáy với volume cao và có reaction)
+    for i in range(7, len(recent_data) - 7):
+        # Kiểm tra đáy (so sánh với nhiều nến hơn)
         is_trough = True
-        for j in range(i-3, i+4):
-            if j != i and recent_data.iloc[j]['low'] <= recent_data.iloc[i]['low']:
-                is_trough = False
-                break
+        for j in range(i-5, i+6):
+            if j != i and j >= 0 and j < len(recent_data):
+                if recent_data.iloc[j]['low'] <= recent_data.iloc[i]['low']:
+                    is_trough = False
+                    break
         
         if is_trough:
             low_price = recent_data.iloc[i]['low']
+            high_price = recent_data.iloc[i]['high']
+            zone_size = high_price - low_price
+            
+            # Filter theo kích thước zone
+            if zone_size < min_zone_size:
+                continue
+            
             volume = recent_data.iloc[i]['tick_volume']
-            # Demand zone: đáy với volume cao
             avg_volume = recent_data['tick_volume'].mean()
+            
+            # Demand zone: đáy với volume cao
             if volume > avg_volume * 1.2:
+                # Kiểm tra reaction: giá có quay lại test vùng này không (trong 20 nến sau)
+                reaction_count = 0
+                for j in range(i+1, min(i+21, len(recent_data))):
+                    if recent_data.iloc[j]['low'] <= low_price * 1.001 and recent_data.iloc[j]['low'] >= low_price * 0.999:
+                        reaction_count += 1
+                
+                # Tính freshness: số nến từ zone đến hiện tại
+                freshness = len(recent_data) - i
+                
                 demand_zones.append({
                     'price': low_price,
+                    'zone_high': high_price,
+                    'zone_size': zone_size,
                     'volume': volume,
-                    'index': i
+                    'volume_ratio': volume / avg_volume if avg_volume > 0 else 0,
+                    'index': i,
+                    'reaction_count': reaction_count,
+                    'freshness': freshness,  # Càng nhỏ càng fresh
+                    'is_fresh': freshness < 30  # Fresh nếu < 30 nến
                 })
     
-    # Sắp xếp và lấy vùng gần nhất
-    supply_zones.sort(key=lambda x: x['index'], reverse=True)
-    demand_zones.sort(key=lambda x: x['index'], reverse=True)
+    # Sắp xếp: ưu tiên fresh zones, sau đó là reaction count, cuối cùng là gần nhất
+    supply_zones.sort(key=lambda x: (x['is_fresh'], x['reaction_count'], -x['index']), reverse=True)
+    demand_zones.sort(key=lambda x: (x['is_fresh'], x['reaction_count'], -x['index']), reverse=True)
     
-    return supply_zones[:3], demand_zones[:3]  # Trả về 3 vùng gần nhất
+    return supply_zones[:5], demand_zones[:5]  # Trả về 5 vùng tốt nhất
 
 def calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
     """Tính toán điểm vào cụ thể dựa trên phân tích"""
@@ -515,7 +732,8 @@ def calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
                 'current_price': current_price,
                 'distance_atr': distance_atr,
                 'distance_pips': analysis_h4.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0,
-                'zone_volume': nearest_supply['volume']
+                'zone_volume': nearest_supply['volume'],
+                'zone_info': nearest_supply  # Thêm thông tin zone đầy đủ
             })
         elif analysis_h4['trend'] == 'BULLISH' and demand_zones:
             # BUY: Vùng demand gần nhất
@@ -532,7 +750,8 @@ def calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
                 'current_price': current_price,
                 'distance_atr': distance_atr,
                 'distance_pips': analysis_h4.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0,
-                'zone_volume': nearest_demand['volume']
+                'zone_volume': nearest_demand['volume'],
+                'zone_info': nearest_demand  # Thêm thông tin zone đầy đủ
             })
     
     # H1: Retest vùng hỗ trợ/kháng cự (dựa trên peaks/troughs)
@@ -580,6 +799,36 @@ def calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
 # 6. GỢI Ý ĐIỂM VÀO LỆNH
 # ==============================================================================
 
+def check_false_break_at_entry(df, entry_price, symbol, tolerance_pips=5):
+    """Kiểm tra false break tại vùng entry price"""
+    if len(df) < 5:
+        return False, None
+    
+    # Chuyển đổi tolerance sang points
+    symbol_info = mt5.symbol_info(symbol) if symbol else None
+    point = symbol_info.point if symbol_info else 0.001
+    tolerance = tolerance_pips * point * 10
+    
+    recent_df = df.iloc[-10:]  # Kiểm tra 10 nến gần nhất
+    
+    for i in range(len(recent_df) - 1):
+        prev_candle = recent_df.iloc[i]
+        curr_candle = recent_df.iloc[i+1]
+        
+        # Kiểm tra false break lên (phá vỡ lên nhưng đóng nến xuống)
+        if (prev_candle['high'] > entry_price - tolerance and 
+            prev_candle['high'] < entry_price + tolerance and
+            curr_candle['close'] < entry_price - tolerance):
+            return True, f"⚠️ False break phát hiện gần entry ({entry_price:.5f}): Giá phá vỡ lên nhưng đóng nến xuống"
+        
+        # Kiểm tra false break xuống (phá vỡ xuống nhưng đóng nến lên)
+        if (prev_candle['low'] < entry_price + tolerance and 
+            prev_candle['low'] > entry_price - tolerance and
+            curr_candle['close'] > entry_price + tolerance):
+            return True, f"⚠️ False break phát hiện gần entry ({entry_price:.5f}): Giá phá vỡ xuống nhưng đóng nến lên"
+    
+    return False, None
+
 def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
     """Gợi ý điểm vào lệnh dựa trên phân tích đa khung thời gian với điểm vào cụ thể"""
     suggestions = []
@@ -588,46 +837,120 @@ def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
     # Multi-timeframe confluence: H1 cùng hướng, M15 cho điểm entry
     if analysis_h1 and analysis_m15:
         if analysis_h1['trend'] == 'BULLISH' and analysis_m15['trend'] == 'BULLISH':
-            suggestions.append({
-                'text': "✅ BUY Signal: H1 & M15 đều BULLISH - Có thể vào lệnh BUY",
-                'entry': None
-            })
+            # Kiểm tra RSI Divergence
+            if analysis_h1.get('rsi_divergence') == 'BEARISH':
+                suggestions.append({
+                    'text': "⚠️ BUY Signal nhưng có Bearish RSI Divergence - Cẩn thận, có thể vào đỉnh",
+                    'entry': None
+                })
+            else:
+                suggestions.append({
+                    'text': "✅ BUY Signal: H1 & M15 đều BULLISH - Có thể vào lệnh BUY",
+                    'entry': None
+                })
         elif analysis_h1['trend'] == 'BEARISH' and analysis_m15['trend'] == 'BEARISH':
-            suggestions.append({
-                'text': "✅ SELL Signal: H1 & M15 đều BEARISH - Có thể vào lệnh SELL",
-                'entry': None
-            })
+            # Kiểm tra RSI Divergence
+            if analysis_h1.get('rsi_divergence') == 'BULLISH':
+                suggestions.append({
+                    'text': "⚠️ SELL Signal nhưng có Bullish RSI Divergence - Cẩn thận, có thể vào đáy",
+                    'entry': None
+                })
+            else:
+                suggestions.append({
+                    'text': "✅ SELL Signal: H1 & M15 đều BEARISH - Có thể vào lệnh SELL",
+                    'entry': None
+                })
         elif analysis_h1['trend'] != analysis_m15['trend']:
             suggestions.append({
                 'text': "⚠️ Không có confluence: H1 và M15 khác hướng - Tránh giao dịch",
                 'entry': None
             })
     
-    # M15: Pullback về EMA20/EMA50
+    # M15: Pullback về EMA20/EMA50 + Pinbar/Engulfing
     if analysis_m15:
         m15_entry = [e for e in entry_details if e['timeframe'] == 'M15']
+        
+        # Kiểm tra Pinbar và Engulfing
+        pinbar_info = ""
+        if analysis_m15.get('pinbar'):
+            pinbar = analysis_m15['pinbar']
+            if pinbar['type'] == 'BULLISH' and analysis_m15['trend'] == 'BULLISH':
+                pinbar_info = f" | 🕯️ {analysis_m15.get('pinbar_msg', 'Pinbar detected')}"
+            elif pinbar['type'] == 'BEARISH' and analysis_m15['trend'] == 'BEARISH':
+                pinbar_info = f" | 🕯️ {analysis_m15.get('pinbar_msg', 'Pinbar detected')}"
+        
+        engulfing_info = ""
+        if analysis_m15.get('engulfing'):
+            engulfing = analysis_m15['engulfing']
+            if engulfing['type'] == 'BULLISH' and analysis_m15['trend'] == 'BULLISH':
+                engulfing_info = f" | 📦 {analysis_m15.get('engulfing_msg', 'Engulfing detected')}"
+            elif engulfing['type'] == 'BEARISH' and analysis_m15['trend'] == 'BEARISH':
+                engulfing_info = f" | 📦 {analysis_m15.get('engulfing_msg', 'Engulfing detected')}"
+        
         if analysis_m15['trend'] == 'BULLISH':
             if m15_entry:
                 entry = m15_entry[0]
+                # Kiểm tra false break tại entry
+                false_break_detected, false_break_msg = False, None
+                if 'df' in analysis_m15 and 'symbol' in analysis_m15:
+                    false_break_detected, false_break_msg = check_false_break_at_entry(
+                        analysis_m15['df'], entry['entry_price'], analysis_m15['symbol']
+                    )
+                
+                text = f"📊 M15: Pullback về {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})"
+                if pinbar_info:
+                    text += pinbar_info
+                if engulfing_info:
+                    text += engulfing_info
+                if false_break_detected:
+                    text += f" | {false_break_msg}"
+                
                 suggestions.append({
-                    'text': f"📊 M15: Pullback về {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
-                    'entry': entry
+                    'text': text,
+                    'entry': entry,
+                    'has_false_break': false_break_detected
                 })
             else:
+                text = "📊 M15: Tìm pullback về EMA20/EMA50 để BUY"
+                if pinbar_info:
+                    text += pinbar_info
+                if engulfing_info:
+                    text += engulfing_info
                 suggestions.append({
-                    'text': "📊 M15: Tìm pullback về EMA20/EMA50 để BUY",
+                    'text': text,
                     'entry': None
                 })
         elif analysis_m15['trend'] == 'BEARISH':
             if m15_entry:
                 entry = m15_entry[0]
+                # Kiểm tra false break tại entry
+                false_break_detected, false_break_msg = False, None
+                if 'df' in analysis_m15 and 'symbol' in analysis_m15:
+                    false_break_detected, false_break_msg = check_false_break_at_entry(
+                        analysis_m15['df'], entry['entry_price'], analysis_m15['symbol']
+                    )
+                
+                text = f"📊 M15: Pullback về {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})"
+                if pinbar_info:
+                    text += pinbar_info
+                if engulfing_info:
+                    text += engulfing_info
+                if false_break_detected:
+                    text += f" | {false_break_msg}"
+                
                 suggestions.append({
-                    'text': f"📊 M15: Pullback về {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
-                    'entry': entry
+                    'text': text,
+                    'entry': entry,
+                    'has_false_break': false_break_detected
                 })
             else:
+                text = "📊 M15: Tìm pullback về EMA20/EMA50 để SELL"
+                if pinbar_info:
+                    text += pinbar_info
+                if engulfing_info:
+                    text += engulfing_info
                 suggestions.append({
-                    'text': "📊 M15: Tìm pullback về EMA20/EMA50 để SELL",
+                    'text': text,
                     'entry': None
                 })
     
@@ -659,14 +982,21 @@ def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
                     'entry': None
                 })
     
-    # H4: Supply/Demand zones
+    # H4: Supply/Demand zones (cải thiện với thông tin freshness và reaction)
     if analysis_h4:
         h4_entry = [e for e in entry_details if e['timeframe'] == 'H4']
         if analysis_h4['trend'] == 'BULLISH':
             if h4_entry:
                 entry = h4_entry[0]
+                zone_info = ""
+                if 'zone_info' in entry:
+                    zone = entry['zone_info']
+                    freshness = "🆕 Fresh" if zone.get('is_fresh') else f"⏳ {zone.get('freshness', 0)} nến"
+                    reaction = f" | Reaction: {zone.get('reaction_count', 0)}x"
+                    zone_info = f" | {freshness}{reaction}"
+                
                 suggestions.append({
-                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f}){zone_info}",
                     'entry': entry
                 })
             else:
@@ -677,8 +1007,15 @@ def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
         elif analysis_h4['trend'] == 'BEARISH':
             if h4_entry:
                 entry = h4_entry[0]
+                zone_info = ""
+                if 'zone_info' in entry:
+                    zone = entry['zone_info']
+                    freshness = "🆕 Fresh" if zone.get('is_fresh') else f"⏳ {zone.get('freshness', 0)} nến"
+                    reaction = f" | Reaction: {zone.get('reaction_count', 0)}x"
+                    zone_info = f" | {freshness}{reaction}"
+                
                 suggestions.append({
-                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f}){zone_info}",
                     'entry': entry
                 })
             else:
@@ -831,6 +1168,11 @@ def format_telegram_message_compact(symbol, analysis_m15, analysis_h1, analysis_
             if analysis['atr_breakout']:
                 msg += "⚠️ ATR breakout\n"
             
+            # Hiển thị RSI Divergence (chỉ cho H1)
+            if tf_name == "H1" and analysis.get('rsi_divergence'):
+                divergence_emoji = "🔴" if analysis['rsi_divergence'] == 'BEARISH' else "🟢"
+                msg += f"{divergence_emoji} RSI Divergence\n"
+            
             msg += "\n"
     
     # Gợi ý vào lệnh (chỉ 2-3 gợi ý đầu tiên)
@@ -880,6 +1222,18 @@ def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, anal
             if analysis['atr_breakout']:
                 msg += f"⚠️ {analysis['atr_msg']}\n"
             
+            # Hiển thị RSI Divergence (chỉ cho H1)
+            if tf_name == "H1" and analysis.get('rsi_divergence'):
+                divergence_emoji = "🔴" if analysis['rsi_divergence'] == 'BEARISH' else "🟢"
+                msg += f"{divergence_emoji} {analysis.get('rsi_divergence_msg', 'RSI Divergence detected')}\n"
+            
+            # Hiển thị Pinbar và Engulfing (chỉ cho M15)
+            if tf_name == "M15":
+                if analysis.get('pinbar'):
+                    msg += f"🕯️ {analysis.get('pinbar_msg', 'Pinbar detected')}\n"
+                if analysis.get('engulfing'):
+                    msg += f"📦 {analysis.get('engulfing_msg', 'Engulfing detected')}\n"
+            
             msg += "\n"
     
     # Gợi ý vào lệnh
@@ -903,8 +1257,17 @@ def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, anal
         warnings.append("⚠️ CẢNH BÁO: ATR breakout - Có thể có tin mạnh")
     if analysis_h1 and analysis_h1['volume_spike']:
         warnings.append("⚠️ CẢNH BÁO: Volume spike - Có thể false breakout")
+    if analysis_h1 and analysis_h1.get('rsi_divergence') == 'BEARISH':
+        warnings.append("⚠️ CẢNH BÁO: Bearish RSI Divergence trên H1 - Cẩn thận vào đỉnh")
+    if analysis_h1 and analysis_h1.get('rsi_divergence') == 'BULLISH':
+        warnings.append("⚠️ CẢNH BÁO: Bullish RSI Divergence trên H1 - Cẩn thận vào đáy")
     if analysis_d1 and analysis_d1['trend'] == 'SIDEWAYS':
         warnings.append("⚠️ CẢNH BÁO: D1 SIDEWAYS - Tránh giao dịch ngược trend lớn")
+    
+    # Cảnh báo False Break trong suggestions
+    for suggestion in suggestions:
+        if isinstance(suggestion, dict) and suggestion.get('has_false_break'):
+            warnings.append(f"⚠️ CẢNH BÁO: False break phát hiện gần entry point")
     
     if warnings:
         msg += "<b>⚠️ CẢNH BÁO:</b>\n"
