@@ -24,12 +24,12 @@ def strategy_3_logic(config, error_count=0):
             manage_position(pos.ticket, symbol, magic, config)
             
         if len(positions) >= max_positions:
-            return error_count
+            return error_count, 0
 
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 50)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10) # Added for Auto SL
-    if df is None or df_m5 is None: return error_count
+    if df is None or df_m5 is None: return error_count, 0
 
     # 2. Indicators
     # SMA 9
@@ -112,7 +112,7 @@ def strategy_3_logic(config, error_count=0):
              my_deals = [d for d in deals if d.magic == magic]
              if my_deals:
                  print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
-                 return error_count
+                 return error_count, 0
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
@@ -190,12 +190,13 @@ def strategy_3_logic(config, error_count=0):
                 f"• RSI: {last['rsi']:.1f}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-            return 0
+            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+            return 0, 0
         else:
             print(f"❌ Order Failed: {result.retcode}")
-            return error_count + 1
+            return error_count + 1, result.retcode
             
-    return error_count
+    return error_count, 0
 
 if __name__ == "__main__":
     import os
@@ -209,10 +210,10 @@ if __name__ == "__main__":
         print("✅ Strategy 3: PA Volume - Started")
         try:
             while True:
-                consecutive_errors = strategy_3_logic(config, consecutive_errors)
+                consecutive_errors, last_error_code = strategy_3_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
+                    msg = f"⚠️ [Strategy 3: PA Volume] WARNING: 5 Consecutive Order Failures. Last Error: {last_error_code}. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
                     time.sleep(120)
