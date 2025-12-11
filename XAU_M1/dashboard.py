@@ -1,4 +1,6 @@
-from flask import Flask, render_template, g
+from flask import Flask, render_template, g, request
+from datetime import datetime, timedelta
+import json
 import sqlite3
 import os
 
@@ -23,8 +25,25 @@ def close_connection(exception):
 def index():
     cur = get_db().cursor()
     
-    # Fetch Orders
-    cur.execute("SELECT * FROM orders ORDER BY open_time DESC")
+    # Get Filter Parameter
+    days_param = request.args.get('days', '30') # Default 30 days
+    if days_param == "all":
+        days = 36500 # 100 years approx
+        filter_label = "All Time"
+    else:
+        try:
+            days = int(days_param)
+            filter_label = f"Last {days} Days"
+        except:
+            days = 30
+            filter_label = "Last 30 Days"
+            
+    # Calculate cutoff date
+    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Fetch Orders Filtered by Time
+    cur.execute("SELECT * FROM orders WHERE open_time >= ? ORDER BY open_time DESC", (cutoff_str,))
     orders = cur.fetchall()
     
     # Calculate Stats
@@ -72,8 +91,24 @@ def index():
             "pf": pf,
             "avg_win": s_avg_win,
             "avg_loss": -s_avg_loss, # Make negative for display
-            "net_profit": s_net_profit
+            "net_profit": s_net_profit,
+            "chart_data": [] # Placeholder
         })
+        
+        # Calculate Equity Curve for this strategy
+        # Sort orders ascending by time for chart
+        chart_orders = sorted(s_orders, key=lambda x: x['open_time'])
+        equity = 0
+        points = []
+        for o in chart_orders:
+            equity += o['profit']
+            points.append({
+                'x': o['open_time'],
+                'y': equity
+            })
+        
+        # Update the last added bot_stats entry with chart data
+        bot_stats[-1]['chart_data'] = points
         
     # Sort by Net Profit
     # Sort by User Defined Order (1, 4, 2, 5)
@@ -96,7 +131,9 @@ def index():
                            win_rate=win_rate,
                            wins=wins,
                            losses=losses,
-                           bot_stats=bot_stats)
+                           bot_stats=bot_stats,
+                           current_filter=days_param,
+                           filter_label=filter_label)
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5000")
