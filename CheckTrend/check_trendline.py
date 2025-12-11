@@ -586,16 +586,22 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
     # 4. Supply/Demand zones
     # Kiểm tra giá có nằm trong zone không
     for zone in demand_zones:
-        if zone['zone_low'] <= current_price <= zone.get('zone_high', current_price * 1.01):
+        # Demand zone: price là low, zone_high là high
+        zone_low = zone['price']
+        zone_high = zone.get('zone_high', zone_low * 1.01)
+        if zone_low <= current_price <= zone_high:
             buy_score += 2
-            reasons_buy.append(f"✅ Giá trong Demand Zone ({zone['price']:.5f})")
-            decision['entry_levels'].append(f"Demand Zone: {zone['price']:.5f}")
+            reasons_buy.append(f"✅ Giá trong Demand Zone ({zone_low:.5f} - {zone_high:.5f})")
+            decision['entry_levels'].append(f"Demand Zone: {zone_low:.5f}")
     
     for zone in supply_zones:
-        if zone.get('zone_low', current_price * 0.99) <= current_price <= zone['price']:
+        # Supply zone: price là high, zone_low là low
+        zone_high = zone['price']
+        zone_low = zone.get('zone_low', zone_high * 0.99)
+        if zone_low <= current_price <= zone_high:
             sell_score += 2
-            reasons_sell.append(f"✅ Giá trong Supply Zone ({zone['price']:.5f})")
-            decision['entry_levels'].append(f"Supply Zone: {zone['price']:.5f}")
+            reasons_sell.append(f"✅ Giá trong Supply Zone ({zone_low:.5f} - {zone_high:.5f})")
+            decision['entry_levels'].append(f"Supply Zone: {zone_high:.5f}")
     
     # 5. Nến xác nhận (candlestick pattern)
     if len(df) >= 2:
