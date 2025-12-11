@@ -1172,10 +1172,10 @@ def analyze_symbol(symbol_base):
             print(f"  {suggestion['text']}")
             if suggestion.get('entry'):
                 entry = suggestion['entry']
-            print(f"    📊 Entry Price: {entry['entry_price']:.5f}")
-            print(f"    📊 Current Price: {entry['current_price']:.5f}")
-            if entry.get('distance_pips'):
-                print(f"    📏 Distance: {entry['distance_pips']:.1f} pips ({entry.get('distance_atr', 0):.2f} ATR)")
+                print(f"    📊 Entry Price: {entry['entry_price']:.5f}")
+                print(f"    📊 Current Price: {entry['current_price']:.5f}")
+                if entry.get('distance_pips'):
+                    print(f"    📏 Distance: {entry['distance_pips']:.1f} pips ({entry.get('distance_atr', 0):.2f} ATR)")
         else:
             print(f"  {suggestion}")
     
