@@ -107,4 +107,7 @@ def main():
 
 if __name__ == "__main__":
     from datetime import datetime # Re-import for safety inside main scope if needed
-    main()
+    while True:
+        main()
+        print("Sleeping for 600 seconds...") 
+        time.sleep(600)
