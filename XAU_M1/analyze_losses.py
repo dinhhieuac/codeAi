@@ -1,5 +1,5 @@
-import sqlite3
 
+import sqlite3
 import json
 import os
 from datetime import datetime, timedelta
@@ -12,9 +12,11 @@ cursor = conn.cursor()
 
 STRATEGY_NAME = "Strategy_1_Trend_HA"
 
-print(f"\n🔍 ANALYZING LOSSES FOR: {STRATEGY_NAME}\n" + "="*80)
+print(f"\n🔍 DEEP DIVE LOSS ANALYSIS: {STRATEGY_NAME}")
+print("Inferring Exit Reasons from Database records...\n")
+print("="*100)
 
-# 1. Get Losing Orders
+# Get Losing Orders
 query_orders = """
 SELECT * FROM orders 
 WHERE strategy_name = ? AND profit <= 0
@@ -25,36 +27,57 @@ cursor.execute(query_orders, (STRATEGY_NAME,))
 losing_orders = cursor.fetchall()
 
 if not losing_orders:
-    print("✅ No losing trades found (or no data)!")
+    print("✅ No losing trades found!")
     exit()
-
-print(f"Found {len(losing_orders)} losing/breakeven trades. Digging into context...\n")
 
 for order in losing_orders:
     ticket = order['ticket']
     open_time_str = order['open_time']
-    profit = order['profit']
+    db_profit = order['profit']
     order_type = order['order_type']
+    open_price = order['open_price']
+    close_price = order['close_price']
+    sl = order['sl']
+    tp = order['tp']
+    comment = order['comment']
     
-    # Convert string time to object
+    # Parse DB Time
     try:
-        # DB format usually: '2025-12-10 09:00:00'
         open_time = datetime.strptime(open_time_str, '%Y-%m-%d %H:%M:%S')
     except:
-        # Try ISO format if needed
         try:
-            open_time = datetime.fromisoformat(open_time_str)
+             open_time = datetime.fromisoformat(open_time_str)
         except:
-            print(f"⚠️ Time parse error for {open_time_str}")
-            continue
+             pass
 
-    # 2. Find closest Signal (Context)
-    # Look for a signal within 30 seconds BEFORE the order
-    # Signal string format needs matching match
+    print(f"🔻 TICKET {ticket} | {order_type} | PnL: ${db_profit:.2f} | 🕒 {open_time_str}")
+
+    # --- A. EXIT ANALYSIS (Inferred from DB) ---
+    exit_reason = "UNKNOWN"
+    notes = []
     
-    # We need to query range
+    if close_price:
+        # Check distance to SL
+        if sl > 0 and abs(close_price - sl) < 0.05: # Within 5 points (0.5 pips)
+            exit_reason = "🔴 HIT STOP LOSS"
+        elif tp > 0 and abs(close_price - tp) < 0.05:
+             exit_reason = "🟢 HIT TAKE PROFIT"
+        else:
+             exit_reason = "👤 MANUAL / SCRIPT CLOSE"
+             notes.append(f"Close Price {close_price} != SL {sl} / TP {tp}")
+    else:
+        exit_reason = "⚠️ RUNNING / OPEN"
+
+    print(f"   🏦 TRADE REALITY:")
+    print(f"      • Entry: {open_price} | Exit: {close_price}")
+    print(f"      • SL: {sl} | TP: {tp}")
+    print(f"      • Result: {exit_reason}")
+    if comment:
+        print(f"      • Comment: {comment}")
+
+    # --- B. STRATEGY CONTEXT ANALYSIS ---
     time_lower = (open_time - timedelta(seconds=30)).strftime('%Y-%m-%d %H:%M:%S')
-    time_upper = (open_time + timedelta(seconds=5)).strftime('%Y-%m-%d %H:%M:%S') # Allow small drift forward?
+    time_upper = (open_time + timedelta(seconds=5)).strftime('%Y-%m-%d %H:%M:%S')
 
     query_sig = """
     SELECT * FROM signals 
@@ -66,38 +89,28 @@ for order in losing_orders:
     cursor.execute(query_sig, (STRATEGY_NAME, time_lower, time_upper))
     signal = cursor.fetchone()
     
-    print(f"🔻 Ticket {ticket} | {order_type} | PnL: ${profit:.2f} | 🕒 {open_time_str}")
-    
     if signal:
         try:
             indicators = json.loads(signal['indicators'])
-            # Strategy 1 Indicators: trend, ha_close, sl_mode, rsi
             trend = indicators.get('trend', 'N/A')
             rsi = indicators.get('rsi', 0)
-            ha_close = indicators.get('ha_close', 0)
             
-            print(f"   📊 Context at Entry:")
+            print(f"   📊 STRATEGY CONTEXT:")
             print(f"      • Trend: {trend}")
-            print(f"      • RSI:   {rsi:.1f} (Was it Overbought/Oversold?)")
+            print(f"      • RSI:   {rsi:.1f}")
             
-            # Auto-Analysis
-            if order_type == 'BUY':
-                if rsi > 70:
-                    print("      ⚠️ WARNING: Bought when RSI was high (>70). Potential Top?")
-                if trend == 'BEARISH': # Should not happen if logic works
-                    print("      ⚠️ CRITICAL: Bought against Bearish Trend!")
-            elif order_type == 'SELL':
-                if rsi < 30:
-                    print("      ⚠️ WARNING: Sold when RSI was low (<30). Potential Bottom?")
-                if trend == 'BULLISH':
-                    print("      ⚠️ CRITICAL: Sold against Bullish Trend!")
-                    
-        except Exception as e:
-            print(f"   ⚠️ Error parsing indicators: {e}")
-            print(f"   Raw: {signal['indicators']}")
+            # Pattern Recognition
+            if order_type == 'BUY' and rsi > 70:
+                print("      ⚠️ FAILURE PATTERN: Bought Top (RSI > 70)")
+            elif order_type == 'SELL' and rsi < 30:
+                print("      ⚠️ FAILURE PATTERN: Sold Bottom (RSI < 30)")
+                
+        except:
+            pass
     else:
-        print("   ❌ No Signal Data found (Manual trade or DB missed signal log)")
+        print("   ❌ No Context Logged")
         
-    print("-" * 80)
+    print("-" * 100)
 
 conn.close()
+
