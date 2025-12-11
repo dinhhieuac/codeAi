@@ -2,12 +2,12 @@ import MetaTrader5 as mt5
 import time
 import sys
 import numpy as np
+import pandas as pd
 
 # Import local modules
 sys.path.append('..')
 from db import Database
-from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
 
 # Initialize Database
 db = Database()
@@ -39,17 +39,35 @@ def strategy_5_logic(config, error_count=0):
     if df is None or df_m5 is None: return error_count, 0
 
     # Trend Filter (M5 EMA 200)
-    df_m5['ema200'] = df_m5['close'].rolling(window=200).mean()
+    df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()  # Sửa thành EMA thực sự
     m5_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
 
-    # Donchian Channel 20 (Breakout)
-    df['upper'] = df['high'].rolling(window=20).max().shift(1) # Previous 20 highs
-    df['lower'] = df['low'].rolling(window=20).min().shift(1)   # Previous 20 lows
+    # Donchian Channel 40 (Breakout) - Tăng từ 20 để giảm false signal
+    donchian_period = 40
+    df['upper'] = df['high'].rolling(window=donchian_period).max().shift(1)  # Previous 40 highs
+    df['lower'] = df['low'].rolling(window=donchian_period).min().shift(1)   # Previous 40 lows
+    
+    # ATR 14 (for dynamic SL/TP and volatility filter)
+    df['tr'] = np.maximum(
+        df['high'] - df['low'],
+        np.maximum(
+            abs(df['high'] - df['close'].shift(1)),
+            abs(df['low'] - df['close'].shift(1))
+        )
+    )
+    df['atr'] = df['tr'].rolling(window=14).mean()
+    
+    # ADX 14 (Trend Strength Filter)
+    df = calculate_adx(df, period=14)
     
     # RSI 14 (Added Filter)
     df['rsi'] = calculate_rsi(df['close'], period=14)
+    
+    # Volume MA (for volume confirmation)
+    df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
 
     last = df.iloc[-1]
+    prev = df.iloc[-2]
     
     # 3. Logic: Donchian Breakout
     signal = None
@@ -57,25 +75,70 @@ def strategy_5_logic(config, error_count=0):
     # BUY: Close > Upper Band + Buffer
     # SELL: Close < Lower Band - Buffer
     
-    buffer = 50 * mt5.symbol_info(symbol).point # 0.5 pips / 50 points
+    buffer = 50 * mt5.symbol_info(symbol).point  # 0.5 pips / 50 points
     
-    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f}")
+    # ATR Volatility Filter
+    atr_value = last['atr'] if not pd.isna(last['atr']) else 0
+    point = mt5.symbol_info(symbol).point
+    atr_pips = (atr_value / point) / 10 if point > 0 else 0
+    atr_min = 5   # Minimum ATR (pips) - tránh market quá yên tĩnh
+    atr_max = 30  # Maximum ATR (pips) - tránh market quá biến động
     
+    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f} | ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
+    
+    # ATR Volatility Filter
+    if atr_pips < atr_min or atr_pips > atr_max:
+        print(f"   ❌ Filtered: ATR {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
+        return error_count, 0
+    
+    # ADX Filter (Trend Strength)
+    adx_value = last.get('adx', 0)
+    if pd.isna(adx_value) or adx_value < 20:
+        print(f"   ❌ Filtered: ADX {adx_value:.1f} < 20 (Choppy Market)")
+        return error_count, 0
+    
+    # Volume Confirmation
+    is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.3)  # Volume > 1.3x average
+    
+    # False Breakout Check
+    false_breakout = False
+    if last['close'] > (last['upper'] + buffer):
+        # BUY: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
+        if prev['high'] > last['upper'] and prev['close'] < last['upper']:
+            false_breakout = True
+            print(f"   ❌ Filtered: False Breakout BUY (Nến trước phá vỡ nhưng đóng ngược lại)")
+    elif last['close'] < (last['lower'] - buffer):
+        # SELL: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
+        if prev['low'] < last['lower'] and prev['close'] > last['lower']:
+            false_breakout = True
+            print(f"   ❌ Filtered: False Breakout SELL (Nến trước phá vỡ nhưng đóng ngược lại)")
+    
+    if false_breakout:
+        return error_count, 0
+    
+    # BUY Signal
     if last['close'] > (last['upper'] + buffer):
         if m5_trend == "BULLISH":
             if last['rsi'] > 50:
-                signal = "BUY"
-                print("   ✅ Valid Breakout BUY")
+                if is_high_volume:
+                    signal = "BUY"
+                    print("   ✅ Valid Breakout BUY (Volume confirmed)")
+                else:
+                    print(f"   ❌ Filtered: Breakout BUY but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
             else:
                 print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
         else:
-             print(f"   ❌ Filtered: Breakout BUY but M5 Trend is BEARISH")
+            print(f"   ❌ Filtered: Breakout BUY but M5 Trend is BEARISH")
              
+    # SELL Signal
     elif last['close'] < (last['lower'] - buffer):
         if m5_trend == "BEARISH":
             if last['rsi'] < 50:
-                signal = "SELL"
-                print("   ✅ Valid Breakout SELL")
+                if is_high_volume:
+                    signal = "SELL"
+                    print("   ✅ Valid Breakout SELL (Volume confirmed)")
+                else:
+                    print(f"   ❌ Filtered: Breakout SELL but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
             else:
                 print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
         else:
@@ -83,59 +146,91 @@ def strategy_5_logic(config, error_count=0):
         
     if signal:
         # --- SPAM FILTER & COOLDOWN ---
-        # 1. 5-Minute Cooldown logic
-        history = mt5.history_deals_get(position_id=0) # Get all deals? No, need specific history lookup
-        # Better: check last closed time from DB or MT5 history for this magic.
-        # Simple method: Check if we have traded recently within this session (approx) 
-        # OR just use the last_trade_time from helper if we kept state, but we don't.
-        # Let's rely on standard Last Trade check but increase time to 300s (5 mins)
-        
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
         if deals:
-             my_deals = [d for d in deals if d.magic == magic]
-             if my_deals:
-                 print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
-                 return error_count, 0
+            my_deals = [d for d in deals if d.magic == magic]
+            if my_deals:
+                print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
+                return error_count, 0
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
         # --- SL/TP Logic based on Config ---
-        # Strat 5 typically uses trailing, but initial SL is needed.
-        sl_mode = config['parameters'].get('sl_mode', 'fixed')
+        sl_mode = config['parameters'].get('sl_mode', 'atr')  # Default to ATR
         reward_ratio = config['parameters'].get('reward_ratio', 1.5)
         
         sl = 0.0
-        tp = 0.0 # Strat 5 might want open TP for trailing, but lets set one if requested.
+        tp = 0.0
         
-        if sl_mode == 'auto_m5':
+        if sl_mode == 'atr':
+            # ATR-based SL/TP (Dynamic)
+            sl_multiplier = config['parameters'].get('sl_atr_multiplier', 2.0)
+            tp_multiplier = config['parameters'].get('tp_atr_multiplier', 3.0)
+            
+            sl_dist = atr_value * sl_multiplier
+            tp_dist = atr_value * tp_multiplier
+            
+            if signal == "BUY":
+                sl = price - sl_dist
+                tp = price + tp_dist
+            else:  # SELL
+                sl = price + sl_dist
+                tp = price - tp_dist
+            
+            # Minimum distance check
+            min_dist = 100 * point  # 10 pips minimum
+            if signal == "BUY":
+                if (price - sl) < min_dist:
+                    sl = price - min_dist
+                    risk_dist = price - sl
+                    tp = price + (risk_dist * reward_ratio)
+            else:
+                if (sl - price) < min_dist:
+                    sl = price + min_dist
+                    risk_dist = sl - price
+                    tp = price - (risk_dist * reward_ratio)
+            
+            print(f"   📏 ATR SL: {sl:.2f} ({sl_multiplier}xATR) | TP: {tp:.2f} ({tp_multiplier}xATR, R:R {reward_ratio})")
+            
+        elif sl_mode == 'auto_m5':
             # Use fetched M5 data
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
-            buffer_sl = 20 * mt5.symbol_info(symbol).point
+            buffer_sl = 20 * point
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer_sl
-                min_dist = 100 * mt5.symbol_info(symbol).point
+                min_dist = 100 * point
                 if (price - sl) < min_dist: sl = price - min_dist
                 risk_dist = price - sl
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
                 sl = prev_m5_high + buffer_sl
-                min_dist = 100 * mt5.symbol_info(symbol).point
+                min_dist = 100 * point
                 if (sl - price) < min_dist: sl = price + min_dist
                 risk_dist = sl - price
                 tp = price - (risk_dist * reward_ratio)
-            print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f}")
+            print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f} (R:R {reward_ratio})")
         else:
-             # Default Strat 5 SL (Tight or recent swing)
-             sl = price - 2.0 if signal == "BUY" else price + 2.0
-             tp = price + 5.0 if signal == "BUY" else price - 5.0
-             print(f"   📏 Default SL: {sl:.2f} | TP: {tp:.2f}")
+            # Fixed SL/TP (Legacy)
+            sl = price - 2.0 if signal == "BUY" else price + 2.0
+            tp = price + 5.0 if signal == "BUY" else price - 5.0
+            print(f"   📏 Fixed SL: {sl:.2f} | TP: {tp:.2f}")
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")
         
-        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {"setup": "Donchian Breakout", "rsi": float(last['rsi']), "trend": m5_trend}, account_id=config['account'])
+        db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {
+            "setup": "Donchian Breakout",
+            "rsi": float(last['rsi']),
+            "adx": float(adx_value),
+            "atr": float(atr_value),
+            "atr_pips": float(atr_pips),
+            "volume": int(last['tick_volume']),
+            "vol_ratio": float(last['tick_volume'] / last['vol_ma']) if last['vol_ma'] > 0 else 0,
+            "trend": m5_trend,
+            "donchian_period": donchian_period
+        }, account_id=config['account'])
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -164,8 +259,11 @@ def strategy_5_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• Donchian Breakout\n"
-                f"• RSI: {last['rsi']:.1f}"
+                f"• Donchian Breakout ({donchian_period} periods)\n"
+                f"• RSI: {last['rsi']:.1f}\n"
+                f"• ADX: {adx_value:.1f}\n"
+                f"• ATR: {atr_pips:.1f} pips\n"
+                f"• Volume: {int(last['tick_volume'])} ({last['tick_volume']/last['vol_ma']:.1f}x avg)"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0
