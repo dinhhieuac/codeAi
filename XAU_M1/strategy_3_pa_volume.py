@@ -50,61 +50,69 @@ def strategy_3_logic(config, error_count=0):
     # 3. Logic: Rejection Candle + Volume Spike near SMA 9
     signal = None
     
-    # SMA 9 Filter: Price must be near SMA 9
+    # SMA 9 Filter: Price at entry must be reasonably close to SMA 9 (Mean Reversion / Trend Touch)
     is_near_sma = False
     pip_val = mt5.symbol_info(symbol).point * 10 
     dist_to_sma = abs(last['close'] - last['sma9'])
-    if dist_to_sma <= 5 * pip_val: # Relaxed to 0.5 pips
+    
+    # Relaxed: Allow up to 2.0 pips distance (20 points)
+    if dist_to_sma <= 20 * mt5.symbol_info(symbol).point: 
         is_near_sma = True
         
-    is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.5)
+    # Relaxed: Volume > 1.2x Average
+    is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.2)
     
-    # Pinbar Detection (Standard: Wick > 2 * Body)
+    # Pinbar Detection (Relaxed: Tail > 1.5 * Body)
     body_size = abs(last['close'] - last['open'])
     upper_shadow = last['high'] - max(last['close'], last['open'])
     lower_shadow = min(last['close'], last['open']) - last['low']
     
-    # Add minimal body size check to avoid absolute dojis being noise
-    min_body = 0.1 * pip_val # very small body allowed
+    # Minimal body size (very small body allowed)
+    min_body = 0.1 * pip_val 
+    if body_size < min_body: body_size = min_body # Prevent division by zero or extreme ratios
     
-    is_bullish_pinbar = (lower_shadow > 2 * body_size) and (upper_shadow < body_size * 1.5)
-    is_bearish_pinbar = (upper_shadow > 2 * body_size) and (lower_shadow < body_size * 1.5)
+    is_bullish_pinbar = (lower_shadow > 1.5 * body_size) and (upper_shadow < body_size * 1.0)
+    is_bearish_pinbar = (upper_shadow > 1.5 * body_size) and (lower_shadow < body_size * 1.0)
     
-    # BUY Signal
-    
-    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | SMA9: {last['sma9']:.2f} | RSI: {last['rsi']:.1f}")
-    print(f"   Volume: {last['tick_volume']} (Avg: {last['vol_ma']:.1f}) | High Vol? {is_high_volume}")
-    print(f"   Dist to SMA: {dist_to_sma:.3f} (Max: {2*pip_val:.3f}) | Near SMA? {is_near_sma}")
-    print(f"   Bull Pinbar? {is_bullish_pinbar} | Bear Pinbar? {is_bearish_pinbar}")
+    # Logging Analysis
+    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | SMA9: {last['sma9']:.2f}")
+    print(f"   Vol: {last['tick_volume']} (Req > {int(last['vol_ma']*1.2)}) | Pinbar? {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
     
     signal = None
-    if is_near_sma and is_high_volume:
-        if is_bullish_pinbar and last['close'] > last['sma9']:
-            if last['rsi'] > 50:
-                 signal = "BUY"
+    if is_near_sma:
+        if is_high_volume:
+            if is_bullish_pinbar and last['close'] > last['sma9']:
+                if last['rsi'] > 50:
+                    signal = "BUY"
+                    print("   ✅ Valid Setup: Bullish Pinbar + Vol + RSI > 50")
+                else:
+                    print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} <= 50")
+            elif is_bearish_pinbar and last['close'] < last['sma9']:
+                if last['rsi'] < 50:
+                    signal = "SELL"
+                    print("   ✅ Valid Setup: Bearish Pinbar + Vol + RSI < 50")
+                else:
+                    print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} >= 50")
             else:
-                 print(f"   ❌ Filtered: Valid Buy Setup but RSI {last['rsi']:.1f} <= 50")
-        elif is_bearish_pinbar and last['close'] < last['sma9']:
-            if last['rsi'] < 50:
-                signal = "SELL"
-            else:
-                 print(f"   ❌ Filtered: Valid Sell Setup but RSI {last['rsi']:.1f} >= 50")
+                 pass # Silent fail for non-pinbars to reduce log spam
+                 # print("   ❌ Condition Fail: No valid Pinbar rejection found")
         else:
-            print("   ❌ Condition Fail: No valid Pinbar rejection found")
+            if is_bullish_pinbar or is_bearish_pinbar:
+                 print(f"   ❌ Filtered: Pinbar found but Volume {last['tick_volume']} too low")
     else:
-        print("   ❌ Condition Fail: Volume too low or Not near SMA")
+        # Only print if we had a pinbar but missed SMA
+        if is_bullish_pinbar or is_bearish_pinbar:
+             print(f"   ❌ Filtered: Pinbar found but Price too far from SMA ({dist_to_sma:.1f} pts)")
     
     # 4. Execute
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
-        if strat_positions:
-            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            last_trade_time = strat_positions[0].time
-            current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count
+        # --- SPAM FILTER & COOLDOWN ---
+        deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
+        if deals:
+             my_deals = [d for d in deals if d.magic == magic]
+             if my_deals:
+                 print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
+                 return error_count
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
