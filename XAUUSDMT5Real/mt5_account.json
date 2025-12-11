@@ -3,5 +3,119 @@
     "SERVER": "Exness-MT5Real28",
     "PASSWORD": "@Dinhhieu273",
     "SYMBOL": "XAUUSDm",
-    "PATH": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe"
+    "PATH": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+    "VOLUME": 0.01,
+    "MAGIC": 20251117,
+    "CHAT_ID": "1887610382",
+    "TELEGRAM_TOKEN": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
+    
+    "INDICATORS": {
+        "EMA_H1": 50,
+        "EMA_M5": 50,
+        "EMA_M1": 20,
+        "ATR_PERIOD": 14,
+        "ADX_PERIOD": 14,
+        "ADX_MIN_THRESHOLD": 20,
+        "ADX_M5_BREAKOUT_THRESHOLD": 35,
+        "RSI_PERIOD": 14,
+        "RSI_OVERBOUGHT": 70,
+        "RSI_OVERSOLD": 30
+    },
+    
+    "TREND_FILTERS": {
+        "ENABLE_H1_TREND_FILTER": true
+    },
+    
+    "MOMENTUM_CONFIRMATION": {
+        "ENABLE_MOMENTUM_CONFIRMATION": true,
+        "MOMENTUM_BUFFER_POINTS": 0
+    },
+    
+    "ATR_FILTER": {
+        "ENABLE_ATR_FILTER": true,
+        "ATR_MIN_THRESHOLD": 40,
+        "ATR_MAX_THRESHOLD": 500
+    },
+    
+    "ORDER_MANAGEMENT": {
+        "SL_ATR_MULTIPLIER": 1.5,
+        "TP_ATR_MULTIPLIER": 2.0,
+        "SL_POINTS_MIN": 50,
+        "SL_POINTS_MAX": 50000,
+        "TP_POINTS_MIN": 80,
+        "TP_POINTS_MAX": 50000,
+        "ENABLE_FIXED_SL_USD": false,
+        "FIXED_SL_USD": 5.0,
+        "SL_MAX_USD": 10.0
+    },
+    
+    "BREAK_EVEN": {
+        "ENABLE_BREAK_EVEN": false,
+        "BREAK_EVEN_START_POINTS": 100
+    },
+    
+    "TRAILING_STOP": {
+        "ENABLE_TRAILING_STOP": true,
+        "TRAILING_START_TP_RATIO": 0.5,
+        "TRAILING_STEP_ATR_MULTIPLIER": 0.5
+    },
+    
+    "LOSS_COOLDOWN": {
+        "ENABLE_LOSS_COOLDOWN": true,
+        "LOSS_COOLDOWN_MINUTES": 10,
+        "LOSS_COOLDOWN_MODE": 2,
+        "ENABLE_LOSS_COOLDOWN_3LOSS": true,
+        "LOSS_COOLDOWN_3LOSS_MINUTES": 60
+    },
+    
+    "ERROR_COOLDOWN": {
+        "ENABLE_ERROR_COOLDOWN": true,
+        "ERROR_COOLDOWN_COUNT": 5,
+        "ERROR_COOLDOWN_MINUTES": 1
+    },
+    
+    "RETEST": {
+        "RETEST_DISTANCE_MIN": 0,
+        "RETEST_DISTANCE_MAX": 200
+    },
+    
+    "BREAKOUT": {
+        "ENABLE_BREAKOUT": false,
+        "BREAKOUT_DISTANCE_MIN": 100,
+        "BREAKOUT_DISTANCE_MAX": 200
+    },
+    
+    "SPREAD_FILTER": {
+        "ENABLE_SPREAD_FILTER": true,
+        "SPREAD_MAX_POINTS": 200
+    },
+    
+    "MOMENTUM_FILTER": {
+        "ENABLE_MOMENTUM_FILTER": true,
+        "MOMENTUM_CANDLE_MAX_PIPS": 50
+    },
+    
+    "BAD_CANDLE_FILTER": {
+        "ENABLE_BAD_CANDLE_FILTER": true,
+        "BAD_CANDLE_SHADOW_RATIO": 0.6
+    },
+    
+    "TIME_FILTER": {
+        "ENABLE_TIME_FILTER": false,
+        "TIME_FILTER_BUFFER_MINUTES": 15,
+        "IMPORTANT_NEWS_HOURS": [
+            [12, 30],
+            [18, 0],
+            [19, 0]
+        ]
+    },
+    
+    "VOLUME_CONFIRMATION": {
+        "ENABLE_VOLUME_CONFIRMATION": true,
+        "VOLUME_INCREASE_RATIO": 1.2
+    },
+    
+    "RSI_FILTER": {
+        "ENABLE_RSI_FILTER": true
+    }
 }

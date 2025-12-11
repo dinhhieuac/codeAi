@@ -11,6 +11,11 @@ import logging
 # 1. CÁC THAM SỐ CẤU HÌNH VÀ CHIẾN LƯỢC (GLOBAL VARIABLES)
 # ==============================================================================
 
+# ==============================================================================
+# 1. CÁC THAM SỐ CẤU HÌNH VÀ CHIẾN LƯỢC (GLOBAL VARIABLES)
+# ==============================================================================
+# Tất cả cấu hình sẽ được tải từ file JSON trong hàm load_config()
+
 # Biến Cấu hình MT5 (Sẽ được ghi đè từ JSON)
 MT5_LOGIN = None
 MT5_PASSWORD = None
@@ -20,120 +25,106 @@ MT5_PATH = None
 VOLUME = 0.01  # Khối lượng mặc định (Có thể ghi đè trong JSON)
 MAGIC = 20251117
 
-# Thông số Chỉ báo & Lọc
-# Chiến thuật M1: "BÁM THEO M5 – ĂN 5–10 PHÚT"
-EMA_H1 = 50  # EMA50 trên H1 để xác định xu hướng dài hạn
-EMA_M5 = 50  # EMA50 trên M5 để xác định trend (thay H1)
-EMA_M1 = 20  # EMA20 trên M1 để tìm điểm retest
+# Thông số Chỉ báo & Lọc (Giá trị mặc định - sẽ được ghi đè từ JSON)
+EMA_H1 = 50
+EMA_M5 = 50
+EMA_M1 = 20
 ATR_PERIOD = 14
-ADX_PERIOD = 14  # Chu kỳ tính ADX
-ADX_MIN_THRESHOLD = 20  # ADX tối thiểu để giao dịch (tránh thị trường đi ngang)
-ADX_M5_BREAKOUT_THRESHOLD = 35  # ADX(M5) > 35 để breakout (thay vì ADX M1)
+ADX_PERIOD = 14
+ADX_MIN_THRESHOLD = 20
+ADX_M5_BREAKOUT_THRESHOLD = 35
+RSI_PERIOD = 14
+RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 30
 
 # H1 Trend Filter
-ENABLE_H1_TREND_FILTER = True  # Bật/tắt lọc theo trend H1 (Chỉ trade khi M5 cùng chiều H1)
+ENABLE_H1_TREND_FILTER = True
 
-# Momentum Confirmation (Sniper Entry)
-ENABLE_MOMENTUM_CONFIRMATION = True  # Bật/tắt xác nhận momentum (chờ phá đỉnh/đáy nến tín hiệu)
-MOMENTUM_BUFFER_POINTS = 0  # Buffer khoảng cách (points) để xác nhận phá vỡ (0 = phá qua là vào)
+# Momentum Confirmation
+ENABLE_MOMENTUM_CONFIRMATION = True
+MOMENTUM_BUFFER_POINTS = 0
 
-# Lọc ATR - chỉ vào lệnh khi ATR đủ lớn (thị trường có biến động)
-ENABLE_ATR_FILTER = True  # Bật/tắt lọc ATR
-ATR_MIN_THRESHOLD = 40    # ATR tối thiểu: 40 pips ($0.4)
-ATR_MAX_THRESHOLD = 500   # ATR tối đa: 500 pips ($5) - Nới rộng để phù hợp với biến động $3-$4 hiện tại
+# ATR Filter
+ENABLE_ATR_FILTER = True
+ATR_MIN_THRESHOLD = 40
+ATR_MAX_THRESHOLD = 500
 
-# Thông số Quản lý Lệnh (Tính bằng points, 10 points = 1 pip)
-# Chiến thuật M1: SL/TP theo nến M5
-SL_ATR_MULTIPLIER = 1.5  # SL = ATR(M5) × 1.5
-TP_ATR_MULTIPLIER = 2.0  # TP = ATR(M5) × 2.0
-SL_POINTS_MIN = 50   # SL tối thiểu: 5 pips (50 points) - bảo vệ
-SL_POINTS_MAX = 50000  # SL tối đa: 5000 pips (50000 points) - cho phép SL lớn theo ATR
-TP_POINTS_MIN = 80   # TP tối thiểu: 8 pips (80 points) - bảo vệ
-TP_POINTS_MAX = 50000  # TP tối đa: 5000 pips (50000 points) - cho phép TP lớn theo ATR
+# Order Management
+SL_ATR_MULTIPLIER = 1.5
+TP_ATR_MULTIPLIER = 2.0
+SL_POINTS_MIN = 50
+SL_POINTS_MAX = 50000
+TP_POINTS_MIN = 80
+TP_POINTS_MAX = 50000
+ENABLE_FIXED_SL_USD = False
+FIXED_SL_USD = 5.0
+SL_MAX_USD = 10.0
 
-# Fix SL theo giá trị USD cố định
-ENABLE_FIXED_SL_USD = False  # Bật/tắt fix SL theo USD
-FIXED_SL_USD = 5.0  # SL cố định tính bằng USD (ví dụ: 5 USD)
-SL_MAX_USD = 10.0    # SL tối đa cho phép (USD) - Dùng để giới hạn SL khi tính theo ATR
+# Break Even
+ENABLE_BREAK_EVEN = False
+BREAK_EVEN_START_POINTS = 100
 
+# Trailing Stop
+ENABLE_TRAILING_STOP = True
+TRAILING_START_TP_RATIO = 0.5
+TRAILING_STEP_ATR_MULTIPLIER = 0.5
 
-ENABLE_BREAK_EVEN = False           # Bật/tắt chức năng di chuyển SL về hòa vốn
-BREAK_EVEN_START_POINTS = 100      # Hòa vốn khi lời 10 pips
+# Loss Cooldown
+ENABLE_LOSS_COOLDOWN = True
+LOSS_COOLDOWN_MINUTES = 10
+LOSS_COOLDOWN_MODE = 2
+ENABLE_LOSS_COOLDOWN_3LOSS = True
+LOSS_COOLDOWN_3LOSS_MINUTES = 60
 
-# Trailing Stop khi lời 1/2 TP để lock profit
-ENABLE_TRAILING_STOP = True        # Bật/tắt chức năng Trailing Stop
-TRAILING_START_TP_RATIO = 0.5  # Bắt đầu trailing khi lời 1/2 TP
-TRAILING_STEP_ATR_MULTIPLIER = 0.5  # Bước trailing = ATR × 0.5
-
-# Cooldown sau lệnh thua
-ENABLE_LOSS_COOLDOWN = True         # Bật/tắt cooldown sau lệnh thua
-LOSS_COOLDOWN_MINUTES = 10         # Thời gian chờ sau lệnh thua (phút)
-LOSS_COOLDOWN_MODE = 2              # Mode cooldown: 1 = 1 lệnh cuối thua, 2 = 2 lệnh cuối đều thua
-
-# Cooldown sau 3 lệnh thua liên tiếp
-ENABLE_LOSS_COOLDOWN_3LOSS = True   # Bật/tắt cooldown sau 3 lệnh thua liên tiếp
-LOSS_COOLDOWN_3LOSS_MINUTES = 60   # Thời gian chờ sau 3 lệnh thua liên tiếp (phút): 60 = 1h, 300 = 5h
-
-# Tạm dừng sau khi gửi lệnh lỗi nhiều lần liên tiếp
-ENABLE_ERROR_COOLDOWN = True         # Bật/tắt tạm dừng sau lỗi gửi lệnh
-ERROR_COOLDOWN_COUNT = 5            # Số lần lỗi liên tiếp để kích hoạt cooldown
-ERROR_COOLDOWN_MINUTES = 1          # Thời gian tạm dừng sau khi lỗi (phút)
+# Error Cooldown
+ENABLE_ERROR_COOLDOWN = True
+ERROR_COOLDOWN_COUNT = 5
+ERROR_COOLDOWN_MINUTES = 1
 
 # Biến đếm lỗi (sẽ được reset khi thành công)
-error_count = 0                     # Số lần lỗi liên tiếp hiện tại
-error_cooldown_start = None         # Thời gian bắt đầu cooldown (None nếu không có)
+error_count = 0
+error_cooldown_start = None
 
 # Telegram Bot Configuration
- # Chat ID sẽ được lấy từ JSON config hoặc để None nếu không dùng Telegram
-TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"         # Token của Telegram Bot (lấy từ @BotFather)
-                                # Ví dụ: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                                # Hướng dẫn: https://core.telegram.org/bots/tutorial
+TELEGRAM_TOKEN = "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g"
+CHAT_ID = "1887610382"
 
-CHAT_ID = "1887610382"      
-# Khoảng cách retest EMA20 trên M1 (points)
-# Giá chạm EMA20 trong vùng 0-20 pips (0-200 points) - Theo yêu cầu m1_gpt.md
-RETEST_DISTANCE_MIN = 0   # Tối thiểu 0 pips (chạm hoặc gần chạm)
-RETEST_DISTANCE_MAX = 200  # Tối đa 20 pips (200 points) từ EMA20
+# Retest
+RETEST_DISTANCE_MIN = 0
+RETEST_DISTANCE_MAX = 200
 
-# Chiến thuật BREAKOUT (khi giá không retest) - CHỈ DÙNG KHI ĐIỀU KIỆN NGHIÊM NGẶT
-ENABLE_BREAKOUT = False  # Tắt breakout mặc định (M1 nhiễu)
-BREAKOUT_DISTANCE_MIN = 100  # Khoảng cách tối thiểu từ EMA20: 10 pips (100 points)
-BREAKOUT_DISTANCE_MAX = 200  # Khoảng cách tối đa từ EMA20: 20 pips (200 points)
+# Breakout
+ENABLE_BREAKOUT = False
+BREAKOUT_DISTANCE_MIN = 100
+BREAKOUT_DISTANCE_MAX = 200
 
 # Spread Filter
-ENABLE_SPREAD_FILTER = True  # Bật/tắt lọc spread
-SPREAD_MAX_POINTS = 200  # Spread tối đa: 50 points (5 pips) - XAUUSD thông thường 2-5 pips
+ENABLE_SPREAD_FILTER = True
+SPREAD_MAX_POINTS = 200
 
-# Momentum Candle Filter
-ENABLE_MOMENTUM_FILTER = True  # Bật/tắt lọc nến momentum
-MOMENTUM_CANDLE_MAX_PIPS = 50  # Không trade sau nến > 50 pips ($5)
+# Momentum Filter
+ENABLE_MOMENTUM_FILTER = True
+MOMENTUM_CANDLE_MAX_PIPS = 50
 
 # Bad Candle Filter
-ENABLE_BAD_CANDLE_FILTER = True  # Bật/tắt lọc nến xấu
-BAD_CANDLE_SHADOW_RATIO = 0.6  # Bóng > 60% thân → bỏ
+ENABLE_BAD_CANDLE_FILTER = True
+BAD_CANDLE_SHADOW_RATIO = 0.6
 
-# Time Filter (Tránh giờ tin tức)
-ENABLE_TIME_FILTER = False  # Bật/tắt lọc giờ tin tức (Mặc định: OFF)
-TIME_FILTER_BUFFER_MINUTES = 15  # Tránh giao dịch 15 phút trước/sau tin tức
-# Danh sách giờ tin tức quan trọng (UTC): [hour, minute]
-# NFP: Thứ 6 đầu tháng, 12:30 UTC
-# FOMC: Thường 18:00 hoặc 19:00 UTC
-# CPI: Thường 12:30 UTC
+# Time Filter
+ENABLE_TIME_FILTER = False
+TIME_FILTER_BUFFER_MINUTES = 15
 IMPORTANT_NEWS_HOURS = [
-    (12, 30),  # NFP, CPI (12:30 UTC)
-    (18, 0),   # FOMC (18:00 UTC)
-    (19, 0),   # FOMC (19:00 UTC)
+    (12, 30),
+    (18, 0),
+    (19, 0),
 ]
 
-# RSI Filter (Tránh quá mua/quá bán)
-ENABLE_RSI_FILTER = True  # Bật/tắt lọc RSI
-RSI_PERIOD = 14  # Chu kỳ tính RSI
-RSI_OVERBOUGHT = 70  # RSI > 70 → Quá mua (không BUY)
-RSI_OVERSOLD = 30  # RSI < 30 → Quá bán (không SELL)
+# Volume Confirmation
+ENABLE_VOLUME_CONFIRMATION = True
+VOLUME_INCREASE_RATIO = 1.2
 
-# Volume Confirmation (Xác nhận volume tăng)
-ENABLE_VOLUME_CONFIRMATION = True  # Bật/tắt xác nhận volume
-VOLUME_INCREASE_RATIO = 1.2  # Volume phải tăng ít nhất 20% so với nến trước
+# RSI Filter
+ENABLE_RSI_FILTER = True
 
 # ==============================================================================
 # 2. HÀM THIẾT LẬP LOGGING
@@ -180,6 +171,28 @@ def setup_logging():
 def load_config(filename="XAUUSDMT5Real/mt5_account.json"):
     """Đọc thông tin cấu hình từ tệp JSON và gán vào biến toàn cục."""
     global MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL, MT5_PATH, VOLUME, CHAT_ID
+    global EMA_H1, EMA_M5, EMA_M1, ATR_PERIOD, ADX_PERIOD, ADX_MIN_THRESHOLD, ADX_M5_BREAKOUT_THRESHOLD
+    global RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD
+    global ENABLE_H1_TREND_FILTER
+    global ENABLE_MOMENTUM_CONFIRMATION, MOMENTUM_BUFFER_POINTS
+    global ENABLE_ATR_FILTER, ATR_MIN_THRESHOLD, ATR_MAX_THRESHOLD
+    global SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, SL_POINTS_MIN, SL_POINTS_MAX, TP_POINTS_MIN, TP_POINTS_MAX
+    global ENABLE_FIXED_SL_USD, FIXED_SL_USD, SL_MAX_USD
+    global ENABLE_BREAK_EVEN, BREAK_EVEN_START_POINTS
+    global ENABLE_TRAILING_STOP, TRAILING_START_TP_RATIO, TRAILING_STEP_ATR_MULTIPLIER
+    global ENABLE_LOSS_COOLDOWN, LOSS_COOLDOWN_MINUTES, LOSS_COOLDOWN_MODE
+    global ENABLE_LOSS_COOLDOWN_3LOSS, LOSS_COOLDOWN_3LOSS_MINUTES
+    global ENABLE_ERROR_COOLDOWN, ERROR_COOLDOWN_COUNT, ERROR_COOLDOWN_MINUTES
+    global TELEGRAM_TOKEN, CHAT_ID
+    global RETEST_DISTANCE_MIN, RETEST_DISTANCE_MAX
+    global ENABLE_BREAKOUT, BREAKOUT_DISTANCE_MIN, BREAKOUT_DISTANCE_MAX
+    global ENABLE_SPREAD_FILTER, SPREAD_MAX_POINTS
+    global ENABLE_MOMENTUM_FILTER, MOMENTUM_CANDLE_MAX_PIPS
+    global ENABLE_BAD_CANDLE_FILTER, BAD_CANDLE_SHADOW_RATIO
+    global ENABLE_TIME_FILTER, TIME_FILTER_BUFFER_MINUTES, IMPORTANT_NEWS_HOURS
+    global ENABLE_VOLUME_CONFIRMATION, VOLUME_INCREASE_RATIO
+    global ENABLE_RSI_FILTER
+    global MAGIC
     
     if not os.path.exists(filename):
         print(f"❌ Lỗi: Không tìm thấy tệp cấu hình '{filename}'. Vui lòng tạo file này.")
@@ -189,13 +202,128 @@ def load_config(filename="XAUUSDMT5Real/mt5_account.json"):
         with open(filename, 'r') as f:
             config = json.load(f)
         
+        # MT5 Account Info
         MT5_LOGIN = config.get("ACCOUNT_NUMBER")
         MT5_PASSWORD = config.get("PASSWORD")
         MT5_SERVER = config.get("SERVER")
         SYMBOL = config.get("SYMBOL", "XAUUSDm") 
         MT5_PATH = config.get("PATH")
-        VOLUME = config.get("VOLUME", VOLUME) # Ghi đè Volume nếu có
-        CHAT_ID = config.get("CHAT_ID", CHAT_ID)  # Lấy CHAT_ID từ JSON nếu có
+        VOLUME = config.get("VOLUME", VOLUME)
+        MAGIC = config.get("MAGIC", MAGIC)
+        
+        # Telegram
+        CHAT_ID = config.get("CHAT_ID", CHAT_ID)
+        TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN)
+        
+        # Indicators
+        if "INDICATORS" in config:
+            ind = config["INDICATORS"]
+            EMA_H1 = ind.get("EMA_H1", EMA_H1)
+            EMA_M5 = ind.get("EMA_M5", EMA_M5)
+            EMA_M1 = ind.get("EMA_M1", EMA_M1)
+            ATR_PERIOD = ind.get("ATR_PERIOD", ATR_PERIOD)
+            ADX_PERIOD = ind.get("ADX_PERIOD", ADX_PERIOD)
+            ADX_MIN_THRESHOLD = ind.get("ADX_MIN_THRESHOLD", ADX_MIN_THRESHOLD)
+            ADX_M5_BREAKOUT_THRESHOLD = ind.get("ADX_M5_BREAKOUT_THRESHOLD", ADX_M5_BREAKOUT_THRESHOLD)
+            RSI_PERIOD = ind.get("RSI_PERIOD", RSI_PERIOD)
+            RSI_OVERBOUGHT = ind.get("RSI_OVERBOUGHT", RSI_OVERBOUGHT)
+            RSI_OVERSOLD = ind.get("RSI_OVERSOLD", RSI_OVERSOLD)
+        
+        # Trend Filters
+        if "TREND_FILTERS" in config:
+            ENABLE_H1_TREND_FILTER = config["TREND_FILTERS"].get("ENABLE_H1_TREND_FILTER", ENABLE_H1_TREND_FILTER)
+        
+        # Momentum Confirmation
+        if "MOMENTUM_CONFIRMATION" in config:
+            ENABLE_MOMENTUM_CONFIRMATION = config["MOMENTUM_CONFIRMATION"].get("ENABLE_MOMENTUM_CONFIRMATION", ENABLE_MOMENTUM_CONFIRMATION)
+            MOMENTUM_BUFFER_POINTS = config["MOMENTUM_CONFIRMATION"].get("MOMENTUM_BUFFER_POINTS", MOMENTUM_BUFFER_POINTS)
+        
+        # ATR Filter
+        if "ATR_FILTER" in config:
+            ENABLE_ATR_FILTER = config["ATR_FILTER"].get("ENABLE_ATR_FILTER", ENABLE_ATR_FILTER)
+            ATR_MIN_THRESHOLD = config["ATR_FILTER"].get("ATR_MIN_THRESHOLD", ATR_MIN_THRESHOLD)
+            ATR_MAX_THRESHOLD = config["ATR_FILTER"].get("ATR_MAX_THRESHOLD", ATR_MAX_THRESHOLD)
+        
+        # Order Management
+        if "ORDER_MANAGEMENT" in config:
+            om = config["ORDER_MANAGEMENT"]
+            SL_ATR_MULTIPLIER = om.get("SL_ATR_MULTIPLIER", SL_ATR_MULTIPLIER)
+            TP_ATR_MULTIPLIER = om.get("TP_ATR_MULTIPLIER", TP_ATR_MULTIPLIER)
+            SL_POINTS_MIN = om.get("SL_POINTS_MIN", SL_POINTS_MIN)
+            SL_POINTS_MAX = om.get("SL_POINTS_MAX", SL_POINTS_MAX)
+            TP_POINTS_MIN = om.get("TP_POINTS_MIN", TP_POINTS_MIN)
+            TP_POINTS_MAX = om.get("TP_POINTS_MAX", TP_POINTS_MAX)
+            ENABLE_FIXED_SL_USD = om.get("ENABLE_FIXED_SL_USD", ENABLE_FIXED_SL_USD)
+            FIXED_SL_USD = om.get("FIXED_SL_USD", FIXED_SL_USD)
+            SL_MAX_USD = om.get("SL_MAX_USD", SL_MAX_USD)
+        
+        # Break Even
+        if "BREAK_EVEN" in config:
+            ENABLE_BREAK_EVEN = config["BREAK_EVEN"].get("ENABLE_BREAK_EVEN", ENABLE_BREAK_EVEN)
+            BREAK_EVEN_START_POINTS = config["BREAK_EVEN"].get("BREAK_EVEN_START_POINTS", BREAK_EVEN_START_POINTS)
+        
+        # Trailing Stop
+        if "TRAILING_STOP" in config:
+            ENABLE_TRAILING_STOP = config["TRAILING_STOP"].get("ENABLE_TRAILING_STOP", ENABLE_TRAILING_STOP)
+            TRAILING_START_TP_RATIO = config["TRAILING_STOP"].get("TRAILING_START_TP_RATIO", TRAILING_START_TP_RATIO)
+            TRAILING_STEP_ATR_MULTIPLIER = config["TRAILING_STOP"].get("TRAILING_STEP_ATR_MULTIPLIER", TRAILING_STEP_ATR_MULTIPLIER)
+        
+        # Loss Cooldown
+        if "LOSS_COOLDOWN" in config:
+            ENABLE_LOSS_COOLDOWN = config["LOSS_COOLDOWN"].get("ENABLE_LOSS_COOLDOWN", ENABLE_LOSS_COOLDOWN)
+            LOSS_COOLDOWN_MINUTES = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_MINUTES", LOSS_COOLDOWN_MINUTES)
+            LOSS_COOLDOWN_MODE = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_MODE", LOSS_COOLDOWN_MODE)
+            ENABLE_LOSS_COOLDOWN_3LOSS = config["LOSS_COOLDOWN"].get("ENABLE_LOSS_COOLDOWN_3LOSS", ENABLE_LOSS_COOLDOWN_3LOSS)
+            LOSS_COOLDOWN_3LOSS_MINUTES = config["LOSS_COOLDOWN"].get("LOSS_COOLDOWN_3LOSS_MINUTES", LOSS_COOLDOWN_3LOSS_MINUTES)
+        
+        # Error Cooldown
+        if "ERROR_COOLDOWN" in config:
+            ENABLE_ERROR_COOLDOWN = config["ERROR_COOLDOWN"].get("ENABLE_ERROR_COOLDOWN", ENABLE_ERROR_COOLDOWN)
+            ERROR_COOLDOWN_COUNT = config["ERROR_COOLDOWN"].get("ERROR_COOLDOWN_COUNT", ERROR_COOLDOWN_COUNT)
+            ERROR_COOLDOWN_MINUTES = config["ERROR_COOLDOWN"].get("ERROR_COOLDOWN_MINUTES", ERROR_COOLDOWN_MINUTES)
+        
+        # Retest
+        if "RETEST" in config:
+            RETEST_DISTANCE_MIN = config["RETEST"].get("RETEST_DISTANCE_MIN", RETEST_DISTANCE_MIN)
+            RETEST_DISTANCE_MAX = config["RETEST"].get("RETEST_DISTANCE_MAX", RETEST_DISTANCE_MAX)
+        
+        # Breakout
+        if "BREAKOUT" in config:
+            ENABLE_BREAKOUT = config["BREAKOUT"].get("ENABLE_BREAKOUT", ENABLE_BREAKOUT)
+            BREAKOUT_DISTANCE_MIN = config["BREAKOUT"].get("BREAKOUT_DISTANCE_MIN", BREAKOUT_DISTANCE_MIN)
+            BREAKOUT_DISTANCE_MAX = config["BREAKOUT"].get("BREAKOUT_DISTANCE_MAX", BREAKOUT_DISTANCE_MAX)
+        
+        # Spread Filter
+        if "SPREAD_FILTER" in config:
+            ENABLE_SPREAD_FILTER = config["SPREAD_FILTER"].get("ENABLE_SPREAD_FILTER", ENABLE_SPREAD_FILTER)
+            SPREAD_MAX_POINTS = config["SPREAD_FILTER"].get("SPREAD_MAX_POINTS", SPREAD_MAX_POINTS)
+        
+        # Momentum Filter
+        if "MOMENTUM_FILTER" in config:
+            ENABLE_MOMENTUM_FILTER = config["MOMENTUM_FILTER"].get("ENABLE_MOMENTUM_FILTER", ENABLE_MOMENTUM_FILTER)
+            MOMENTUM_CANDLE_MAX_PIPS = config["MOMENTUM_FILTER"].get("MOMENTUM_CANDLE_MAX_PIPS", MOMENTUM_CANDLE_MAX_PIPS)
+        
+        # Bad Candle Filter
+        if "BAD_CANDLE_FILTER" in config:
+            ENABLE_BAD_CANDLE_FILTER = config["BAD_CANDLE_FILTER"].get("ENABLE_BAD_CANDLE_FILTER", ENABLE_BAD_CANDLE_FILTER)
+            BAD_CANDLE_SHADOW_RATIO = config["BAD_CANDLE_FILTER"].get("BAD_CANDLE_SHADOW_RATIO", BAD_CANDLE_SHADOW_RATIO)
+        
+        # Time Filter
+        if "TIME_FILTER" in config:
+            ENABLE_TIME_FILTER = config["TIME_FILTER"].get("ENABLE_TIME_FILTER", ENABLE_TIME_FILTER)
+            TIME_FILTER_BUFFER_MINUTES = config["TIME_FILTER"].get("TIME_FILTER_BUFFER_MINUTES", TIME_FILTER_BUFFER_MINUTES)
+            if "IMPORTANT_NEWS_HOURS" in config["TIME_FILTER"]:
+                # Chuyển đổi list of lists thành list of tuples
+                IMPORTANT_NEWS_HOURS = [tuple(hour) for hour in config["TIME_FILTER"]["IMPORTANT_NEWS_HOURS"]]
+        
+        # Volume Confirmation
+        if "VOLUME_CONFIRMATION" in config:
+            ENABLE_VOLUME_CONFIRMATION = config["VOLUME_CONFIRMATION"].get("ENABLE_VOLUME_CONFIRMATION", ENABLE_VOLUME_CONFIRMATION)
+            VOLUME_INCREASE_RATIO = config["VOLUME_CONFIRMATION"].get("VOLUME_INCREASE_RATIO", VOLUME_INCREASE_RATIO)
+        
+        # RSI Filter
+        if "RSI_FILTER" in config:
+            ENABLE_RSI_FILTER = config["RSI_FILTER"].get("ENABLE_RSI_FILTER", ENABLE_RSI_FILTER)
         
         # Kiểm tra tính hợp lệ cơ bản
         if not all([MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL]):
@@ -207,6 +335,9 @@ def load_config(filename="XAUUSDMT5Real/mt5_account.json"):
     
     except json.JSONDecodeError:
         print(f"❌ Lỗi: Tệp '{filename}' không phải là định dạng JSON hợp lệ.")
+        return False
+    except Exception as e:
+        print(f"❌ Lỗi khi đọc cấu hình: {e}")
         return False
 
 # ==============================================================================
