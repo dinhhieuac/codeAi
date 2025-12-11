@@ -76,7 +76,17 @@ def index():
         })
         
     # Sort by Net Profit
-    bot_stats = sorted(bot_stats, key=lambda x: x['net_profit'], reverse=True)
+    # Sort by User Defined Order (1, 4, 2, 5)
+    desired_order = [
+        "Strategy_1_Trend_HA",
+        "Strategy_4_UT_Bot",
+        "Strategy_2_EMA_ATR", 
+        "Strategy_5_Filter_First"
+    ]
+    
+    # Filter only requested bots and sort
+    bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
+    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']))
 
     return render_template('index.html', 
                            orders=orders, 

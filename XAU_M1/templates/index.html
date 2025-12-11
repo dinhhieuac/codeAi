@@ -19,12 +19,10 @@
 
         .profit-pos {
             color: green;
-            font-weight: bold;
         }
 
         .profit-neg {
             color: red;
-            font-weight: bold;
         }
 
         .badge-buy {
@@ -149,7 +147,7 @@
                                         <td class="text-success">{{ "$%.2f"|format(bot.avg_win) }}</td>
                                         <td class="text-danger">{{ "$%.2f"|format(bot.avg_loss) }}</td>
                                         <td
-                                            class="fw-bold {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                            class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
                                             {{ "$%.2f"|format(bot.net_profit) }}
                                         </td>
                                     </tr>
@@ -193,7 +191,7 @@
                                         </td>
                                         <td>{{ order.open_price }}</td>
                                         <td
-                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %}">
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
                                             {% if order.profit is not none %}
                                             {{ "%.2f"|format(order.profit) }}
                                             {% else %}
@@ -220,7 +218,9 @@
                         <div class="card bg-light">
                             <div class="card-body text-center">
                                 <h5>Net Profit</h5>
-                                <h3 class="{% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{
+                                <h3
+                                    class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{
                                     "$%.2f"|format(bot.net_profit) }}</h3>
                             </div>
                         </div>
@@ -278,7 +278,7 @@
                                         <td>{{ order.sl }}</td>
                                         <td>{{ order.tp }}</td>
                                         <td
-                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %}">
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
                                             {% if order.profit is not none %}
                                             {{ "%.2f"|format(order.profit) }}
                                             {% else %}
