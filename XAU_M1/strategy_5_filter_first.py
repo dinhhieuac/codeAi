@@ -6,7 +6,8 @@ import numpy as np
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position
+from db import Database
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message
 
 # Initialize Database
 db = Database()
@@ -27,7 +28,7 @@ def strategy_5_logic(config, error_count=0):
             manage_position(pos.ticket, symbol, magic, config)
             
         if len(positions) >= max_positions:
-            return error_count
+            return error_count, 0
 
     # --- ENTRY MODE ---
     
@@ -35,7 +36,7 @@ def strategy_5_logic(config, error_count=0):
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200) # For Trend Filter
     
-    if df is None or df_m5 is None: return error_count
+    if df is None or df_m5 is None: return error_count, 0
 
     # Trend Filter (M5 EMA 200)
     df_m5['ema200'] = df_m5['close'].rolling(window=200).mean()
@@ -98,7 +99,7 @@ def strategy_5_logic(config, error_count=0):
              my_deals = [d for d in deals if d.magic == magic]
              if my_deals:
                  print(f"   ⏳ Cooldown: Last trade was < 5 mins ago. Skipping.")
-                 return error_count
+                 return error_count, 0
 
         price = mt5.symbol_info_tick(symbol).ask if signal == "BUY" else mt5.symbol_info_tick(symbol).bid
         
@@ -171,12 +172,12 @@ def strategy_5_logic(config, error_count=0):
                 f"• RSI: {last['rsi']:.1f}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-            return 0
+            return 0, 0
         else:
             print(f"❌ Order Failed: {result.retcode}")
-            return error_count + 1
+            return error_count + 1, result.retcode
 
-    return error_count
+    return error_count, 0
 
 if __name__ == "__main__":
     import os
@@ -190,10 +191,11 @@ if __name__ == "__main__":
         print("✅ Strategy 5: Filter First - Started")
         try:
             while True:
-                consecutive_errors = strategy_5_logic(config, consecutive_errors)
+                consecutive_errors, last_error_code = strategy_5_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
+                    error_msg = get_mt5_error_message(last_error_code)
+                    msg = f"⚠️ [Strategy 5: Filter First] WARNING: 5 Consecutive Order Failures. Last Error: {error_msg}. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
                     time.sleep(120)

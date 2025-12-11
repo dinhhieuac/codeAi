@@ -7,7 +7,8 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position
+from db import Database
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message
 
 # Initialize Database
 db = Database()
@@ -27,14 +28,14 @@ def strategy_1_logic(config, error_count=0):
             
         if len(positions) >= max_positions:
             # Silent return to avoid spam
-            return error_count
+            return error_count, 0
 
     # 1. Get Data (M1 and M5 for trend)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200)
     
     if df_m1 is None or df_m5 is None: 
-        return
+        return error_count, 0
 
     # 2. Calculate Indicators
     # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
@@ -120,7 +121,7 @@ def strategy_1_logic(config, error_count=0):
             current_server_time = mt5.symbol_info_tick(symbol).time
             if (current_server_time - last_trade_time) < 60:
                 print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count
+                return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
         
@@ -208,12 +209,13 @@ def strategy_1_logic(config, error_count=0):
                 f"• RSI: {last_ha['rsi']:.1f}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-            return 0 # Reset error count
+            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+            return 0, 0 # Reset error count
         else:
             print(f"❌ Order Failed: {result.retcode}")
-            return error_count + 1
+            return error_count + 1, result.retcode
     
-    return error_count
+    return error_count, 0
 
 if __name__ == "__main__":
     import os
@@ -228,10 +230,11 @@ if __name__ == "__main__":
         print("✅ Strategy 1: Trend HA - Started")
         try:
             while True:
-                consecutive_errors = strategy_1_logic(config, consecutive_errors)
+                consecutive_errors, last_error_code = strategy_1_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = "⚠️ WARNING: 5 Consecutive Order Failures. Pausing for 2 minutes..."
+                    error_msg = get_mt5_error_message(last_error_code)
+                    msg = f"⚠️ [Strategy 1: Trend HA] WARNING: 5 Consecutive Order Failures. Last Error: {error_msg}. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
                     time.sleep(120) # Pause for 2 minutes

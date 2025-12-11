@@ -200,3 +200,23 @@ def manage_position(order_ticket, symbol, magic, config):
 
     except Exception as e:
         print(f"⚠️ Error managing position {order_ticket}: {e}")
+
+def get_mt5_error_message(error_code):
+    """
+    Translate MT5 Error Codes to Human Readable Messages
+    """
+    error_map = {
+        10004: "Requote",
+        10006: "Request Rejected",
+        10013: "Invalid Request",
+        10014: "Invalid Volume",
+        10015: "Invalid Price",
+        10016: "Invalid Stops",
+        10018: "Market Closed",
+        10027: "AutoTrading Disabled by Client",
+        10030: "Unsupported Filling Mode",
+        10031: "Connection Error",
+        10036: "Request Timeout"
+    }
+    msg = error_map.get(error_code, "Unknown Error")
+    return f"{error_code} ({msg})"
