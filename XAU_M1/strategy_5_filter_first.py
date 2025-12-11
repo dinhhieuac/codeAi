@@ -6,7 +6,8 @@ import numpy as np
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position
+from db import Database
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message
 
 # Initialize Database
 db = Database()
@@ -193,7 +194,8 @@ if __name__ == "__main__":
                 consecutive_errors, last_error_code = strategy_5_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
-                    msg = f"⚠️ [Strategy 5: Filter First] WARNING: 5 Consecutive Order Failures. Last Error: {last_error_code}. Pausing for 2 minutes..."
+                    error_msg = get_mt5_error_message(last_error_code)
+                    msg = f"⚠️ [Strategy 5: Filter First] WARNING: 5 Consecutive Order Failures. Last Error: {error_msg}. Pausing for 2 minutes..."
                     print(msg)
                     send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
                     time.sleep(120)
