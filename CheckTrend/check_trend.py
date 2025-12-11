@@ -282,6 +282,7 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
     df.set_index('time', inplace=True)
     
     # Tính các chỉ báo
+    ema20 = calculate_ema(df['close'], 20)
     ema50 = calculate_ema(df['close'], 50)
     ema200 = calculate_ema(df['close'], 200)
     adx = calculate_adx(df, 14)
@@ -290,6 +291,7 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
     
     # Lấy giá trị hiện tại
     current_price = df['close'].iloc[-1]
+    ema20_current = ema20.iloc[-1] if not pd.isna(ema20.iloc[-1]) else current_price
     ema50_current = ema50.iloc[-1]
     ema200_current = ema200.iloc[-1]
     adx_current = adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 0
@@ -347,6 +349,7 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
     return {
         'timeframe': timeframe_name,
         'price': current_price,
+        'ema20': ema20_current,
         'ema50': ema50_current,
         'ema200': ema200_current,
         'adx': adx_current,
@@ -365,55 +368,342 @@ def analyze_timeframe(symbol, timeframe, timeframe_name):
         'atr_breakout': atr_breakout,
         'atr_msg': atr_msg,
         'peaks': peaks,
-        'troughs': troughs
+        'troughs': troughs,
+        'df': df,  # Lưu dataframe để tính toán điểm vào
+        'symbol': symbol  # Lưu symbol để tính toán
     }
 
 # ==============================================================================
-# 5. GỢI Ý ĐIỂM VÀO LỆNH
+# 5. TÍNH TOÁN ĐIỂM VÀO CỤ THỂ
+# ==============================================================================
+
+def find_supply_demand_zones(df, lookback=50):
+    """Tìm vùng supply (kháng cự) và demand (hỗ trợ) trên H4"""
+    supply_zones = []  # Vùng kháng cự (cho SELL)
+    demand_zones = []  # Vùng hỗ trợ (cho BUY)
+    
+    if len(df) < lookback:
+        lookback = len(df)
+    
+    recent_data = df.iloc[-lookback:]
+    
+    # Tìm các vùng supply (đỉnh với volume cao)
+    for i in range(5, len(recent_data) - 5):
+        # Kiểm tra đỉnh
+        is_peak = True
+        for j in range(i-3, i+4):
+            if j != i and recent_data.iloc[j]['high'] >= recent_data.iloc[i]['high']:
+                is_peak = False
+                break
+        
+        if is_peak:
+            high_price = recent_data.iloc[i]['high']
+            volume = recent_data.iloc[i]['tick_volume']
+            # Supply zone: đỉnh với volume cao
+            avg_volume = recent_data['tick_volume'].mean()
+            if volume > avg_volume * 1.2:
+                supply_zones.append({
+                    'price': high_price,
+                    'volume': volume,
+                    'index': i
+                })
+    
+    # Tìm các vùng demand (đáy với volume cao)
+    for i in range(5, len(recent_data) - 5):
+        # Kiểm tra đáy
+        is_trough = True
+        for j in range(i-3, i+4):
+            if j != i and recent_data.iloc[j]['low'] <= recent_data.iloc[i]['low']:
+                is_trough = False
+                break
+        
+        if is_trough:
+            low_price = recent_data.iloc[i]['low']
+            volume = recent_data.iloc[i]['tick_volume']
+            # Demand zone: đáy với volume cao
+            avg_volume = recent_data['tick_volume'].mean()
+            if volume > avg_volume * 1.2:
+                demand_zones.append({
+                    'price': low_price,
+                    'volume': volume,
+                    'index': i
+                })
+    
+    # Sắp xếp và lấy vùng gần nhất
+    supply_zones.sort(key=lambda x: x['index'], reverse=True)
+    demand_zones.sort(key=lambda x: x['index'], reverse=True)
+    
+    return supply_zones[:3], demand_zones[:3]  # Trả về 3 vùng gần nhất
+
+def calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
+    """Tính toán điểm vào cụ thể dựa trên phân tích"""
+    entry_details = []
+    
+    # M15: Pullback về EMA20/EMA50
+    if analysis_m15 and 'ema20' in analysis_m15 and 'ema50' in analysis_m15:
+        ema20 = analysis_m15['ema20']
+        ema50 = analysis_m15['ema50']
+        current_price = analysis_m15['price']
+        
+        if analysis_m15['trend'] == 'BULLISH':
+            # BUY: Pullback về EMA20 hoặc EMA50
+            entry_ema20 = ema20
+            entry_ema50 = ema50
+            # Chọn EMA gần giá hơn
+            if abs(current_price - ema20) < abs(current_price - ema50):
+                entry_price = entry_ema20
+                entry_type = "EMA20"
+            else:
+                entry_price = entry_ema50
+                entry_type = "EMA50"
+            
+            atr_value = analysis_m15.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'M15',
+                'type': 'BUY',
+                'strategy': f'Pullback về {entry_type}',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_m15.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0
+            })
+        elif analysis_m15['trend'] == 'BEARISH':
+            # SELL: Pullback về EMA20 hoặc EMA50
+            entry_ema20 = ema20
+            entry_ema50 = ema50
+            # Chọn EMA gần giá hơn
+            if abs(current_price - ema20) < abs(current_price - ema50):
+                entry_price = entry_ema20
+                entry_type = "EMA20"
+            else:
+                entry_price = entry_ema50
+                entry_type = "EMA50"
+            
+            atr_value = analysis_m15.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'M15',
+                'type': 'SELL',
+                'strategy': f'Pullback về {entry_type}',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_m15.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0
+            })
+    
+    # H4: Supply/Demand zones
+    if analysis_h4 and 'df' in analysis_h4:
+        df_h4 = analysis_h4['df']
+        supply_zones, demand_zones = find_supply_demand_zones(df_h4)
+        current_price = analysis_h4['price']
+        
+        if analysis_h4['trend'] == 'BEARISH' and supply_zones:
+            # SELL: Vùng supply gần nhất
+            nearest_supply = supply_zones[0]
+            entry_price = nearest_supply['price']
+            atr_value = analysis_h4.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'H4',
+                'type': 'SELL',
+                'strategy': 'Vùng supply mạnh',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_h4.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0,
+                'zone_volume': nearest_supply['volume']
+            })
+        elif analysis_h4['trend'] == 'BULLISH' and demand_zones:
+            # BUY: Vùng demand gần nhất
+            nearest_demand = demand_zones[0]
+            entry_price = nearest_demand['price']
+            atr_value = analysis_h4.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'H4',
+                'type': 'BUY',
+                'strategy': 'Vùng demand mạnh',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_h4.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0,
+                'zone_volume': nearest_demand['volume']
+            })
+    
+    # H1: Retest vùng hỗ trợ/kháng cự (dựa trên peaks/troughs)
+    if analysis_h1 and 'peaks' in analysis_h1 and 'troughs' in analysis_h1:
+        peaks = analysis_h1['peaks']
+        troughs = analysis_h1['troughs']
+        current_price = analysis_h1['price']
+        
+        if analysis_h1['trend'] == 'BEARISH' and peaks:
+            # SELL: Retest đỉnh gần nhất (kháng cự)
+            nearest_peak = sorted(peaks, key=lambda x: x[1], reverse=True)[0]
+            entry_price = nearest_peak[1]
+            atr_value = analysis_h1.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'H1',
+                'type': 'SELL',
+                'strategy': 'Retest vùng kháng cự',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_h1.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0
+            })
+        elif analysis_h1['trend'] == 'BULLISH' and troughs:
+            # BUY: Retest đáy gần nhất (hỗ trợ)
+            nearest_trough = sorted(troughs, key=lambda x: x[1])[0]
+            entry_price = nearest_trough[1]
+            atr_value = analysis_h1.get('atr', 0)
+            distance_atr = abs(current_price - entry_price) / atr_value if atr_value > 0 else 0
+            
+            entry_details.append({
+                'timeframe': 'H1',
+                'type': 'BUY',
+                'strategy': 'Retest vùng hỗ trợ',
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'distance_atr': distance_atr,
+                'distance_pips': analysis_h1.get('atr_pips', 0) * distance_atr if distance_atr > 0 else 0
+            })
+    
+    return entry_details
+
+# ==============================================================================
+# 6. GỢI Ý ĐIỂM VÀO LỆNH
 # ==============================================================================
 
 def get_entry_suggestions(analysis_m15, analysis_h1, analysis_h4, analysis_d1):
-    """Gợi ý điểm vào lệnh dựa trên phân tích đa khung thời gian"""
+    """Gợi ý điểm vào lệnh dựa trên phân tích đa khung thời gian với điểm vào cụ thể"""
     suggestions = []
+    entry_details = calculate_entry_prices(analysis_m15, analysis_h1, analysis_h4, analysis_d1)
     
     # Multi-timeframe confluence: H1 cùng hướng, M15 cho điểm entry
     if analysis_h1 and analysis_m15:
         if analysis_h1['trend'] == 'BULLISH' and analysis_m15['trend'] == 'BULLISH':
-            suggestions.append("✅ BUY Signal: H1 & M15 đều BULLISH - Có thể vào lệnh BUY")
+            suggestions.append({
+                'text': "✅ BUY Signal: H1 & M15 đều BULLISH - Có thể vào lệnh BUY",
+                'entry': None
+            })
         elif analysis_h1['trend'] == 'BEARISH' and analysis_m15['trend'] == 'BEARISH':
-            suggestions.append("✅ SELL Signal: H1 & M15 đều BEARISH - Có thể vào lệnh SELL")
+            suggestions.append({
+                'text': "✅ SELL Signal: H1 & M15 đều BEARISH - Có thể vào lệnh SELL",
+                'entry': None
+            })
         elif analysis_h1['trend'] != analysis_m15['trend']:
-            suggestions.append("⚠️ Không có confluence: H1 và M15 khác hướng - Tránh giao dịch")
+            suggestions.append({
+                'text': "⚠️ Không có confluence: H1 và M15 khác hướng - Tránh giao dịch",
+                'entry': None
+            })
     
     # M15: Pullback về EMA20/EMA50
     if analysis_m15:
+        m15_entry = [e for e in entry_details if e['timeframe'] == 'M15']
         if analysis_m15['trend'] == 'BULLISH':
-            suggestions.append("📊 M15: Tìm pullback về EMA20/EMA50 để BUY")
+            if m15_entry:
+                entry = m15_entry[0]
+                suggestions.append({
+                    'text': f"📊 M15: Pullback về {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 M15: Tìm pullback về EMA20/EMA50 để BUY",
+                    'entry': None
+                })
         elif analysis_m15['trend'] == 'BEARISH':
-            suggestions.append("📊 M15: Tìm pullback về EMA20/EMA50 để SELL")
+            if m15_entry:
+                entry = m15_entry[0]
+                suggestions.append({
+                    'text': f"📊 M15: Pullback về {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 M15: Tìm pullback về EMA20/EMA50 để SELL",
+                    'entry': None
+                })
     
     # H1: Retest vùng hỗ trợ/kháng cự
     if analysis_h1:
+        h1_entry = [e for e in entry_details if e['timeframe'] == 'H1']
         if analysis_h1['trend'] == 'BULLISH':
-            suggestions.append("📊 H1: Retest vùng hỗ trợ để BUY")
+            if h1_entry:
+                entry = h1_entry[0]
+                suggestions.append({
+                    'text': f"📊 H1: {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 H1: Retest vùng hỗ trợ để BUY",
+                    'entry': None
+                })
         elif analysis_h1['trend'] == 'BEARISH':
-            suggestions.append("📊 H1: Retest vùng kháng cự để SELL")
+            if h1_entry:
+                entry = h1_entry[0]
+                suggestions.append({
+                    'text': f"📊 H1: {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 H1: Retest vùng kháng cự để SELL",
+                    'entry': None
+                })
     
     # H4: Supply/Demand zones
     if analysis_h4:
+        h4_entry = [e for e in entry_details if e['timeframe'] == 'H4']
         if analysis_h4['trend'] == 'BULLISH':
-            suggestions.append("📊 H4: Tìm vùng demand mạnh để BUY")
+            if h4_entry:
+                entry = h4_entry[0]
+                suggestions.append({
+                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để BUY | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 H4: Tìm vùng demand mạnh để BUY",
+                    'entry': None
+                })
         elif analysis_h4['trend'] == 'BEARISH':
-            suggestions.append("📊 H4: Tìm vùng supply mạnh để SELL")
+            if h4_entry:
+                entry = h4_entry[0]
+                suggestions.append({
+                    'text': f"📊 H4: Tìm vùng {entry['strategy']} để SELL | 💰 Entry: {entry['entry_price']:.5f} (Giá hiện tại: {entry['current_price']:.5f})",
+                    'entry': entry
+                })
+            else:
+                suggestions.append({
+                    'text': "📊 H4: Tìm vùng supply mạnh để SELL",
+                    'entry': None
+                })
     
     # D1: Bias chính
     if analysis_d1:
         if analysis_d1['trend'] == 'BULLISH':
-            suggestions.append("📊 D1: Bias BULLISH - Chỉ BUY, tránh SELL")
+            suggestions.append({
+                'text': "📊 D1: Bias BULLISH - Chỉ BUY, tránh SELL",
+                'entry': None
+            })
         elif analysis_d1['trend'] == 'BEARISH':
-            suggestions.append("📊 D1: Bias BEARISH - Chỉ SELL, tránh BUY")
+            suggestions.append({
+                'text': "📊 D1: Bias BEARISH - Chỉ SELL, tránh BUY",
+                'entry': None
+            })
         else:
-            suggestions.append("📊 D1: Bias SIDEWAYS - Cẩn thận giao dịch")
+            suggestions.append({
+                'text': "📊 D1: Bias SIDEWAYS - Cẩn thận giao dịch",
+                'entry': None
+            })
     
     return suggestions
 
@@ -547,7 +837,10 @@ def format_telegram_message_compact(symbol, analysis_m15, analysis_h1, analysis_
     if suggestions:
         msg += "<b>💡 GỢI Ý:</b>\n"
         for suggestion in suggestions[:3]:  # Chỉ lấy 3 gợi ý đầu
-            msg += f"• {suggestion}\n"
+            if isinstance(suggestion, dict):
+                msg += f"• {suggestion['text']}\n"
+            else:
+                msg += f"• {suggestion}\n"
     
     return msg
 
@@ -593,7 +886,15 @@ def format_telegram_message(symbol, analysis_m15, analysis_h1, analysis_h4, anal
     if suggestions:
         msg += "<b>💡 GỢI Ý VÀO LỆNH:</b>\n"
         for suggestion in suggestions:
-            msg += f"{suggestion}\n"
+            if isinstance(suggestion, dict):
+                msg += f"• {suggestion['text']}\n"
+                # Hiển thị thêm thông tin chi tiết nếu có entry
+                if suggestion.get('entry'):
+                    entry = suggestion['entry']
+                    if entry.get('distance_pips'):
+                        msg += f"  📏 Khoảng cách: {entry['distance_pips']:.1f} pips ({entry.get('distance_atr', 0):.2f} ATR)\n"
+            else:
+                msg += f"• {suggestion}\n"
         msg += "\n"
     
     # Cảnh báo
@@ -646,7 +947,11 @@ def format_all_symbols_message(all_results):
             
             # Gợi ý (chỉ 2 đầu tiên)
             if suggestions:
-                msg += f"💡 {suggestions[0] if len(suggestions) > 0 else ''}\n"
+                first_suggestion = suggestions[0]
+                if isinstance(first_suggestion, dict):
+                    msg += f"💡 {first_suggestion['text']}\n"
+                else:
+                    msg += f"💡 {first_suggestion}\n"
             
             msg += "\n"
         else:
@@ -690,7 +995,15 @@ def format_all_symbols_message(all_results):
             if suggestions:
                 msg += "<b>💡 GỢI Ý VÀO LỆNH:</b>\n"
                 for suggestion in suggestions:
-                    msg += f"{suggestion}\n"
+                    if isinstance(suggestion, dict):
+                        msg += f"• {suggestion['text']}\n"
+                        # Hiển thị thêm thông tin chi tiết nếu có entry
+                        if suggestion.get('entry'):
+                            entry = suggestion['entry']
+                            if entry.get('distance_pips'):
+                                msg += f"  📏 Khoảng cách: {entry['distance_pips']:.1f} pips ({entry.get('distance_atr', 0):.2f} ATR)\n"
+                    else:
+                        msg += f"• {suggestion}\n"
                 msg += "\n"
             
             # Cảnh báo
@@ -855,7 +1168,16 @@ def analyze_symbol(symbol_base):
     print("GỢI Ý VÀO LỆNH:")
     print("="*70)
     for suggestion in suggestions:
-        print(f"  {suggestion}")
+        if isinstance(suggestion, dict):
+            print(f"  {suggestion['text']}")
+            if suggestion.get('entry'):
+                entry = suggestion['entry']
+            print(f"    📊 Entry Price: {entry['entry_price']:.5f}")
+            print(f"    📊 Current Price: {entry['current_price']:.5f}")
+            if entry.get('distance_pips'):
+                print(f"    📏 Distance: {entry['distance_pips']:.1f} pips ({entry.get('distance_atr', 0):.2f} ATR)")
+        else:
+            print(f"  {suggestion}")
     
     return (analysis_m15, analysis_h1, analysis_h4, analysis_d1, suggestions, symbol)
 
