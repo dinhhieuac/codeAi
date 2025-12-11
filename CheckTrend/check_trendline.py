@@ -741,23 +741,96 @@ def find_symbol(base_name):
 # 9. GỬI TELEGRAM
 # ==============================================================================
 
-def send_telegram(message):
-    """Gửi tin nhắn qua Telegram"""
+def split_message(message, max_length=4096):
+    """Chia message thành nhiều phần nếu quá dài"""
+    if len(message) <= max_length:
+        return [message]
+    
+    parts = []
+    current_part = ""
+    
+    lines = message.split('\n')
+    
+    for line in lines:
+        if len(current_part) + len(line) + 1 > max_length:
+            if current_part:
+                parts.append(current_part)
+                current_part = line + '\n'
+            else:
+                parts.append(line[:max_length])
+                current_part = line[max_length:] + '\n'
+        else:
+            current_part += line + '\n'
+    
+    if current_part:
+        parts.append(current_part)
+    
+    return parts
+
+def send_telegram(message, max_retries=3):
+    """Gửi tin nhắn qua Telegram với retry logic và tự động chia message nếu quá dài"""
     if not CHAT_ID or not TELEGRAM_TOKEN:
+        print("⚠️ Thiếu CHAT_ID hoặc TELEGRAM_TOKEN")
         return False
     
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        }
-        response = requests.post(url, data=data, timeout=15)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"⚠️ Lỗi gửi Telegram: {e}")
-        return False
+    # Kiểm tra độ dài message (Telegram giới hạn 4096 ký tự)
+    message_parts = split_message(message, max_length=4096)
+    
+    if len(message_parts) > 1:
+        print(f"⚠️ Message quá dài ({len(message)} ký tự), chia thành {len(message_parts)} phần")
+    
+    success_count = 0
+    for part_idx, message_part in enumerate(message_parts):
+        if len(message_parts) > 1:
+            if part_idx > 0:
+                message_part = f"<b>📄 Phần {part_idx + 1}/{len(message_parts)}</b>\n\n" + message_part
+        
+        for attempt in range(max_retries):
+            try:
+                url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                data = {
+                    "chat_id": CHAT_ID,
+                    "text": message_part,
+                    "parse_mode": "HTML"
+                }
+                response = requests.post(url, data=data, timeout=15)
+                
+                if response.status_code == 200:
+                    success_count += 1
+                    if len(message_parts) > 1:
+                        print(f"✅ Đã gửi phần {part_idx + 1}/{len(message_parts)}")
+                    break
+                else:
+                    try:
+                        error_data = response.json()
+                        error_desc = error_data.get('description', 'Unknown error')
+                        print(f"⚠️ Lỗi gửi Telegram (lần {attempt + 1}/{max_retries}): Status {response.status_code}")
+                        print(f"   Chi tiết: {error_desc}")
+                        print(f"   Độ dài message: {len(message_part)} ký tự")
+                    except:
+                        print(f"⚠️ Lỗi gửi Telegram (lần {attempt + 1}/{max_retries}): Status {response.status_code}")
+                        print(f"   Response: {response.text[:200]}")
+                    
+                    if response.status_code == 429:  # Rate limit
+                        retry_after = int(response.headers.get('Retry-After', 10))
+                        print(f"⏳ Rate limit, đợi {retry_after} giây...")
+                        time.sleep(retry_after)
+                    elif attempt < max_retries - 1:
+                        time.sleep(2)
+            except requests.exceptions.Timeout:
+                print(f"⚠️ Timeout khi gửi Telegram (lần {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ Lỗi gửi Telegram (lần {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+        
+        # Đợi 1 giây giữa các phần để tránh rate limit
+        if part_idx < len(message_parts) - 1:
+            time.sleep(1)
+    
+    return success_count == len(message_parts)
 
 def format_telegram_message(symbol, analysis):
     """Định dạng tin nhắn Telegram"""
@@ -883,10 +956,13 @@ def main():
             # Gửi Telegram
             telegram_msg = format_telegram_message(analysis['symbol'], analysis)
             print(f"\n📤 Đang gửi Telegram...")
+            print(f"   Độ dài message: {len(telegram_msg)} ký tự")
             if send_telegram(telegram_msg):
                 print(f"✅ Đã gửi log về Telegram")
             else:
-                print(f"❌ Không thể gửi Telegram")
+                print(f"❌ Không thể gửi Telegram sau 3 lần thử")
+                # In một phần message để debug
+                print(f"   Preview message (100 ký tự đầu): {telegram_msg[:100]}...")
         else:
             print(f"⚠️ Không có dữ liệu cho {symbol_base}")
         
