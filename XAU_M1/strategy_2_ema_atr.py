@@ -31,8 +31,9 @@ def strategy_2_logic(config, error_count=0):
     # 1. Get Data
     df = get_data(symbol, mt5.TIMEFRAME_M1, 100)
     df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 100) # H1 Trend Filter
+    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 10)  # Added for Auto SL
     
-    if df is None or df_h1 is None: return error_count
+    if df is None or df_h1 is None or df_m5 is None: return error_count
 
     # H1 Trend
     df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
