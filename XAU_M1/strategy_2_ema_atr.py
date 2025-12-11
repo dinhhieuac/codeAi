@@ -7,7 +7,7 @@ import numpy as np
 sys.path.append('..')
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
 
 # Initialize Database
 # Initialize Database
@@ -56,11 +56,7 @@ def strategy_2_logic(config, error_count=0):
     df['atr'] = df['tr'].rolling(window=14).mean()
 
     # RSI 14 (Added Filter)
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    df['rsi'] = calculate_rsi(df['close'], period=14)
     
     last = df.iloc[-1]
     prev = df.iloc[-2]

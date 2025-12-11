@@ -8,7 +8,7 @@ from datetime import datetime
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi
 
 # Initialize Database
 db = Database()
@@ -50,11 +50,7 @@ def strategy_1_logic(config, error_count=0):
     ha_df = calculate_heiken_ashi(df_m1)
     
     # RSI 14 (Added Filter)
-    delta = df_m1['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    ha_df['rsi'] = 100 - (100 / (1 + rs))
+    ha_df['rsi'] = calculate_rsi(df_m1['close'], period=14)
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]

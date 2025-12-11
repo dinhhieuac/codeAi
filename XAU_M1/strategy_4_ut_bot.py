@@ -8,7 +8,7 @@ import pandas as pd
 sys.path.append('..')
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx, manage_position, get_mt5_error_message
+from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx, manage_position, get_mt5_error_message, calculate_rsi
 
 # Initialize Database
 db = Database()
@@ -76,11 +76,7 @@ def strategy_4_logic(config, error_count=0):
     trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
     
     # RSI Calculation (M1)
-    delta = df_m1['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df_m1['rsi'] = 100 - (100 / (1 + rs))
+    df_m1['rsi'] = calculate_rsi(df_m1['close'], period=14)
     
     # ADX Calculation (M1)
     df_m1 = calculate_adx(df_m1)

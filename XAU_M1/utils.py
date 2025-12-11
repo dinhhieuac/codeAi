@@ -111,6 +111,30 @@ def calculate_adx(df, period=14):
     
     return df
 
+def calculate_rsi(series, period=14):
+    """
+    Calculate RSI using Wilder's Smoothing (Standard MT5/TradingView RSI)
+    """
+    delta = series.diff()
+    
+    # Separate gains and losses
+    gain = (delta.where(delta > 0, 0))
+    loss = (-delta.where(delta < 0, 0))
+    
+    # Calculate initial average (simple MA)
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()[:period+1]
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()[:period+1]
+    
+    # Manual loop or pandas ewm for Wilder's Smoothing (alpha=1/period)
+    # Pandas EWM with adjust=False approximates Wilder's if alpha=1/period
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi
+
 def is_doji(row, threshold=0.1):
     """Check if candle is a Doji (Body < 10% of Range)"""
     body = abs(row['close'] - row['open'])
