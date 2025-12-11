@@ -65,6 +65,7 @@ def index():
         win_rate = (len(s_wins) / s_total) * 100
         
         bot_stats.append({
+            "raw_name": strat, # Added for template filtering
             "name": strat.replace("Strategy_", "").replace("_", " "),
             "trades": s_total,
             "win_rate": win_rate,
