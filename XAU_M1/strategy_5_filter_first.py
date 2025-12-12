@@ -80,9 +80,15 @@ def strategy_5_logic(config, error_count=0):
     # ATR Volatility Filter
     atr_value = last['atr'] if not pd.isna(last['atr']) else 0
     point = mt5.symbol_info(symbol).point
+    # Với XAUUSD: ATR được tính bằng giá trị thực (USD)
+    # Chuyển sang pips: ATR(pips) = ATR(price) / point / 10
+    # Ví dụ: ATR = 1.057 USD, point = 0.01 → ATR(pips) = 1.057 / 0.01 / 10 = 10.57 pips
+    # Nếu ATR = 105.7 points → ATR(pips) = 105.7 / 10 = 10.57 pips
     atr_pips = (atr_value / point) / 10 if point > 0 else 0
-    atr_min = 5   # Minimum ATR (pips) - tránh market quá yên tĩnh
-    atr_max = 30  # Maximum ATR (pips) - tránh market quá biến động
+    # XAUUSD M1: ATR thường từ 10-150 pips (tùy volatility)
+    # Threshold điều chỉnh để phù hợp với XAUUSD M1 scalping
+    atr_min = 10   # Minimum ATR (pips) - tránh market quá yên tĩnh
+    atr_max = 200  # Maximum ATR (pips) - tránh market quá biến động (news events)
     
     print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f} | ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
     
