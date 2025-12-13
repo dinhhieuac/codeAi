@@ -10,6 +10,13 @@ def get_chat_id(token):
         
     Returns:
         str or int: The Chat ID if found, else None.
+
+        XAU INFO : XAU8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU
+        BTCUSD INFO : 8171919458:AAEMKOHsFJee7MSs2QW1-EI85EBof-yZ1zw
+        ETHUSD INFO : 8293920688:AAEV7_JEt-AV1rEI2idDXrm9YLZV3pJWBKI
+
+        EURUSD INFO : EURUSD8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU
+        GBPUSD INFO : GBPUSD8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU
     """
     url = f"https://api.telegram.org/bot{token}/getUpdates"
     
