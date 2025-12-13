@@ -5,7 +5,7 @@
     "mt5_path": "C:\\Program Files\\M4\\terminal64.exe",
     "symbol": "ETHUSD",
     "magic": 300004,
-    "volume": 0.01,
+    "volume": 0.1,
     "max_positions": 1,
     "telegram_token": "6398751744:AAGp7VH7B00_kzMqdaFB59xlqAXnlKTar-g",
     "telegram_chat_id": "1887610382",
