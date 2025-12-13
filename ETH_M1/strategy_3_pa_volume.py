@@ -84,6 +84,7 @@ def strategy_3_logic(config, error_count=0):
         return error_count, 0
     
     # SMA 9 Filter: Price at entry must be reasonably close to SMA 9 (Mean Reversion / Trend Touch)
+    is_near_sma = False
     dist_to_sma = abs(last['close'] - last['sma9'])
     
     # Allow up to 500 points ($5)
