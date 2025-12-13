@@ -201,18 +201,18 @@ def strategy_5_logic(config, error_count=0):
             # Use fetched M5 data
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
-            buffer_sl = 2000 * point
+            buffer_sl = 20000 * point
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer_sl
-                min_dist = 5000 * point
+                min_dist = 50000 * point
                 if (price - sl) < min_dist: sl = price - min_dist
                 risk_dist = price - sl
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
                 sl = prev_m5_high + buffer_sl
-                min_dist = 5000 * point
+                min_dist = 50000 * point
                 if (sl - price) < min_dist: sl = price + min_dist
                 risk_dist = sl - price
                 tp = price - (risk_dist * reward_ratio)

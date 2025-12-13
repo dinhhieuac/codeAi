@@ -138,18 +138,18 @@ def strategy_4_logic(config, error_count=0):
             if df_m5 is not None:
                 prev_m5_high = df_m5.iloc[-2]['high']
                 prev_m5_low = df_m5.iloc[-2]['low']
-                buffer = 20 * mt5.symbol_info(symbol).point
+                buffer = 2000 * mt5.symbol_info(symbol).point
                 
                 if signal == "BUY":
                     sl = prev_m5_low - buffer
-                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    min_dist = 5000 * mt5.symbol_info(symbol).point
                     if (price - sl) < min_dist: sl = price - min_dist
                     risk_dist = price - sl
                     tp = price + (risk_dist * reward_ratio)
                     
                 elif signal == "SELL":
                     sl = prev_m5_high + buffer
-                    min_dist = 100 * mt5.symbol_info(symbol).point
+                    min_dist = 5000 * mt5.symbol_info(symbol).point
                     if (sl - price) < min_dist: sl = price + min_dist
                     risk_dist = sl - price
                     tp = price - (risk_dist * reward_ratio)

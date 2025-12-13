@@ -134,13 +134,13 @@ def strategy_1_logic(config, error_count=0):
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
             
-            # Add a small buffer (e.g., 2000 points / $20) to avoid noise
-            buffer = 2000 * mt5.symbol_info(symbol).point
+            # Add a small buffer (e.g., 20000 points / $200) to avoid noise
+            buffer = 20000 * mt5.symbol_info(symbol).point
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer
-                # Check if SL is too close (safety) - min 5000 points
-                min_dist = 5000 * mt5.symbol_info(symbol).point
+                # Check if SL is too close (safety) - min 50000 points
+                min_dist = 50000 * mt5.symbol_info(symbol).point
                 if (price - sl) < min_dist:
                     sl = price - min_dist
                     
@@ -150,7 +150,7 @@ def strategy_1_logic(config, error_count=0):
             elif signal == "SELL":
                 sl = prev_m5_high + buffer
                 # Check min dist
-                min_dist = 5000 * mt5.symbol_info(symbol).point
+                min_dist = 50000 * mt5.symbol_info(symbol).point
                 if (sl - price) < min_dist:
                     sl = price + min_dist
                     
