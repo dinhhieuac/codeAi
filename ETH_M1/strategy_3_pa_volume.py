@@ -63,7 +63,7 @@ def strategy_3_logic(config, error_count=0):
     point = mt5.symbol_info(symbol).point
     spread = (tick.ask - tick.bid) / point
     spread_pips = spread / 10
-    max_spread = 300  # $30 max for ETH SCALPING
+    max_spread = 3000  # $30 max for ETH SCALPING
     
     # 3. Logic: Rejection Candle + Volume Spike near SMA 9
     signal = None
@@ -88,8 +88,8 @@ def strategy_3_logic(config, error_count=0):
     pip_val = point * 10
     dist_to_sma = abs(last['close'] - last['sma9'])
     
-    # Allow up to 500 points ($5)
-    if dist_to_sma <= 500 * point: 
+    # Allow up to 5000 points ($50)
+    if dist_to_sma <= 5000 * point: 
         is_near_sma = True
         
     # Volume > 1.5x Average (Tăng từ 1.1x)
@@ -198,18 +198,18 @@ def strategy_3_logic(config, error_count=0):
             # Auto M5 Logic
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
-            buffer = 200 * point
+            buffer = 2000 * point
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer
-                min_dist = 500 * point
+                min_dist = 5000 * point
                 if (price - sl) < min_dist: sl = price - min_dist
                 risk_dist = price - sl
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
                 sl = prev_m5_high + buffer
-                min_dist = 500 * point
+                min_dist = 5000 * point
                 if (sl - price) < min_dist: sl = price + min_dist
                 risk_dist = sl - price
                 tp = price - (risk_dist * reward_ratio)

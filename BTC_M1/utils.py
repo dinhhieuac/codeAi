@@ -165,9 +165,9 @@ def manage_position(order_ticket, symbol, magic, config):
             
         request = None
         
-        # 1. Quick Breakeven (1000 points / $10)
+        # 1. Quick Breakeven (10000 points / $100)
         # Move SL to Entry if not already there
-        if profit_points > 1000:
+        if profit_points > 10000:
             # Check if SL is already at or better than breakeven
             is_breakeven = False
             if pos.type == mt5.ORDER_TYPE_BUY:
@@ -185,10 +185,10 @@ def manage_position(order_ticket, symbol, magic, config):
                 }
                  print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket}")
 
-        # 2. Trailing Stop (Trigger > 3000 points / $30)
-        # Trail distance: 2000 points / $20
-        if request is None and profit_points > 3000:
-            trail_dist = 2000 * point
+        # 2. Trailing Stop (Trigger > 30000 points / $300)
+        # Trail distance: 20000 points / $200
+        if request is None and profit_points > 30000:
+            trail_dist = 20000 * point
             new_sl = 0.0
             
             if pos.type == mt5.ORDER_TYPE_BUY:
