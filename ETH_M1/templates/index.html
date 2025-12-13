@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+        }
+
+        .profit-pos {
+            color: green;
+        }
+
+        .profit-neg {
+            color: red;
+        }
+
+        .badge-buy {
+            background-color: #198754;
+        }
+
+        .badge-sell {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">🤖 ETHUSD Trading Bot Dashboard</span>
+            <span class="text-white"><i class="fas fa-sync"></i> Auto-refreshing usually requires JS, hit F5
+                manually</span>
+        </div>
+    </nav>
+
+    <div class="container mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h3>{{ filter_label }}</h3>
+            <div class="btn-group" role="group">
+                <a href="/?days=1" class="btn btn-outline-primary {% if current_filter == '1' %}active{% endif %}">1
+                    Day</a>
+                <a href="/?days=3" class="btn btn-outline-primary {% if current_filter == '3' %}active{% endif %}">3
+                    Days</a>
+                <a href="/?days=5" class="btn btn-outline-primary {% if current_filter == '5' %}active{% endif %}">5
+                    Days</a>
+                <a href="/?days=7" class="btn btn-outline-primary {% if current_filter == '7' %}active{% endif %}">7
+                    Days</a>
+                <a href="/?days=30" class="btn btn-outline-primary {% if current_filter == '30' %}active{% endif %}">30
+                    Days</a>
+                <a href="/?days=all"
+                    class="btn btn-outline-primary {% if current_filter == 'all' %}active{% endif %}">All Time</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Stats Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Trades</h5>
+                        <h2 class="card-text">{{ total_trades }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card {% if total_profit >= 0 %}bg-success{% else %}bg-danger{% endif %} text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Profit ($)</h5>
+                        <h2 class="card-text">{{ "%.2f"|format(total_profit) }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Win Rate</h5>
+                        <h2 class="card-text">{{ "%.1f"|format(win_rate) }}%</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-secondary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">W / L</h5>
+                        <h2 class="card-text">{{ wins }} / {{ losses }}</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs Navigation -->
+        <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview"
+                    type="button" role="tab" aria-controls="overview" aria-selected="true">Global Overview</button>
+            </li>
+            {% for bot in bot_stats %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-{{ loop.index }}" data-bs-toggle="tab"
+                    data-bs-target="#content-{{ loop.index }}" type="button" role="tab"
+                    aria-controls="content-{{ loop.index }}" aria-selected="false">{{ bot.name }}</button>
+            </li>
+            {% endfor %}
+        </ul>
+
+        <!-- Tabs Content -->
+        <div class="tab-content" id="myTabContent">
+
+            <!-- OVERVIEW TAB -->
+            <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview-tab">
+
+                <!-- Bot Performance Stats -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-robot"></i> Strategy Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Strategy</th>
+                                        <th>Trades</th>
+                                        <th>Win Rate</th>
+                                        <th>Profit Factor</th>
+                                        <th>Avg Win</th>
+                                        <th>Avg Loss</th>
+                                        <th>Net Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for bot in bot_stats %}
+                                    <tr>
+                                        <td class="fw-bold text-primary">{{ bot.name }}</td>
+                                        <td>{{ bot.trades }}</td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <span class="me-2">{{ "%.1f"|format(bot.win_rate) }}%</span>
+                                                <div class="progress flex-grow-1" style="height: 6px; width: 60px;">
+                                                    <div class="progress-bar {% if bot.win_rate >= 50 %}bg-success{% else %}bg-warning{% endif %}"
+                                                        role="progressbar" style="width: {{ bot.win_rate }}%"></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            {% if bot.pf >= 1.5 %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% elif bot.pf >= 1.0 %}
+                                            <span class="badge bg-primary">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% else %}
+                                            <span class="badge bg-danger">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-success">{{ "$%.2f"|format(bot.avg_win) }}</td>
+                                        <td class="text-danger">{{ "$%.2f"|format(bot.avg_loss) }}</td>
+                                        <td
+                                            class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                            {{ "$%.2f"|format(bot.net_profit) }}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Global Orders Table -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-history"></i> Recent Global Trades</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Ticket</th>
+                                        <th>Time</th>
+                                        <th>Strategy</th>
+                                        <th>Type</th>
+                                        <th>Price</th>
+                                        <th>Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in orders[:50] %}
+                                    <tr>
+                                        <td>{{ order.ticket }}</td>
+                                        <td>{{ order.open_time }}</td>
+                                        <td><span class="badge bg-secondary">{{ order.strategy_name }}</span></td>
+                                        <td>
+                                            {% if order.order_type == 'BUY' %}
+                                            <span class="badge badge-buy">BUY</span>
+                                            {% else %}
+                                            <span class="badge badge-sell">SELL</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ order.open_price }}</td>
+                                        <td
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
+                                            {% if order.profit is not none %}
+                                            {{ "%.2f"|format(order.profit) }}
+                                            {% else %}
+                                            <span class="text-muted">Running</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- INDIVIDUAL BOT TABS -->
+            {% for bot in bot_stats %}
+            <div class="tab-pane fade" id="content-{{ loop.index }}" role="tabpanel"
+                aria-labelledby="tab-{{ loop.index }}">
+
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title text-center text-muted">Equity Curve ({{ filter_label }})</h5>
+                        <canvas id="chart-{{ loop.index }}" style="max-height: 300px;"></canvas>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Net Profit</h5>
+                                <h3
+                                    class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{
+                                    "$%.2f"|format(bot.net_profit) }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Win Rate</h5>
+                                <h3>{{ "%.1f"|format(bot.win_rate) }}%</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Profit Factor</h5>
+                                <h3>{{ "%.2f"|format(bot.pf) }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Ticket</th>
+                                        <th>Time</th>
+                                        <th>Type</th>
+                                        <th>Price</th>
+                                        <th>SL</th>
+                                        <th>TP</th>
+                                        <th>Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in orders %}
+                                    {% if order.strategy_name == bot.raw_name %}
+                                    <tr>
+                                        <td>{{ order.ticket }}</td>
+                                        <td>{{ order.open_time }}</td>
+                                        <td>
+                                            {% if order.order_type == 'BUY' %}
+                                            <span class="badge badge-buy">BUY</span>
+                                            {% else %}
+                                            <span class="badge badge-sell">SELL</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ order.open_price }}</td>
+                                        <td>{{ order.sl }}</td>
+                                        <td>{{ order.tp }}</td>
+                                        <td
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
+                                            {% if order.profit is not none %}
+                                            {{ "%.2f"|format(order.profit) }}
+                                            {% else %}
+                                            <span class="text-muted">Running</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            {% endfor %}
+
+        </div>
+
+        <!-- Recent Signals -->
+        <div class="card">
+            <div class="card-header bg-white">
+                <h5 class="mb-0"><i class="fas fa-signal"></i> Recent Signals (Last 50)</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Strategy</th>
+                                <th>Signal</th>
+                                <th>Price</th>
+                                <th>Info</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sig in signals %}
+                            <tr>
+                                <td>{{ sig.timestamp }}</td>
+                                <td>{{ sig.strategy_name }}</td>
+                                <td>
+                                    {% if sig.signal_type == 'BUY' %}
+                                    <span class="text-success fw-bold">BUY</span>
+                                    {% else %}
+                                    <span class="text-danger fw-bold">SELL</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ sig.price }}</td>
+                                <td class="small text-muted">{{ sig.indicators }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        {% for bot in bot_stats %}
+        (function () {
+            const ctx = document.getElementById('chart-{{ loop.index }}').getContext('2d');
+            const dataPoints = {{ bot.chart_data | tojson
+        }};
+
+        // Allow empty charts
+        if (!dataPoints || dataPoints.length === 0) return;
+
+        const labels = dataPoints.map(p => p.x);
+        const data = dataPoints.map(p => p.y);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Cumulative Profit ($)',
+                    data: data,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { display: false }, // Hide x labels for cleanliness
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: '#f0f0f0' }
+                    }
+                }
+            }
+        });
+        }) ();
+        {% endfor %}
+    </script>
+</body>
+
+</html>
