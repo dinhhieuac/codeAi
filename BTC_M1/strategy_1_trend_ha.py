@@ -205,7 +205,6 @@ def strategy_1_logic(config, error_count=0):
                 f"• RSI: {last_ha['rsi']:.1f}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
-            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0 # Reset error count
         else:
             print(f"❌ Order Failed: {result.retcode}")
