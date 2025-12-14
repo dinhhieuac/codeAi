@@ -17,6 +17,7 @@ def get_chat_id(token):
 
         EURUSD INFO : EURUSD8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU
         GBPUSD INFO : GBPUSD8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU
+        TUYEN INFO : 6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE
     """
     url = f"https://api.telegram.org/bot{token}/getUpdates"
     

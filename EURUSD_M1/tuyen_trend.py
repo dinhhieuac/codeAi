@@ -67,6 +67,80 @@ def check_signal_candle(row, trend):
         
     return False
 
+def check_compression_block(df_slice):
+    """
+    Check for Price Action Compression (Block of 3+ candles)
+    Criteria:
+    1. Min 3 candles
+    2. Shrinking or stable range (not expanding violently)
+    3. Overlapping bodies (compression)
+    """
+    if len(df_slice) < 3: return False
+    
+    # Calculate ranges
+    ranges = df_slice['high'] - df_slice['low']
+    avg_range = ranges.mean()
+    
+    # Check if any candle is "Huge" (Momentum) - we want compression, not expansion
+    # If a candle range is > 2x average, it's not compression
+    if (ranges > avg_range * 2.0).any():
+        return False
+        
+    # Check overlapping (Highs lower, Lows higher? Or just general range containment)
+    # Simple compression: Avg Body Size should be small relative to Avg Range
+    bodies = abs(df_slice['close'] - df_slice['open'])
+    avg_body = bodies.mean()
+    
+    # Body should be relatively small
+    if avg_body > (avg_range * 0.6): # If bodies are big, it's directional, not compressed
+        return False
+        
+    return True
+
+def detect_pattern(df_slice, type='W'):
+    """
+    Rudimentary Pattern Detection for M (Sell) or W (Buy) over last 5-10 candles.
+    """
+    # Simply check for Double Bottom/Top logic via fractal or pivots
+    # For M1, we can check Swing Points
+    # W Pattern: Low1, High1, Low2 (Higher/Same), Break?
+    
+    # Simplified for Bot: Check if we have two distinct lows (for W) without a lower low
+    if len(df_slice) < 5: return False
+    
+    lows = df_slice['low'].values
+    highs = df_slice['high'].values
+    
+    if type == 'W': # BUY
+        # Look for two minima
+        # Split data in half?
+        mid = len(lows) // 2
+        min1 = np.min(lows[:mid])
+        min2 = np.min(lows[mid:])
+        
+        # Min2 should be >= Min1 (Higher Low or Double Bottom)
+        # And recent Close should be moving up
+        if min2 >= min1 * 0.9999: # Allow tiny violation or exact
+             # Also check if we are near the top of the range (ready to break)
+             current_close = df_slice.iloc[-1]['close']
+             range_high = np.max(highs)
+             if current_close > (range_high + min2)/2: # Upper half
+                 return True
+                 
+    elif type == 'M': # SELL
+        mid = len(highs) // 2
+        max1 = np.max(highs[:mid])
+        max2 = np.max(highs[mid:])
+        
+        # Max2 should be <= Max1 (Lower High or Double Top)
+        if max2 <= max1 * 1.0001:
+             current_close = df_slice.iloc[-1]['close']
+             range_low = np.min(lows)
+             if current_close < (range_low + max2)/2: # Lower half
+                 return True
+                 
+    return False
+
 def tuyen_trend_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
@@ -82,25 +156,17 @@ def tuyen_trend_logic(config, error_count=0):
             return error_count, 0
 
     # --- 2. Data Fetching ---
-    # Need sufficient history for EMA 200/50
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
     
     if df_m1 is None or df_m5 is None: return error_count, 0
 
     # --- 3. M5 Trend Detection ---
-    # 1.1: Supply/Demand H1 (Skipped - manual/visual mostly, assume trend following is safe)
-    # 1.2: Structure M5
-    # Sell: Price < EMA 21 < EMA 50, EMA Slope Down
-    # Buy: Price > EMA 21 > EMA 50, EMA Slope Up
-    
     df_m5['ema21'] = calculate_ema(df_m5['close'], 21)
     df_m5['ema50'] = calculate_ema(df_m5['close'], 50)
     
     last_m5 = df_m5.iloc[-1]
-    prev_m5 = df_m5.iloc[-2] # Completed candle
     
-    # Check Slope (using last 3 candles to ensure it's not flat)
     ema21_slope_up = df_m5.iloc[-1]['ema21'] > df_m5.iloc[-2]['ema21'] > df_m5.iloc[-3]['ema21']
     ema21_slope_down = df_m5.iloc[-1]['ema21'] < df_m5.iloc[-2]['ema21'] < df_m5.iloc[-3]['ema21']
     
@@ -110,98 +176,121 @@ def tuyen_trend_logic(config, error_count=0):
     elif last_m5['close'] < last_m5['ema21'] < last_m5['ema50'] and ema21_slope_down:
         m5_trend = "BEARISH"
         
-    # --- 4. M1 Pullback & Setup ---
-    # 2.2: Pullback to EMA 21/50
-    # 2.3: Cluster of min 2 Doji/Pinbar
-    
+    # --- 4. M1 Setup Checks ---
     df_m1['ema21'] = calculate_ema(df_m1['close'], 21)
     df_m1['ema50'] = calculate_ema(df_m1['close'], 50)
+    df_m1['ema200'] = calculate_ema(df_m1['close'], 200) # Added for Strat 2
     df_m1['atr'] = calculate_atr(df_m1, 14)
     
-    # We look at completed candles for the Setup Cluster
-    c1 = df_m1.iloc[-2] # Most recent completed
-    c2 = df_m1.iloc[-3] # Previous
-    
-    # Check if candles are "Around EMA"
-    # Logic: Low <= EMA21 <= High OR Low <= EMA50 <= High (Intersects)
-    # OR Body is between EMA21 and EMA50?
-    # "Chững lại tại EMA" -> Interaction or close proximity.
+    # Recent completed candles (last 3-5)
+    c1 = df_m1.iloc[-2] # Completed
+    c2 = df_m1.iloc[-3]
+    c3 = df_m1.iloc[-4]
     
     def touches_ema(row):
-        # Check proximity to EMA 21 or 50 (within 2 pips?)
-        # Or Just High >= EMA >= Low
-        e21 = row['ema21']
-        e50 = row['ema50']
-        
-        # Check limits
-        c_high = row['high']
-        c_low = row['low']
-        
-        # Intersection
-        cond21 = (c_low <= e21 <= c_high)
-        cond50 = (c_low <= e50 <= c_high)
-        
-        # Or close proximity (if price is just sitting on top)
-        # Assuming Trend, for Buy, Low might just touch EMA
-        return cond21 or cond50
+        # Check simple intersection with EMA 21 or 50
+        e21, e50 = row['ema21'], row['ema50']
+        high, low = row['high'], row['low']
+        return (low <= e21 <= high) or (low <= e50 <= high)
 
-    setup_valid = False
     signal_type = None
+    reason = ""
     
-    # Check Setup Candles
-    is_c1_signal = check_signal_candle(c1, m5_trend)
-    is_c2_signal = check_signal_candle(c2, m5_trend)
+    # === STRATEGY 1: PULLBACK + DOJI/PINBAR CLUSTER ===
+    # Criteria:
+    # 1. Trend M5 (Matched)
+    # 2. Touch EMA 21/50
+    # 3. Cluster of 2+ Doji/Pinbars
     
-    # Check interaction with EMA
-    # At least one of the candles in cluster should interact with EMA
-    is_near_ema = touches_ema(c1) or touches_ema(c2)
-    
-    # Valid Cluster?
-    if m5_trend != "NEUTRAL" and is_c1_signal and is_c2_signal and is_near_ema:
-        signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
-        setup_valid = True
+    is_strat1 = False
+    if m5_trend != "NEUTRAL":
+        # Check cluster of 2 signals
+        is_c1_sig = check_signal_candle(c1, m5_trend)
+        is_c2_sig = check_signal_candle(c2, m5_trend)
+        # Check EMA Touch
+        is_touch = touches_ema(c1) or touches_ema(c2)
         
+        if is_c1_sig and is_c2_sig and is_touch:
+            signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
+            is_strat1 = True
+            reason = "Strat1_Pullback_Cluster"
+
+    # === STRATEGY 2: CONTINUATION + STRUCTURE (M/W + COMPRESSION) ===
+    # Criteria:
+    # 1. Trend M5 (Matched)
+    # 2. Price > EMA 200 (Buy) or < EMA 200 (Sell) [V2 Requirement]
+    # 3. Compression Block or M/W Pattern
+    # 4. Near EMA 21/50 (Retest)
+    
+    is_strat2 = False
+    # If Strat 1 already found, we can stick to it, or prioritize? 
+    # Strat 1 is safer. Check Strat 2 if Strat 1 is False.
+    
+    if not is_strat1 and m5_trend != "NEUTRAL":
+        # Check EMA 200 Filter
+        pass_ema200 = False
+        if m5_trend == "BULLISH" and c1['close'] > c1['ema200']: pass_ema200 = True
+        if m5_trend == "BEARISH" and c1['close'] < c1['ema200']: pass_ema200 = True
+        
+        if pass_ema200:
+            # Check Compression (Last 3-5 candles)
+            recent_block = df_m1.iloc[-5:-1] # 4 completed candles
+            is_compressed = check_compression_block(recent_block)
+            
+            # Check Pattern (M/W)
+            is_pattern = detect_pattern(recent_block, type='W' if m5_trend == "BULLISH" else 'M')
+            
+            # Check EMA Touch (Retest)
+            # The block should act around EMA
+            block_touch = False
+            for idx, row in recent_block.iterrows():
+                if touches_ema(row):
+                    block_touch = True
+                    break
+            
+            if (is_compressed or is_pattern) and block_touch:
+                 signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
+                 is_strat2 = True
+                 reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}"
+
+    # --- Logging ---
     price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" else mt5.symbol_info_tick(symbol).bid
+    print(f"📊 [TuyenTrend] P: {price} | M5: {m5_trend} | S1: {is_strat1} | S2: {is_strat2}")
     
-    # Logging
-    print(f"📊 [TuyenTrend] P: {price} | M5 Trend: {m5_trend}")
-    print(f"   M1 Candles (-2, -3): Signal? {is_c1_signal}, {is_c2_signal} | Near EMA? {is_near_ema}")
-    
-    if not setup_valid:
+    if not signal_type:
         return error_count, 0
         
     # --- 5. Execution Trigger ---
-    # Buy: Break High of Signal
-    # Sell: Break Low of Signal
+    # Breakout of the Signal Cluster (Strat 1) or Block (Strat 2)
     
-    cluster_high = max(c1['high'], c2['high'])
-    cluster_low = min(c1['low'], c2['low'])
-    
+    # Define Range to Break
+    if is_strat1:
+        trigger_high = max(c1['high'], c2['high'])
+        trigger_low = min(c1['low'], c2['low'])
+    else: # Strat 2
+        # Use the block high/low
+        recent_block = df_m1.iloc[-5:-1]
+        trigger_high = recent_block['high'].max()
+        trigger_low = recent_block['low'].min()
+        
     execute = False
     sl = 0.0
     tp = 0.0
+    atr_val = c1['atr']
     
     if signal_type == "BUY":
-        # Breakout check
-        if price > cluster_high:
+        if price > trigger_high:
             execute = True
-            atr_val = c1['atr']
-            sl = price - (2 * atr_val) # SL = 2 * ATR
-            tp = price + (4 * atr_val) # TP = 2 * SL (2 * 2 = 4 ATR)
-            
-            # Safety checks for SL
-            # Ensure SL is below cluster low? Strategy says 2*ATR, usually safer.
-            # But technically SL should be logical. Doc says "SL = 2 x ATR(14)". Stick to doc.
-            
+            sl = price - (2 * atr_val)
+            tp = price + (4 * atr_val)
     elif signal_type == "SELL":
-        if price < cluster_low:
+        if price < trigger_low:
             execute = True
-            atr_val = c1['atr']
             sl = price + (2 * atr_val)
             tp = price - (4 * atr_val)
-
+            
     if execute:
-        # Spam Filter (60s)
+         # Spam Filter (60s)
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
@@ -209,7 +298,7 @@ def tuyen_trend_logic(config, error_count=0):
                 print("   ⏳ Trade taken recently. Waiting.")
                 return error_count, 0
 
-        print(f"🚀 SIGNAL EXECUTE: {signal_type} @ {price}")
+        print(f"🚀 SIGNAL EXECUTE: {signal_type} @ {price} | {reason}")
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -220,7 +309,7 @@ def tuyen_trend_logic(config, error_count=0):
             "sl": sl,
             "tp": tp,
             "magic": magic,
-            "comment": "Tuyen_Trend_M1",
+            "comment": reason,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
@@ -228,16 +317,16 @@ def tuyen_trend_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, result.comment, account_id=config['account'])
+            db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
             
              # Telegram
             msg = (
                 f"✅ <b>Tuyen Trend Bot Triggered</b>\n"
                 f"🆔 <b>Ticket:</b> {result.order}\n"
                 f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
+                f"📋 <b>Reason:</b> {reason}\n"
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.5f} | 🎯 <b>TP:</b> {tp:.5f}\n"
-                f"📉 <b>Reason:</b> M5 Trend + M1 EMA Pullback + 2 Candle Rejection"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0
@@ -250,12 +339,13 @@ def tuyen_trend_logic(config, error_count=0):
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Assuming config path remains same
     config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
     config = load_config(config_path)
     
     consecutive_errors = 0
     if config and connect_mt5(config):
-        print("✅ Tuyen Trend Bot - Started")
+        print("✅ Tuyen Trend Bot (V2) - Started")
         try:
             while True:
                 consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
