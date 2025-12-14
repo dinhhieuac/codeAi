@@ -167,19 +167,32 @@ def tuyen_trend_logic(config, error_count=0):
     
     last_m5 = df_m5.iloc[-1]
     
+    # Check Slope
     ema21_slope_up = df_m5.iloc[-1]['ema21'] > df_m5.iloc[-2]['ema21'] > df_m5.iloc[-3]['ema21']
     ema21_slope_down = df_m5.iloc[-1]['ema21'] < df_m5.iloc[-2]['ema21'] < df_m5.iloc[-3]['ema21']
     
     m5_trend = "NEUTRAL"
-    if last_m5['close'] > last_m5['ema21'] > last_m5['ema50'] and ema21_slope_up:
-        m5_trend = "BULLISH"
-    elif last_m5['close'] < last_m5['ema21'] < last_m5['ema50'] and ema21_slope_down:
-        m5_trend = "BEARISH"
+    trend_reason = "Flat/Mixed"
+    
+    if last_m5['close'] > last_m5['ema21'] > last_m5['ema50']:
+        if ema21_slope_up:
+            m5_trend = "BULLISH"
+            trend_reason = "Price > EMA21 > EMA50, Slope Up"
+        else:
+            trend_reason = "Price OK (Valid Stack), but Slope Flat/Down"
+    elif last_m5['close'] < last_m5['ema21'] < last_m5['ema50']:
+        if ema21_slope_down:
+            m5_trend = "BEARISH"
+            trend_reason = "Price < EMA21 < EMA50, Slope Down"
+        else:
+            trend_reason = "Price OK (Valid Stack), but Slope Flat/Up"
+    else:
+        trend_reason = "EMAs Crossed or Price Inside EMAs"
         
     # --- 4. M1 Setup Checks ---
     df_m1['ema21'] = calculate_ema(df_m1['close'], 21)
     df_m1['ema50'] = calculate_ema(df_m1['close'], 50)
-    df_m1['ema200'] = calculate_ema(df_m1['close'], 200) # Added for Strat 2
+    df_m1['ema200'] = calculate_ema(df_m1['close'], 200) 
     df_m1['atr'] = calculate_atr(df_m1, 14)
     
     # Recent completed candles (last 3-5)
@@ -195,80 +208,96 @@ def tuyen_trend_logic(config, error_count=0):
 
     signal_type = None
     reason = ""
+    log_details = []
     
+    price = mt5.symbol_info_tick(symbol).ask 
+    
+    log_details.append(f"M5 Trend: {m5_trend} ({trend_reason})")
+    
+    if m5_trend == "NEUTRAL":
+        print(f"📉 [TuyenTrend] No Trend. Details: {trend_reason}")
+        return error_count, 0
+
     # === STRATEGY 1: PULLBACK + DOJI/PINBAR CLUSTER ===
-    # Criteria:
-    # 1. Trend M5 (Matched)
-    # 2. Touch EMA 21/50
-    # 3. Cluster of 2+ Doji/Pinbars
-    
     is_strat1 = False
-    if m5_trend != "NEUTRAL":
-        # Check cluster of 2 signals
-        is_c1_sig = check_signal_candle(c1, m5_trend)
-        is_c2_sig = check_signal_candle(c2, m5_trend)
-        # Check EMA Touch
-        is_touch = touches_ema(c1) or touches_ema(c2)
-        
-        if is_c1_sig and is_c2_sig and is_touch:
-            signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
-            is_strat1 = True
-            reason = "Strat1_Pullback_Cluster"
+    
+    # Check cluster of 2 signals
+    is_c1_sig = check_signal_candle(c1, m5_trend)
+    is_c2_sig = check_signal_candle(c2, m5_trend)
+    # Check EMA Touch
+    is_touch = touches_ema(c1) or touches_ema(c2)
+    
+    strat1_fail_reasons = []
+    if not is_c1_sig: strat1_fail_reasons.append("Candle-1 Not Signal")
+    if not is_c2_sig: strat1_fail_reasons.append("Candle-2 Not Signal")
+    if not is_touch: strat1_fail_reasons.append("No EMA Touch")
+    
+    if is_c1_sig and is_c2_sig and is_touch:
+        signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
+        is_strat1 = True
+        reason = "Strat1_Pullback_Cluster"
+    else:
+        log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
 
     # === STRATEGY 2: CONTINUATION + STRUCTURE (M/W + COMPRESSION) ===
-    # Criteria:
-    # 1. Trend M5 (Matched)
-    # 2. Price > EMA 200 (Buy) or < EMA 200 (Sell) [V2 Requirement]
-    # 3. Compression Block or M/W Pattern
-    # 4. Near EMA 21/50 (Retest)
-    
     is_strat2 = False
-    # If Strat 1 already found, we can stick to it, or prioritize? 
-    # Strat 1 is safer. Check Strat 2 if Strat 1 is False.
+    strat2_fail_reasons = []
     
-    if not is_strat1 and m5_trend != "NEUTRAL":
+    if not is_strat1:
         # Check EMA 200 Filter
         pass_ema200 = False
-        if m5_trend == "BULLISH" and c1['close'] > c1['ema200']: pass_ema200 = True
-        if m5_trend == "BEARISH" and c1['close'] < c1['ema200']: pass_ema200 = True
+        ema200_val = c1['ema200']
+        if m5_trend == "BULLISH":
+             if c1['close'] > ema200_val: pass_ema200 = True
+             else: strat2_fail_reasons.append(f"Price {c1['close']:.5f} < EMA200 {ema200_val:.5f}")
+        elif m5_trend == "BEARISH":
+             if c1['close'] < ema200_val: pass_ema200 = True
+             else: strat2_fail_reasons.append(f"Price {c1['close']:.5f} > EMA200 {ema200_val:.5f}")
         
         if pass_ema200:
-            # Check Compression (Last 3-5 candles)
-            recent_block = df_m1.iloc[-5:-1] # 4 completed candles
+            # Check Compression
+            recent_block = df_m1.iloc[-5:-1]
             is_compressed = check_compression_block(recent_block)
             
-            # Check Pattern (M/W)
+            # Check Pattern
             is_pattern = detect_pattern(recent_block, type='W' if m5_trend == "BULLISH" else 'M')
             
+            if not is_compressed and not is_pattern:
+                strat2_fail_reasons.append("No Compression OR Pattern found")
+            
             # Check EMA Touch (Retest)
-            # The block should act around EMA
             block_touch = False
             for idx, row in recent_block.iterrows():
                 if touches_ema(row):
                     block_touch = True
                     break
             
+            if not block_touch:
+                 strat2_fail_reasons.append("Block didn't touch EMA")
+            
             if (is_compressed or is_pattern) and block_touch:
                  signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
                  is_strat2 = True
                  reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}"
+        else:
+             strat2_fail_reasons.append("EMA200 Filter Fail")
+
+        if not is_strat2:
+             log_details.append(f"Strat 2 Fail: {', '.join(strat2_fail_reasons)}")
 
     # --- Logging ---
-    price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" else mt5.symbol_info_tick(symbol).bid
-    print(f"📊 [TuyenTrend] P: {price} | M5: {m5_trend} | S1: {is_strat1} | S2: {is_strat2}")
+    price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" or m5_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
     
+    # Concise 1-line log if nothing found
     if not signal_type:
+        print(f"📉 [TuyenTrend] P: {price:.5f} | { ' | '.join(log_details) }")
         return error_count, 0
         
     # --- 5. Execution Trigger ---
-    # Breakout of the Signal Cluster (Strat 1) or Block (Strat 2)
-    
-    # Define Range to Break
     if is_strat1:
         trigger_high = max(c1['high'], c2['high'])
         trigger_low = min(c1['low'], c2['low'])
     else: # Strat 2
-        # Use the block high/low
         recent_block = df_m1.iloc[-5:-1]
         trigger_high = recent_block['high'].max()
         trigger_low = recent_block['low'].min()
@@ -283,11 +312,15 @@ def tuyen_trend_logic(config, error_count=0):
             execute = True
             sl = price - (2 * atr_val)
             tp = price + (4 * atr_val)
+        else:
+            print(f"⏳ Signal Found ({reason}) but waiting for breakout > {trigger_high:.5f} (Curr: {price:.5f})")
     elif signal_type == "SELL":
         if price < trigger_low:
             execute = True
             sl = price + (2 * atr_val)
             tp = price - (4 * atr_val)
+        else:
+            print(f"⏳ Signal Found ({reason}) but waiting for breakout < {trigger_low:.5f} (Curr: {price:.5f})")
             
     if execute:
          # Spam Filter (60s)
@@ -339,7 +372,6 @@ def tuyen_trend_logic(config, error_count=0):
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Assuming config path remains same
     config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
     config = load_config(config_path)
     
