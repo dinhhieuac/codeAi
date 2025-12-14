@@ -7,6 +7,7 @@
     "volume": 0.01,
     "magic": 400006,
     "max_positions": 1,
+    "language": "vi",
     "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
     "telegram_chat_id": "1887610382",
     "parameters": {

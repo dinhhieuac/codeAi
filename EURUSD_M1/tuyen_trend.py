@@ -13,6 +13,248 @@ from utils import load_config, connect_mt5, get_data, send_telegram, manage_posi
 # Initialize Database
 db = Database()
 
+# Translation dictionary for Vietnamese/English logging
+TRANSLATIONS = {
+    'vi': {
+        'analysis': '📊 [Phân Tích TuyenTrend]',
+        'h1_bias': '🔍 [H1 Xu Hướng Lớn]',
+        'h1_bias_value': 'H1 Bias',
+        'no_structure': 'Không có cấu trúc rõ ràng',
+        'supply_zones': 'Vùng Cung',
+        'demand_zones': 'Vùng Cầu',
+        'zones_found': 'vùng được tìm thấy',
+        'freshness': 'Độ mới',
+        'candles': 'nến',
+        'm5_trend': '🔍 [Phân Tích Xu Hướng M5]',
+        'trend': 'Xu hướng',
+        'reason': 'Lý do',
+        'price': 'Giá',
+        'slope': 'Độ dốc',
+        'up': 'LÊN',
+        'down': 'XUỐNG',
+        'flat': 'NGANG',
+        'distance': 'Khoảng cách',
+        'pips': 'pips',
+        'm1_structure': '🔍 [Phân Tích Cấu Trúc M1]',
+        'last_high': 'Đỉnh gần nhất',
+        'prev_high': 'Đỉnh trước',
+        'last_low': 'Đáy gần nhất',
+        'prev_low': 'Đáy trước',
+        'lower_high': '✅ Đỉnh thấp hơn',
+        'not_lower': '❌ Không thấp hơn',
+        'higher_high': '✅ Đỉnh cao hơn',
+        'not_higher': '❌ Không cao hơn',
+        'lower_low': '✅ Đáy thấp hơn',
+        'higher_low': '✅ Đáy cao hơn',
+        'structure_valid': '✅ Cấu trúc M1 hợp lệ',
+        'strategy_1': '📈 [CHIẾN LƯỢC 1: Pullback + Cụm Doji/Pinbar]',
+        'strategy_2': '📈 [CHIẾN LƯỢC 2: Tiếp Diễn + Cấu Trúc (M/W + Compression)]',
+        'fibonacci': '🔍 [Kiểm Tra Fibonacci Retracement]',
+        'swing_high': 'Đỉnh Swing',
+        'swing_low': 'Đáy Swing',
+        'current_price': 'Giá hiện tại',
+        'in_zone': '✅ Giá trong vùng Fib',
+        'not_in_zone': '❌ Giá KHÔNG trong vùng Fib',
+        'required': 'Yêu cầu',
+        'signal_candle': '🔍 [Kiểm Tra Nến Tín Hiệu]',
+        'candle': 'Nến',
+        'signal': '✅ Tín hiệu',
+        'not_signal': '❌ Không phải tín hiệu',
+        'ema_touch': '🔍 [Kiểm Tra Chạm EMA]',
+        'touches': '✅ Có chạm',
+        'not_touches': '❌ Không chạm',
+        'smooth_pullback': '🔍 [Kiểm Tra Sóng Hồi Mượt]',
+        'smooth': '✅ Sóng hồi mượt',
+        'not_smooth': '❌ Sóng hồi không mượt',
+        'large_candles': 'Nến lớn',
+        'avg_range': 'Biên độ trung bình',
+        'strategy_1_signal': '✅ [TÍN HIỆU CHIẾN LƯỢC 1]',
+        'strategy_1_fail': '❌ [CHIẾN LƯỢC 1 THẤT BẠI]',
+        'all_conditions_met': 'Tất cả điều kiện đạt',
+        'missing_conditions': 'Thiếu điều kiện',
+        'ema200_filter': '🔍 [Kiểm Tra Bộ Lọc EMA200]',
+        'filter_passed': '✅ Bộ lọc đạt',
+        'filter_failed': '❌ Bộ lọc không đạt',
+        'breakout_retest': '🔍 [Kiểm Tra Breakout + Retest]',
+        'looking_back': 'Đang tìm kiếm',
+        'candles_back': 'nến trước',
+        'breakout_found': '✅ Tìm thấy Breakout+Retest',
+        'breakout_not_found': '❌ Không tìm thấy Breakout+Retest',
+        'level': 'Mức',
+        'shallow': 'Shallow',
+        'shallow_detected': 'Phát hiện Shallow Breakout',
+        'pullback_percent': 'Pullback',
+        'in_range': '✅ Trong khoảng hợp lệ',
+        'not_in_range': '❌ Không trong khoảng hợp lệ',
+        'compression': '🔍 [Kiểm Tra Compression Block]',
+        'compression_detected': '✅ Phát hiện Compression Block',
+        'no_compression': '❌ Không có Compression Block',
+        'block_range': 'Biên độ Block',
+        'pattern': '🔍 [Kiểm Tra Pattern]',
+        'pattern_detected': '✅ Phát hiện Pattern',
+        'no_pattern': '❌ Không có Pattern',
+        'signal_candle_compression': '🔍 [Kiểm Tra Nến Tín Hiệu trong Compression]',
+        'valid_signal_candle': '✅ Nến tín hiệu hợp lệ',
+        'invalid_signal_candle': '❌ Nến tín hiệu không hợp lệ',
+        'close': 'Đóng cửa',
+        'body': 'Thân',
+        'range': 'Biên độ',
+        'ema_breakout_touch': '🔍 [Kiểm Tra Chạm EMA/Breakout Level]',
+        'block_touches': '✅ Block chạm EMA hoặc Breakout Level',
+        'block_not_touches': '❌ Block không chạm EMA hoặc Breakout Level',
+        'strategy_2_summary': '📊 [Tóm Tắt Chiến Lược 2]',
+        'strategy_2_signal': '✅ [TÍN HIỆU CHIẾN LƯỢC 2]',
+        'strategy_2_fail': '❌ [CHIẾN LƯỢC 2 THẤT BẠI]',
+        'final_summary': '📊 [TÓM TẮT CUỐI CÙNG]',
+        'no_signal': '❌ [KHÔNG CÓ TÍN HIỆU]',
+        'signal_found': '✅ [TÌM THẤY TÍN HIỆU]',
+        'reasons': 'Lý do',
+        'entry_trigger': '🔍 [Kiểm Tra Điểm Vào Lệnh]',
+        'trigger_high': 'Mức kích hoạt Cao',
+        'trigger_low': 'Mức kích hoạt Thấp',
+        'ready_execute': '✅ SẴN SÀNG THỰC HIỆN',
+        'waiting_breakout': '⏳ Đang chờ breakout',
+        'need': 'Cần thêm',
+        'execution': '🚀 [THỰC HIỆN]',
+        'spam_filter': '🔍 [Kiểm Tra Spam Filter]',
+        'last_trade': 'Lệnh cuối',
+        'seconds_ago': 'giây trước',
+        'cooldown_passed': '✅ Đã qua thời gian chờ',
+        'no_recent_trades': '✅ Không có lệnh gần đây',
+        'signal_execute': '✅ [THỰC HIỆN TÍN HIỆU]',
+        'filter_fail': '❌ [BỘ LỌC THẤT BẠI]',
+        'h1_conflicts': 'H1 Bias xung đột với M5 Trend',
+        'no_trend': 'Không có xu hướng',
+        'too_close_zone': 'Giá quá gần vùng Supply/Demand ngược',
+        'structure_unclear': 'Cấu trúc không rõ ràng',
+        'aligns': '✅ H1 Bias phù hợp với M5 Trend',
+        'no_bias': '⚠️ H1 Bias: None',
+        'has_room': '✅ Giá có khoảng trống để di chuyển',
+        'not_enough_swing': '❌ Không đủ swing points',
+    },
+    'en': {
+        'analysis': '📊 [TuyenTrend Analysis]',
+        'h1_bias': '🔍 [H1 Higher-timeframe Bias]',
+        'h1_bias_value': 'H1 Bias',
+        'no_structure': 'None (No clear structure)',
+        'supply_zones': 'H1 Supply Zones',
+        'demand_zones': 'H1 Demand Zones',
+        'zones_found': 'zones found',
+        'freshness': 'Freshness',
+        'candles': 'candles',
+        'm5_trend': '🔍 [M5 Trend Analysis]',
+        'trend': 'Trend',
+        'reason': 'Reason',
+        'price': 'Price',
+        'slope': 'EMA21 Slope',
+        'up': 'UP',
+        'down': 'DOWN',
+        'flat': 'FLAT',
+        'distance': 'Distance',
+        'pips': 'pips',
+        'm1_structure': '🔍 [M1 Structure Analysis]',
+        'last_high': 'Last High',
+        'prev_high': 'Prev High',
+        'last_low': 'Last Low',
+        'prev_low': 'Prev Low',
+        'lower_high': '✅ Lower High',
+        'not_lower': '❌ Not Lower',
+        'higher_high': '✅ Higher High',
+        'not_higher': '❌ Not Higher',
+        'lower_low': '✅ Lower Low',
+        'higher_low': '✅ Higher Low',
+        'structure_valid': '✅ M1 Structure valid',
+        'strategy_1': '📈 [STRATEGY 1: Pullback + Doji/Pinbar Cluster]',
+        'strategy_2': '📈 [STRATEGY 2: Continuation + Structure (M/W + Compression)]',
+        'fibonacci': '🔍 [Fibonacci Retracement Check]',
+        'swing_high': 'Swing High',
+        'swing_low': 'Swing Low',
+        'current_price': 'Current Price',
+        'in_zone': '✅ Price in Fib zone',
+        'not_in_zone': '❌ Price NOT in Fib zone',
+        'required': 'Required',
+        'signal_candle': '🔍 [Signal Candle Check]',
+        'candle': 'Candle',
+        'signal': '✅ Signal',
+        'not_signal': '❌ Not Signal',
+        'ema_touch': '🔍 [EMA Touch Check]',
+        'touches': '✅ Yes',
+        'not_touches': '❌ No',
+        'smooth_pullback': '🔍 [Smooth Pullback Check]',
+        'smooth': '✅ Pullback is smooth',
+        'not_smooth': '❌ Pullback not smooth',
+        'large_candles': 'Large candles',
+        'avg_range': 'Avg range',
+        'strategy_1_signal': '✅ [STRATEGY 1 SIGNAL]',
+        'strategy_1_fail': '❌ [STRATEGY 1 FAIL]',
+        'all_conditions_met': 'All conditions met!',
+        'missing_conditions': 'Missing conditions:',
+        'ema200_filter': '🔍 [EMA200 Filter Check]',
+        'filter_passed': '✅ Filter passed',
+        'filter_failed': '❌ Filter failed',
+        'breakout_retest': '🔍 [Breakout + Retest Check]',
+        'looking_back': 'Looking back',
+        'candles_back': 'candles for breakout',
+        'breakout_found': '✅ Breakout+Retest found',
+        'breakout_not_found': '❌ No Breakout+Retest found',
+        'level': 'Level',
+        'shallow': 'Shallow',
+        'shallow_detected': 'Shallow Breakout detected',
+        'pullback_percent': 'Pullback',
+        'in_range': '✅ in valid range',
+        'not_in_range': '❌ not in range',
+        'compression': '🔍 [Compression Block Check]',
+        'compression_detected': '✅ Compression Block detected',
+        'no_compression': '❌ No Compression Block found',
+        'block_range': 'Block Range',
+        'pattern': '🔍 [Pattern Detection Check]',
+        'pattern_detected': '✅ Pattern detected',
+        'no_pattern': '❌ No Pattern found',
+        'signal_candle_compression': '🔍 [Signal Candle in Compression Check]',
+        'valid_signal_candle': '✅ Valid Signal Candle found',
+        'invalid_signal_candle': '❌ Signal Candle conditions not met',
+        'close': 'Close',
+        'body': 'Body',
+        'range': 'Range',
+        'ema_breakout_touch': '🔍 [EMA/Breakout Level Touch Check]',
+        'block_touches': '✅ Block touches EMA or Breakout Level',
+        'block_not_touches': '❌ Block didn\'t touch',
+        'strategy_2_summary': '📊 [Strategy 2 Summary]',
+        'strategy_2_signal': '✅ [STRATEGY 2 SIGNAL]',
+        'strategy_2_fail': '❌ [STRATEGY 2 FAIL]',
+        'final_summary': '📊 [FINAL SUMMARY]',
+        'no_signal': '❌ [NO SIGNAL]',
+        'signal_found': '✅ [SIGNAL FOUND]',
+        'reasons': 'Reasons',
+        'entry_trigger': '🔍 [Entry Trigger Check]',
+        'trigger_high': 'Trigger High',
+        'trigger_low': 'Trigger Low',
+        'ready_execute': '✅ READY TO EXECUTE',
+        'waiting_breakout': '⏳ Waiting for breakout',
+        'need': 'Need',
+        'execution': '🚀 [EXECUTION]',
+        'spam_filter': '🔍 [Spam Filter Check]',
+        'last_trade': 'Last trade',
+        'seconds_ago': 'seconds ago',
+        'cooldown_passed': '✅ Cooldown passed',
+        'no_recent_trades': '✅ No recent trades',
+        'signal_execute': '✅ [SIGNAL EXECUTE]',
+        'filter_fail': '❌ [FILTER FAIL]',
+        'h1_conflicts': 'H1 Bias conflicts with M5 Trend',
+        'no_trend': 'No Trend',
+        'too_close_zone': 'Price too close to opposite Supply/Demand zone',
+        'structure_unclear': 'M1 Structure không rõ ràng',
+        'aligns': '✅ H1 Bias aligns with M5 Trend',
+        'no_bias': '⚠️ H1 Bias: None',
+        'has_room': '✅ Price has room to move',
+        'not_enough_swing': '❌ Not enough swing points',
+    }
+}
+
+def t(key, lang='en'):
+    """Translation helper function"""
+    return TRANSLATIONS.get(lang, TRANSLATIONS['en']).get(key, key)
+
 def calculate_ema(series, span):
     """Calculate EMA"""
     return series.ewm(span=span, adjust=False).mean()
@@ -507,6 +749,9 @@ def tuyen_trend_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
+    # Language setting (Vietnamese or English)
+    lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
+    
     # --- 1. Manage Existing Positions ---
     positions = mt5.positions_get(symbol=symbol, magic=magic)
     if positions:
@@ -642,30 +887,34 @@ def tuyen_trend_logic(config, error_count=0):
                 trend_reason += " | M1 Structure: Not Higher Highs/Lows"
     
     # M1 Structure Analysis
-    print(f"\n🔍 [M1 Structure Analysis]")
+    print(f"\n{t('m1_structure', lang)}")
     if len(m1_swing_highs) >= 2 and len(m1_swing_lows) >= 2:
         if m5_trend == "BEARISH":
             last_high = m1_swing_highs[-1]['price']
             prev_high = m1_swing_highs[-2]['price']
             last_low = m1_swing_lows[-1]['price']
             prev_low = m1_swing_lows[-2]['price']
-            print(f"   Last High: {last_high:.5f} | Prev High: {prev_high:.5f} | {'✅ Lower High' if last_high < prev_high else '❌ Not Lower'}")
-            print(f"   Last Low: {last_low:.5f} | Prev Low: {prev_low:.5f} | {'✅ Lower Low' if last_low < prev_low else '❌ Not Lower'}")
+            high_status = t('lower_high', lang) if last_high < prev_high else t('not_lower', lang)
+            low_status = t('lower_low', lang) if last_low < prev_low else t('not_lower', lang)
+            print(f"   {t('last_high', lang)}: {last_high:.5f} | {t('prev_high', lang)}: {prev_high:.5f} | {high_status}")
+            print(f"   {t('last_low', lang)}: {last_low:.5f} | {t('prev_low', lang)}: {prev_low:.5f} | {low_status}")
         elif m5_trend == "BULLISH":
             last_high = m1_swing_highs[-1]['price']
             prev_high = m1_swing_highs[-2]['price']
             last_low = m1_swing_lows[-1]['price']
             prev_low = m1_swing_lows[-2]['price']
-            print(f"   Last High: {last_high:.5f} | Prev High: {prev_high:.5f} | {'✅ Higher High' if last_high > prev_high else '❌ Not Higher'}")
-            print(f"   Last Low: {last_low:.5f} | Prev Low: {prev_low:.5f} | {'✅ Higher Low' if last_low > prev_low else '❌ Not Higher'}")
+            high_status = t('higher_high', lang) if last_high > prev_high else t('not_higher', lang)
+            low_status = t('higher_low', lang) if last_low > prev_low else t('not_higher', lang)
+            print(f"   {t('last_high', lang)}: {last_high:.5f} | {t('prev_high', lang)}: {prev_high:.5f} | {high_status}")
+            print(f"   {t('last_low', lang)}: {last_low:.5f} | {t('prev_low', lang)}: {prev_low:.5f} | {low_status}")
     else:
-        print(f"   ⚠️ Not enough swing points ({len(m1_swing_highs)} highs, {len(m1_swing_lows)} lows)")
+        print(f"   ⚠️ {t('not_enough_swing', lang)} ({len(m1_swing_highs)} highs, {len(m1_swing_lows)} lows)")
     
     if not m1_structure_valid:
-        print(f"\n❌ [FILTER FAIL] M1 Structure không rõ ràng. Skipping.")
+        print(f"\n{t('filter_fail', lang)} {t('structure_unclear', lang)}. Bỏ qua.")
         return error_count, 0
     else:
-        print(f"   ✅ M1 Structure valid")
+        print(f"   {t('structure_valid', lang)}")
     
     # Recent completed candles (last 3-5)
     c1 = df_m1.iloc[-2] # Completed
@@ -708,62 +957,63 @@ def tuyen_trend_logic(config, error_count=0):
     
     # === DETAILED LOGGING ===
     print(f"\n{'='*80}")
-    print(f"📊 [TuyenTrend Analysis] {symbol} | Price: {price:.5f}")
+    print(f"{t('analysis', lang)} {symbol} | {t('price', lang)}: {price:.5f}")
     print(f"{'='*80}")
     
     # H1 Analysis
-    print(f"\n🔍 [H1 Higher-timeframe Bias]")
-    print(f"   H1 Bias: {h1_bias if h1_bias else 'None (No clear structure)'}")
+    print(f"\n{t('h1_bias', lang)}")
+    print(f"   {t('h1_bias_value', lang)}: {h1_bias if h1_bias else t('no_structure', lang)}")
     if h1_supply_zones:
-        print(f"   H1 Supply Zones: {len(h1_supply_zones)} zones found")
+        print(f"   {t('supply_zones', lang)}: {len(h1_supply_zones)} {t('zones_found', lang)}")
         for i, zone in enumerate(h1_supply_zones[-3:], 1):
-            print(f"      Zone {i}: {zone['low']:.5f} - {zone['high']:.5f} (Freshness: {zone['freshness']} candles)")
+            print(f"      Vùng {i}: {zone['low']:.5f} - {zone['high']:.5f} ({t('freshness', lang)}: {zone['freshness']} {t('candles', lang)})")
     if h1_demand_zones:
-        print(f"   H1 Demand Zones: {len(h1_demand_zones)} zones found")
+        print(f"   {t('demand_zones', lang)}: {len(h1_demand_zones)} {t('zones_found', lang)}")
         for i, zone in enumerate(h1_demand_zones[-3:], 1):
-            print(f"      Zone {i}: {zone['low']:.5f} - {zone['high']:.5f} (Freshness: {zone['freshness']} candles)")
+            print(f"      Vùng {i}: {zone['low']:.5f} - {zone['high']:.5f} ({t('freshness', lang)}: {zone['freshness']} {t('candles', lang)})")
     
     # M5 Analysis
-    print(f"\n🔍 [M5 Trend Analysis]")
-    print(f"   Trend: {m5_trend} | Reason: {trend_reason}")
-    print(f"   Price: {last_m5['close']:.5f} | EMA21: {last_m5['ema21']:.5f} | EMA50: {last_m5['ema50']:.5f}")
-    print(f"   EMA21 Slope: {'UP' if ema21_slope_up else 'DOWN' if ema21_slope_down else 'FLAT'}")
+    print(f"\n{t('m5_trend', lang)}")
+    print(f"   {t('trend', lang)}: {m5_trend} | {t('reason', lang)}: {trend_reason}")
+    print(f"   {t('price', lang)}: {last_m5['close']:.5f} | EMA21: {last_m5['ema21']:.5f} | EMA50: {last_m5['ema50']:.5f}")
+    slope_text = t('up', lang) if ema21_slope_up else (t('down', lang) if ema21_slope_down else t('flat', lang))
+    print(f"   {t('slope', lang)}: {slope_text}")
     if m5_supply_zones:
-        print(f"   M5 Supply Zones: {len(m5_supply_zones)} zones")
+        print(f"   M5 {t('supply_zones', lang)}: {len(m5_supply_zones)} {t('zones_found', lang).split()[0]}")
         for i, zone in enumerate(m5_supply_zones[-3:], 1):
             distance = ((zone['low'] - current_m5_price) / current_m5_price * 10000) if m5_trend == "BULLISH" else 0
-            print(f"      Zone {i}: {zone['low']:.5f} - {zone['high']:.5f} (Distance: {distance:.1f} pips)")
+            print(f"      Vùng {i}: {zone['low']:.5f} - {zone['high']:.5f} ({t('distance', lang)}: {distance:.1f} {t('pips', lang)})")
     if m5_demand_zones:
-        print(f"   M5 Demand Zones: {len(m5_demand_zones)} zones")
+        print(f"   M5 {t('demand_zones', lang)}: {len(m5_demand_zones)} {t('zones_found', lang).split()[0]}")
         for i, zone in enumerate(m5_demand_zones[-3:], 1):
             distance = ((current_m5_price - zone['high']) / current_m5_price * 10000) if m5_trend == "BEARISH" else 0
-            print(f"      Zone {i}: {zone['low']:.5f} - {zone['high']:.5f} (Distance: {distance:.1f} pips)")
+            print(f"      Vùng {i}: {zone['low']:.5f} - {zone['high']:.5f} ({t('distance', lang)}: {distance:.1f} {t('pips', lang)})")
     
     log_details.append(f"H1 Bias: {h1_bias} | M5 Trend: {m5_trend} ({trend_reason})")
     
     # Higher-timeframe bias filter: Only trade in direction of H1 bias
     if h1_bias is not None:
         if (h1_bias == "SELL" and m5_trend == "BULLISH") or (h1_bias == "BUY" and m5_trend == "BEARISH"):
-            print(f"\n❌ [FILTER FAIL] H1 Bias ({h1_bias}) conflicts with M5 Trend ({m5_trend}). Skipping.")
+            print(f"\n{t('filter_fail', lang)} {t('h1_conflicts', lang)}. Bỏ qua.")
             return error_count, 0
         else:
-            print(f"   ✅ H1 Bias ({h1_bias}) aligns with M5 Trend ({m5_trend})")
+            print(f"   {t('aligns', lang)}")
     else:
-        print(f"   ⚠️ H1 Bias: None (No clear structure, proceeding with M5 trend)")
+        print(f"   {t('no_bias', lang)} (Không có cấu trúc rõ ràng, tiếp tục với M5 trend)")
     
     if m5_trend == "NEUTRAL":
-        print(f"\n❌ [FILTER FAIL] No Trend. Details: {trend_reason}")
+        print(f"\n{t('filter_fail', lang)} {t('no_trend', lang)}. Chi tiết: {trend_reason}")
         return error_count, 0
     
     if too_close_to_opposite_zone:
-        print(f"\n❌ [FILTER FAIL] Price too close to opposite Supply/Demand zone. No room to move.")
+        print(f"\n{t('filter_fail', lang)} {t('too_close_zone', lang)}.")
         return error_count, 0
     else:
-        print(f"   ✅ Price has room to move (not too close to opposite zone)")
+        print(f"   {t('has_room', lang)}")
 
     # === STRATEGY 1: PULLBACK + DOJI/PINBAR CLUSTER ===
     print(f"\n{'='*80}")
-    print(f"📈 [STRATEGY 1: Pullback + Doji/Pinbar Cluster]")
+    print(f"{t('strategy_1', lang)}")
     print(f"{'='*80}")
     
     is_strat1 = False
@@ -773,75 +1023,77 @@ def tuyen_trend_logic(config, error_count=0):
     fib_levels = None
     pass_fib = False
     
-    print(f"\n🔍 [Fibonacci Retracement Check]")
+    print(f"\n{t('fibonacci', lang)}")
     if m5_trend == "BULLISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
         # Pullback from high to low
         swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
         swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
         fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
         current_price = c1['close']
-        print(f"   Swing High: {swing_high:.5f} | Swing Low: {swing_low:.5f}")
+        print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
         print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
-        print(f"   Current Price: {current_price:.5f}")
+        print(f"   {t('current_price', lang)}: {current_price:.5f}")
         # Check if in 38.2-62% retracement zone
         pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BULLISH', min_level=0.382, max_level=0.618)
         if pass_fib:
-            print(f"   ✅ Price in Fib 38.2-62% zone")
+            print(f"   {t('in_zone', lang)} 38.2-62%")
         else:
-            print(f"   ❌ Price NOT in Fib 38.2-62% zone (Required: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
+            print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
     elif m5_trend == "BEARISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
         # Pullback from low to high
         swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
         swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
         fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
         current_price = c1['close']
-        print(f"   Swing High: {swing_high:.5f} | Swing Low: {swing_low:.5f}")
+        print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
         print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
-        print(f"   Current Price: {current_price:.5f}")
+        print(f"   {t('current_price', lang)}: {current_price:.5f}")
         # Check if in 38.2-62% retracement zone
         pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BEARISH', min_level=0.382, max_level=0.618)
         if pass_fib:
-            print(f"   ✅ Price in Fib 38.2-62% zone")
+            print(f"   {t('in_zone', lang)} 38.2-62%")
         else:
-            print(f"   ❌ Price NOT in Fib 38.2-62% zone (Required: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
+            print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
     else:
-        print(f"   ❌ Not enough swing points for Fibonacci calculation")
+        print(f"   {t('not_enough_swing', lang)}")
     
     # Check cluster of 2 signals
-    print(f"\n🔍 [Signal Candle Check]")
+    print(f"\n{t('signal_candle', lang)}")
     is_c1_sig = check_signal_candle(c1, m5_trend)
     is_c2_sig = check_signal_candle(c2, m5_trend)
     
     c1_type = "Doji" if is_doji(c1, 0.2) else ("Pinbar" if is_pinbar(c1, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c1) else ("Inverted Hammer" if is_inverted_hammer(c1) else "Normal")))
     c2_type = "Doji" if is_doji(c2, 0.2) else ("Pinbar" if is_pinbar(c2, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c2) else ("Inverted Hammer" if is_inverted_hammer(c2) else "Normal")))
     
-    print(f"   Candle-1: {c1_type} | {'✅ Signal' if is_c1_sig else '❌ Not Signal'}")
-    print(f"   Candle-2: {c2_type} | {'✅ Signal' if is_c2_sig else '❌ Not Signal'}")
+    c1_status = t('signal', lang) if is_c1_sig else t('not_signal', lang)
+    c2_status = t('signal', lang) if is_c2_sig else t('not_signal', lang)
+    print(f"   {t('candle', lang)}-1: {c1_type} | {c1_status}")
+    print(f"   {t('candle', lang)}-2: {c2_type} | {c2_status}")
     
     # Check EMA Touch
     is_touch = touches_ema(c1) or touches_ema(c2)
-    print(f"\n🔍 [EMA Touch Check]")
+    print(f"\n{t('ema_touch', lang)}")
     print(f"   EMA21: {c1['ema21']:.5f} | EMA50: {c1['ema50']:.5f}")
     c1_touch = touches_ema(c1)
     c2_touch = touches_ema(c2)
-    print(f"   Candle-1 touches EMA: {'✅ Yes' if c1_touch else '❌ No'}")
-    print(f"   Candle-2 touches EMA: {'✅ Yes' if c2_touch else '❌ No'}")
+    print(f"   {t('candle', lang)}-1 chạm EMA: {t('touches', lang) if c1_touch else t('not_touches', lang)}")
+    print(f"   {t('candle', lang)}-2 chạm EMA: {t('touches', lang) if c2_touch else t('not_touches', lang)}")
     if is_touch:
-        print(f"   ✅ At least one candle touches EMA")
+        print(f"   ✅ Ít nhất một nến chạm EMA")
     else:
-        print(f"   ❌ No candle touches EMA")
+        print(f"   ❌ Không có nến nào chạm EMA")
     
     # Check smooth pullback (sóng hồi chéo, mượt)
     pullback_candles = df_m1.iloc[-6:-1]  # Last 5 completed candles
     is_smooth = is_smooth_pullback(pullback_candles, m5_trend)
-    print(f"\n🔍 [Smooth Pullback Check]")
+    print(f"\n{t('smooth_pullback', lang)}")
     if is_smooth:
-        print(f"   ✅ Pullback is smooth (no large candles, no gaps)")
+        print(f"   {t('smooth', lang)}")
     else:
         ranges = pullback_candles['high'] - pullback_candles['low']
         avg_range = ranges.mean()
         large_candles = (ranges > avg_range * 2.0).sum()
-        print(f"   ❌ Pullback not smooth (Large candles: {large_candles}, Avg range: {avg_range:.5f})")
+        print(f"   {t('not_smooth', lang)} ({t('large_candles', lang)}: {large_candles}, {t('avg_range', lang)}: {avg_range:.5f})")
     
     strat1_fail_reasons = []
     if not is_c1_sig: strat1_fail_reasons.append("Candle-1 Not Signal")
@@ -854,17 +1106,17 @@ def tuyen_trend_logic(config, error_count=0):
         signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
         is_strat1 = True
         reason = "Strat1_Pullback_Cluster_Fib"
-        print(f"\n✅ [STRATEGY 1 SIGNAL] {signal_type} - All conditions met!")
-        print(f"   Reason: {reason}")
+        print(f"\n{t('strategy_1_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
+        print(f"   {t('reason', lang)}: {reason}")
     else:
-        print(f"\n❌ [STRATEGY 1 FAIL] Missing conditions:")
+        print(f"\n{t('strategy_1_fail', lang)} {t('missing_conditions', lang)}:")
         for reason in strat1_fail_reasons:
             print(f"   - {reason}")
         log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
 
     # === STRATEGY 2: CONTINUATION + STRUCTURE (M/W + COMPRESSION) ===
     print(f"\n{'='*80}")
-    print(f"📈 [STRATEGY 2: Continuation + Structure (M/W + Compression)]")
+    print(f"{t('strategy_2', lang)}")
     print(f"{'='*80}")
     
     is_strat2 = False
@@ -872,24 +1124,24 @@ def tuyen_trend_logic(config, error_count=0):
     
     if not is_strat1:
         # Check EMA 200 Filter
-        print(f"\n🔍 [EMA200 Filter Check]")
+        print(f"\n{t('ema200_filter', lang)}")
         pass_ema200 = False
         ema200_val = c1['ema200']
-        print(f"   Price: {c1['close']:.5f} | EMA200: {ema200_val:.5f}")
+        print(f"   {t('price', lang)}: {c1['close']:.5f} | EMA200: {ema200_val:.5f}")
         if m5_trend == "BULLISH":
              if c1['close'] > ema200_val: 
                  pass_ema200 = True
-                 print(f"   ✅ Price > EMA200 (Bullish filter passed)")
+                 print(f"   {t('filter_passed', lang)} (Bullish)")
              else: 
                  strat2_fail_reasons.append(f"Price {c1['close']:.5f} < EMA200 {ema200_val:.5f}")
-                 print(f"   ❌ Price < EMA200 (Bullish filter failed)")
+                 print(f"   {t('filter_failed', lang)} (Bullish)")
         elif m5_trend == "BEARISH":
              if c1['close'] < ema200_val: 
                  pass_ema200 = True
-                 print(f"   ✅ Price < EMA200 (Bearish filter passed)")
+                 print(f"   {t('filter_passed', lang)} (Bearish)")
              else: 
                  strat2_fail_reasons.append(f"Price {c1['close']:.5f} > EMA200 {ema200_val:.5f}")
-                 print(f"   ❌ Price > EMA200 (Bearish filter failed)")
+                 print(f"   {t('filter_failed', lang)} (Bearish)")
         
         if pass_ema200:
             # Check for previous breakout + retest (including shallow breakout)
@@ -932,15 +1184,15 @@ def tuyen_trend_logic(config, error_count=0):
                                     if is_shallow_breakout:
                                         pullback_depth = prev_high - df_m1.iloc[k]['low']
                                         pullback_percent = pullback_depth / breakout_leg if breakout_leg > 0 else 0
-                                        print(f"   Shallow Breakout detected: Leg={breakout_leg:.5f}, Pullback={pullback_percent*100:.1f}%")
+                                        print(f"   {t('shallow_detected', lang)}: Leg={breakout_leg:.5f}, {t('pullback_percent', lang)}={pullback_percent*100:.1f}%")
                                         if pullback_percent < 0.5 or pullback_percent > 1.0:
                                             has_breakout_retest = False  # Pullback not in 50-100% range
-                                            print(f"   ❌ Pullback {pullback_percent*100:.1f}% not in 50-100% range")
+                                            print(f"   {t('not_in_range', lang)} 50-100%")
                                         else:
-                                            print(f"   ✅ Pullback {pullback_percent*100:.1f}% in valid range (50-100%)")
+                                            print(f"   {t('in_range', lang)} (50-100%)")
                                     break
                             if has_breakout_retest:
-                                print(f"   ✅ Breakout+Retest found: Level {breakout_level:.5f} | Shallow: {is_shallow_breakout}")
+                                print(f"   {t('breakout_found', lang)}: {t('level', lang)} {breakout_level:.5f} | {t('shallow', lang)}: {is_shallow_breakout}")
                                 break
                     if has_breakout_retest:
                         break
@@ -980,16 +1232,16 @@ def tuyen_trend_logic(config, error_count=0):
                                             print(f"   ✅ Pullback {pullback_percent*100:.1f}% in valid range (50-100%)")
                                     break
                             if has_breakout_retest:
-                                print(f"   ✅ Breakout+Retest found: Level {breakout_level:.5f} | Shallow: {is_shallow_breakout}")
+                                print(f"   {t('breakout_found', lang)}: {t('level', lang)} {breakout_level:.5f} | {t('shallow', lang)}: {is_shallow_breakout}")
                                 break
                     if has_breakout_retest:
                         break
             
             if not has_breakout_retest:
-                print(f"   ❌ No Breakout+Retest found in last 50 candles")
+                print(f"   {t('breakout_not_found', lang)}")
             
             # Calculate Fibonacci for Strategy 2 (38.2-79%)
-            print(f"\n🔍 [Fibonacci Retracement Check (Strategy 2)]")
+            print(f"\n{t('fibonacci', lang)} (Strategy 2)")
             fib_levels_strat2 = None
             pass_fib_strat2 = False
             
@@ -999,51 +1251,51 @@ def tuyen_trend_logic(config, error_count=0):
                     swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
                     fib_levels_strat2 = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
                     current_price = c1['close']
-                    print(f"   Swing High: {swing_high:.5f} | Swing Low: {swing_low:.5f}")
+                    print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
                     print(f"   Fib 38.2%: {fib_levels_strat2['382']:.5f} | Fib 78.6%: {fib_levels_strat2['786']:.5f}")
-                    print(f"   Current Price: {current_price:.5f}")
+                    print(f"   {t('current_price', lang)}: {current_price:.5f}")
                     pass_fib_strat2 = check_fibonacci_retracement(current_price, fib_levels_strat2, 'BULLISH', min_level=0.382, max_level=0.786)
                     if pass_fib_strat2:
-                        print(f"   ✅ Price in Fib 38.2-79% zone")
+                        print(f"   {t('in_zone', lang)} 38.2-79%")
                     else:
-                        print(f"   ❌ Price NOT in Fib 38.2-79% zone (Required: {fib_levels_strat2['786']:.5f} - {fib_levels_strat2['382']:.5f})")
+                        print(f"   {t('not_in_zone', lang)} 38.2-79% ({t('required', lang)}: {fib_levels_strat2['786']:.5f} - {fib_levels_strat2['382']:.5f})")
                 elif m5_trend == "BEARISH":
                     swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
                     swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
                     fib_levels_strat2 = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
                     current_price = c1['close']
-                    print(f"   Swing High: {swing_high:.5f} | Swing Low: {swing_low:.5f}")
+                    print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
                     print(f"   Fib 38.2%: {fib_levels_strat2['382']:.5f} | Fib 78.6%: {fib_levels_strat2['786']:.5f}")
-                    print(f"   Current Price: {current_price:.5f}")
+                    print(f"   {t('current_price', lang)}: {current_price:.5f}")
                     pass_fib_strat2 = check_fibonacci_retracement(current_price, fib_levels_strat2, 'BEARISH', min_level=0.382, max_level=0.786)
                     if pass_fib_strat2:
-                        print(f"   ✅ Price in Fib 38.2-79% zone")
+                        print(f"   {t('in_zone', lang)} 38.2-79%")
                     else:
-                        print(f"   ❌ Price NOT in Fib 38.2-79% zone (Required: {fib_levels_strat2['382']:.5f} - {fib_levels_strat2['786']:.5f})")
+                        print(f"   {t('not_in_zone', lang)} 38.2-79% ({t('required', lang)}: {fib_levels_strat2['382']:.5f} - {fib_levels_strat2['786']:.5f})")
             else:
-                print(f"   ❌ Not enough swing points for Fibonacci calculation")
+                print(f"   {t('not_enough_swing', lang)}")
             
             # Check Compression
-            print(f"\n🔍 [Compression Block Check]")
+            print(f"\n{t('compression', lang)}")
             recent_block = df_m1.iloc[-5:-1]
             is_compressed = check_compression_block(recent_block)
             if is_compressed:
-                print(f"   ✅ Compression Block detected ({len(recent_block)} candles)")
+                print(f"   {t('compression_detected', lang)} ({len(recent_block)} {t('candles', lang)})")
             else:
-                print(f"   ❌ No Compression Block found")
+                print(f"   {t('no_compression', lang)}")
             
             # Check Pattern (with EMA50 and EMA200 for condition 7)
-            print(f"\n🔍 [Pattern Detection Check]")
+            print(f"\n{t('pattern', lang)}")
             pattern_type = 'W' if m5_trend == "BULLISH" else 'M'
             is_pattern = detect_pattern(recent_block, type=pattern_type, 
                                        ema50_val=c1['ema50'], ema200_val=c1['ema200'])
             if is_pattern:
-                print(f"   ✅ {pattern_type} Pattern detected")
+                print(f"   {t('pattern_detected', lang)} {pattern_type}")
             else:
-                print(f"   ❌ No {pattern_type} Pattern found")
+                print(f"   {t('no_pattern', lang)} {pattern_type}")
             
             # Check Signal Candle in Compression Block (NEW - Document requirement)
-            print(f"\n🔍 [Signal Candle in Compression Check]")
+            print(f"\n{t('signal_candle_compression', lang)}")
             has_signal_candle = False
             if is_compressed:
                 has_signal_candle = check_signal_candle_in_compression(recent_block, m5_trend, 
@@ -1051,13 +1303,13 @@ def tuyen_trend_logic(config, error_count=0):
                                                                        ema200_val=c1['ema200'])
                 if has_signal_candle:
                     signal_candle = recent_block.iloc[-1]
-                    print(f"   ✅ Valid Signal Candle found at end of compression block")
-                    print(f"      Close: {signal_candle['close']:.5f} | Body: {abs(signal_candle['close'] - signal_candle['open']):.5f}")
-                    print(f"      Range: {signal_candle['high']:.5f} - {signal_candle['low']:.5f}")
+                    print(f"   {t('valid_signal_candle', lang)}")
+                    print(f"      {t('close', lang)}: {signal_candle['close']:.5f} | {t('body', lang)}: {abs(signal_candle['close'] - signal_candle['open']):.5f}")
+                    print(f"      {t('range', lang)}: {signal_candle['high']:.5f} - {signal_candle['low']:.5f}")
                 else:
-                    print(f"   ❌ Compression found but Signal Candle conditions not met")
+                    print(f"   {t('invalid_signal_candle', lang)}")
             else:
-                print(f"   ⚠️ No compression block, skipping Signal Candle check")
+                print(f"   ⚠️ Không có compression block, bỏ qua kiểm tra Signal Candle")
             
             if not is_compressed and not is_pattern:
                 strat2_fail_reasons.append("No Compression OR Pattern found")
@@ -1069,33 +1321,33 @@ def tuyen_trend_logic(config, error_count=0):
                 strat2_fail_reasons.append("No Breakout+Retest found")
             
             # Check EMA Touch (Retest) - Can be EMA or breakout level
-            print(f"\n🔍 [EMA/Breakout Level Touch Check]")
+            print(f"\n{t('ema_breakout_touch', lang)}")
             block_touch = False
             touch_details = []
             for idx, row in recent_block.iterrows():
                 if touches_ema(row):
                     block_touch = True
-                    touch_details.append(f"Candle at index {idx} touches EMA")
+                    touch_details.append(f"{t('candle', lang)} tại index {idx} chạm EMA")
                     break
                 # Also check if touching breakout level
                 if breakout_level and (row['low'] <= breakout_level * 1.0001 and row['high'] >= breakout_level * 0.9999):
                     block_touch = True
-                    touch_details.append(f"Candle at index {idx} touches Breakout Level {breakout_level:.5f}")
+                    touch_details.append(f"{t('candle', lang)} tại index {idx} chạm {t('level', lang)} Breakout {breakout_level:.5f}")
                     break
             
             if block_touch:
-                print(f"   ✅ Block touches EMA or Breakout Level")
+                print(f"   {t('block_touches', lang)}")
                 for detail in touch_details:
                     print(f"      - {detail}")
             else:
-                print(f"   ❌ Block didn't touch EMA or Breakout Level")
+                print(f"   {t('block_not_touches', lang)}")
                 strat2_fail_reasons.append("Block didn't touch EMA or Breakout Level")
             
             # For Compression: Need signal candle. For Pattern: Don't need signal candle.
             compression_valid = is_compressed and has_signal_candle and block_touch
             pattern_valid = is_pattern and block_touch
             
-            print(f"\n📊 [Strategy 2 Summary]")
+            print(f"\n{t('strategy_2_summary', lang)}")
             print(f"   Compression Block: {'✅' if is_compressed else '❌'}")
             print(f"   Signal Candle: {'✅' if has_signal_candle else '❌'}")
             print(f"   Pattern ({pattern_type}): {'✅' if is_pattern else '❌'}")
@@ -1107,15 +1359,15 @@ def tuyen_trend_logic(config, error_count=0):
                  signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
                  is_strat2 = True
                  reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}_BreakoutRetest"
-                 print(f"\n✅ [STRATEGY 2 SIGNAL] {signal_type} - All conditions met!")
-                 print(f"   Reason: {reason}")
+                 print(f"\n{t('strategy_2_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
+                 print(f"   {t('reason', lang)}: {reason}")
             else:
-                print(f"\n❌ [STRATEGY 2 FAIL] Missing conditions:")
+                print(f"\n{t('strategy_2_fail', lang)} {t('missing_conditions', lang)}:")
                 for reason in strat2_fail_reasons:
                     print(f"   - {reason}")
         else:
              strat2_fail_reasons.append("EMA200 Filter Fail")
-             print(f"\n❌ [STRATEGY 2 FAIL] EMA200 Filter failed")
+             print(f"\n{t('strategy_2_fail', lang)} EMA200 Filter failed")
 
         if not is_strat2:
              log_details.append(f"Strat 2 Fail: {', '.join(strat2_fail_reasons)}")
@@ -1163,22 +1415,24 @@ def tuyen_trend_logic(config, error_count=0):
             sl = price - (2 * atr_val)
             tp = price + (4 * atr_val)
         else:
-            print(f"⏳ Signal Found ({reason}) but waiting for breakout > {trigger_high:.5f} (Curr: {price:.5f})")
+            distance = trigger_high - price
+            print(f"   {t('waiting_breakout', lang)} > {trigger_high:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
     elif signal_type == "SELL":
         if price < trigger_low:
             execute = True
             sl = price + (2 * atr_val)
             tp = price - (4 * atr_val)
         else:
-            print(f"⏳ Signal Found ({reason}) but waiting for breakout < {trigger_low:.5f} (Curr: {price:.5f})")
+            distance = price - trigger_low
+            print(f"   {t('waiting_breakout', lang)} < {trigger_low:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
             
     if execute:
         print(f"\n{'='*80}")
-        print(f"🚀 [EXECUTION]")
+        print(f"{t('execution', lang)}")
         print(f"{'='*80}")
         
         # Spam Filter (60s) - Fix: Convert datetime to timestamp
-        print(f"\n🔍 [Spam Filter Check]")
+        print(f"\n{t('spam_filter', lang)}")
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
@@ -1195,16 +1449,16 @@ def tuyen_trend_logic(config, error_count=0):
                 current_timestamp = current_time
             
             time_since_last = current_timestamp - last_trade_timestamp
-            print(f"   Last trade: {time_since_last:.0f} seconds ago")
+            print(f"   {t('last_trade', lang)}: {time_since_last:.0f} {t('seconds_ago', lang)}")
             if time_since_last < 60:
-                print(f"   ⏳ Trade taken recently ({time_since_last:.0f}s < 60s). Waiting.")
+                print(f"   ⏳ Lệnh gần đây ({time_since_last:.0f}s < 60s). Đang chờ.")
                 return error_count, 0
             else:
-                print(f"   ✅ Cooldown passed ({time_since_last:.0f}s >= 60s)")
+                print(f"   {t('cooldown_passed', lang)} ({time_since_last:.0f}s >= 60s)")
         else:
-            print(f"   ✅ No recent trades")
+            print(f"   {t('no_recent_trades', lang)}")
 
-        print(f"\n✅ [SIGNAL EXECUTE] {signal_type} @ {price:.5f} | {reason}")
+        print(f"\n{t('signal_execute', lang)} {signal_type} @ {price:.5f} | {reason}")
         print(f"   SL: {sl:.5f} (2x ATR) | TP: {tp:.5f} (4x ATR) | R:R = 1:2")
         
         request = {
