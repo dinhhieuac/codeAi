@@ -17,15 +17,125 @@ def calculate_ema(series, span):
     """Calculate EMA"""
     return series.ewm(span=span, adjust=False).mean()
 
+def find_swing_points(df, lookback=5):
+    """Find swing highs and lows"""
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(lookback, len(df) - lookback):
+        # Swing High: Higher than lookback candles on both sides
+        is_swing_high = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df.iloc[j]['high'] >= df.iloc[i]['high']:
+                is_swing_high = False
+                break
+        if is_swing_high:
+            swing_highs.append({'index': i, 'price': df.iloc[i]['high'], 'time': df.index[i]})
+        
+        # Swing Low: Lower than lookback candles on both sides
+        is_swing_low = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df.iloc[j]['low'] <= df.iloc[i]['low']:
+                is_swing_low = False
+                break
+        if is_swing_low:
+            swing_lows.append({'index': i, 'price': df.iloc[i]['low'], 'time': df.index[i]})
+    
+    return swing_highs, swing_lows
+
+def find_supply_demand_zones(df, swing_highs, swing_lows, lookback=20):
+    """Find Supply (resistance) and Demand (support) zones"""
+    supply_zones = []
+    demand_zones = []
+    
+    # Supply zones from swing highs
+    for swing in swing_highs[-10:]:  # Last 10 swing highs
+        idx = swing['index']
+        if idx < len(df):
+            zone_high = df.iloc[idx]['high']
+            zone_low = df.iloc[idx]['low']
+            # Check if price reacted to this zone
+            reactions = 0
+            for i in range(max(0, idx - lookback), min(len(df), idx + lookback)):
+                if i != idx and df.iloc[i]['high'] >= zone_low and df.iloc[i]['high'] <= zone_high:
+                    reactions += 1
+            
+            if reactions >= 1:  # At least 1 reaction
+                supply_zones.append({
+                    'high': zone_high,
+                    'low': zone_low,
+                    'price': zone_high,  # Entry level
+                    'time': swing['time'],
+                    'freshness': len(df) - idx  # How recent
+                })
+    
+    # Demand zones from swing lows
+    for swing in swing_lows[-10:]:  # Last 10 swing lows
+        idx = swing['index']
+        if idx < len(df):
+            zone_high = df.iloc[idx]['high']
+            zone_low = df.iloc[idx]['low']
+            # Check if price reacted to this zone
+            reactions = 0
+            for i in range(max(0, idx - lookback), min(len(df), idx + lookback)):
+                if i != idx and df.iloc[i]['low'] <= zone_high and df.iloc[i]['low'] >= zone_low:
+                    reactions += 1
+            
+            if reactions >= 1:  # At least 1 reaction
+                demand_zones.append({
+                    'high': zone_high,
+                    'low': zone_low,
+                    'price': zone_low,  # Entry level
+                    'time': swing['time'],
+                    'freshness': len(df) - idx  # How recent
+                })
+    
+    return supply_zones, demand_zones
+
+def calculate_fibonacci_levels(high_price, low_price, trend='BULLISH'):
+    """Calculate Fibonacci retracement levels"""
+    diff = abs(high_price - low_price)
+    
+    if trend == 'BULLISH':
+        # Retracement from high to low
+        fib_236 = high_price - (diff * 0.236)
+        fib_382 = high_price - (diff * 0.382)
+        fib_500 = high_price - (diff * 0.500)
+        fib_618 = high_price - (diff * 0.618)
+        fib_786 = high_price - (diff * 0.786)
+    else:  # BEARISH
+        # Retracement from low to high
+        fib_236 = low_price + (diff * 0.236)
+        fib_382 = low_price + (diff * 0.382)
+        fib_500 = low_price + (diff * 0.500)
+        fib_618 = low_price + (diff * 0.618)
+        fib_786 = low_price + (diff * 0.786)
+    
+    return {
+        '236': fib_236,
+        '382': fib_382,
+        '500': fib_500,
+        '618': fib_618,
+        '786': fib_786
+    }
+
+def check_fibonacci_retracement(current_price, fib_levels, trend, min_level=0.382, max_level=0.786):
+    """Check if price is in Fibonacci retracement zone"""
+    if trend == 'BULLISH':
+        # Price should be between fib_382 and fib_786 (38.2% - 78.6%)
+        return fib_levels['786'] <= current_price <= fib_levels['382']
+    else:  # BEARISH
+        return fib_levels['382'] <= current_price <= fib_levels['786']
+
 def calculate_atr(df, period=14):
-    """Calculate ATR"""
+    """Calculate ATR - Returns Series that can be assigned to DataFrame"""
     df = df.copy()
     df['tr0'] = abs(df['high'] - df['low'])
     df['tr1'] = abs(df['high'] - df['close'].shift(1))
     df['tr2'] = abs(df['low'] - df['close'].shift(1))
     df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
-    df['atr'] = df['tr'].rolling(window=period).mean()
-    return df['atr']
+    atr_series = df['tr'].rolling(window=period).mean()
+    return atr_series
 
 def is_doji(row, body_percent=0.1):
     """Body is less than 10% of total range"""
@@ -54,90 +164,340 @@ def is_pinbar(row, tail_percent=0.6, type='buy'):
         return (upper_wick / rng) >= tail_percent
     return False
 
+def is_hammer(row):
+    """Hammer (Nến búa): Long lower wick, small body, small upper wick"""
+    rng = row['high'] - row['low']
+    if rng == 0: return False
+    
+    body = abs(row['close'] - row['open'])
+    upper_wick = row['high'] - max(row['close'], row['open'])
+    lower_wick = min(row['close'], row['open']) - row['low']
+    
+    # Lower wick >= 2x body, upper wick < body
+    return (lower_wick >= 2 * body) and (upper_wick < body) and (body < rng * 0.3)
+
+def is_inverted_hammer(row):
+    """Inverted Hammer (Búa ngược): Long upper wick, small body, small lower wick"""
+    rng = row['high'] - row['low']
+    if rng == 0: return False
+    
+    body = abs(row['close'] - row['open'])
+    upper_wick = row['high'] - max(row['close'], row['open'])
+    lower_wick = min(row['close'], row['open']) - row['low']
+    
+    # Upper wick >= 2x body, lower wick < body
+    return (upper_wick >= 2 * body) and (lower_wick < body) and (body < rng * 0.3)
+
 def check_signal_candle(row, trend):
     """
-    Return True if candle is Doji or Pinbar conforming to trend
+    Return True if candle is Doji, Pinbar, Hammer, or Inverted Hammer conforming to trend
     """
     if is_doji(row, 0.2): return True # Allow slightly fatter Doji
     
     if trend == "BULLISH":
         if is_pinbar(row, type='buy'): return True
+        if is_hammer(row): return True  # Hammer is bullish reversal
+        if is_inverted_hammer(row): return True  # Inverted hammer can be bullish
     elif trend == "BEARISH":
         if is_pinbar(row, type='sell'): return True
+        if is_hammer(row): return True  # Hammer can be bearish if at top
+        if is_inverted_hammer(row): return True  # Inverted hammer is bearish reversal
         
+    return False
+
+def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_val=None):
+    """
+    Check Signal Candle at end of Compression Block (Strategy 2)
+    Document requirements (dòng 138-159):
+    
+    BUY (tiếp diễn tăng):
+    - Nằm ở cuối khối hành vi giá
+    - Giá đóng cửa gần đỉnh của khối
+    - Giá đóng cửa >EMA 50, 200
+    - Thân nến nhỏ
+    - Tổng biên độ (high-low) nhỏ hơn trung bình 3-5 nến trước
+    - Râu nến ngắn hoặc cân bằng
+    - Không phá vỡ đỉnh khối
+    - Không phải nến momentum tăng mạnh
+    
+    SELL (tiếp diễn giảm):
+    - Nằm ở cuối khối hành vi giá
+    - Giá đóng cửa gần đáy của khối
+    - Giá đóng cửa <EMA50, 200
+    - Thân nến nhỏ
+    - Tổng biên độ (high-low) nhỏ hơn trung bình 3-5 nến trước
+    - Râu nến ngắn hoặc cân bằng
+    - Không phá vỡ đáy khối
+    - Không phải nến momentum giảm mạnh
+    """
+    if len(df_slice) < 3: return False
+    
+    # Get last candle (signal candle)
+    signal_candle = df_slice.iloc[-1]
+    block_high = df_slice['high'].max()
+    block_low = df_slice['low'].min()
+    
+    # Check range < avg 3-5 nến trước
+    if len(df_slice) >= 5:
+        prev_3_5 = df_slice.iloc[-5:-1] if len(df_slice) > 5 else df_slice.iloc[:-1]
+        avg_prev_range = (prev_3_5['high'] - prev_3_5['low']).mean()
+        signal_range = signal_candle['high'] - signal_candle['low']
+        if signal_range >= avg_prev_range:
+            return False  # Range not smaller than previous
+    
+    # Check body size (thân nến nhỏ)
+    body = abs(signal_candle['close'] - signal_candle['open'])
+    signal_range = signal_candle['high'] - signal_candle['low']
+    if signal_range == 0 or (body / signal_range) > 0.4:
+        return False  # Body too big
+    
+    # Check wicks (râu nến ngắn hoặc cân bằng)
+    upper_wick = signal_candle['high'] - max(signal_candle['close'], signal_candle['open'])
+    lower_wick = min(signal_candle['close'], signal_candle['open']) - signal_candle['low']
+    if upper_wick > signal_range * 0.5 or lower_wick > signal_range * 0.5:
+        return False  # Wick too long (bị đạp mạnh)
+    
+    if trend == "BULLISH":
+        # Close gần đỉnh của khối
+        block_range = block_high - block_low
+        if block_range == 0:
+            return False
+        close_position = (signal_candle['close'] - block_low) / block_range
+        if close_position < 0.6:  # Not near top (should be > 60% of block range)
+            return False
+        
+        # Close > EMA50, 200
+        if ema50_val and signal_candle['close'] <= ema50_val:
+            return False
+        if ema200_val and signal_candle['close'] <= ema200_val:
+            return False
+        
+        # Không phá vỡ đỉnh khối
+        if signal_candle['high'] > block_high * 1.0001:
+            return False
+        
+        # Không phải nến momentum tăng mạnh (body không quá lớn, không có gap)
+        if body > signal_range * 0.6:
+            return False
+        
+        return True
+        
+    elif trend == "BEARISH":
+        # Close gần đáy của khối
+        block_range = block_high - block_low
+        if block_range == 0:
+            return False
+        close_position = (signal_candle['close'] - block_low) / block_range
+        if close_position > 0.4:  # Not near bottom (should be < 40% of block range)
+            return False
+        
+        # Close < EMA50, 200
+        if ema50_val and signal_candle['close'] >= ema50_val:
+            return False
+        if ema200_val and signal_candle['close'] >= ema200_val:
+            return False
+        
+        # Không phá vỡ đáy khối
+        if signal_candle['low'] < block_low * 0.9999:
+            return False
+        
+        # Không phải nến momentum giảm mạnh
+        if body > signal_range * 0.6:
+            return False
+        
+        return True
+    
     return False
 
 def check_compression_block(df_slice):
     """
     Check for Price Action Compression (Block of 3+ candles)
-    Criteria:
-    1. Min 3 candles
-    2. Shrinking or stable range (not expanding violently)
-    3. Overlapping bodies (compression)
+    Criteria from document:
+    1. Cụm ≥ 3 nến
+    2. Biên độ dao động thu hẹp dần
+    3. Thân nến nhỏ dần
+    4. Râu nến ngắn dần
+    5. High thấp dần hoặc Low cao dần
     """
     if len(df_slice) < 3: return False
     
-    # Calculate ranges
+    # Calculate ranges, bodies, wicks
     ranges = df_slice['high'] - df_slice['low']
-    avg_range = ranges.mean()
+    bodies = abs(df_slice['close'] - df_slice['open'])
+    upper_wicks = df_slice['high'] - df_slice[['open', 'close']].max(axis=1)
+    lower_wicks = df_slice[['open', 'close']].min(axis=1) - df_slice['low']
     
-    # Check if any candle is "Huge" (Momentum) - we want compression, not expansion
-    # If a candle range is > 2x average, it's not compression
+    # 1. Check if any candle is "Huge" (Momentum) - we want compression, not expansion
+    avg_range = ranges.mean()
     if (ranges > avg_range * 2.0).any():
         return False
-        
-    # Check overlapping (Highs lower, Lows higher? Or just general range containment)
-    # Simple compression: Avg Body Size should be small relative to Avg Range
-    bodies = abs(df_slice['close'] - df_slice['open'])
+    
+    # 2. Check range contraction (biên độ thu hẹp dần)
+    # Compare first half vs second half
+    mid = len(ranges) // 2
+    first_half_avg = ranges[:mid].mean() if mid > 0 else ranges.mean()
+    second_half_avg = ranges[mid:].mean() if mid < len(ranges) else ranges.mean()
+    range_contracting = second_half_avg < first_half_avg * 1.1  # Second half smaller or similar
+    
+    # 3. Check body shrinking (thân nến nhỏ dần)
+    first_half_body = bodies[:mid].mean() if mid > 0 else bodies.mean()
+    second_half_body = bodies[mid:].mean() if mid < len(bodies) else bodies.mean()
+    body_shrinking = second_half_body < first_half_body * 1.1
+    
+    # 4. Check wick shortening (râu nến ngắn dần)
+    first_half_wick = (upper_wicks[:mid] + lower_wicks[:mid]).mean() if mid > 0 else (upper_wicks + lower_wicks).mean()
+    second_half_wick = (upper_wicks[mid:] + lower_wicks[mid:]).mean() if mid < len(upper_wicks) else (upper_wicks + lower_wicks).mean()
+    wick_shortening = second_half_wick < first_half_wick * 1.1
+    
+    # 5. Check high lowering or low raising (High thấp dần hoặc Low cao dần)
+    highs = df_slice['high'].values
+    lows = df_slice['low'].values
+    first_half_high = highs[:mid].max() if mid > 0 else highs.max()
+    second_half_high = highs[mid:].max() if mid < len(highs) else highs.max()
+    first_half_low = lows[:mid].min() if mid > 0 else lows.min()
+    second_half_low = lows[mid:].min() if mid < len(lows) else lows.min()
+    
+    high_lowering = second_half_high < first_half_high
+    low_raising = second_half_low > first_half_low
+    
+    # At least 3 out of 5 criteria should be met
+    criteria_met = sum([range_contracting, body_shrinking, wick_shortening, high_lowering, low_raising])
+    
+    # Also check: Avg Body Size should be small relative to Avg Range
     avg_body = bodies.mean()
-    
-    # Body should be relatively small
-    if avg_body > (avg_range * 0.6): # If bodies are big, it's directional, not compressed
+    if avg_body > (avg_range * 0.6):  # Bodies too big = directional, not compressed
         return False
-        
-    return True
-
-def detect_pattern(df_slice, type='W'):
-    """
-    Rudimentary Pattern Detection for M (Sell) or W (Buy) over last 5-10 candles.
-    """
-    # Simply check for Double Bottom/Top logic via fractal or pivots
-    # For M1, we can check Swing Points
-    # W Pattern: Low1, High1, Low2 (Higher/Same), Break?
     
-    # Simplified for Bot: Check if we have two distinct lows (for W) without a lower low
+    return criteria_met >= 3  # At least 3 compression criteria met
+
+def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
+    """
+    Improved Pattern Detection for M (Sell) or W (Buy) with all 7 conditions from document.
+    
+    W Pattern (BUY) conditions:
+    1. Xuất hiện sau đáy thứ 2
+    2. Nằm trong khối hành vi giá
+    3. Không phá đáy Low 2
+    4. Thân nến nhỏ (nén)
+    5. Đỉnh nến là mức phá
+    6. Nằm gần neckline
+    7. Giá đóng cửa > EMA50, 200
+    """
     if len(df_slice) < 5: return False
     
     lows = df_slice['low'].values
     highs = df_slice['high'].values
+    closes = df_slice['close'].values
+    opens = df_slice['open'].values
     
-    if type == 'W': # BUY
-        # Look for two minima
-        # Split data in half?
-        mid = len(lows) // 2
-        min1 = np.min(lows[:mid])
-        min2 = np.min(lows[mid:])
+    if type == 'W':  # BUY
+        # Find two distinct lows (đáy thứ 1 và đáy thứ 2)
+        # Look for local minima
+        local_mins = []
+        for i in range(1, len(lows) - 1):
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                local_mins.append({'index': i, 'price': lows[i]})
         
-        # Min2 should be >= Min1 (Higher Low or Double Bottom)
-        # And recent Close should be moving up
-        if min2 >= min1 * 0.9999: # Allow tiny violation or exact
-             # Also check if we are near the top of the range (ready to break)
-             current_close = df_slice.iloc[-1]['close']
-             range_high = np.max(highs)
-             if current_close > (range_high + min2)/2: # Upper half
-                 return True
-                 
-    elif type == 'M': # SELL
-        mid = len(highs) // 2
-        max1 = np.max(highs[:mid])
-        max2 = np.max(highs[mid:])
+        if len(local_mins) < 2:
+            return False
         
-        # Max2 should be <= Max1 (Lower High or Double Top)
-        if max2 <= max1 * 1.0001:
-             current_close = df_slice.iloc[-1]['close']
-             range_low = np.min(lows)
-             if current_close < (range_low + max2)/2: # Lower half
-                 return True
+        # Sort by index to get first and second low
+        local_mins = sorted(local_mins, key=lambda x: x['index'])
+        low1 = local_mins[0]
+        low2 = local_mins[-1]  # Last low (đáy thứ 2)
+        
+        # Condition 1: Xuất hiện sau đáy thứ 2
+        if low2['index'] >= len(df_slice) - 2:  # Too recent, not enough candles after
+            return False
+        
+        # Condition 3: Không phá đáy Low 2 (current price should not break below low2)
+        current_low = df_slice.iloc[-1]['low']
+        if current_low < low2['price'] * 0.9999:
+            return False
+        
+        # Condition 2: Min2 should be >= Min1 (Higher Low or Double Bottom)
+        if low2['price'] < low1['price'] * 0.9999:  # Lower low, not W pattern
+            return False
+        
+        # Condition 4: Thân nến nhỏ (nén) - last candle body should be small
+        last_body = abs(closes[-1] - opens[-1])
+        last_range = highs[-1] - lows[-1]
+        if last_range == 0 or (last_body / last_range) > 0.4:  # Body too big
+            return False
+        
+        # Condition 5: Đỉnh nến là mức phá - high should be near top
+        current_high = df_slice.iloc[-1]['high']
+        range_high = np.max(highs)
+        if current_high < range_high * 0.995:  # Not near top
+            return False
+        
+        # Condition 6: Nằm gần neckline (middle of the range between low2 and high)
+        neckline = (low2['price'] + range_high) / 2
+        current_close = closes[-1]
+        if abs(current_close - neckline) / neckline > 0.002:  # More than 0.2% away
+            return False
+        
+        # Condition 7: Giá đóng cửa > EMA50, 200
+        if ema50_val and current_close <= ema50_val:
+            return False
+        if ema200_val and current_close <= ema200_val:
+            return False
+        
+        return True
+        
+    elif type == 'M':  # SELL
+        # Find two distinct highs (đỉnh thứ 1 và đỉnh thứ 2)
+        local_maxs = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                local_maxs.append({'index': i, 'price': highs[i]})
+        
+        if len(local_maxs) < 2:
+            return False
+        
+        # Sort by index
+        local_maxs = sorted(local_maxs, key=lambda x: x['index'])
+        high1 = local_maxs[0]
+        high2 = local_maxs[-1]  # Last high (đỉnh thứ 2)
+        
+        # Condition 1: Xuất hiện sau đỉnh thứ 2
+        if high2['index'] >= len(df_slice) - 2:
+            return False
+        
+        # Condition 3: Không phá đỉnh High 2
+        current_high = df_slice.iloc[-1]['high']
+        if current_high > high2['price'] * 1.0001:
+            return False
+        
+        # Condition 2: Max2 should be <= Max1 (Lower High or Double Top)
+        if high2['price'] > high1['price'] * 1.0001:  # Higher high, not M pattern
+            return False
+        
+        # Condition 4: Thân nến nhỏ
+        last_body = abs(closes[-1] - opens[-1])
+        last_range = highs[-1] - lows[-1]
+        if last_range == 0 or (last_body / last_range) > 0.4:
+            return False
+        
+        # Condition 5: Đáy nến là mức phá
+        current_low = df_slice.iloc[-1]['low']
+        range_low = np.min(lows)
+        if current_low > range_low * 1.005:  # Not near bottom
+            return False
+        
+        # Condition 6: Nằm gần neckline
+        neckline = (high2['price'] + range_low) / 2
+        current_close = closes[-1]
+        if abs(current_close - neckline) / neckline > 0.002:
+            return False
+        
+        # Condition 7: Giá đóng cửa < EMA50, 200
+        if ema50_val and current_close >= ema50_val:
+            return False
+        if ema200_val and current_close >= ema200_val:
+            return False
+        
+        return True
                  
     return False
 
@@ -156,12 +516,48 @@ def tuyen_trend_logic(config, error_count=0):
             return error_count, 0
 
     # --- 2. Data Fetching ---
+    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # H1 for higher-timeframe bias
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
     
     if df_m1 is None or df_m5 is None: return error_count, 0
+    if df_h1 is None: df_h1 = df_m5  # Fallback to M5 if H1 not available
 
-    # --- 3. M5 Trend Detection ---
+    # --- 3. H1 Higher-timeframe Bias (Supply/Demand) ---
+    h1_bias = None
+    h1_swing_highs, h1_swing_lows = find_swing_points(df_h1, lookback=3)
+    h1_supply_zones, h1_demand_zones = find_supply_demand_zones(df_h1, h1_swing_highs, h1_swing_lows)
+    
+    current_h1_price = df_h1.iloc[-1]['close']
+    # Check if price is near Supply (bearish) or Demand (bullish) zone
+    near_supply = False
+    near_demand = False
+    
+    for zone in h1_supply_zones[-5:]:  # Check last 5 supply zones
+        if zone['low'] <= current_h1_price <= zone['high'] * 1.001:  # Within or very close
+            near_supply = True
+            h1_bias = "SELL"
+            break
+    
+    for zone in h1_demand_zones[-5:]:  # Check last 5 demand zones
+        if zone['high'] >= current_h1_price >= zone['low'] * 0.999:  # Within or very close
+            near_demand = True
+            h1_bias = "BUY"
+            break
+    
+    # If not near zones, determine bias from structure (Lower Highs/Lows = SELL, Higher Highs/Lows = BUY)
+    if h1_bias is None and len(h1_swing_highs) >= 2 and len(h1_swing_lows) >= 2:
+        last_high = h1_swing_highs[-1]['price']
+        prev_high = h1_swing_highs[-2]['price']
+        last_low = h1_swing_lows[-1]['price']
+        prev_low = h1_swing_lows[-2]['price']
+        
+        if last_high < prev_high and last_low < prev_low:
+            h1_bias = "SELL"  # Lower Highs, Lower Lows
+        elif last_high > prev_high and last_low > prev_low:
+            h1_bias = "BUY"  # Higher Highs, Higher Lows
+    
+    # --- 4. M5 Trend Detection + Supply/Demand ---
     df_m5['ema21'] = calculate_ema(df_m5['close'], 21)
     df_m5['ema50'] = calculate_ema(df_m5['close'], 50)
     
@@ -188,6 +584,28 @@ def tuyen_trend_logic(config, error_count=0):
             trend_reason = "Price OK (Valid Stack), but Slope Flat/Up"
     else:
         trend_reason = "EMAs Crossed or Price Inside EMAs"
+    
+    # M5 Supply/Demand zones
+    m5_swing_highs, m5_swing_lows = find_swing_points(df_m5, lookback=3)
+    m5_supply_zones, m5_demand_zones = find_supply_demand_zones(df_m5, m5_swing_highs, m5_swing_lows)
+    
+    current_m5_price = df_m5.iloc[-1]['close']
+    # Check if price is too close to opposite zone (should have room to move)
+    too_close_to_opposite_zone = False
+    if m5_trend == "BULLISH":
+        # Check if near supply zone (resistance)
+        for zone in m5_supply_zones[-5:]:
+            distance = (zone['low'] - current_m5_price) / current_m5_price
+            if distance < 0.0005:  # Less than 5 pips away
+                too_close_to_opposite_zone = True
+                break
+    elif m5_trend == "BEARISH":
+        # Check if near demand zone (support)
+        for zone in m5_demand_zones[-5:]:
+            distance = (current_m5_price - zone['high']) / current_m5_price
+            if distance < 0.0005:  # Less than 5 pips away
+                too_close_to_opposite_zone = True
+                break
         
     # --- 4. M1 Setup Checks ---
     df_m1['ema21'] = calculate_ema(df_m1['close'], 21)
@@ -195,10 +613,64 @@ def tuyen_trend_logic(config, error_count=0):
     df_m1['ema200'] = calculate_ema(df_m1['close'], 200) 
     df_m1['atr'] = calculate_atr(df_m1, 14)
     
+    # M1 Structure Detection (Lower Highs/Lows for SELL, Higher Highs/Lows for BUY)
+    m1_swing_highs, m1_swing_lows = find_swing_points(df_m1, lookback=5)
+    m1_structure_valid = True
+    
+    if len(m1_swing_highs) >= 2 and len(m1_swing_lows) >= 2:
+        if m5_trend == "BEARISH":
+            # Check Lower Highs and Lower Lows
+            last_high = m1_swing_highs[-1]['price']
+            prev_high = m1_swing_highs[-2]['price']
+            last_low = m1_swing_lows[-1]['price']
+            prev_low = m1_swing_lows[-2]['price']
+            
+            # Should have Lower Highs and Lower Lows
+            if not (last_high < prev_high and last_low < prev_low):
+                m1_structure_valid = False
+                trend_reason += " | M1 Structure: Not Lower Highs/Lows"
+        elif m5_trend == "BULLISH":
+            # Check Higher Highs and Higher Lows
+            last_high = m1_swing_highs[-1]['price']
+            prev_high = m1_swing_highs[-2]['price']
+            last_low = m1_swing_lows[-1]['price']
+            prev_low = m1_swing_lows[-2]['price']
+            
+            # Should have Higher Highs and Higher Lows
+            if not (last_high > prev_high and last_low > prev_low):
+                m1_structure_valid = False
+                trend_reason += " | M1 Structure: Not Higher Highs/Lows"
+    
+    if not m1_structure_valid:
+        print(f"📉 [TuyenTrend] M1 Structure không rõ ràng. Skipping.")
+        return error_count, 0
+    
     # Recent completed candles (last 3-5)
     c1 = df_m1.iloc[-2] # Completed
     c2 = df_m1.iloc[-3]
     c3 = df_m1.iloc[-4]
+    
+    # Check for smooth pullback (sóng hồi chéo, mượt) - Strategy 1
+    def is_smooth_pullback(df_slice, trend):
+        """Check if pullback is smooth (no large candles, no gaps)"""
+        if len(df_slice) < 3: return False
+        
+        ranges = df_slice['high'] - df_slice['low']
+        avg_range = ranges.mean()
+        
+        # No candle should be > 2x average (no large impulsive move)
+        if (ranges > avg_range * 2.0).any():
+            return False
+        
+        # Check for gaps (large difference between consecutive candles)
+        for i in range(1, len(df_slice)):
+            prev_close = df_slice.iloc[i-1]['close']
+            curr_open = df_slice.iloc[i]['open']
+            gap = abs(curr_open - prev_close)
+            if gap > avg_range * 0.5:  # Large gap
+                return False
+        
+        return True
     
     def touches_ema(row):
         # Check simple intersection with EMA 21 or 50
@@ -212,14 +684,47 @@ def tuyen_trend_logic(config, error_count=0):
     
     price = mt5.symbol_info_tick(symbol).ask 
     
-    log_details.append(f"M5 Trend: {m5_trend} ({trend_reason})")
+    log_details.append(f"H1 Bias: {h1_bias} | M5 Trend: {m5_trend} ({trend_reason})")
+    
+    # Higher-timeframe bias filter: Only trade in direction of H1 bias
+    if h1_bias is not None:
+        if (h1_bias == "SELL" and m5_trend == "BULLISH") or (h1_bias == "BUY" and m5_trend == "BEARISH"):
+            print(f"📉 [TuyenTrend] H1 Bias ({h1_bias}) conflicts with M5 Trend ({m5_trend}). Skipping.")
+            return error_count, 0
     
     if m5_trend == "NEUTRAL":
         print(f"📉 [TuyenTrend] No Trend. Details: {trend_reason}")
         return error_count, 0
+    
+    if too_close_to_opposite_zone:
+        print(f"📉 [TuyenTrend] Price too close to opposite Supply/Demand zone. No room to move.")
+        return error_count, 0
 
     # === STRATEGY 1: PULLBACK + DOJI/PINBAR CLUSTER ===
     is_strat1 = False
+    
+    # Calculate Fibonacci levels for pullback (38.2-62%)
+    # Find recent swing high/low for Fibonacci calculation
+    m1_swing_highs, m1_swing_lows = find_swing_points(df_m1, lookback=5)
+    fib_levels = None
+    pass_fib = False
+    
+    if m5_trend == "BULLISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
+        # Pullback from high to low
+        swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+        swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+        fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
+        current_price = c1['close']
+        # Check if in 38.2-62% retracement zone
+        pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BULLISH', min_level=0.382, max_level=0.618)
+    elif m5_trend == "BEARISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
+        # Pullback from low to high
+        swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+        swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+        fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
+        current_price = c1['close']
+        # Check if in 38.2-62% retracement zone
+        pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BEARISH', min_level=0.382, max_level=0.618)
     
     # Check cluster of 2 signals
     is_c1_sig = check_signal_candle(c1, m5_trend)
@@ -227,15 +732,21 @@ def tuyen_trend_logic(config, error_count=0):
     # Check EMA Touch
     is_touch = touches_ema(c1) or touches_ema(c2)
     
+    # Check smooth pullback (sóng hồi chéo, mượt)
+    pullback_candles = df_m1.iloc[-6:-1]  # Last 5 completed candles
+    is_smooth = is_smooth_pullback(pullback_candles, m5_trend)
+    
     strat1_fail_reasons = []
     if not is_c1_sig: strat1_fail_reasons.append("Candle-1 Not Signal")
     if not is_c2_sig: strat1_fail_reasons.append("Candle-2 Not Signal")
     if not is_touch: strat1_fail_reasons.append("No EMA Touch")
+    if not pass_fib: strat1_fail_reasons.append("Not in Fib 38.2-62% zone")
+    if not is_smooth: strat1_fail_reasons.append("Pullback not smooth")
     
-    if is_c1_sig and is_c2_sig and is_touch:
+    if is_c1_sig and is_c2_sig and is_touch and pass_fib and is_smooth:
         signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
         is_strat1 = True
-        reason = "Strat1_Pullback_Cluster"
+        reason = "Strat1_Pullback_Cluster_Fib"
     else:
         log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
 
@@ -255,30 +766,151 @@ def tuyen_trend_logic(config, error_count=0):
              else: strat2_fail_reasons.append(f"Price {c1['close']:.5f} > EMA200 {ema200_val:.5f}")
         
         if pass_ema200:
+            # Check for previous breakout + retest (including shallow breakout)
+            breakout_level = None
+            has_breakout_retest = False
+            is_shallow_breakout = False
+            
+            # Look back 20-50 candles for previous breakout
+            lookback_start = max(0, len(df_m1) - 50)
+            lookback_end = len(df_m1) - 5
+            
+            if m5_trend == "BULLISH":
+                # Look for previous high breakout
+                for i in range(lookback_start, lookback_end - 10):
+                    prev_high = df_m1.iloc[i]['high']
+                    breakout_candle_idx = None
+                    # Check if price broke above this high
+                    broke_above = False
+                    for j in range(i + 1, min(i + 15, lookback_end)):
+                        if df_m1.iloc[j]['close'] > prev_high:
+                            broke_above = True
+                            breakout_level = prev_high
+                            breakout_candle_idx = j
+                            
+                            # Check if shallow breakout (impulsive yếu - didn't move far)
+                            breakout_leg = df_m1.iloc[j]['close'] - prev_high
+                            breakout_range = df_m1.iloc[j]['high'] - df_m1.iloc[j]['low']
+                            # If breakout leg is small (< 50% of candle range), it's shallow
+                            if breakout_leg < breakout_range * 0.5:
+                                is_shallow_breakout = True
+                            
+                            # Check if price retested this level (came back to it)
+                            for k in range(j + 1, min(j + 20, len(df_m1) - 2)):
+                                if df_m1.iloc[k]['low'] <= breakout_level * 1.0001 and df_m1.iloc[k]['low'] >= breakout_level * 0.9999:
+                                    has_breakout_retest = True
+                                    
+                                    # For shallow breakout: Check if pullback is 50-100% of breakout leg
+                                    if is_shallow_breakout:
+                                        pullback_depth = prev_high - df_m1.iloc[k]['low']
+                                        pullback_percent = pullback_depth / breakout_leg if breakout_leg > 0 else 0
+                                        if pullback_percent < 0.5 or pullback_percent > 1.0:
+                                            has_breakout_retest = False  # Pullback not in 50-100% range
+                                    break
+                            if has_breakout_retest:
+                                break
+                    if has_breakout_retest:
+                        break
+            elif m5_trend == "BEARISH":
+                # Look for previous low breakout
+                for i in range(lookback_start, lookback_end - 10):
+                    prev_low = df_m1.iloc[i]['low']
+                    breakout_candle_idx = None
+                    # Check if price broke below this low
+                    broke_below = False
+                    for j in range(i + 1, min(i + 15, lookback_end)):
+                        if df_m1.iloc[j]['close'] < prev_low:
+                            broke_below = True
+                            breakout_level = prev_low
+                            breakout_candle_idx = j
+                            
+                            # Check if shallow breakout (impulsive yếu)
+                            breakout_leg = prev_low - df_m1.iloc[j]['close']
+                            breakout_range = df_m1.iloc[j]['high'] - df_m1.iloc[j]['low']
+                            if breakout_leg < breakout_range * 0.5:
+                                is_shallow_breakout = True
+                            
+                            # Check if price retested this level
+                            for k in range(j + 1, min(j + 20, len(df_m1) - 2)):
+                                if df_m1.iloc[k]['high'] >= breakout_level * 0.9999 and df_m1.iloc[k]['high'] <= breakout_level * 1.0001:
+                                    has_breakout_retest = True
+                                    
+                                    # For shallow breakout: Check pullback 50-100%
+                                    if is_shallow_breakout:
+                                        pullback_depth = df_m1.iloc[k]['high'] - prev_low
+                                        pullback_percent = pullback_depth / breakout_leg if breakout_leg > 0 else 0
+                                        if pullback_percent < 0.5 or pullback_percent > 1.0:
+                                            has_breakout_retest = False
+                                    break
+                            if has_breakout_retest:
+                                break
+                    if has_breakout_retest:
+                        break
+            
+            # Calculate Fibonacci for Strategy 2 (38.2-79%)
+            fib_levels_strat2 = None
+            pass_fib_strat2 = False
+            
+            if m1_swing_highs and m1_swing_lows:
+                if m5_trend == "BULLISH":
+                    swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+                    swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+                    fib_levels_strat2 = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
+                    current_price = c1['close']
+                    pass_fib_strat2 = check_fibonacci_retracement(current_price, fib_levels_strat2, 'BULLISH', min_level=0.382, max_level=0.786)
+                elif m5_trend == "BEARISH":
+                    swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+                    swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+                    fib_levels_strat2 = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
+                    current_price = c1['close']
+                    pass_fib_strat2 = check_fibonacci_retracement(current_price, fib_levels_strat2, 'BEARISH', min_level=0.382, max_level=0.786)
+            
             # Check Compression
             recent_block = df_m1.iloc[-5:-1]
             is_compressed = check_compression_block(recent_block)
             
-            # Check Pattern
-            is_pattern = detect_pattern(recent_block, type='W' if m5_trend == "BULLISH" else 'M')
+            # Check Pattern (with EMA50 and EMA200 for condition 7)
+            is_pattern = detect_pattern(recent_block, type='W' if m5_trend == "BULLISH" else 'M', 
+                                       ema50_val=c1['ema50'], ema200_val=c1['ema200'])
+            
+            # Check Signal Candle in Compression Block (NEW - Document requirement)
+            has_signal_candle = False
+            if is_compressed:
+                has_signal_candle = check_signal_candle_in_compression(recent_block, m5_trend, 
+                                                                       ema50_val=c1['ema50'], 
+                                                                       ema200_val=c1['ema200'])
             
             if not is_compressed and not is_pattern:
                 strat2_fail_reasons.append("No Compression OR Pattern found")
+            if is_compressed and not has_signal_candle:
+                strat2_fail_reasons.append("Compression found but no valid Signal Candle")
+            if not pass_fib_strat2:
+                strat2_fail_reasons.append("Not in Fib 38.2-79% zone")
+            if not has_breakout_retest:
+                strat2_fail_reasons.append("No Breakout+Retest found")
             
-            # Check EMA Touch (Retest)
+            # Check EMA Touch (Retest) - Can be EMA or breakout level
             block_touch = False
             for idx, row in recent_block.iterrows():
                 if touches_ema(row):
                     block_touch = True
                     break
+                # Also check if touching breakout level
+                if breakout_level and (row['low'] <= breakout_level * 1.0001 and row['high'] >= breakout_level * 0.9999):
+                    block_touch = True
+                    break
             
             if not block_touch:
-                 strat2_fail_reasons.append("Block didn't touch EMA")
+                 strat2_fail_reasons.append("Block didn't touch EMA or Breakout Level")
             
-            if (is_compressed or is_pattern) and block_touch:
+            # For Compression: Need signal candle. For Pattern: Don't need signal candle.
+            compression_valid = is_compressed and has_signal_candle and block_touch
+            pattern_valid = is_pattern and block_touch
+            
+            if (compression_valid or pattern_valid) and pass_fib_strat2:
                  signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
                  is_strat2 = True
-                 reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}"
+                 reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}_BreakoutRetest"
         else:
              strat2_fail_reasons.append("EMA200 Filter Fail")
 
@@ -286,7 +918,8 @@ def tuyen_trend_logic(config, error_count=0):
              log_details.append(f"Strat 2 Fail: {', '.join(strat2_fail_reasons)}")
 
     # --- Logging ---
-    price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" or m5_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
+    # Fix: Use signal_type only, not m5_trend (could be wrong if signal is SELL but trend is BULLISH)
+    price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" else mt5.symbol_info_tick(symbol).bid
     
     # Concise 1-line log if nothing found
     if not signal_type:
@@ -305,7 +938,13 @@ def tuyen_trend_logic(config, error_count=0):
     execute = False
     sl = 0.0
     tp = 0.0
+    # Fix: Check NaN for ATR, use default if NaN
     atr_val = c1['atr']
+    if pd.isna(atr_val) or atr_val <= 0:
+        # Default ATR fallback (use recent price range as estimate)
+        recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+        atr_val = recent_range / 14 if recent_range > 0 else 0.0001
+        print(f"   ⚠️ ATR is NaN, using fallback: {atr_val:.5f}")
     
     if signal_type == "BUY":
         if price > trigger_high:
@@ -323,11 +962,23 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"⏳ Signal Found ({reason}) but waiting for breakout < {trigger_low:.5f} (Curr: {price:.5f})")
             
     if execute:
-         # Spam Filter (60s)
+        # Spam Filter (60s) - Fix: Convert datetime to timestamp
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            if (mt5.symbol_info_tick(symbol).time - strat_positions[0].time) < 60:
+            last_trade_time = strat_positions[0].time
+            current_time = mt5.symbol_info_tick(symbol).time
+            # Convert to timestamp if needed (MT5 returns datetime)
+            if isinstance(last_trade_time, datetime):
+                last_trade_timestamp = last_trade_time.timestamp()
+            else:
+                last_trade_timestamp = last_trade_time
+            if isinstance(current_time, datetime):
+                current_timestamp = current_time.timestamp()
+            else:
+                current_timestamp = current_time
+            
+            if (current_timestamp - last_trade_timestamp) < 60:
                 print("   ⏳ Trade taken recently. Waiting.")
                 return error_count, 0
 
