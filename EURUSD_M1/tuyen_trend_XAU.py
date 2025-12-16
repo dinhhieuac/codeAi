@@ -1041,11 +1041,32 @@ def tuyen_trend_logic(config, error_count=0):
     
     log_details.append(f"H1 Bias: {h1_bias} | M5 Trend: {m5_trend} ({trend_reason})")
     
+    # Initialize Strategy variables (sẽ được set sau nếu pass filters)
+    is_strat1 = False
+    is_strat2 = False
+    has_enough_signals = False
+    is_touch = False
+    is_smooth = False
+    pass_fib = False
+    signal_count = 0
+    strat1_fail_reasons = []
+    strat2_fail_reasons = []
+    pass_ema200 = False
+    has_breakout_retest = False
+    is_compressed = False
+    has_signal_candle = False
+    is_pattern = False
+    pass_fib_strat2 = False
+    pattern_type = None
+    fib_levels = None
+    
     # Higher-timeframe bias filter: Only trade in direction of H1 bias
     if h1_bias is not None:
         if (h1_bias == "SELL" and m5_trend == "BULLISH") or (h1_bias == "BUY" and m5_trend == "BEARISH"):
             print(f"\n{t('filter_fail', lang)} {t('h1_conflicts', lang)}. Bỏ qua.")
-            return error_count, 0
+            # Không return sớm, tiếp tục đến Final Summary
+            signal_type = None
+            log_details.append(f"H1 Bias xung đột: H1={h1_bias} nhưng M5={m5_trend}")
         else:
             print(f"   {t('aligns', lang)}")
     else:
@@ -1053,34 +1074,34 @@ def tuyen_trend_logic(config, error_count=0):
     
     if m5_trend == "NEUTRAL":
         print(f"\n{t('filter_fail', lang)} {t('no_trend', lang)}. Chi tiết: {trend_reason}")
-        return error_count, 0
+        # Không return sớm, tiếp tục đến Final Summary để hiển thị chi tiết
+        signal_type = None
+        log_details.append(f"M5 Trend: NEUTRAL ({trend_reason})")
     
     if too_close_to_opposite_zone:
         print(f"\n{t('filter_fail', lang)} {t('too_close_zone', lang)}.")
-        return error_count, 0
+        # Không return sớm, tiếp tục đến Final Summary để hiển thị chi tiết
+        signal_type = None
+        log_details.append(f"Giá quá gần vùng Supply/Demand ngược (< {min_zone_distance_pips} pips)")
     else:
         print(f"   {t('has_room', lang)}")
+    
+    # Nếu đã fail ở Tier 1, skip Strategy evaluation nhưng vẫn đến Final Summary
+    skip_strategy_eval = (m5_trend == "NEUTRAL" or too_close_to_opposite_zone or 
+                          (h1_bias is not None and ((h1_bias == "SELL" and m5_trend == "BULLISH") or (h1_bias == "BUY" and m5_trend == "BEARISH"))))
 
     # === STRATEGY 1: PULLBACK + DOJI/PINBAR CLUSTER ===
-    print(f"\n{'='*80}")
-    print(f"{t('strategy_1', lang)}")
-    print(f"{'='*80}")
-    
-    is_strat1 = False
-    # Initialize Strategy 1 variables
-    has_enough_signals = False
-    is_touch = False
-    is_smooth = False
-    pass_fib = False
-    signal_count = 0
-    strat1_fail_reasons = []
-    
-    # Calculate Fibonacci levels for pullback (38.2-62%)
-    # Find recent swing high/low for Fibonacci calculation
-    fib_levels = None
-    pass_fib = False
-    
-    print(f"\n{t('fibonacci', lang)}")
+    if not skip_strategy_eval:
+        print(f"\n{'='*80}")
+        print(f"{t('strategy_1', lang)}")
+        print(f"{'='*80}")
+        
+        # Calculate Fibonacci levels for pullback (38.2-62%)
+        # Find recent swing high/low for Fibonacci calculation
+        fib_levels = None
+        pass_fib = False
+        
+        print(f"\n{t('fibonacci', lang)}")
     if m5_trend == "BULLISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
         # Pullback from high to low
         swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
@@ -1096,7 +1117,7 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   {t('in_zone', lang)} 38.2-62%")
         else:
             print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
-    elif m5_trend == "BEARISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
+        elif m5_trend == "BEARISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
         # Pullback from low to high
         swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
         swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
@@ -1111,94 +1132,93 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   {t('in_zone', lang)} 38.2-62%")
         else:
             print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
-    else:
-        print(f"   {t('not_enough_swing', lang)}")
-    
-    # Check cluster of signals (configurable: count and window)
-    print(f"\n{t('signal_candle', lang)}")
-    # Check signals in recent window (default: last 3 candles)
-    recent_candles = [c1, c2, c3] if signal_cluster_window >= 3 else [c1, c2]
-    recent_candles = recent_candles[:signal_cluster_window]
-    
-    signal_counts = [check_signal_candle(c, m5_trend) for c in recent_candles]
-    signal_count = sum(signal_counts)
-    
-    # Check individual candles for display
-    is_c1_sig = check_signal_candle(c1, m5_trend)
-    is_c2_sig = check_signal_candle(c2, m5_trend)
-    
-    c1_type = "Doji" if is_doji(c1, 0.2) else ("Pinbar" if is_pinbar(c1, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c1) else ("Inverted Hammer" if is_inverted_hammer(c1) else "Normal")))
-    c2_type = "Doji" if is_doji(c2, 0.2) else ("Pinbar" if is_pinbar(c2, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c2) else ("Inverted Hammer" if is_inverted_hammer(c2) else "Normal")))
-    
-    c1_status = t('signal', lang) if is_c1_sig else t('not_signal', lang)
-    c2_status = t('signal', lang) if is_c2_sig else t('not_signal', lang)
-    print(f"   {t('candle', lang)}-1: {c1_type} | {c1_status}")
-    print(f"   {t('candle', lang)}-2: {c2_type} | {c2_status}")
-    print(f"   {t('signal', lang)} trong {signal_cluster_window} {t('candle', lang)} gần nhất: {signal_count}/{signal_cluster_window}")
-    
-    # Configurable: require at least signal_cluster_count signals
-    has_enough_signals = signal_count >= signal_cluster_count
-    
-    # Check EMA Touch
-    is_touch = touches_ema(c1) or touches_ema(c2)
-    print(f"\n{t('ema_touch', lang)}")
-    print(f"   EMA21: {c1['ema21']:.5f} | EMA50: {c1['ema50']:.5f}")
-    c1_touch = touches_ema(c1)
-    c2_touch = touches_ema(c2)
-    print(f"   {t('candle', lang)}-1 chạm EMA: {t('touches', lang) if c1_touch else t('not_touches', lang)}")
-    print(f"   {t('candle', lang)}-2 chạm EMA: {t('touches', lang) if c2_touch else t('not_touches', lang)}")
-    if is_touch:
-        print(f"   ✅ Ít nhất một nến chạm EMA")
-    else:
-        print(f"   ❌ Không có nến nào chạm EMA")
-    
-    # Check smooth pullback (sóng hồi chéo, mượt)
-    pullback_candles = df_m1.iloc[-6:-1]  # Last 5 completed candles
-    is_smooth = is_smooth_pullback(pullback_candles, m5_trend)
-    print(f"\n{t('smooth_pullback', lang)}")
-    if is_smooth:
-        print(f"   {t('smooth', lang)}")
-    else:
-        ranges = pullback_candles['high'] - pullback_candles['low']
-        avg_range = ranges.mean()
-        large_candles = (ranges > avg_range * 2.0).sum()
-        print(f"   {t('not_smooth', lang)} ({t('large_candles', lang)}: {large_candles}, {t('avg_range', lang)}: {avg_range:.5f})")
-    
-    strat1_fail_reasons = []
-    if not has_enough_signals: strat1_fail_reasons.append(f"Not enough signal candles ({signal_count}/{signal_cluster_count} required)")
-    if not is_touch: strat1_fail_reasons.append("No EMA Touch")
-    if not pass_fib: strat1_fail_reasons.append("Not in Fib 38.2-62% zone")
-    if not is_smooth: strat1_fail_reasons.append("Pullback not smooth")
-    
-    if has_enough_signals and is_touch and pass_fib and is_smooth:
-        signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
-        is_strat1 = True
-        reason = "Strat1_Pullback_Cluster_Fib"
-        print(f"\n{t('strategy_1_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
-        print(f"   {t('reason', lang)}: {reason}")
-    else:
-        print(f"\n{t('strategy_1_fail', lang)} {t('missing_conditions', lang)}:")
-        for reason in strat1_fail_reasons:
-            print(f"   - {reason}")
-        log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
+        else:
+            print(f"   {t('not_enough_swing', lang)}")
+        
+        # Check cluster of signals (configurable: count and window)
+        print(f"\n{t('signal_candle', lang)}")
+        # Check signals in recent window (default: last 3 candles)
+        recent_candles = [c1, c2, c3] if signal_cluster_window >= 3 else [c1, c2]
+        recent_candles = recent_candles[:signal_cluster_window]
+        
+        signal_counts = [check_signal_candle(c, m5_trend) for c in recent_candles]
+        signal_count = sum(signal_counts)
+        
+        # Check individual candles for display
+        is_c1_sig = check_signal_candle(c1, m5_trend)
+        is_c2_sig = check_signal_candle(c2, m5_trend)
+        
+        c1_type = "Doji" if is_doji(c1, 0.2) else ("Pinbar" if is_pinbar(c1, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c1) else ("Inverted Hammer" if is_inverted_hammer(c1) else "Normal")))
+        c2_type = "Doji" if is_doji(c2, 0.2) else ("Pinbar" if is_pinbar(c2, type='buy' if m5_trend == "BULLISH" else 'sell') else ("Hammer" if is_hammer(c2) else ("Inverted Hammer" if is_inverted_hammer(c2) else "Normal")))
+        
+        c1_status = t('signal', lang) if is_c1_sig else t('not_signal', lang)
+        c2_status = t('signal', lang) if is_c2_sig else t('not_signal', lang)
+        print(f"   {t('candle', lang)}-1: {c1_type} | {c1_status}")
+        print(f"   {t('candle', lang)}-2: {c2_type} | {c2_status}")
+        print(f"   {t('signal', lang)} trong {signal_cluster_window} {t('candle', lang)} gần nhất: {signal_count}/{signal_cluster_window}")
+        
+        # Configurable: require at least signal_cluster_count signals
+        has_enough_signals = signal_count >= signal_cluster_count
+        
+        # Check EMA Touch
+        is_touch = touches_ema(c1) or touches_ema(c2)
+        print(f"\n{t('ema_touch', lang)}")
+        print(f"   EMA21: {c1['ema21']:.5f} | EMA50: {c1['ema50']:.5f}")
+        c1_touch = touches_ema(c1)
+        c2_touch = touches_ema(c2)
+        print(f"   {t('candle', lang)}-1 chạm EMA: {t('touches', lang) if c1_touch else t('not_touches', lang)}")
+        print(f"   {t('candle', lang)}-2 chạm EMA: {t('touches', lang) if c2_touch else t('not_touches', lang)}")
+        if is_touch:
+            print(f"   ✅ Ít nhất một nến chạm EMA")
+        else:
+            print(f"   ❌ Không có nến nào chạm EMA")
+        
+        # Check smooth pullback (sóng hồi chéo, mượt)
+        pullback_candles = df_m1.iloc[-6:-1]  # Last 5 completed candles
+        is_smooth = is_smooth_pullback(pullback_candles, m5_trend)
+        print(f"\n{t('smooth_pullback', lang)}")
+        if is_smooth:
+            print(f"   {t('smooth', lang)}")
+        else:
+            ranges = pullback_candles['high'] - pullback_candles['low']
+            avg_range = ranges.mean()
+            large_candles = (ranges > avg_range * 2.0).sum()
+            print(f"   {t('not_smooth', lang)} ({t('large_candles', lang)}: {large_candles}, {t('avg_range', lang)}: {avg_range:.5f})")
+        
+        strat1_fail_reasons = []
+        if not has_enough_signals: strat1_fail_reasons.append(f"Not enough signal candles ({signal_count}/{signal_cluster_count} required)")
+        if not is_touch: strat1_fail_reasons.append("No EMA Touch")
+        if not pass_fib: strat1_fail_reasons.append("Not in Fib 38.2-62% zone")
+        if not is_smooth: strat1_fail_reasons.append("Pullback not smooth")
+        
+        if has_enough_signals and is_touch and pass_fib and is_smooth:
+            signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
+            is_strat1 = True
+            reason = "Strat1_Pullback_Cluster_Fib"
+            print(f"\n{t('strategy_1_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
+            print(f"   {t('reason', lang)}: {reason}")
+        else:
+            print(f"\n{t('strategy_1_fail', lang)} {t('missing_conditions', lang)}:")
+            for reason in strat1_fail_reasons:
+                print(f"   - {reason}")
+            log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
 
     # === STRATEGY 2: CONTINUATION + STRUCTURE (M/W + COMPRESSION) ===
-    print(f"\n{'='*80}")
-    print(f"{t('strategy_2', lang)}")
-    print(f"{'='*80}")
-    
-    is_strat2 = False
-    strat2_fail_reasons = []
-    # Initialize Strategy 2 variables (will be set if Strategy 2 is evaluated)
-    pass_ema200 = False
-    has_breakout_retest = False
-    is_compressed = False
-    has_signal_candle = False
-    is_pattern = False
-    pass_fib_strat2 = False
-    pattern_type = None
-    
-    if not is_strat1:
+    if not skip_strategy_eval and not is_strat1:
+        print(f"\n{'='*80}")
+        print(f"{t('strategy_2', lang)}")
+        print(f"{'='*80}")
+        
+        is_strat2 = False
+        strat2_fail_reasons = []
+        # Initialize Strategy 2 variables (will be set if Strategy 2 is evaluated)
+        pass_ema200 = False
+        has_breakout_retest = False
+        is_compressed = False
+        has_signal_candle = False
+        is_pattern = False
+        pass_fib_strat2 = False
+        pattern_type = None
         # Check EMA 200 Filter
         print(f"\n{t('ema200_filter', lang)}")
         pass_ema200 = False
