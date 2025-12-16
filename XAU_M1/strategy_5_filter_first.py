@@ -90,21 +90,47 @@ def strategy_5_logic(config, error_count=0):
     atr_min = 10   # Minimum ATR (pips) - tránh market quá yên tĩnh
     atr_max = 200  # Maximum ATR (pips) - tránh market quá biến động (news events)
     
-    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f} | ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
+    print(f"\n{'='*80}")
+    print(f"📊 [STRATEGY 5: FILTER FIRST ANALYSIS] {symbol}")
+    print(f"{'='*80}")
+    print(f"💱 Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f} | ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
+    print(f"   Donchian Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | Buffer: {buffer/point:.0f} pts")
+    
+    # Track all filter status
+    filter_status = []
+    early_exit = False
     
     # ATR Volatility Filter
     if atr_pips < atr_min or atr_pips > atr_max:
-        print(f"   ❌ Filtered: ATR {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
+        filter_status.append(f"❌ ATR: {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
+        print(f"\n{'='*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Early Exit Filter")
+        print(f"{'='*80}")
+        print(f"   {filter_status[0]}")
+        print(f"{'='*80}\n")
         return error_count, 0
+    else:
+        filter_status.append(f"✅ ATR: {atr_pips:.1f}p trong khoảng {atr_min}-{atr_max}p")
     
     # ADX Filter (Trend Strength)
     adx_value = last.get('adx', 0)
-    if pd.isna(adx_value) or adx_value < 20:
-        print(f"   ❌ Filtered: ADX {adx_value:.1f} < 20 (Choppy Market)")
+    adx_threshold = 20
+    if pd.isna(adx_value) or adx_value < adx_threshold:
+        filter_status.append(f"❌ ADX: {adx_value:.1f} < {adx_threshold} (Choppy Market)")
+        print(f"\n{'='*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Early Exit Filter")
+        print(f"{'='*80}")
+        for status in filter_status:
+            print(f"   {status}")
+        print(f"{'='*80}\n")
         return error_count, 0
+    else:
+        filter_status.append(f"✅ ADX: {adx_value:.1f} >= {adx_threshold}")
     
     # Volume Confirmation
-    is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.3)  # Volume > 1.3x average
+    volume_threshold = 1.3
+    is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
+    vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
     
     # False Breakout Check
     false_breakout = False
@@ -112,43 +138,96 @@ def strategy_5_logic(config, error_count=0):
         # BUY: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
         if prev['high'] > last['upper'] and prev['close'] < last['upper']:
             false_breakout = True
-            print(f"   ❌ Filtered: False Breakout BUY (Nến trước phá vỡ nhưng đóng ngược lại)")
+            filter_status.append(f"❌ False Breakout BUY: Nến trước phá vỡ nhưng đóng ngược lại")
     elif last['close'] < (last['lower'] - buffer):
         # SELL: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
         if prev['low'] < last['lower'] and prev['close'] > last['lower']:
             false_breakout = True
-            print(f"   ❌ Filtered: False Breakout SELL (Nến trước phá vỡ nhưng đóng ngược lại)")
+            filter_status.append(f"❌ False Breakout SELL: Nến trước phá vỡ nhưng đóng ngược lại")
     
     if false_breakout:
+        print(f"\n{'='*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - False Breakout Detected")
+        print(f"{'='*80}")
+        for status in filter_status:
+            print(f"   {status}")
+        print(f"{'='*80}\n")
         return error_count, 0
     
     # BUY Signal
     if last['close'] > (last['upper'] + buffer):
+        filter_status.append(f"✅ Breakout BUY: Price {last['close']:.2f} > Upper {last['upper']:.2f} + Buffer")
         if m5_trend == "BULLISH":
+            filter_status.append(f"✅ M5 Trend: BULLISH")
             if last['rsi'] > 50:
+                filter_status.append(f"✅ RSI > 50: {last['rsi']:.1f}")
+                filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
                 if is_high_volume:
                     signal = "BUY"
-                    print("   ✅ Valid Breakout BUY (Volume confirmed)")
+                    print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
                 else:
-                    print(f"   ❌ Filtered: Breakout BUY but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
             else:
-                print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
+                filter_status.append(f"❌ RSI <= 50: {last['rsi']:.1f}")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
         else:
-            print(f"   ❌ Filtered: Breakout BUY but M5 Trend is BEARISH")
+            filter_status.append(f"❌ M5 Trend: BEARISH (cần BULLISH)")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - M5 Trend không phù hợp")
              
     # SELL Signal
     elif last['close'] < (last['lower'] - buffer):
+        filter_status.append(f"✅ Breakout SELL: Price {last['close']:.2f} < Lower {last['lower']:.2f} - Buffer")
         if m5_trend == "BEARISH":
+            filter_status.append(f"✅ M5 Trend: BEARISH")
             if last['rsi'] < 50:
+                filter_status.append(f"✅ RSI < 50: {last['rsi']:.1f}")
+                filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
                 if is_high_volume:
                     signal = "SELL"
-                    print("   ✅ Valid Breakout SELL (Volume confirmed)")
+                    print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
                 else:
-                    print(f"   ❌ Filtered: Breakout SELL but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
             else:
-                print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
+                filter_status.append(f"❌ RSI >= 50: {last['rsi']:.1f}")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
         else:
-            print(f"   ❌ Filtered: Breakout SELL but M5 Trend is BULLISH")
+            filter_status.append(f"❌ M5 Trend: BULLISH (cần BEARISH)")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - M5 Trend không phù hợp")
+    else:
+        filter_status.append(f"❌ No Breakout: Price {last['close']:.2f} trong range [{last['lower']:.2f}, {last['upper']:.2f}]")
+        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Không có Donchian Breakout")
+    
+    # Final Summary
+    if not signal:
+        print(f"\n{'─'*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Tóm tắt các bộ lọc:")
+        print(f"{'─'*80}")
+        
+        # Group filters by tier
+        print(f"\n🔴 [TIER 1: EARLY EXIT FILTERS]")
+        tier1_status = [f for f in filter_status if "ATR" in f or "ADX" in f or "False Breakout" in f]
+        for status in tier1_status:
+            print(f"   {status}")
+        
+        print(f"\n🟡 [TIER 2: SIGNAL CONDITIONS]")
+        tier2_status = [f for f in filter_status if "ATR" not in f and "ADX" not in f and "False Breakout" not in f]
+        for i, status in enumerate(tier2_status, 1):
+            print(f"   {i}. {status}")
+        
+        # Chi tiết giá trị
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {last['close']:.2f}")
+        print(f"   📈 M5 Trend: {m5_trend}")
+        print(f"   📊 Donchian Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | Period: {donchian_period}")
+        print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips)")
+        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_threshold})")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
+        
+        print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
+        print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
+        print(f"   ❌ FAIL: {len([f for f in filter_status if f.startswith('❌')])}")
+        print(f"{'─'*80}\n")
         
     if signal:
         # --- SPAM FILTER & COOLDOWN ---

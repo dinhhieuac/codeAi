@@ -64,42 +64,103 @@ def strategy_2_logic(config, error_count=0):
     # 3. Logic: Crossover + RSI Filter + H1 Trend
     signal = None
     
-    print(f"📊 [Strat 2 Analysis] H1 Trend: {h1_trend} | EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | RSI: {last['rsi']:.1f}")
+    print(f"\n{'='*80}")
+    print(f"📊 [STRATEGY 2: EMA ATR ANALYSIS] {symbol}")
+    print(f"{'='*80}")
+    print(f"💱 Price: {last['close']:.2f} | H1 Trend: {h1_trend} | EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | RSI: {last['rsi']:.1f}")
+    
+    # Track all filter status
+    filter_status = []
+    
+    # Check for crossover
+    has_crossover = False
+    crossover_direction = None
     
     # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50 AND H1 Bullish
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
+        has_crossover = True
+        crossover_direction = "BUY"
+        filter_status.append(f"✅ EMA Crossover: EMA14 > EMA28 (Bullish)")
+        
         if h1_trend == "BULLISH":
+            filter_status.append(f"✅ H1 Trend: BULLISH")
             # Extension Check
-            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-            elif last['rsi'] > 50:
-                signal = "BUY"
-                print("   ✅ Crossover: EMA 14 > EMA 28 (Bullish)")
+            price_dist = abs(last['close'] - last['ema14'])
+            atr_threshold = 1.5 * last['atr']
+            is_extended = price_dist > atr_threshold
+            filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
+            
+            if not is_extended:
+                filter_status.append(f"{'✅' if last['rsi'] > 50 else '❌'} RSI > 50: {last['rsi']:.1f}")
+                if last['rsi'] > 50:
+                    signal = "BUY"
+                    print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                else:
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
             else:
-                print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= 50")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
         else:
-             print(f"   ❌ Filtered: Crossover BUY but H1 Trend is BEARISH")
+            filter_status.append(f"❌ H1 Trend: BEARISH (cần BULLISH)")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
         
     # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50 AND H1 Bearish
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
+        has_crossover = True
+        crossover_direction = "SELL"
+        filter_status.append(f"✅ EMA Crossover: EMA14 < EMA28 (Bearish)")
+        
         if h1_trend == "BEARISH":
+            filter_status.append(f"✅ H1 Trend: BEARISH")
             # Extension Check
-            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-            elif last['rsi'] < 50:
-                signal = "SELL"
-                print("   ✅ Crossover: EMA 14 < EMA 28 (Bearish)")
+            price_dist = abs(last['close'] - last['ema14'])
+            atr_threshold = 1.5 * last['atr']
+            is_extended = price_dist > atr_threshold
+            filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
+            
+            if not is_extended:
+                filter_status.append(f"{'✅' if last['rsi'] < 50 else '❌'} RSI < 50: {last['rsi']:.1f}")
+                if last['rsi'] < 50:
+                    signal = "SELL"
+                    print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                else:
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
             else:
-                print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= 50")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
         else:
-             print(f"   ❌ Filtered: Crossover SELL but H1 Trend is BULLISH")
+            filter_status.append(f"❌ H1 Trend: BULLISH (cần BEARISH)")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
 
     else:
         diff = last['ema14'] - last['ema28']
         if diff > 0:
-            print(f"   ❌ No Cross (Already Bullish, Gap: {diff:.3f})")
+            filter_status.append(f"❌ No Crossover: Already Bullish (Gap: {diff:.3f})")
         else:
-            print(f"   ❌ No Cross (Already Bearish, Gap: {diff:.3f})")
+            filter_status.append(f"❌ No Crossover: Already Bearish (Gap: {diff:.3f})")
+        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Không có EMA Crossover")
+    
+    # Final Summary
+    if not signal:
+        print(f"\n{'─'*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Tóm tắt các bộ lọc:")
+        print(f"{'─'*80}")
+        for i, status in enumerate(filter_status, 1):
+            print(f"   {i}. {status}")
+        
+        # Chi tiết giá trị
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {last['close']:.2f}")
+        print(f"   📈 H1 Trend: {h1_trend}")
+        print(f"   📊 EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | Gap: {last['ema14'] - last['ema28']:.3f}")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 ATR: {last['atr']:.2f}")
+        price_dist = abs(last['close'] - last['ema14'])
+        atr_threshold = 1.5 * last['atr']
+        print(f"   📊 Price Distance from EMA14: {price_dist:.2f} (max: {atr_threshold:.2f} = 1.5xATR)")
+        
+        print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
+        print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
+        print(f"   ❌ FAIL: {len([f for f in filter_status if f.startswith('❌')])}")
+        print(f"{'─'*80}\n")
         
     # 4. Execute
     if signal:

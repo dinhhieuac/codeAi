@@ -96,22 +96,73 @@ def strategy_4_logic(config, error_count=0):
     
     signal = None
     
-    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}")
+    print(f"\n{'='*80}")
+    print(f"📊 [STRATEGY 4: UT BOT ANALYSIS] {symbol}")
+    print(f"{'='*80}")
+    print(f"💱 Price: {last['close']:.2f} | Trend H1: {trend} | UT Pos: {last['pos']} (Prev: {prev['pos']}) | RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}")
+    
+    # Track all filter status
+    filter_status = []
     
     # Filter: Only trade valid breakouts if ADX > 20 (Trend Strength)
-    if last['adx'] < 20: 
-        print(f"   ❌ Filtered: Low ADX ({last['adx']:.1f} < 20) - Choppy Market")
-    elif ut_signal == "BUY" and trend == "BULLISH":
-        if last['rsi'] > 50:
-            signal = "BUY"
+    adx_threshold = 20
+    if last['adx'] < adx_threshold: 
+        filter_status.append(f"❌ ADX < {adx_threshold}: {last['adx']:.1f} (Choppy Market)")
+        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - ADX quá thấp")
+    else:
+        filter_status.append(f"✅ ADX >= {adx_threshold}: {last['adx']:.1f}")
+        
+        if ut_signal == "BUY":
+            filter_status.append(f"✅ UT Signal: BUY (Pos: {prev['pos']} → {last['pos']})")
+            if trend == "BULLISH":
+                filter_status.append(f"✅ H1 Trend: BULLISH")
+                filter_status.append(f"{'✅' if last['rsi'] > 50 else '❌'} RSI > 50: {last['rsi']:.1f}")
+                if last['rsi'] > 50:
+                    signal = "BUY"
+                    print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                else:
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
+            else:
+                filter_status.append(f"❌ H1 Trend: BEARISH (cần BULLISH)")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
+        elif ut_signal == "SELL":
+            filter_status.append(f"✅ UT Signal: SELL (Pos: {prev['pos']} → {last['pos']})")
+            if trend == "BEARISH":
+                filter_status.append(f"✅ H1 Trend: BEARISH")
+                filter_status.append(f"{'✅' if last['rsi'] < 50 else '❌'} RSI < 50: {last['rsi']:.1f}")
+                if last['rsi'] < 50:
+                    signal = "SELL"
+                    print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                else:
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
+            else:
+                filter_status.append(f"❌ H1 Trend: BULLISH (cần BEARISH)")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
         else:
-            print(f"   ❌ Filtered: Buy Signal but RSI {last['rsi']:.1f} <= 50")
-            
-    elif ut_signal == "SELL" and trend == "BEARISH":
-         if last['rsi'] < 50:
-             signal = "SELL"
-         else:
-            print(f"   ❌ Filtered: Sell Signal but RSI {last['rsi']:.1f} >= 50")
+            filter_status.append(f"❌ No UT Signal: Pos unchanged ({prev['pos']} → {last['pos']})")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Không có UT Signal")
+    
+    # Final Summary
+    if not signal:
+        print(f"\n{'─'*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Tóm tắt các bộ lọc:")
+        print(f"{'─'*80}")
+        for i, status in enumerate(filter_status, 1):
+            print(f"   {i}. {status}")
+        
+        # Chi tiết giá trị
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {last['close']:.2f}")
+        print(f"   📈 H1 Trend: {trend}")
+        print(f"   📊 UT Position: {last['pos']} (Prev: {prev['pos']})")
+        print(f"   📊 ADX: {last['adx']:.1f} (cần >= {adx_threshold})")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 UT Trailing Stop: {last.get('x_atr_trailing_stop', 0):.2f}")
+        
+        print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
+        print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
+        print(f"   ❌ FAIL: {len([f for f in filter_status if f.startswith('❌')])}")
+        print(f"{'─'*80}\n")
             
     # 4. Execute
     if signal:

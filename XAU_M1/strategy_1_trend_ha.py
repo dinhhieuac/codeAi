@@ -60,9 +60,15 @@ def strategy_1_logic(config, error_count=0):
     price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
     
     # Detailed Logging
-    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend} | RSI: {last_ha['rsi']:.1f}")
+    print(f"\n{'='*80}")
+    print(f"📊 [STRATEGY 1: TREND HA ANALYSIS] {symbol}")
+    print(f"{'='*80}")
+    print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
+    
+    # Track all filter status
+    filter_status = []
     
     # BUY SETUP
     if current_trend == "BULLISH":
@@ -71,19 +77,27 @@ def strategy_1_logic(config, error_count=0):
         is_fresh_breakout = prev_ha['ha_close'] <= prev_ha['sma55_high']
         is_solid_candle = not is_doji(last_ha, threshold=0.2) # Require body > 20% of range for HA
 
+        filter_status.append(f"✅ M5 Trend: BULLISH")
+        filter_status.append(f"{'✅' if is_green else '❌'} HA Candle: {'Green' if is_green else 'Red'}")
+        filter_status.append(f"{'✅' if is_above_channel else '❌'} Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f}")
+        
         if is_green and is_above_channel:
+            filter_status.append(f"{'✅' if is_fresh_breakout else '❌'} Fresh Breakout: Prev HA Close {prev_ha['ha_close']:.2f} <= SMA55 High {prev_ha['sma55_high']:.2f}")
             if is_fresh_breakout:
+                filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
+                    filter_status.append(f"{'✅' if last_ha['rsi'] > 50 else '❌'} RSI > 50: {last_ha['rsi']:.1f}")
                     if last_ha['rsi'] > 50:
                         signal = "BUY"
+                        print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
                     else:
-                        print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= 50")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
                 else: 
-                     print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
-                print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already above).")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Không phải fresh breakout")
         else:
-            print(f"   ❌ Condition Fail: Green? {is_green} | Above Channel? {is_above_channel}")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Điều kiện cơ bản không đạt")
 
     # SELL SETUP
     elif current_trend == "BEARISH":
@@ -92,19 +106,54 @@ def strategy_1_logic(config, error_count=0):
         is_fresh_breakout = prev_ha['ha_close'] >= prev_ha['sma55_low']
         is_solid_candle = not is_doji(last_ha, threshold=0.2)
 
+        filter_status.append(f"✅ M5 Trend: BEARISH")
+        filter_status.append(f"{'✅' if is_red else '❌'} HA Candle: {'Red' if is_red else 'Green'}")
+        filter_status.append(f"{'✅' if is_below_channel else '❌'} Below Channel: {last_ha['ha_close']:.2f} < {last_ha['sma55_low']:.2f}")
+        
         if is_red and is_below_channel:
+            filter_status.append(f"{'✅' if is_fresh_breakout else '❌'} Fresh Breakout: Prev HA Close {prev_ha['ha_close']:.2f} >= SMA55 Low {prev_ha['sma55_low']:.2f}")
             if is_fresh_breakout:
+                filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
+                    filter_status.append(f"{'✅' if last_ha['rsi'] < 50 else '❌'} RSI < 50: {last_ha['rsi']:.1f}")
                     if last_ha['rsi'] < 50:
                         signal = "SELL"
+                        print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
                     else:
-                        print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= 50")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
                 else:
-                    print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
-                print("   ❌ Condition Fail: Not a fresh breakout (Previous candle was already below).")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Không phải fresh breakout")
         else:
-            print(f"   ❌ Condition Fail: Red? {is_red} | Below Channel? {is_below_channel}")
+            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Điều kiện cơ bản không đạt")
+    
+    # Final Summary
+    if not signal:
+        print(f"\n{'─'*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Tóm tắt các bộ lọc:")
+        print(f"{'─'*80}")
+        for i, status in enumerate(filter_status, 1):
+            print(f"   {i}. {status}")
+        
+        # Chi tiết giá trị
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {price:.2f}")
+        print(f"   📈 M5 Trend: {current_trend}")
+        print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
+        print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
+        print(f"   📊 RSI: {last_ha['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        if current_trend == "BULLISH":
+            print(f"   📊 Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f} = {is_above_channel}")
+            print(f"   📊 Fresh Breakout: Prev {prev_ha['ha_close']:.2f} <= {prev_ha['sma55_high']:.2f} = {is_fresh_breakout}")
+        else:
+            print(f"   📊 Below Channel: {last_ha['ha_close']:.2f} < {last_ha['sma55_low']:.2f} = {is_below_channel}")
+            print(f"   📊 Fresh Breakout: Prev {prev_ha['ha_close']:.2f} >= {prev_ha['sma55_low']:.2f} = {is_fresh_breakout}")
+        
+        print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
+        print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
+        print(f"   ❌ FAIL: {len([f for f in filter_status if f.startswith('❌')])}")
+        print(f"{'─'*80}\n")
 
     
     # 4. Execute Trade
