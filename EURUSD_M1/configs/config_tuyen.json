@@ -17,5 +17,15 @@
         "atr_multiplier": 2.0,
         "ema_fast": 21,
         "ema_slow": 50
+    },
+    "filters": {
+        "m1_structure_require_both": true,
+        "signal_cluster_count": 2,
+        "signal_cluster_window": 3,
+        "min_zone_distance_pips": 10,
+        "breakout_lookback_candles": 100,
+        "signal_candle_min_criteria": 6,
+        "smooth_pullback_max_candle_multiplier": 2.0,
+        "smooth_pullback_max_gap_multiplier": 0.5
     }
 }

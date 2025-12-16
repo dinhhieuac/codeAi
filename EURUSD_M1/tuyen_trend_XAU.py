@@ -447,7 +447,7 @@ def check_signal_candle(row, trend):
         
     return False
 
-def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_val=None):
+def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_val=None, min_criteria=6):
     """
     Check Signal Candle at end of Compression Block (Strategy 2)
     Document requirements (dòng 138-159):
@@ -471,6 +471,8 @@ def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_v
     - Râu nến ngắn hoặc cân bằng
     - Không phá vỡ đáy khối
     - Không phải nến momentum giảm mạnh
+    
+    min_criteria: Minimum number of criteria to pass (out of 8 total, default 6)
     """
     if len(df_slice) < 3: return False
     
@@ -479,77 +481,96 @@ def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_v
     block_high = df_slice['high'].max()
     block_low = df_slice['low'].min()
     
-    # Check range < avg 3-5 nến trước
+    criteria_met = 0
+    total_criteria = 8
+    
+    # 1. Check range < avg 3-5 nến trước
+    range_check = True
     if len(df_slice) >= 5:
         prev_3_5 = df_slice.iloc[-5:-1] if len(df_slice) > 5 else df_slice.iloc[:-1]
         avg_prev_range = (prev_3_5['high'] - prev_3_5['low']).mean()
         signal_range = signal_candle['high'] - signal_candle['low']
         if signal_range >= avg_prev_range:
-            return False  # Range not smaller than previous
+            range_check = False
+    if range_check:
+        criteria_met += 1
     
-    # Check body size (thân nến nhỏ)
+    # 2. Check body size (thân nến nhỏ)
     body = abs(signal_candle['close'] - signal_candle['open'])
     signal_range = signal_candle['high'] - signal_candle['low']
-    if signal_range == 0 or (body / signal_range) > 0.4:
-        return False  # Body too big
+    body_check = signal_range > 0 and (body / signal_range) <= 0.4
+    if body_check:
+        criteria_met += 1
     
-    # Check wicks (râu nến ngắn hoặc cân bằng)
+    # 3. Check wicks (râu nến ngắn hoặc cân bằng)
     upper_wick = signal_candle['high'] - max(signal_candle['close'], signal_candle['open'])
     lower_wick = min(signal_candle['close'], signal_candle['open']) - signal_candle['low']
-    if upper_wick > signal_range * 0.5 or lower_wick > signal_range * 0.5:
-        return False  # Wick too long (bị đạp mạnh)
+    wick_check = upper_wick <= signal_range * 0.5 and lower_wick <= signal_range * 0.5
+    if wick_check:
+        criteria_met += 1
     
     if trend == "BULLISH":
-        # Close gần đỉnh của khối
+        # 4. Close gần đỉnh của khối
         block_range = block_high - block_low
-        if block_range == 0:
-            return False
-        close_position = (signal_candle['close'] - block_low) / block_range
-        if close_position < 0.6:  # Not near top (should be > 60% of block range)
-            return False
+        close_position_check = False
+        if block_range > 0:
+            close_position = (signal_candle['close'] - block_low) / block_range
+            close_position_check = close_position >= 0.6
+        if close_position_check:
+            criteria_met += 1
         
-        # Close > EMA50, 200
-        if ema50_val and signal_candle['close'] <= ema50_val:
-            return False
-        if ema200_val and signal_candle['close'] <= ema200_val:
-            return False
+        # 5. Close > EMA50
+        ema50_check = not ema50_val or signal_candle['close'] > ema50_val
+        if ema50_check:
+            criteria_met += 1
         
-        # Không phá vỡ đỉnh khối
-        if signal_candle['high'] > block_high * 1.0001:
-            return False
+        # 6. Close > EMA200
+        ema200_check = not ema200_val or signal_candle['close'] > ema200_val
+        if ema200_check:
+            criteria_met += 1
         
-        # Không phải nến momentum tăng mạnh (body không quá lớn, không có gap)
-        if body > signal_range * 0.6:
-            return False
+        # 7. Không phá vỡ đỉnh khối
+        no_break_high = signal_candle['high'] <= block_high * 1.0001
+        if no_break_high:
+            criteria_met += 1
         
-        return True
+        # 8. Không phải nến momentum tăng mạnh
+        no_momentum = body <= signal_range * 0.6
+        if no_momentum:
+            criteria_met += 1
         
     elif trend == "BEARISH":
-        # Close gần đáy của khối
+        # 4. Close gần đáy của khối
         block_range = block_high - block_low
-        if block_range == 0:
-            return False
-        close_position = (signal_candle['close'] - block_low) / block_range
-        if close_position > 0.4:  # Not near bottom (should be < 40% of block range)
-            return False
+        close_position_check = False
+        if block_range > 0:
+            close_position = (signal_candle['close'] - block_low) / block_range
+            close_position_check = close_position <= 0.4
+        if close_position_check:
+            criteria_met += 1
         
-        # Close < EMA50, 200
-        if ema50_val and signal_candle['close'] >= ema50_val:
-            return False
-        if ema200_val and signal_candle['close'] >= ema200_val:
-            return False
+        # 5. Close < EMA50
+        ema50_check = not ema50_val or signal_candle['close'] < ema50_val
+        if ema50_check:
+            criteria_met += 1
         
-        # Không phá vỡ đáy khối
-        if signal_candle['low'] < block_low * 0.9999:
-            return False
+        # 6. Close < EMA200
+        ema200_check = not ema200_val or signal_candle['close'] < ema200_val
+        if ema200_check:
+            criteria_met += 1
         
-        # Không phải nến momentum giảm mạnh
-        if body > signal_range * 0.6:
-            return False
+        # 7. Không phá vỡ đáy khối
+        no_break_low = signal_candle['low'] >= block_low * 0.9999
+        if no_break_low:
+            criteria_met += 1
         
-        return True
+        # 8. Không phải nến momentum giảm mạnh
+        no_momentum = body <= signal_range * 0.6
+        if no_momentum:
+            criteria_met += 1
     
-    return False
+    # Configurable: require at least min_criteria out of total_criteria
+    return criteria_met >= min_criteria
 
 def check_compression_block(df_slice):
     """
@@ -752,6 +773,17 @@ def tuyen_trend_logic(config, error_count=0):
     # Language setting (Vietnamese or English)
     lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
     
+    # Load filter configs with defaults
+    filters_config = config.get('filters', {})
+    m1_structure_require_both = filters_config.get('m1_structure_require_both', True)
+    signal_cluster_count = filters_config.get('signal_cluster_count', 2)
+    signal_cluster_window = filters_config.get('signal_cluster_window', 3)
+    min_zone_distance_pips = filters_config.get('min_zone_distance_pips', 10)
+    breakout_lookback_candles = filters_config.get('breakout_lookback_candles', 100)
+    signal_candle_min_criteria = filters_config.get('signal_candle_min_criteria', 6)
+    smooth_pullback_max_candle_multiplier = filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)
+    smooth_pullback_max_gap_multiplier = filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)
+    
     # --- 1. Manage Existing Positions ---
     positions = mt5.positions_get(symbol=symbol, magic=magic)
     if positions:
@@ -836,19 +868,21 @@ def tuyen_trend_logic(config, error_count=0):
     
     current_m5_price = df_m5.iloc[-1]['close']
     # Check if price is too close to opposite zone (should have room to move)
+    # Configurable: min_zone_distance_pips (default 10 pips)
+    min_zone_distance = min_zone_distance_pips / 10000  # Convert pips to price
     too_close_to_opposite_zone = False
     if m5_trend == "BULLISH":
         # Check if near supply zone (resistance)
         for zone in m5_supply_zones[-5:]:
             distance = (zone['low'] - current_m5_price) / current_m5_price
-            if distance < 0.0005:  # Less than 5 pips away
+            if distance < min_zone_distance:
                 too_close_to_opposite_zone = True
                 break
     elif m5_trend == "BEARISH":
         # Check if near demand zone (support)
         for zone in m5_demand_zones[-5:]:
             distance = (current_m5_price - zone['high']) / current_m5_price
-            if distance < 0.0005:  # Less than 5 pips away
+            if distance < min_zone_distance:
                 too_close_to_opposite_zone = True
                 break
         
@@ -870,10 +904,17 @@ def tuyen_trend_logic(config, error_count=0):
             last_low = m1_swing_lows[-1]['price']
             prev_low = m1_swing_lows[-2]['price']
             
-            # Should have Lower Highs and Lower Lows
-            if not (last_high < prev_high and last_low < prev_low):
-                m1_structure_valid = False
-                trend_reason += " | M1 Structure: Not Lower Highs/Lows"
+            # Configurable: require both or just one
+            if m1_structure_require_both:
+                # Should have Lower Highs AND Lower Lows
+                if not (last_high < prev_high and last_low < prev_low):
+                    m1_structure_valid = False
+                    trend_reason += " | M1 Structure: Not Lower Highs/Lows"
+            else:
+                # Should have Lower Highs OR Lower Lows
+                if not (last_high < prev_high or last_low < prev_low):
+                    m1_structure_valid = False
+                    trend_reason += " | M1 Structure: Not Lower Highs or Lower Lows"
         elif m5_trend == "BULLISH":
             # Check Higher Highs and Higher Lows
             last_high = m1_swing_highs[-1]['price']
@@ -881,10 +922,17 @@ def tuyen_trend_logic(config, error_count=0):
             last_low = m1_swing_lows[-1]['price']
             prev_low = m1_swing_lows[-2]['price']
             
-            # Should have Higher Highs and Higher Lows
-            if not (last_high > prev_high and last_low > prev_low):
-                m1_structure_valid = False
-                trend_reason += " | M1 Structure: Not Higher Highs/Lows"
+            # Configurable: require both or just one
+            if m1_structure_require_both:
+                # Should have Higher Highs AND Higher Lows
+                if not (last_high > prev_high and last_low > prev_low):
+                    m1_structure_valid = False
+                    trend_reason += " | M1 Structure: Not Higher Highs/Lows"
+            else:
+                # Should have Higher Highs OR Higher Lows
+                if not (last_high > prev_high or last_low > prev_low):
+                    m1_structure_valid = False
+                    trend_reason += " | M1 Structure: Not Higher Highs or Higher Lows"
     
     # M1 Structure Analysis
     print(f"\n{t('m1_structure', lang)}")
@@ -929,16 +977,18 @@ def tuyen_trend_logic(config, error_count=0):
         ranges = df_slice['high'] - df_slice['low']
         avg_range = ranges.mean()
         
-        # No candle should be > 2x average (no large impulsive move)
-        if (ranges > avg_range * 2.0).any():
+        # Configurable: max_candle_multiplier (default 2.0)
+        # No candle should be > multiplier x average (no large impulsive move)
+        if (ranges > avg_range * smooth_pullback_max_candle_multiplier).any():
             return False
         
+        # Configurable: max_gap_multiplier (default 0.5)
         # Check for gaps (large difference between consecutive candles)
         for i in range(1, len(df_slice)):
             prev_close = df_slice.iloc[i-1]['close']
             curr_open = df_slice.iloc[i]['open']
             gap = abs(curr_open - prev_close)
-            if gap > avg_range * 0.5:  # Large gap
+            if gap > avg_range * smooth_pullback_max_gap_multiplier:  # Large gap
                 return False
         
         return True
@@ -1057,8 +1107,16 @@ def tuyen_trend_logic(config, error_count=0):
     else:
         print(f"   {t('not_enough_swing', lang)}")
     
-    # Check cluster of 2 signals
+    # Check cluster of signals (configurable: count and window)
     print(f"\n{t('signal_candle', lang)}")
+    # Check signals in recent window (default: last 3 candles)
+    recent_candles = [c1, c2, c3] if signal_cluster_window >= 3 else [c1, c2]
+    recent_candles = recent_candles[:signal_cluster_window]
+    
+    signal_counts = [check_signal_candle(c, m5_trend) for c in recent_candles]
+    signal_count = sum(signal_counts)
+    
+    # Check individual candles for display
     is_c1_sig = check_signal_candle(c1, m5_trend)
     is_c2_sig = check_signal_candle(c2, m5_trend)
     
@@ -1069,6 +1127,10 @@ def tuyen_trend_logic(config, error_count=0):
     c2_status = t('signal', lang) if is_c2_sig else t('not_signal', lang)
     print(f"   {t('candle', lang)}-1: {c1_type} | {c1_status}")
     print(f"   {t('candle', lang)}-2: {c2_type} | {c2_status}")
+    print(f"   {t('signal', lang)} trong {signal_cluster_window} {t('candle', lang)} gần nhất: {signal_count}/{signal_cluster_window}")
+    
+    # Configurable: require at least signal_cluster_count signals
+    has_enough_signals = signal_count >= signal_cluster_count
     
     # Check EMA Touch
     is_touch = touches_ema(c1) or touches_ema(c2)
@@ -1096,13 +1158,12 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"   {t('not_smooth', lang)} ({t('large_candles', lang)}: {large_candles}, {t('avg_range', lang)}: {avg_range:.5f})")
     
     strat1_fail_reasons = []
-    if not is_c1_sig: strat1_fail_reasons.append("Candle-1 Not Signal")
-    if not is_c2_sig: strat1_fail_reasons.append("Candle-2 Not Signal")
+    if not has_enough_signals: strat1_fail_reasons.append(f"Not enough signal candles ({signal_count}/{signal_cluster_count} required)")
     if not is_touch: strat1_fail_reasons.append("No EMA Touch")
     if not pass_fib: strat1_fail_reasons.append("Not in Fib 38.2-62% zone")
     if not is_smooth: strat1_fail_reasons.append("Pullback not smooth")
     
-    if is_c1_sig and is_c2_sig and is_touch and pass_fib and is_smooth:
+    if has_enough_signals and is_touch and pass_fib and is_smooth:
         signal_type = "BUY" if m5_trend == "BULLISH" else "SELL"
         is_strat1 = True
         reason = "Strat1_Pullback_Cluster_Fib"
@@ -1150,10 +1211,10 @@ def tuyen_trend_logic(config, error_count=0):
             has_breakout_retest = False
             is_shallow_breakout = False
             
-            # Look back 20-50 candles for previous breakout
-            lookback_start = max(0, len(df_m1) - 50)
+            # Configurable: breakout_lookback_candles (default 100)
+            lookback_start = max(0, len(df_m1) - breakout_lookback_candles)
             lookback_end = len(df_m1) - 5
-            print(f"   Looking back {lookback_end - lookback_start} candles for breakout")
+            print(f"   Looking back {lookback_end - lookback_start} candles for breakout (config: {breakout_lookback_candles})")
             
             if m5_trend == "BULLISH":
                 # Look for previous high breakout
@@ -1300,7 +1361,8 @@ def tuyen_trend_logic(config, error_count=0):
             if is_compressed:
                 has_signal_candle = check_signal_candle_in_compression(recent_block, m5_trend, 
                                                                        ema50_val=c1['ema50'], 
-                                                                       ema200_val=c1['ema200'])
+                                                                       ema200_val=c1['ema200'],
+                                                                       min_criteria=signal_candle_min_criteria)
                 if has_signal_candle:
                     signal_candle = recent_block.iloc[-1]
                     print(f"   {t('valid_signal_candle', lang)}")
