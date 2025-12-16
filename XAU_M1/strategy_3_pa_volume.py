@@ -63,7 +63,7 @@ def strategy_3_logic(config, error_count=0):
     point = mt5.symbol_info(symbol).point
     spread = (tick.ask - tick.bid) / point
     spread_pips = spread / 10
-    max_spread = 30  # 3 pips max for XAUUSD scalping
+    max_spread = 50  # 5 pips max for XAUUSD (adjusted from 30/3 pips)
     
     # 3. Logic: Rejection Candle + Volume Spike near SMA 9
     signal = None
@@ -84,8 +84,9 @@ def strategy_3_logic(config, error_count=0):
     # ATR Volatility Filter
     atr_value = last['atr'] if not pd.isna(last['atr']) else 0
     atr_pips = (atr_value / point) / 10 if point > 0 else 0
-    atr_min = 5   # Minimum ATR (pips)
-    atr_max = 30  # Maximum ATR (pips)
+    # XAUUSD M1 typically has ATR 50-200 pips, so adjust range accordingly
+    atr_min = 10   # Minimum ATR (pips) - Adjusted for XAUUSD
+    atr_max = 200  # Maximum ATR (pips) - Adjusted for XAUUSD
     
     if atr_pips < atr_min or atr_pips > atr_max:
         early_exit_filters.append(f"❌ ATR: {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
@@ -104,12 +105,13 @@ def strategy_3_logic(config, error_count=0):
     pip_val = point * 10 
     dist_to_sma = abs(last['close'] - last['sma9'])
     
-    # Allow up to 5.0 pips distance (50 points)
-    if dist_to_sma <= 50 * point: 
+    # Allow up to 10.0 pips distance (100 points) - Adjusted for XAUUSD volatility
+    max_sma_distance = 100 * point  # 10 pips for XAUUSD
+    if dist_to_sma <= max_sma_distance: 
         is_near_sma = True
         
-    # Volume > 1.5x Average (Tăng từ 1.1x)
-    volume_threshold = 1.5
+    # Volume > 1.3x Average (Adjusted from 1.5x for more signals)
+    volume_threshold = 1.3  # Reduced from 1.5x to 1.3x for more opportunities
     is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
     
     # Pinbar Detection (Tightened: Nose < 1.5x body thay vì 2x)
@@ -121,9 +123,10 @@ def strategy_3_logic(config, error_count=0):
     min_body = 0.1 * pip_val 
     if body_size < min_body: body_size = min_body  # Prevent division by zero or extreme ratios
     
-    # Tightened Pinbar (Nose < 1.5x body thay vì 2x)
-    is_bullish_pinbar = (lower_shadow > 1.5 * body_size) and (upper_shadow < body_size * 1.5)
-    is_bearish_pinbar = (upper_shadow > 1.5 * body_size) and (lower_shadow < body_size * 1.5)
+    # Pinbar Detection (Adjusted: Nose < 2.0x body for more opportunities)
+    pinbar_multiplier = 2.0  # Increased from 1.5x to 2.0x for more pinbar detection
+    is_bullish_pinbar = (lower_shadow > pinbar_multiplier * body_size) and (upper_shadow < body_size * pinbar_multiplier)
+    is_bearish_pinbar = (upper_shadow > pinbar_multiplier * body_size) and (lower_shadow < body_size * pinbar_multiplier)
     
     # Logging Analysis
     print(f"\n{'='*80}")
@@ -138,8 +141,8 @@ def strategy_3_logic(config, error_count=0):
     signal = None
     
     # Check all conditions step by step
-    if is_near_sma:
-        filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= 50 pts")
+        if is_near_sma:
+        filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= {max_sma_distance/point:.0f} pts")
         if is_high_volume:
             vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
             filter_status.append(f"✅ High Volume: {vol_ratio:.2f}x > {volume_threshold}x")
@@ -178,12 +181,12 @@ def strategy_3_logic(config, error_count=0):
                     filter_status.append(f"❌ Bearish Pinbar nhưng Price >= SMA9: {last['close']:.2f} >= {last['sma9']:.2f}")
         else:
             vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
-            filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= 50 pts")
+            filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= {max_sma_distance/point:.0f} pts")
             filter_status.append(f"❌ Volume không đủ: {vol_ratio:.2f}x < {volume_threshold}x (cần > {volume_threshold}x)")
             if is_bullish_pinbar or is_bearish_pinbar:
                 filter_status.append(f"⚠️ Có Pinbar nhưng Volume thấp")
     else:
-        filter_status.append(f"❌ Price quá xa SMA9: {dist_to_sma:.1f} pts > 50 pts (cần <= 50 pts)")
+        filter_status.append(f"❌ Price quá xa SMA9: {dist_to_sma:.1f} pts > {max_sma_distance/point:.0f} pts (cần <= {max_sma_distance/point:.0f} pts)")
         if is_bullish_pinbar or is_bearish_pinbar:
             filter_status.append(f"⚠️ Có Pinbar nhưng Price quá xa SMA9")
     
@@ -211,7 +214,7 @@ def strategy_3_logic(config, error_count=0):
         print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
         print(f"   💱 Price: {last['close']:.2f}")
         print(f"   📈 M5 Trend: {m5_trend}")
-        print(f"   📊 SMA9: {last['sma9']:.2f} | Distance: {dist_to_sma:.1f} pts (max: 50 pts)")
+        print(f"   📊 SMA9: {last['sma9']:.2f} | Distance: {dist_to_sma:.1f} pts (max: {max_sma_distance/point:.0f} pts)")
         vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
         print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
         print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips)")
