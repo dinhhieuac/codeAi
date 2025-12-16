@@ -141,7 +141,7 @@ def strategy_3_logic(config, error_count=0):
     signal = None
     
     # Check all conditions step by step
-        if is_near_sma:
+    if is_near_sma:
         filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= {max_sma_distance/point:.0f} pts")
         if is_high_volume:
             vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
