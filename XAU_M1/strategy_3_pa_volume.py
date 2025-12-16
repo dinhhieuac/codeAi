@@ -67,11 +67,19 @@ def strategy_3_logic(config, error_count=0):
     
     # 3. Logic: Rejection Candle + Volume Spike near SMA 9
     signal = None
+    early_exit_filters = []
     
     # Spread Filter
     if spread_pips > max_spread:
-        print(f"   ❌ Filtered: Spread {spread_pips:.1f} pips > {max_spread} pips (Too high)")
+        early_exit_filters.append(f"❌ Spread: {spread_pips:.1f} pips > {max_spread} pips (Too high)")
+        print(f"\n{'='*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Early Exit Filter")
+        print(f"{'='*80}")
+        print(f"   {early_exit_filters[0]}")
+        print(f"{'='*80}\n")
         return error_count, 0
+    else:
+        early_exit_filters.append(f"✅ Spread: {spread_pips:.1f} pips <= {max_spread} pips")
     
     # ATR Volatility Filter
     atr_value = last['atr'] if not pd.isna(last['atr']) else 0
@@ -80,8 +88,16 @@ def strategy_3_logic(config, error_count=0):
     atr_max = 30  # Maximum ATR (pips)
     
     if atr_pips < atr_min or atr_pips > atr_max:
-        print(f"   ❌ Filtered: ATR {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
+        early_exit_filters.append(f"❌ ATR: {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
+        print(f"\n{'='*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Early Exit Filter")
+        print(f"{'='*80}")
+        for filter_msg in early_exit_filters:
+            print(f"   {filter_msg}")
+        print(f"{'='*80}\n")
         return error_count, 0
+    else:
+        early_exit_filters.append(f"✅ ATR: {atr_pips:.1f}p trong khoảng {atr_min}-{atr_max}p")
     
     # SMA 9 Filter: Price at entry must be reasonably close to SMA 9 (Mean Reversion / Trend Touch)
     is_near_sma = False
@@ -110,40 +126,106 @@ def strategy_3_logic(config, error_count=0):
     is_bearish_pinbar = (upper_shadow > 1.5 * body_size) and (lower_shadow < body_size * 1.5)
     
     # Logging Analysis
-    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | SMA9: {last['sma9']:.2f} | Dist: {dist_to_sma:.1f}")
-    print(f"   Vol: {last['tick_volume']} (Req > {int(last['vol_ma']*volume_threshold)}) | ATR: {atr_pips:.1f}p | Spread: {spread_pips:.1f}p")
-    print(f"   Pinbar? {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
+    print(f"\n{'='*80}")
+    print(f"📊 [STRATEGY 3: PA VOLUME ANALYSIS] {symbol}")
+    print(f"{'='*80}")
+    print(f"💱 Price: {last['close']:.2f} | M5 Trend: {m5_trend} | SMA9: {last['sma9']:.2f}")
+    print(f"   📊 Volume: {last['tick_volume']} (Req > {int(last['vol_ma']*volume_threshold)}) | ATR: {atr_pips:.1f}p | Spread: {spread_pips:.1f}p")
+    print(f"   📈 RSI: {last['rsi']:.1f} | Pinbar: {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
     
+    # Track all filter status (include early exit filters)
+    filter_status = early_exit_filters.copy()
     signal = None
+    
+    # Check all conditions step by step
     if is_near_sma:
+        filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= 50 pts")
         if is_high_volume:
+            vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+            filter_status.append(f"✅ High Volume: {vol_ratio:.2f}x > {volume_threshold}x")
             if is_bullish_pinbar and last['close'] > last['sma9']:
+                filter_status.append(f"✅ Bullish Pinbar detected")
+                filter_status.append(f"✅ Price > SMA9: {last['close']:.2f} > {last['sma9']:.2f}")
                 if m5_trend == "BULLISH":
+                    filter_status.append(f"✅ M5 Trend: BULLISH")
                     if last['rsi'] > 50:
+                        filter_status.append(f"✅ RSI > 50: {last['rsi']:.1f}")
                         signal = "BUY"
-                        print("   ✅ Valid Setup: Bullish Pinbar + Vol + RSI > 50 + M5 Bullish")
+                        print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
                     else:
-                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} <= 50")
+                        filter_status.append(f"❌ RSI <= 50: {last['rsi']:.1f} (cần > 50)")
                 else:
-                    print(f"   ❌ Filtered: Valid Pinbar but M5 Trend is BEARISH")
+                    filter_status.append(f"❌ M5 Trend: BEARISH (cần BULLISH)")
             elif is_bearish_pinbar and last['close'] < last['sma9']:
+                filter_status.append(f"✅ Bearish Pinbar detected")
+                filter_status.append(f"✅ Price < SMA9: {last['close']:.2f} < {last['sma9']:.2f}")
                 if m5_trend == "BEARISH":
+                    filter_status.append(f"✅ M5 Trend: BEARISH")
                     if last['rsi'] < 50:
+                        filter_status.append(f"✅ RSI < 50: {last['rsi']:.1f}")
                         signal = "SELL"
-                        print("   ✅ Valid Setup: Bearish Pinbar + Vol + RSI < 50 + M5 Bearish")
+                        print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
                     else:
-                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} >= 50")
+                        filter_status.append(f"❌ RSI >= 50: {last['rsi']:.1f} (cần < 50)")
                 else:
-                    print(f"   ❌ Filtered: Valid Pinbar but M5 Trend is BULLISH")
+                    filter_status.append(f"❌ M5 Trend: BULLISH (cần BEARISH)")
             else:
-                pass  # Silent fail for non-pinbars to reduce log spam
+                if not is_bullish_pinbar and not is_bearish_pinbar:
+                    filter_status.append(f"❌ Không có Pinbar (Bull: {is_bullish_pinbar}, Bear: {is_bearish_pinbar})")
+                elif is_bullish_pinbar and last['close'] <= last['sma9']:
+                    filter_status.append(f"❌ Bullish Pinbar nhưng Price <= SMA9: {last['close']:.2f} <= {last['sma9']:.2f}")
+                elif is_bearish_pinbar and last['close'] >= last['sma9']:
+                    filter_status.append(f"❌ Bearish Pinbar nhưng Price >= SMA9: {last['close']:.2f} >= {last['sma9']:.2f}")
         else:
+            vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+            filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= 50 pts")
+            filter_status.append(f"❌ Volume không đủ: {vol_ratio:.2f}x < {volume_threshold}x (cần > {volume_threshold}x)")
             if is_bullish_pinbar or is_bearish_pinbar:
-                print(f"   ❌ Filtered: Pinbar found but Volume {last['tick_volume']} < {int(last['vol_ma']*volume_threshold)} ({volume_threshold}x average)")
+                filter_status.append(f"⚠️ Có Pinbar nhưng Volume thấp")
     else:
-        # Only print if we had a pinbar but missed SMA
+        filter_status.append(f"❌ Price quá xa SMA9: {dist_to_sma:.1f} pts > 50 pts (cần <= 50 pts)")
         if is_bullish_pinbar or is_bearish_pinbar:
-            print(f"   ❌ Filtered: Pinbar found but Price too far from SMA ({dist_to_sma:.1f} pts)")
+            filter_status.append(f"⚠️ Có Pinbar nhưng Price quá xa SMA9")
+    
+    # Final Summary
+    if not signal:
+        print(f"\n{'─'*80}")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - Tóm tắt các bộ lọc:")
+        print(f"{'─'*80}")
+        
+        # Group filters by tier
+        print(f"\n🔴 [TIER 1: EARLY EXIT FILTERS]")
+        tier1_failed = [f for f in filter_status if f.startswith("❌") and ("Spread" in f or "ATR" in f)]
+        tier1_passed = [f for f in filter_status if f.startswith("✅") and ("Spread" in f or "ATR" in f)]
+        for status in tier1_passed:
+            print(f"   {status}")
+        for status in tier1_failed:
+            print(f"   {status}")
+        
+        print(f"\n🟡 [TIER 2: SIGNAL CONDITIONS]")
+        tier2_status = [f for f in filter_status if "Spread" not in f and "ATR" not in f]
+        for i, status in enumerate(tier2_status, 1):
+            print(f"   {i}. {status}")
+        
+        # Chi tiết giá trị
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {last['close']:.2f}")
+        print(f"   📈 M5 Trend: {m5_trend}")
+        print(f"   📊 SMA9: {last['sma9']:.2f} | Distance: {dist_to_sma:.1f} pts (max: 50 pts)")
+        vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+        print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
+        print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips)")
+        print(f"   📊 Spread: {spread_pips:.1f} pips (max: {max_spread} pips)")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 Pinbar: {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
+        if is_bullish_pinbar or is_bearish_pinbar:
+            body_pct = (body_size / (last['high'] - last['low'])) * 100 if (last['high'] - last['low']) > 0 else 0
+            print(f"      Body: {body_pct:.1f}% | Lower Shadow: {lower_shadow:.2f} | Upper Shadow: {upper_shadow:.2f}")
+        
+        print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
+        print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
+        print(f"   ❌ FAIL: {len([f for f in filter_status if f.startswith('❌')])}")
+        print(f"{'─'*80}\n")
     
     # 4. Execute
     if signal:
