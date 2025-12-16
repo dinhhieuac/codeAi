@@ -1067,6 +1067,13 @@ def tuyen_trend_logic(config, error_count=0):
     print(f"{'='*80}")
     
     is_strat1 = False
+    # Initialize Strategy 1 variables
+    has_enough_signals = False
+    is_touch = False
+    is_smooth = False
+    pass_fib = False
+    signal_count = 0
+    strat1_fail_reasons = []
     
     # Calculate Fibonacci levels for pullback (38.2-62%)
     # Find recent swing high/low for Fibonacci calculation
@@ -1182,6 +1189,14 @@ def tuyen_trend_logic(config, error_count=0):
     
     is_strat2 = False
     strat2_fail_reasons = []
+    # Initialize Strategy 2 variables (will be set if Strategy 2 is evaluated)
+    pass_ema200 = False
+    has_breakout_retest = False
+    is_compressed = False
+    has_signal_candle = False
+    is_pattern = False
+    pass_fib_strat2 = False
+    pattern_type = None
     
     if not is_strat1:
         # Check EMA 200 Filter
@@ -1438,18 +1453,157 @@ def tuyen_trend_logic(config, error_count=0):
     # Fix: Use signal_type only, not m5_trend (could be wrong if signal is SELL but trend is BULLISH)
     price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" else mt5.symbol_info_tick(symbol).bid
     
-    # Final Summary
+    # Final Summary với logging chi tiết
     print(f"\n{'='*80}")
     print(f"📊 [FINAL SUMMARY]")
     print(f"{'='*80}")
     
     if not signal_type:
-        print(f"❌ [NO SIGNAL] Price: {price:.5f}")
-        print(f"   Reasons: { ' | '.join(log_details) }")
+        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] Price: {price:.5f}")
+        print(f"\n{'─'*80}")
+        print(f"📋 TÓM TẮT CÁC BỘ LỌC ĐÃ KIỂM TRA:")
+        print(f"{'─'*80}")
+        
+        # Tier 1: High-level Filters
+        print(f"\n🔴 [TIER 1: HIGH-LEVEL FILTERS]")
+        tier1_failed = []
+        if h1_bias is not None:
+            if (h1_bias == "SELL" and m5_trend == "BULLISH") or (h1_bias == "BUY" and m5_trend == "BEARISH"):
+                tier1_failed.append(f"❌ H1 Bias xung đột: H1={h1_bias} nhưng M5={m5_trend}")
+            else:
+                print(f"   ✅ H1 Bias: {h1_bias} phù hợp với M5 Trend: {m5_trend}")
+        else:
+            print(f"   ⚠️ H1 Bias: None (không có cấu trúc rõ ràng)")
+        
+        if m5_trend == "NEUTRAL":
+            tier1_failed.append(f"❌ M5 Trend: NEUTRAL (không có xu hướng rõ ràng)")
+        else:
+            print(f"   ✅ M5 Trend: {m5_trend}")
+        
+        if too_close_to_opposite_zone:
+            tier1_failed.append(f"❌ Giá quá gần vùng Supply/Demand ngược (< {min_zone_distance_pips} pips)")
+        else:
+            print(f"   ✅ Giá có khoảng trống để di chuyển (>= {min_zone_distance_pips} pips)")
+        
+        if not m1_structure_valid:
+            tier1_failed.append(f"❌ M1 Structure không hợp lệ: Không có Higher/Lower Highs/Lows rõ ràng")
+        else:
+            print(f"   ✅ M1 Structure: Hợp lệ")
+        
+        if tier1_failed:
+            print(f"   {' | '.join(tier1_failed)}")
+        
+        # Tier 2: Strategy 1 Filters
+        print(f"\n🟡 [TIER 2: STRATEGY 1 - PULLBACK + DOJI/PINBAR CLUSTER]")
+        if is_strat1:
+            print(f"   ✅ Strategy 1: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 1: FAIL")
+            if strat1_fail_reasons:
+                for i, reason in enumerate(strat1_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 1")
+        
+        # Tier 3: Strategy 2 Filters
+        print(f"\n🟢 [TIER 3: STRATEGY 2 - CONTINUATION + STRUCTURE]")
+        if is_strat2:
+            print(f"   ✅ Strategy 2: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 2: FAIL")
+            if strat2_fail_reasons:
+                for i, reason in enumerate(strat2_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 2")
+        
+        # Chi tiết các giá trị quan trọng
+        print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
+        print(f"   💱 Price: {price:.5f}")
+        print(f"   📈 M5 Trend: {m5_trend} ({trend_reason})")
+        print(f"   🎯 H1 Bias: {h1_bias if h1_bias else 'None'}")
+        if m1_swing_highs and m1_swing_lows:
+            last_high = m1_swing_highs[-1]['price']
+            last_low = m1_swing_lows[-1]['price']
+            print(f"   📊 M1 Swing High: {last_high:.5f} | M1 Swing Low: {last_low:.5f}")
+        
+        # Fibonacci Status (Strategy 1)
+        if fib_levels:
+            current_price = c1['close']
+            if m5_trend == "BULLISH":
+                fib_status = "✅" if pass_fib else "❌"
+                print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
+            else:
+                fib_status = "✅" if pass_fib else "❌"
+                print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
+        else:
+            print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points)")
+        
+        # Signal Cluster Status
+        print(f"   📊 Signal Cluster: {signal_count}/{signal_cluster_count} nến signal trong {signal_cluster_window} nến gần nhất")
+        if has_enough_signals:
+            print(f"      ✅ Đủ số lượng signal candles")
+        else:
+            print(f"      ❌ Thiếu signal candles (cần {signal_cluster_count}, có {signal_count})")
+        
+        # EMA Touch Status
+        if is_touch:
+            print(f"   ✅ EMA Touch: Có nến chạm EMA21 hoặc EMA50")
+        else:
+            print(f"   ❌ EMA Touch: Không có nến nào chạm EMA")
+        
+        # Smooth Pullback Status
+        if is_smooth:
+            print(f"   ✅ Smooth Pullback: Sóng hồi mượt")
+        else:
+            print(f"   ❌ Smooth Pullback: Sóng hồi không mượt (có nến lớn hoặc gap)")
+        
+        # Strategy 2 Details (chỉ hiển thị nếu Strategy 1 không pass)
+        if not is_strat1:
+            print(f"\n   [STRATEGY 2 CHI TIẾT]")
+            if pass_ema200:
+                print(f"   ✅ EMA200 Filter: PASS")
+            else:
+                ema200_val = c1['ema200']
+                print(f"   ❌ EMA200 Filter: Price {c1['close']:.5f} {'<' if m5_trend == 'BULLISH' else '>'} EMA200 {ema200_val:.5f}")
+            
+            if has_breakout_retest:
+                print(f"   ✅ Breakout+Retest: Tìm thấy")
+            else:
+                print(f"   ❌ Breakout+Retest: Không tìm thấy trong {breakout_lookback_candles} nến gần nhất")
+            
+            if is_compressed:
+                print(f"   ✅ Compression Block: Phát hiện")
+                if has_signal_candle:
+                    print(f"      ✅ Signal Candle: Hợp lệ ({signal_candle_min_criteria}/8 điều kiện)")
+                else:
+                    print(f"      ❌ Signal Candle: Không hợp lệ (cần {signal_candle_min_criteria}/8 điều kiện)")
+            else:
+                print(f"   ❌ Compression Block: Không phát hiện")
+            
+            if is_pattern:
+                pattern_name = pattern_type if pattern_type else 'M/W'
+                print(f"   ✅ Pattern ({pattern_name}): Phát hiện")
+            else:
+                print(f"   ❌ Pattern: Không phát hiện")
+            
+            if pass_fib_strat2:
+                print(f"   ✅ Fibonacci 38.2-79%: PASS")
+            else:
+                print(f"   ❌ Fibonacci 38.2-79%: FAIL")
+        else:
+            print(f"\n   [STRATEGY 2] Không được đánh giá (Strategy 1 đã pass)")
+        
+        print(f"\n{'─'*80}")
+        print(f"💡 KẾT LUẬN: Không có tín hiệu phù hợp để vào lệnh")
+        print(f"   Tổng số filters đã kiểm tra: {len(tier1_failed) + len(strat1_fail_reasons) + len(strat2_fail_reasons)}")
+        print(f"{'─'*80}\n")
+        
         return error_count, 0
     else:
-        print(f"✅ [SIGNAL FOUND] {signal_type} | Reason: {reason}")
-        print(f"   Price: {price:.5f}")
+        print(f"\n✅ [TÌM THẤY TÍN HIỆU] {signal_type} | Reason: {reason}")
+        print(f"   💱 Price: {price:.5f}")
+        print(f"   📈 Strategy: {'Strategy 1 (Pullback)' if is_strat1 else 'Strategy 2 (Continuation)'}")
         
     # --- 5. Execution Trigger ---
     if is_strat1:
