@@ -2,105 +2,57 @@
 
 ## 🎯 **TỔNG QUAN**
 
-Bot hiện hỗ trợ **3 chế độ filter** có thể chọn khi start:
-- **`default`** - Mặc định (cân bằng)
-- **`balanced`** - Cân bằng (linh hoạt hơn)
-- **`strict`** - Khắt khe (chất lượng cao)
+Bot hiện hỗ trợ **menu tương tác** để chọn chế độ filter khi start:
+- **1** - Default (Mặc định) - Cân bằng
+- **2** - Balanced (Cân bằng) - Linh hoạt hơn
+- **3** - Strict (Khắt khe) - Chất lượng cao
+- **0** - Sử dụng config mặc định
 
 ---
 
 ## 📋 **CÁCH SỬ DỤNG**
 
-### **1. Chế độ mặc định (không chỉ định mode):**
+### **1. Start Bot:**
 ```bash
 python tuyen_trend.py
 ```
-- Sử dụng file: `config_tuyen.json`
-- Chế độ: Mặc định
 
----
-
-### **2. Chế độ Default (cân bằng):**
-```bash
-python tuyen_trend.py --mode default
+### **2. Menu sẽ hiển thị:**
 ```
-- Sử dụng file: `config_tuyen_default.json`
-- Chế độ: Cân bằng giữa số lượng và chất lượng
-- Signals: 1-3/ngày
+================================================================================
+🚀 TUYEN TREND BOT (V2) - CHỌN CHẾ ĐỘ FILTER
+================================================================================
 
----
+📋 Vui lòng chọn chế độ filter:
+   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)
+   2️⃣  Balanced (Cân bằng) - Linh hoạt hơn, nhiều signals hơn (3-8 signals/ngày)
+   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)
+   0️⃣  Sử dụng config mặc định (config_tuyen.json)
+================================================================================
 
-### **3. Chế độ Balanced (linh hoạt hơn):**
-```bash
-python tuyen_trend.py --mode balanced
+👉 Nhập lựa chọn (1/2/3/0): 
 ```
-- Sử dụng file: `config_tuyen_balanced.json`
-- Chế độ: Linh hoạt, nhiều signals hơn
-- Signals: 3-8/ngày
 
----
-
-### **4. Chế độ Strict (khắt khe):**
-```bash
-python tuyen_trend.py --mode strict
-```
-- Sử dụng file: `config_tuyen_strict.json`
-- Chế độ: Khắt khe, chất lượng cao
-- Signals: 0-1/ngày
+### **3. Nhập số để chọn:**
+- Nhập **`1`** → Chế độ Default
+- Nhập **`2`** → Chế độ Balanced
+- Nhập **`3`** → Chế độ Strict
+- Nhập **`0`** → Config mặc định
 
 ---
 
 ## 📊 **CHO XAUUSD:**
 
-### **1. Chế độ mặc định:**
+### **1. Start Bot:**
 ```bash
 python tuyen_trend_XAU.py
 ```
-- Sử dụng file: `config_tuyen_xau.json`
 
-### **2. Chế độ Default:**
-```bash
-python tuyen_trend_XAU.py --mode default
-```
-- Sử dụng file: `config_tuyen_xau_default.json`
-
-### **3. Chế độ Balanced:**
-```bash
-python tuyen_trend_XAU.py --mode balanced
-```
-- Sử dụng file: `config_tuyen_xau_balanced.json`
-
-### **4. Chế độ Strict:**
-```bash
-python tuyen_trend_XAU.py --mode strict
-```
-- Sử dụng file: `config_tuyen_xau_strict.json`
-
----
-
-## 🔍 **XEM HELP:**
-
-```bash
-python tuyen_trend.py --help
-```
-
-Sẽ hiển thị:
-```
-usage: tuyen_trend.py [-h] [--mode {default,balanced,strict}]
-
-Tuyen Trend Bot - Chọn chế độ filter
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --mode {default,balanced,strict}
-                        Chế độ filter: default (mặc định), balanced (cân bằng), strict (khắt khe)
-
-Ví dụ sử dụng:
-  python tuyen_trend.py                    # Dùng config mặc định (config_tuyen.json)
-  python tuyen_trend.py --mode default     # Chế độ mặc định
-  python tuyen_trend.py --mode balanced    # Chế độ cân bằng (linh hoạt hơn)
-  python tuyen_trend.py --mode strict     # Chế độ khắt khe (chất lượng cao)
-```
+### **2. Menu tương tự sẽ hiển thị:**
+- Nhập **`1`** → `config_tuyen_xau_default.json`
+- Nhập **`2`** → `config_tuyen_xau_balanced.json`
+- Nhập **`3`** → `config_tuyen_xau_strict.json`
+- Nhập **`0`** → `config_tuyen_xau.json`
 
 ---
 
@@ -122,21 +74,30 @@ Ví dụ sử dụng:
 
 ## 🎯 **VÍ DỤ OUTPUT KHI START:**
 
-### **Khi start với mode:**
+### **1. Menu hiển thị:**
 ```
 ================================================================================
-✅ Tuyen Trend Bot (V2) - Started
-📋 Chế độ: Cân Bằng (Linh Hoạt)
-📁 Config: config_tuyen_balanced.json
+🚀 TUYEN TREND BOT (V2) - CHỌN CHẾ ĐỘ FILTER
 ================================================================================
+
+📋 Vui lòng chọn chế độ filter:
+   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)
+   2️⃣  Balanced (Cân bằng) - Linh hoạt hơn, nhiều signals hơn (3-8 signals/ngày)
+   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)
+   0️⃣  Sử dụng config mặc định (config_tuyen.json)
+================================================================================
+
+👉 Nhập lựa chọn (1/2/3/0): 2
 ```
 
-### **Khi start không chỉ định mode:**
+### **2. Sau khi chọn (ví dụ chọn 2):**
 ```
 ================================================================================
 ✅ Tuyen Trend Bot (V2) - Started
-📋 Chế độ: Mặc Định (config_tuyen.json)
-📁 Config: config_tuyen.json
+📋 Chế độ: Cân Bằng (Balanced - Linh Hoạt)
+📁 Config: config_tuyen_balanced.json
+💱 Symbol: EURUSD
+📊 Volume: 0.01
 ================================================================================
 ```
 
@@ -151,21 +112,26 @@ Ví dụ sử dụng:
 2. **File config mặc định:**
    - EURUSD: `config_tuyen.json`
    - XAUUSD: `config_tuyen_xau.json`
-   - Luôn được sử dụng nếu không chỉ định mode hoặc file mode không tồn tại
+   - Luôn được sử dụng nếu chọn `0` hoặc file mode không tồn tại
 
 3. **Thay đổi mode:**
-   - Chỉ cần restart bot với `--mode` khác
+   - Chỉ cần restart bot và chọn lại
    - Không cần sửa code
+
+4. **Nhập sai:**
+   - Nếu nhập số không hợp lệ, bot sẽ yêu cầu nhập lại
+   - Có thể nhấn `Ctrl+C` để hủy và thoát
 
 ---
 
 ## ✅ **KẾT LUẬN**
 
-Bot hiện hỗ trợ **chọn chế độ dễ dàng** khi start:
-- ✅ Không cần sửa code
-- ✅ Chỉ cần thêm `--mode` khi start
-- ✅ Tự động fallback nếu file không tồn tại
-- ✅ Hiển thị rõ ràng chế độ đang dùng
+Bot hiện hỗ trợ **menu tương tác** để chọn chế độ khi start:
+- ✅ **Dễ sử dụng** - Chỉ cần nhập số 1, 2, 3 hoặc 0
+- ✅ **Không cần sửa code** - Chọn trực tiếp khi start
+- ✅ **Tự động fallback** - Nếu file không tồn tại
+- ✅ **Hiển thị rõ ràng** - Chế độ và config đang dùng
+- ✅ **An toàn** - Validate input, yêu cầu nhập lại nếu sai
 
 **Chúc bạn trading thành công!** 🚀
 

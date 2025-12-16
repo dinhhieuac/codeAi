@@ -1561,76 +1561,76 @@ def tuyen_trend_logic(config, error_count=0):
 
 if __name__ == "__main__":
     import os
-    import argparse
-    
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description='Tuyen Trend Bot - Chọn chế độ filter',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Ví dụ sử dụng:
-  python tuyen_trend.py                    # Dùng config mặc định (config_tuyen.json)
-  python tuyen_trend.py --mode default     # Chế độ mặc định
-  python tuyen_trend.py --mode balanced    # Chế độ cân bằng (linh hoạt hơn)
-  python tuyen_trend.py --mode strict     # Chế độ khắt khe (chất lượng cao)
-  
-Các chế độ:
-  default  - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)
-  balanced - Linh hoạt hơn, nhiều signals hơn (3-8 signals/ngày)
-  strict   - Khắt khe, chất lượng cao (0-1 signals/ngày)
-        """
-    )
-    parser.add_argument(
-        '--mode', 
-        type=str, 
-        choices=['default', 'balanced', 'strict'],
-        default=None,
-        help='Chế độ filter: default (mặc định), balanced (cân bằng), strict (khắt khe)'
-    )
-    
-    args = parser.parse_args()
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Determine config file based on mode
-    if args.mode:
-        if args.mode == 'default':
-            config_filename = "config_tuyen_default.json"
-            mode_name = "Mặc Định"
-        elif args.mode == 'balanced':
-            config_filename = "config_tuyen_balanced.json"
-            mode_name = "Cân Bằng (Linh Hoạt)"
-        elif args.mode == 'strict':
-            config_filename = "config_tuyen_strict.json"
-            mode_name = "Khắt Khe"
-        else:
-            config_filename = "config_tuyen.json"
-            mode_name = "Mặc Định"
-    else:
-        # No mode specified, use default config
-        config_filename = "config_tuyen.json"
-        mode_name = "Mặc Định (config_tuyen.json)"
+    # Interactive menu để chọn chế độ
+    print("="*80)
+    print("🚀 TUYEN TREND BOT (V2) - CHỌN CHẾ ĐỘ FILTER")
+    print("="*80)
+    print("\n📋 Vui lòng chọn chế độ filter:")
+    print("   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)")
+    print("   2️⃣  Balanced (Cân bằng) - Linh hoạt hơn, nhiều signals hơn (3-8 signals/ngày)")
+    print("   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)")
+    print("   0️⃣  Sử dụng config mặc định (config_tuyen.json)")
+    print("="*80)
+    
+    while True:
+        try:
+            choice = input("\n👉 Nhập lựa chọn (1/2/3/0): ").strip()
+            
+            if choice == "1":
+                config_filename = "config_tuyen_default.json"
+                mode_name = "Mặc Định (Default)"
+                break
+            elif choice == "2":
+                config_filename = "config_tuyen_balanced.json"
+                mode_name = "Cân Bằng (Balanced - Linh Hoạt)"
+                break
+            elif choice == "3":
+                config_filename = "config_tuyen_strict.json"
+                mode_name = "Khắt Khe (Strict)"
+                break
+            elif choice == "0":
+                config_filename = "config_tuyen.json"
+                mode_name = "Config Mặc Định (config_tuyen.json)"
+                break
+            else:
+                print("❌ Lựa chọn không hợp lệ! Vui lòng nhập 1, 2, 3 hoặc 0")
+        except KeyboardInterrupt:
+            print("\n\n⚠️ Đã hủy. Thoát bot.")
+            sys.exit(0)
+        except Exception as e:
+            print(f"❌ Lỗi: {e}. Vui lòng thử lại.")
     
     config_path = os.path.join(script_dir, "configs", config_filename)
     
     # Check if config file exists
     if not os.path.exists(config_path):
-        print(f"❌ Không tìm thấy file config: {config_path}")
+        print(f"\n❌ Không tìm thấy file config: {config_filename}")
         print(f"   Đang thử dùng config mặc định: config_tuyen.json")
         config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
         if not os.path.exists(config_path):
             print(f"❌ Không tìm thấy file config mặc định!")
             sys.exit(1)
+        config_filename = "config_tuyen.json"
+        mode_name = "Config Mặc Định (config_tuyen.json)"
     
     config = load_config(config_path)
     
+    if not config:
+        print(f"❌ Không thể load config từ: {config_path}")
+        sys.exit(1)
+    
     consecutive_errors = 0
-    if config and connect_mt5(config):
-        print("="*80)
+    if connect_mt5(config):
+        print("\n" + "="*80)
         print(f"✅ Tuyen Trend Bot (V2) - Started")
         print(f"📋 Chế độ: {mode_name}")
         print(f"📁 Config: {config_filename}")
-        print("="*80)
+        print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
+        print(f"📊 Volume: {config.get('volume', 'N/A')}")
+        print("="*80 + "\n")
         try:
             while True:
                 consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
@@ -1640,5 +1640,8 @@ Các chế độ:
                     consecutive_errors = 0
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n⚠️ Bot stopped by user")
+            print("\n\n⚠️ Bot stopped by user")
             mt5.shutdown()
+    else:
+        print("❌ Không thể kết nối MT5. Vui lòng kiểm tra lại.")
+        sys.exit(1)
