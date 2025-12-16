@@ -1,0 +1,35 @@
+{
+  "_comment": "=== CONFIG KHẮT KHE (STRICT) - XAUUSD ===",
+  "_comment2": "Chất lượng cao, ít signals nhưng win rate cao hơn",
+  
+  "account": 413011866,
+  "password": "Huutuyen10387@",
+  "server": "Exness-MT5Trial6",
+  "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+  "symbol": "XAUUSD",
+  "volume": 0.01,
+  "magic": 400006,
+  "max_positions": 1,
+  "language": "vi",
+  "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
+  "telegram_chat_id": "1887610382",
+  "parameters": {
+    "sl_mode": "atr",
+    "reward_ratio": 2.0,
+    "atr_period": 14,
+    "atr_multiplier": 2.0,
+    "ema_fast": 21,
+    "ema_slow": 50
+  },
+  "filters": {
+    "m1_structure_require_both": true,
+    "signal_cluster_count": 2,
+    "signal_cluster_window": 2,
+    "min_zone_distance_pips": 15,
+    "breakout_lookback_candles": 100,
+    "signal_candle_min_criteria": 7,
+    "smooth_pullback_max_candle_multiplier": 1.8,
+    "smooth_pullback_max_gap_multiplier": 0.4
+  }
+}
+

@@ -1,0 +1,46 @@
+{
+  "_comment": "=== CONFIG CÂN BẰNG (BALANCED) ===",
+  "_comment2": "Linh hoạt hơn một chút so với mặc định, tăng số lượng signals",
+  
+  "account": 413011866,
+  "password": "Huutuyen10387@",
+  "server": "Exness-MT5Trial6",
+  "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+  "symbol": "EURUSD",
+  "volume": 0.01,
+  "magic": 400006,
+  "max_positions": 1,
+  "language": "vi",
+  "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
+  "telegram_chat_id": "1887610382",
+  "parameters": {
+    "sl_mode": "atr",
+    "reward_ratio": 2.0,
+    "atr_period": 14,
+    "atr_multiplier": 2.0,
+    "ema_fast": 21,
+    "ema_slow": 50
+  },
+  "filters": {
+    "_comment": "Linh hoạt hơn: Chỉ cần 1 trong 2 (Highs HOẶC Lows)",
+    "m1_structure_require_both": false,
+    
+    "_comment2": "Vẫn cần 2 nến signal nhưng check trong 5 nến (không cần liên tiếp)",
+    "signal_cluster_count": 2,
+    "signal_cluster_window": 5,
+    
+    "_comment3": "Cho phép gần zone hơn (5 pips thay vì 10)",
+    "min_zone_distance_pips": 5,
+    
+    "_comment4": "Tìm breakout xa hơn (150 nến)",
+    "breakout_lookback_candles": 150,
+    
+    "_comment5": "Chỉ cần 5/8 điều kiện cho signal candle",
+    "signal_candle_min_criteria": 5,
+    
+    "_comment6": "Cho phép nến lớn hơn (2.5x) và gap lớn hơn (0.7x)",
+    "smooth_pullback_max_candle_multiplier": 2.5,
+    "smooth_pullback_max_gap_multiplier": 0.7
+  }
+}
+
