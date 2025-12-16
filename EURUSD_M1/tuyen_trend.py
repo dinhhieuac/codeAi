@@ -1554,11 +1554,21 @@ def tuyen_trend_logic(config, error_count=0):
             if m5_trend == "BULLISH":
                 fib_status = "✅" if pass_fib else "❌"
                 print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
-            else:
+            elif m5_trend == "BEARISH":
                 fib_status = "✅" if pass_fib else "❌"
                 print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
+            else:
+                # M5 = NEUTRAL, nhưng vẫn hiển thị Fibonacci nếu đã tính được
+                print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Đã tính nhưng M5 Trend = NEUTRAL (Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
         else:
-            print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points)")
+            # Kiểm tra xem có swing points không
+            if m1_swing_highs and m1_swing_lows:
+                if m5_trend == "NEUTRAL":
+                    print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (M5 Trend = NEUTRAL, Strategy 1 không được đánh giá)")
+                else:
+                    print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points hoặc điều kiện khác)")
+            else:
+                print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points)")
         
         # Signal Cluster Status
         print(f"   📊 Signal Cluster: {signal_count}/{signal_cluster_count} nến signal trong {signal_cluster_window} nến gần nhất")

@@ -1102,36 +1102,36 @@ def tuyen_trend_logic(config, error_count=0):
         pass_fib = False
         
         print(f"\n{t('fibonacci', lang)}")
-    if m5_trend == "BULLISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
-        # Pullback from high to low
-        swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
-        swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
-        fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
-        current_price = c1['close']
-        print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
-        print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
-        print(f"   {t('current_price', lang)}: {current_price:.5f}")
-        # Check if in 38.2-62% retracement zone
-        pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BULLISH', min_level=0.382, max_level=0.618)
-        if pass_fib:
-            print(f"   {t('in_zone', lang)} 38.2-62%")
-        else:
-            print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
+        if m5_trend == "BULLISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
+            # Pullback from high to low
+            swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+            swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+            fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BULLISH')
+            current_price = c1['close']
+            print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
+            print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
+            print(f"   {t('current_price', lang)}: {current_price:.5f}")
+            # Check if in 38.2-62% retracement zone
+            pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BULLISH', min_level=0.382, max_level=0.618)
+            if pass_fib:
+                print(f"   {t('in_zone', lang)} 38.2-62%")
+            else:
+                print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
         elif m5_trend == "BEARISH" and len(m1_swing_highs) >= 1 and len(m1_swing_lows) >= 1:
-        # Pullback from low to high
-        swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
-        swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
-        fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
-        current_price = c1['close']
-        print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
-        print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
-        print(f"   {t('current_price', lang)}: {current_price:.5f}")
-        # Check if in 38.2-62% retracement zone
-        pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BEARISH', min_level=0.382, max_level=0.618)
-        if pass_fib:
-            print(f"   {t('in_zone', lang)} 38.2-62%")
-        else:
-            print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
+            # Pullback from low to high
+            swing_high = max([s['price'] for s in m1_swing_highs[-3:]])
+            swing_low = min([s['price'] for s in m1_swing_lows[-3:]])
+            fib_levels = calculate_fibonacci_levels(swing_high, swing_low, 'BEARISH')
+            current_price = c1['close']
+            print(f"   {t('swing_high', lang)}: {swing_high:.5f} | {t('swing_low', lang)}: {swing_low:.5f}")
+            print(f"   Fib 38.2%: {fib_levels['382']:.5f} | Fib 61.8%: {fib_levels['618']:.5f}")
+            print(f"   {t('current_price', lang)}: {current_price:.5f}")
+            # Check if in 38.2-62% retracement zone
+            pass_fib = check_fibonacci_retracement(current_price, fib_levels, 'BEARISH', min_level=0.382, max_level=0.618)
+            if pass_fib:
+                print(f"   {t('in_zone', lang)} 38.2-62%")
+            else:
+                print(f"   {t('not_in_zone', lang)} 38.2-62% ({t('required', lang)}: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
         else:
             print(f"   {t('not_enough_swing', lang)}")
         
@@ -1553,11 +1553,21 @@ def tuyen_trend_logic(config, error_count=0):
             if m5_trend == "BULLISH":
                 fib_status = "✅" if pass_fib else "❌"
                 print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['618']:.5f} - {fib_levels['382']:.5f})")
-            else:
+            elif m5_trend == "BEARISH":
                 fib_status = "✅" if pass_fib else "❌"
                 print(f"   {fib_status} Fibonacci 38.2-62% (Strat1): Price {current_price:.5f} (Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
+            else:
+                # M5 = NEUTRAL, nhưng vẫn hiển thị Fibonacci nếu đã tính được
+                print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Đã tính nhưng M5 Trend = NEUTRAL (Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f})")
         else:
-            print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points)")
+            # Kiểm tra xem có swing points không
+            if m1_swing_highs and m1_swing_lows:
+                if m5_trend == "NEUTRAL":
+                    print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (M5 Trend = NEUTRAL, Strategy 1 không được đánh giá)")
+                else:
+                    print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points hoặc điều kiện khác)")
+            else:
+                print(f"   ⚠️ Fibonacci 38.2-62% (Strat1): Không tính được (thiếu swing points)")
         
         # Signal Cluster Status
         print(f"   📊 Signal Cluster: {signal_count}/{signal_cluster_count} nến signal trong {signal_cluster_window} nến gần nhất")
