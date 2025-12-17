@@ -114,6 +114,10 @@
                     aria-controls="content-{{ loop.index }}" aria-selected="false">{{ bot.name }}</button>
             </li>
             {% endfor %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="hourly-tab" data-bs-toggle="tab" data-bs-target="#hourly" type="button"
+                    role="tab" aria-controls="hourly" aria-selected="false">Hourly Stats (VN)</button>
+            </li>
         </ul>
 
         <!-- Tabs Content -->
@@ -222,6 +226,60 @@
                                     {% endfor %}
                                 </tbody>
                             </table>
+                        </div>
+
+                        <!-- HOURLY STATS TAB -->
+                        <div class="tab-pane fade" id="hourly" role="tabpanel" aria-labelledby="hourly-tab">
+                            <div class="row">
+                                <div class="col-md-12 mb-4">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title text-center text-muted">Profit by Hour (Vietnam Time)
+                                            </h5>
+                                            <canvas id="hourlyChart" style="max-height: 400px;"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card mb-4">
+                                <div class="card-header bg-white">
+                                    <h5 class="mb-0"><i class="far fa-clock"></i> Hourly Breakdown (Vietnam Time UTC+7)
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle table-sm">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Hour</th>
+                                                    <th>Trades</th>
+                                                    <th>Win Rate</th>
+                                                    <th>Profit</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for stat in hourly_stats %}
+                                                <tr {% if stat.profit> 0 %}class="table-success"{% elif stat.profit < 0
+                                                        %}class="table-danger" {% endif %}>
+                                                        <td><strong>{{ "%02d:00 - %02d:59"|format(stat.hour, stat.hour)
+                                                                }}</strong></td>
+                                                        <td>{{ stat.trades }}</td>
+                                                        <td>
+                                                            {% if stat.trades > 0 %}
+                                                            {{ "%.1f"|format(stat.win_rate) }}%
+                                                            {% else %}
+                                                            -
+                                                            {% endif %}
+                                                        </td>
+                                                        <td class="fw-bold">{{ "$%.2f"|format(stat.profit) }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -371,41 +429,77 @@
 
     <script>
         {% for bot in bot_stats %}
-        (function() {
+        (function () {
             const ctx = document.getElementById('chart-{{ loop.index }}').getContext('2d');
-            const dataPoints = {{ bot.chart_data | tojson }};
-            
-            // Allow empty charts
-            if (!dataPoints || dataPoints.length === 0) return;
+            const dataPoints = {{ bot.chart_data | tojson
+        }};
 
-            const labels = dataPoints.map(p => p.x);
-            const data = dataPoints.map(p => p.y);
-            
-            new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Cumulative Profit ($)',
-                        data: data,
-                        borderColor: 'rgb(75, 192, 192)',
-                        tension: 0.1,
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: { display: false }, // Hide x labels for cleanliness
-                        y: { 
-                            beginAtZero: false,
-                            grid: { color: '#f0f0f0' }
-                        }
+        // Allow empty charts
+        if (!dataPoints || dataPoints.length === 0) return;
+
+        const labels = dataPoints.map(p => p.x);
+        const data = dataPoints.map(p => p.y);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Cumulative Profit ($)',
+                    data: data,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { display: false }, // Hide x labels for cleanliness
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: '#f0f0f0' }
                     }
                 }
-            });
-        })();
+            }
+        });
+        }) ();
         {% endfor %}
+    </script>
+    <script>
+        // Hourly Chart
+        (function () {
+            const ctx = document.getElementById('hourlyChart').getContext('2d');
+            const dataStats = {{ hourly_stats | tojson
+        }};
+
+        const labels = dataStats.map(s => s.hour + ":00");
+        const data = dataStats.map(s => s.profit);
+        const backgroundColors = dataStats.map(s => s.profit >= 0 ? 'rgba(75, 192, 192, 0.6)' : 'rgba(255, 99, 132, 0.6)');
+        const borderColors = dataStats.map(s => s.profit >= 0 ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)');
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Net Profit ($)',
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    borderColor: borderColors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+        }) ();
     </script>
 </body>
 

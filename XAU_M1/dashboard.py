@@ -123,6 +123,9 @@ def index():
     bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
     bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']))
 
+    # --- HOURLY STATS (VIETNAM TIME) ---
+    hourly_stats = process_hourly_stats(orders)
+
     return render_template('index.html', 
                            orders=orders, 
                            signals=signals, 
@@ -132,8 +135,60 @@ def index():
                            wins=wins,
                            losses=losses,
                            bot_stats=bot_stats,
+                           hourly_stats=hourly_stats,
                            current_filter=days_param,
                            filter_label=filter_label)
+
+def process_hourly_stats(orders):
+    """
+    Aggregate trade stats by hour of day (Vietnam Time UTC+7).
+    """
+    stats = {}
+    # Initialize 0-23 hours
+    for h in range(24):
+        stats[h] = {
+            'hour': h,
+            'trades': 0,
+            'wins': 0,
+            'losses': 0,
+            'profit': 0.0
+        }
+        
+    for order in orders:
+        if order['profit'] is None:
+            continue
+            
+        try:
+            # Parse open_time (UTC)
+            # Ensure format matches DB string
+            # Example: 2025-12-10 06:10:02
+            utc_time = datetime.strptime(order['open_time'], "%Y-%m-%d %H:%M:%S")
+            
+            # Convert to Vietnam Time (UTC+7)
+            vn_time = utc_time + timedelta(hours=7)
+            hour = vn_time.hour
+            
+            stats[hour]['trades'] += 1
+            stats[hour]['profit'] += order['profit']
+            if order['profit'] > 0:
+                stats[hour]['wins'] += 1
+            elif order['profit'] < 0:
+                stats[hour]['losses'] += 1
+                
+        except Exception as e:
+            print(f"Error processing time for order {order['ticket']}: {e}")
+            continue
+            
+    # Calculate Win Rate and convert to list
+    result = []
+    for h in range(24):
+        s = stats[h]
+        total = s['trades']
+        win_rate = (s['wins'] / total * 100) if total > 0 else 0
+        s['win_rate'] = win_rate
+        result.append(s)
+        
+    return result
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5000")
