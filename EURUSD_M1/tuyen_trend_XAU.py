@@ -1708,39 +1708,67 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"   SL: {sl:.5f} (2x ATR) | TP: {tp:.5f} (4x ATR) | R:R = 1:2")
         
         # === PRE-ORDER VALIDATION ===
+        # Helper function để gửi error notification
+        def send_error_telegram(error_msg, error_detail=""):
+            msg = (
+                f"❌ <b>Tuyen Trend Bot (XAU) - Lỗi Gửi Lệnh</b>\n"
+                f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
+                f"📋 <b>Reason:</b> {reason}\n"
+                f"💵 <b>Price:</b> {price:.5f}\n"
+                f"🛑 <b>SL:</b> {sl:.5f} | 🎯 <b>TP:</b> {tp:.5f}\n"
+                f"❌ <b>Lỗi:</b> {error_msg}\n"
+            )
+            if error_detail:
+                msg += f"📝 <b>Chi tiết:</b> {error_detail}"
+            send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+        
         # 1. Check MT5 connection
         if not mt5.terminal_info():
             print("❌ MT5 Terminal không kết nối. Đang thử kết nối lại...")
             if not connect_mt5(config):
-                print("❌ Không thể kết nối lại MT5. Bỏ qua lệnh này.")
+                error_msg = "MT5 Terminal không kết nối"
+                print(f"❌ Không thể kết nối lại MT5. Bỏ qua lệnh này.")
+                send_error_telegram(error_msg, "Không thể kết nối lại MT5 sau khi thử")
                 return error_count + 1, 0
         
         # 2. Get symbol info and validate
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            print(f"❌ Không thể lấy thông tin symbol: {symbol}")
+            error_msg = f"Không thể lấy thông tin symbol: {symbol}"
+            print(f"❌ {error_msg}")
+            send_error_telegram(error_msg, "Symbol không tồn tại hoặc không khả dụng")
             return error_count + 1, 0
         
         if not symbol_info.visible:
             print(f"⚠️ Symbol {symbol} không visible. Đang thử kích hoạt...")
             if not mt5.symbol_select(symbol, True):
-                print(f"❌ Không thể kích hoạt symbol: {symbol}")
+                error_msg = f"Không thể kích hoạt symbol: {symbol}"
+                print(f"❌ {error_msg}")
+                send_error_telegram(error_msg, "Symbol không visible và không thể kích hoạt")
                 return error_count + 1, 0
         
         # 3. Validate SL/TP logic
         if signal_type == "BUY":
             if sl >= price:
-                print(f"❌ Lỗi logic: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f})")
+                error_msg = f"BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f})"
+                print(f"❌ Lỗi logic: {error_msg}")
+                send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
             if tp <= price:
-                print(f"❌ Lỗi logic: BUY order - TP ({tp:.5f}) phải > Entry ({price:.5f})")
+                error_msg = f"BUY order - TP ({tp:.5f}) phải > Entry ({price:.5f})"
+                print(f"❌ Lỗi logic: {error_msg}")
+                send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
         else:  # SELL
             if sl <= price:
-                print(f"❌ Lỗi logic: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f})")
+                error_msg = f"SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f})"
+                print(f"❌ Lỗi logic: {error_msg}")
+                send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
             if tp >= price:
-                print(f"❌ Lỗi logic: SELL order - TP ({tp:.5f}) phải < Entry ({price:.5f})")
+                error_msg = f"SELL order - TP ({tp:.5f}) phải < Entry ({price:.5f})"
+                print(f"❌ Lỗi logic: {error_msg}")
+                send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
         
         # 4. Check stops_level (minimum distance from price)
@@ -1790,8 +1818,10 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   ⚠️ order_check() trả về None. Lỗi: {error}")
             print(f"   ⚠️ Vẫn thử gửi lệnh...")
         elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
-            print(f"   ❌ order_check() không hợp lệ: {check_result.comment if hasattr(check_result, 'comment') else 'Unknown'}")
-            print(f"   ❌ Retcode: {check_result.retcode}")
+            error_msg = f"order_check() không hợp lệ"
+            error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
+            print(f"   ❌ {error_msg}: {error_detail}")
+            send_error_telegram(error_msg, error_detail)
             return error_count + 1, check_result.retcode
         else:
             print(f"   ✅ Request hợp lệ")
@@ -1800,13 +1830,16 @@ def tuyen_trend_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result is None:
             error = mt5.last_error()
-            print(f"❌ Order Send Failed: Result is None")
+            error_msg = "Order Send Failed: Result is None"
+            error_detail = f"Lỗi MT5: {error}\nKiểm tra: MT5 Terminal, Symbol, Account quyền, SL/TP hợp lệ"
+            print(f"❌ {error_msg}")
             print(f"   Lỗi MT5: {error}")
             print(f"   Kiểm tra:")
             print(f"   - MT5 Terminal đang chạy?")
             print(f"   - Symbol {symbol} có sẵn?")
             print(f"   - Account có quyền trade?")
             print(f"   - SL/TP có hợp lệ? (SL: {sl:.5f}, TP: {tp:.5f})")
+            send_error_telegram(error_msg, error_detail)
             return error_count + 1, 0
         
         if result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -1825,7 +1858,10 @@ def tuyen_trend_logic(config, error_count=0):
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0
         else:
-            print(f"❌ Order Failed: {result.retcode} - {result.comment}")
+            error_msg = f"Order Failed: Retcode {result.retcode}"
+            error_detail = f"{result.comment if hasattr(result, 'comment') else 'Unknown error'}"
+            print(f"❌ {error_msg} - {error_detail}")
+            send_error_telegram(error_msg, error_detail)
             return error_count + 1, result.retcode
 
     return error_count, 0
