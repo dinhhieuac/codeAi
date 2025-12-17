@@ -1777,7 +1777,7 @@ def tuyen_trend_logic(config, error_count=0):
             "sl": sl,
             "tp": tp,
             "magic": magic,
-            "comment": reason,
+            "comment": reason[:31],
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
