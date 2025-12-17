@@ -39,7 +39,8 @@ def index():
             filter_label = "Last 30 Days"
             
     # Calculate cutoff date
-    cutoff_date = datetime.now() - timedelta(days=days)
+    # Calculate cutoff date
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
     cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
 
     # Fetch Orders Filtered by Time
