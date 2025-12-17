@@ -1723,6 +1723,10 @@ def tuyen_trend_logic(config, error_count=0):
         }
         
         result = mt5.order_send(request)
+        if result is None:
+            print("❌ Order Send Failed: Result is None (Check MT5 connection/Settings)")
+            return error_count + 1, 0
+
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
