@@ -1708,6 +1708,67 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"\n{t('signal_execute', lang)} {signal_type} @ {price:.5f} | {reason}")
         print(f"   SL: {sl:.5f} (2x ATR) | TP: {tp:.5f} (4x ATR) | R:R = 1:2")
         
+        # === PRE-ORDER VALIDATION ===
+        # 1. Check MT5 connection
+        if not mt5.terminal_info():
+            print("❌ MT5 Terminal không kết nối. Đang thử kết nối lại...")
+            if not connect_mt5(config):
+                print("❌ Không thể kết nối lại MT5. Bỏ qua lệnh này.")
+                return error_count + 1, 0
+        
+        # 2. Get symbol info and validate
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            print(f"❌ Không thể lấy thông tin symbol: {symbol}")
+            return error_count + 1, 0
+        
+        if not symbol_info.visible:
+            print(f"⚠️ Symbol {symbol} không visible. Đang thử kích hoạt...")
+            if not mt5.symbol_select(symbol, True):
+                print(f"❌ Không thể kích hoạt symbol: {symbol}")
+                return error_count + 1, 0
+        
+        # 3. Validate SL/TP logic
+        if signal_type == "BUY":
+            if sl >= price:
+                print(f"❌ Lỗi logic: BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f})")
+                return error_count + 1, 0
+            if tp <= price:
+                print(f"❌ Lỗi logic: BUY order - TP ({tp:.5f}) phải > Entry ({price:.5f})")
+                return error_count + 1, 0
+        else:  # SELL
+            if sl <= price:
+                print(f"❌ Lỗi logic: SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f})")
+                return error_count + 1, 0
+            if tp >= price:
+                print(f"❌ Lỗi logic: SELL order - TP ({tp:.5f}) phải < Entry ({price:.5f})")
+                return error_count + 1, 0
+        
+        # 4. Check stops_level (minimum distance from price)
+        stops_level = getattr(symbol_info, 'stops_level', 0)
+        trade_stops_level = getattr(symbol_info, 'trade_stops_level', 0)
+        stops_level = max(stops_level, trade_stops_level)
+        point = symbol_info.point
+        
+        if stops_level > 0:
+            min_sl_distance = stops_level * point
+            if signal_type == "BUY":
+                if (price - sl) < min_sl_distance:
+                    print(f"⚠️ SL quá gần price. Cần >= {min_sl_distance:.5f} (stops_level: {stops_level} points)")
+                    sl = price - (min_sl_distance * 1.1)  # Add 10% buffer
+                    print(f"   → Điều chỉnh SL: {sl:.5f}")
+            else:  # SELL
+                if (sl - price) < min_sl_distance:
+                    print(f"⚠️ SL quá gần price. Cần >= {min_sl_distance:.5f} (stops_level: {stops_level} points)")
+                    sl = price + (min_sl_distance * 1.1)
+                    print(f"   → Điều chỉnh SL: {sl:.5f}")
+        
+        # 5. Normalize price, SL, TP to symbol digits
+        digits = symbol_info.digits
+        price = round(price, digits)
+        sl = round(sl, digits)
+        tp = round(tp, digits)
+        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -1722,9 +1783,31 @@ def tuyen_trend_logic(config, error_count=0):
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
         
+        # 6. Validate request với order_check
+        print(f"   🔍 Đang validate request...")
+        check_result = mt5.order_check(request)
+        if check_result is None:
+            error = mt5.last_error()
+            print(f"   ⚠️ order_check() trả về None. Lỗi: {error}")
+            print(f"   ⚠️ Vẫn thử gửi lệnh...")
+        elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
+            print(f"   ❌ order_check() không hợp lệ: {check_result.comment if hasattr(check_result, 'comment') else 'Unknown'}")
+            print(f"   ❌ Retcode: {check_result.retcode}")
+            return error_count + 1, check_result.retcode
+        else:
+            print(f"   ✅ Request hợp lệ")
+        
+        # 7. Send order
         result = mt5.order_send(request)
         if result is None:
-            print("❌ Order Send Failed: Result is None (Check MT5 connection/Settings)")
+            error = mt5.last_error()
+            print(f"❌ Order Send Failed: Result is None")
+            print(f"   Lỗi MT5: {error}")
+            print(f"   Kiểm tra:")
+            print(f"   - MT5 Terminal đang chạy?")
+            print(f"   - Symbol {symbol} có sẵn?")
+            print(f"   - Account có quyền trade?")
+            print(f"   - SL/TP có hợp lệ? (SL: {sl:.5f}, TP: {tp:.5f})")
             return error_count + 1, 0
 
         if result.retcode == mt5.TRADE_RETCODE_DONE:
