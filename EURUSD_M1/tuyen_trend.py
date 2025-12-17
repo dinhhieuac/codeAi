@@ -3,6 +3,7 @@ import time
 import sys
 import numpy as np
 import pandas as pd
+import re
 from datetime import datetime
 
 # Import local modules
@@ -1797,6 +1798,13 @@ def tuyen_trend_logic(config, error_count=0):
         sl = round(sl, digits)
         tp = round(tp, digits)
         
+        # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
+        # Remove special characters, emojis, and limit to 31 chars
+        sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason)  # Only keep alphanumeric, underscore, hyphen
+        if not sanitized_comment:  # If empty after sanitization, use default
+            sanitized_comment = f"TuyenTrend_{signal_type}"
+        sanitized_comment = sanitized_comment[:31]  # Limit to 31 chars
+        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -1806,12 +1814,12 @@ def tuyen_trend_logic(config, error_count=0):
             "sl": sl,
             "tp": tp,
             "magic": magic,
-            "comment": reason[:31], # Limit comment to 31 chars
+            "comment": sanitized_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
         
-        # 6. Validate request với order_check
+        # 7. Validate request với order_check
         print(f"   🔍 Đang validate request...")
         check_result = mt5.order_check(request)
         if check_result is None:
@@ -1827,7 +1835,7 @@ def tuyen_trend_logic(config, error_count=0):
         else:
             print(f"   ✅ Request hợp lệ")
         
-        # 7. Send order
+        # 8. Send order
         result = mt5.order_send(request)
         if result is None:
             error = mt5.last_error()
