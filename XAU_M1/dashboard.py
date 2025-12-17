@@ -190,6 +190,37 @@ def process_hourly_stats(orders):
         
     return result
 
+def format_vn_time(value):
+    """
+    Convert UTC string or datetime to Vietnam Time string (UTC+7).
+    """
+    if not value:
+        return ""
+    
+    try:
+        # If it's already a string, parse it
+        if isinstance(value, str):
+            # Try parsing with seconds
+            try:
+                dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # Try parsing without seconds or other formats if needed
+                dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
+        else:
+            dt = value
+            
+        # Add 7 hours
+        vn_time = dt + timedelta(hours=7)
+        res = vn_time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"DEBUG: Converted {value} -> {res}")
+        return res
+    except Exception as e:
+        print(f"DEBUG: Error parsing '{value}': {e}")
+        return value # Return original on error
+
+# Register Jinja2 filter
+app.jinja_env.filters['to_vn_time'] = format_vn_time
+
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5000")
     app.run(debug=True, port=5000)

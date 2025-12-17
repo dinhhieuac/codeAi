@@ -204,7 +204,7 @@
                                     {% for order in orders[:50] %}
                                     <tr>
                                         <td>{{ order.ticket }}</td>
-                                        <td>{{ order.open_time }}</td>
+                                        <td>{{ order.open_time | to_vn_time }}</td>
                                         <td><span class="badge bg-secondary">{{ order.strategy_name }}</span></td>
                                         <td>
                                             {% if order.order_type == 'BUY' %}
@@ -351,7 +351,7 @@
                                     {% if order.strategy_name == bot.raw_name %}
                                     <tr>
                                         <td>{{ order.ticket }}</td>
-                                        <td>{{ order.open_time }}</td>
+                                        <td>{{ order.open_time | to_vn_time }}</td>
                                         <td>
                                             {% if order.order_type == 'BUY' %}
                                             <span class="badge badge-buy">BUY</span>
@@ -404,7 +404,7 @@
                         <tbody>
                             {% for sig in signals %}
                             <tr>
-                                <td>{{ sig.timestamp }}</td>
+                                <td>{{ sig.timestamp | to_vn_time }}</td>
                                 <td>{{ sig.strategy_name }}</td>
                                 <td>
                                     {% if sig.signal_type == 'BUY' %}
