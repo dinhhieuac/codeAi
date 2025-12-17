@@ -1,0 +1,19 @@
+{
+    "account": 270590765,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial17",
+    "mt5_path": "C:\\Program Files\\M3\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "magic": 3000,
+    "volume": 0.01,
+    "max_positions": 1,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "1887610382",
+    "parameters": {
+        "sl_mode": "auto_m5",
+        "reward_ratio": 1.5,
+        "sma_period": 9,
+        "rsi_period": 14,
+        "rsi_threshold": 50
+    }
+}
