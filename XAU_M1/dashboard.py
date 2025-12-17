@@ -27,25 +27,45 @@ def index():
     
     # Get Filter Parameter
     days_param = request.args.get('days', '30') # Default 30 days
+    # Calculate cutoff date based on VN Time (UTC+7) start of day
     if days_param == "all":
-        days = 36500 # 100 years approx
+        # Just use a very old date
+        cutoff_date = datetime(2000, 1, 1)
         filter_label = "All Time"
     else:
         try:
             days = int(days_param)
-            filter_label = f"Last {days} Days"
+            if days == 1:
+                filter_label = "Today"
+            else:
+                filter_label = f"Last {days} Days"
         except:
             days = 30
             filter_label = "Last 30 Days"
             
-    # Calculate cutoff date
-    # Calculate cutoff date
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+        # Current VN Time
+        now_vn = datetime.utcnow() + timedelta(hours=7)
+        # Start of Today VN (00:00:00)
+        start_of_today_vn = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Calculate start date (VN)
+        # days=1 -> Today 00:00
+        # days=2 -> Yesterday 00:00
+        start_date_vn = start_of_today_vn - timedelta(days=days-1)
+        
+        # Convert back to UTC for DB Query
+        cutoff_date = start_date_vn - timedelta(hours=7)
+    
     cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+    # print(f"DEBUG: days={days_param}, now_vn={now_vn}, start_vn={start_date_vn}, cutoff_utc={cutoff_str}", flush=True)
 
     # Fetch Orders Filtered by Time
     cur.execute("SELECT * FROM orders WHERE open_time >= ? ORDER BY open_time DESC", (cutoff_str,))
     orders = cur.fetchall()
+    
+    # if orders:
+    #     print(f"DEBUG: First order time (UTC): {orders[0]['open_time']}", flush=True)
+    #     print(f"DEBUG: Last order time (UTC): {orders[-1]['open_time']}", flush=True)
     
     # Calculate Stats
     total_trades = len(orders)
@@ -55,7 +75,7 @@ def index():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     
     # Fetch Recent Signals
-    cur.execute("SELECT * FROM signals ORDER BY timestamp DESC LIMIT 50")
+    cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 50", (cutoff_str,))
     signals = cur.fetchall()
 
     # --- ADVANCED STATS PER STRATEGY ---
@@ -205,8 +225,12 @@ def format_vn_time(value):
             try:
                 dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                # Try parsing without seconds or other formats if needed
-                dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
+                try:
+                    # Try with milliseconds
+                    dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
+                except ValueError:
+                    # Try parsing without seconds
+                    dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
         else:
             dt = value
             
