@@ -1756,12 +1756,14 @@ if __name__ == "__main__":
     print("   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)")
     print("   2️⃣  Balanced (Cân bằng) - Linh hoạt hơn, nhiều signals hơn (3-8 signals/ngày)")
     print("   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)")
+    print("   4️⃣  Loose (Lỏng) - Nới lỏng điều kiện, nhiều signals (5-12 signals/ngày)")
+    print("   5️⃣  Very Loose (Rất lỏng) - Nới lỏng tối đa, rất nhiều signals (10-20+ signals/ngày)")
     print("   0️⃣  Sử dụng config mặc định (config_tuyen_xau.json)")
     print("="*80)
     
     while True:
         try:
-            choice = input("\n👉 Nhập lựa chọn (1/2/3/0): ").strip()
+            choice = input("\n👉 Nhập lựa chọn (1/2/3/4/5/0): ").strip()
             
             if choice == "1":
                 config_filename = "config_tuyen_xau_default.json"
@@ -1775,12 +1777,20 @@ if __name__ == "__main__":
                 config_filename = "config_tuyen_xau_strict.json"
                 mode_name = "Khắt Khe (Strict)"
                 break
+            elif choice == "4":
+                config_filename = "config_tuyen_xau_loose.json"
+                mode_name = "Lỏng (Loose - Nhiều Signals)"
+                break
+            elif choice == "5":
+                config_filename = "config_tuyen_xau_very_loose.json"
+                mode_name = "Rất Lỏng (Very Loose - Rất Nhiều Signals)"
+                break
             elif choice == "0":
                 config_filename = "config_tuyen_xau.json"
                 mode_name = "Config Mặc Định (config_tuyen_xau.json)"
                 break
             else:
-                print("❌ Lựa chọn không hợp lệ! Vui lòng nhập 1, 2, 3 hoặc 0")
+                print("❌ Lựa chọn không hợp lệ! Vui lòng nhập 1, 2, 3, 4, 5 hoặc 0")
         except KeyboardInterrupt:
             print("\n\n⚠️ Đã hủy. Thoát bot.")
             sys.exit(0)
