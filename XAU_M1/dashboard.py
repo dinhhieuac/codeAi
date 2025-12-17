@@ -212,7 +212,7 @@ def format_vn_time(value):
         # Add 7 hours
         vn_time = dt + timedelta(hours=7)
         res = vn_time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"DEBUG: Converted {value} -> {res}")
+        # print(f"DEBUG: Converted {value} -> {res}", flush=True)
         return res
     except Exception as e:
         print(f"DEBUG: Error parsing '{value}': {e}")
