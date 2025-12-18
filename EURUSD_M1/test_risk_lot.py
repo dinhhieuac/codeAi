@@ -1,19 +1,12 @@
 """
-Test script để kiểm tra tính năng Risk-Based Lot Calculation
-Không gửi lệnh thật lên MT5, chỉ in log để test
+Test script để kiểm tra tính năng Risk-Based Lot Calculation với MT5 thật
+Không gửi lệnh thật lên MT5, chỉ tính toán và in log
 """
 
 import sys
 import os
 import json
-
-# Try to import MT5 (optional)
-try:
-    import MetaTrader5 as mt5
-    MT5_AVAILABLE = True
-except ImportError:
-    MT5_AVAILABLE = False
-    print("⚠️ MetaTrader5 module not available, using test values only")
+import MetaTrader5 as mt5
 
 def load_config(config_path):
     """Load configuration from JSON file"""
@@ -28,26 +21,30 @@ def load_config(config_path):
         return None
 
 def connect_mt5(config):
-    """Try to connect to MT5 (optional)"""
-    if not MT5_AVAILABLE:
+    """Connect to MT5"""
+    login = config.get("account")
+    password = config.get("password")
+    server = config.get("server")
+    path = config.get("mt5_path")
+    
+    if not all([login, password, server]):
+        print("❌ Missing MT5 credentials in config")
         return False
+    
     try:
-        login = config.get("account")
-        password = config.get("password")
-        server = config.get("server")
-        path = config.get("mt5_path")
-        
-        if not all([login, password, server]):
-            return False
-        
         if path:
             if not mt5.initialize(path=path, login=login, password=password, server=server):
+                print(f"❌ MT5 Init failed with path: {mt5.last_error()}")
                 return False
         else:
             if not mt5.initialize(login=login, password=password, server=server):
+                print(f"❌ MT5 Init failed: {mt5.last_error()}")
                 return False
+                
+        print(f"✅ Connected to MT5 Account: {login}")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Connection error: {e}")
         return False
 
 def get_pip_value_per_lot(symbol):
@@ -119,10 +116,10 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
     return lot_size
 
 def test_risk_lot_calculation():
-    """Test risk-based lot calculation với các scenarios khác nhau"""
+    """Test risk-based lot calculation với dữ liệu thật từ MT5"""
     
     print("="*80)
-    print("🧪 TEST RISK-BASED LOT CALCULATION")
+    print("🧪 TEST RISK-BASED LOT CALCULATION (MT5 REAL DATA)")
     print("="*80)
     
     # Load config
@@ -143,115 +140,136 @@ def test_risk_lot_calculation():
     print(f"   Risk Percent: {risk_percent}%")
     print(f"   Use Risk-Based Lot: {use_risk_based_lot}")
     
-    # Connect to MT5 (optional, chỉ để lấy account balance)
-    account_balance = 10000.0  # Default test balance
-    if connect_mt5(config):
-        account_info = mt5.account_info()
-        if account_info:
-            account_balance = account_info.balance
-            print(f"\n✅ Connected to MT5")
-            print(f"   Account Balance: ${account_balance:.2f}")
-        else:
-            print(f"\n⚠️ Không thể lấy account info, dùng balance test: ${account_balance:.2f}")
-    else:
-        print(f"\n⚠️ Không kết nối được MT5, dùng balance test: ${account_balance:.2f}")
+    # Connect to MT5
+    if not connect_mt5(config):
+        print("❌ Không thể kết nối MT5. Thoát.")
+        return
     
-    # Test scenarios
+    # Get account info
+    account_info = mt5.account_info()
+    if not account_info:
+        print("❌ Không thể lấy account info")
+        mt5.shutdown()
+        return
+    
+    account_balance = account_info.balance
+    account_equity = account_info.equity
+    account_currency = account_info.currency
+    
+    print(f"\n💰 Account Info:")
+    print(f"   Balance: {account_balance:,.2f} {account_currency}")
+    print(f"   Equity: {account_equity:,.2f} {account_currency}")
+    
+    # Get symbol info
+    symbol_info = mt5.symbol_info(symbol)
+    if not symbol_info:
+        print(f"❌ Không thể lấy symbol info: {symbol}")
+        mt5.shutdown()
+        return
+    
+    if not symbol_info.visible:
+        print(f"⚠️ Symbol {symbol} không visible. Đang kích hoạt...")
+        if not mt5.symbol_select(symbol, True):
+            print(f"❌ Không thể kích hoạt symbol: {symbol}")
+            mt5.shutdown()
+            return
+    
+    # Get current price
+    tick = mt5.symbol_info_tick(symbol)
+    if not tick:
+        print(f"❌ Không thể lấy tick data: {symbol}")
+        mt5.shutdown()
+        return
+    
+    current_price = tick.ask if tick.ask > 0 else tick.bid
+    
+    print(f"\n📊 Symbol Info:")
+    print(f"   Symbol: {symbol}")
+    print(f"   Current Price: {current_price:.5f}")
+    print(f"   Digits: {symbol_info.digits}")
+    print(f"   Point: {symbol_info.point}")
+    print(f"   Contract Size: {symbol_info.trade_contract_size}")
+    
+    # Get ATR để tính SL (giống như trong bot)
+    import pandas as pd
+    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 300)
+    if rates is None or len(rates) == 0:
+        print(f"❌ Không thể lấy dữ liệu giá")
+        mt5.shutdown()
+        return
+    
+    df = pd.DataFrame(rates)
+    df['tr0'] = abs(df['high'] - df['low'])
+    df['tr1'] = abs(df['high'] - df['close'].shift(1))
+    df['tr2'] = abs(df['low'] - df['close'].shift(1))
+    df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
+    atr_val = df['tr'].rolling(window=14).mean().iloc[-1]
+    
+    # Calculate SL và TP (giống bot: SL = 2x ATR, TP = 4x ATR)
+    sl_buy = current_price - (2 * atr_val)
+    tp_buy = current_price + (4 * atr_val)
+    sl_sell = current_price + (2 * atr_val)
+    tp_sell = current_price - (4 * atr_val)
+    
+    print(f"\n📈 Market Data:")
+    print(f"   ATR (14): {atr_val:.5f}")
+    print(f"   SL Distance (2x ATR): {2 * atr_val:.5f}")
+    print(f"   TP Distance (4x ATR): {4 * atr_val:.5f}")
+    
+    # Test BUY scenario
     print(f"\n{'='*80}")
-    print("📊 TEST SCENARIOS")
+    print("📊 BUY SCENARIO")
     print(f"{'='*80}")
     
-    test_cases = [
-        {
-            "name": "EURUSD - SL 20 pips",
-            "symbol": "EURUSD",
-            "entry_price": 1.10000,
-            "sl_price": 1.09800,  # 20 pips
-            "account_balance": account_balance,
-            "risk_percent": risk_percent
-        },
-        {
-            "name": "EURUSD - SL 30 pips",
-            "symbol": "EURUSD",
-            "entry_price": 1.10000,
-            "sl_price": 1.09700,  # 30 pips
-            "account_balance": account_balance,
-            "risk_percent": risk_percent
-        },
-        {
-            "name": "XAUUSD - SL 20 USD (200 pips)",
-            "symbol": "XAUUSD",
-            "entry_price": 2000.00,
-            "sl_price": 1998.00,  # 20 USD = 200 pips (vì 1 pip = $0.1 với XAUUSD)
-            "account_balance": account_balance,
-            "risk_percent": risk_percent
-        },
-        {
-            "name": "EURUSD - Risk 2%",
-            "symbol": "EURUSD",
-            "entry_price": 1.10000,
-            "sl_price": 1.09800,  # 20 pips
-            "account_balance": account_balance,
-            "risk_percent": 2.0
-        },
-        {
-            "name": "EURUSD - Vốn lớn $50,000",
-            "symbol": "EURUSD",
-            "entry_price": 1.10000,
-            "sl_price": 1.09800,  # 20 pips
-            "account_balance": 50000.0,
-            "risk_percent": risk_percent
-        },
-    ]
+    sl_pips_buy = calculate_sl_pips(current_price, sl_buy, symbol)
+    pip_value_buy = get_pip_value_per_lot(symbol)
+    lot_size_buy = calculate_lot_size(account_balance, risk_percent, sl_pips_buy, symbol)
+    risk_money_buy = account_balance * (risk_percent / 100.0)
     
-    for i, test in enumerate(test_cases, 1):
-        print(f"\n{'─'*80}")
-        print(f"Test {i}: {test['name']}")
-        print(f"{'─'*80}")
-        
-        # Calculate SL pips
-        sl_pips = calculate_sl_pips(test['entry_price'], test['sl_price'], test['symbol'])
-        
-        # Get pip value
-        pip_value = get_pip_value_per_lot(test['symbol'])
-        
-        # Calculate lot size
-        lot_size = calculate_lot_size(
-            test['account_balance'],
-            test['risk_percent'],
-            sl_pips,
-            test['symbol']
-        )
-        
-        # Calculate risk money
-        risk_money = test['account_balance'] * (test['risk_percent'] / 100.0)
-        
-        # Display results
-        print(f"   Entry Price: {test['entry_price']:.5f}")
-        print(f"   SL Price: {test['sl_price']:.5f}")
-        print(f"   SL Distance: {sl_pips:.1f} pips")
-        print(f"   Account Balance: ${test['account_balance']:,.2f}")
-        print(f"   Risk: {test['risk_percent']}% = ${risk_money:.2f}")
-        print(f"   Pip Value: ${pip_value:.2f} per lot")
-        print(f"   Formula: Lot = ${risk_money:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
-        print(f"   Calculated Lot: {lot_size:.2f}")
-        
-        # Verify calculation
-        expected_risk = lot_size * sl_pips * pip_value
-        print(f"   ✅ Verification: {lot_size:.2f} lot × {sl_pips:.1f} pips × ${pip_value:.2f} = ${expected_risk:.2f} risk")
-        
-        if abs(expected_risk - risk_money) < 0.01:
-            print(f"   ✅ PASS: Risk matches expected (${expected_risk:.2f} ≈ ${risk_money:.2f})")
-        else:
-            print(f"   ⚠️ WARNING: Risk mismatch (${expected_risk:.2f} ≠ ${risk_money:.2f})")
+    print(f"   Entry Price: {current_price:.5f}")
+    print(f"   SL Price: {sl_buy:.5f}")
+    print(f"   TP Price: {tp_buy:.5f}")
+    print(f"   SL Distance: {sl_pips_buy:.1f} pips")
+    print(f"   Account Balance: ${account_balance:,.2f}")
+    print(f"   Risk: {risk_percent}% = ${risk_money_buy:.2f}")
+    print(f"   Pip Value: ${pip_value_buy:.2f} per lot")
+    print(f"   Formula: Lot = ${risk_money_buy:.2f} / ({sl_pips_buy:.1f} pips × ${pip_value_buy:.2f})")
+    print(f"   ✅ Calculated Lot: {lot_size_buy:.2f}")
+    
+    # Verify
+    expected_risk_buy = lot_size_buy * sl_pips_buy * pip_value_buy
+    print(f"   ✅ Verification: {lot_size_buy:.2f} lot × {sl_pips_buy:.1f} pips × ${pip_value_buy:.2f} = ${expected_risk_buy:.2f} risk")
+    
+    # Test SELL scenario
+    print(f"\n{'='*80}")
+    print("📊 SELL SCENARIO")
+    print(f"{'='*80}")
+    
+    sl_pips_sell = calculate_sl_pips(current_price, sl_sell, symbol)
+    pip_value_sell = get_pip_value_per_lot(symbol)
+    lot_size_sell = calculate_lot_size(account_balance, risk_percent, sl_pips_sell, symbol)
+    risk_money_sell = account_balance * (risk_percent / 100.0)
+    
+    print(f"   Entry Price: {current_price:.5f}")
+    print(f"   SL Price: {sl_sell:.5f}")
+    print(f"   TP Price: {tp_sell:.5f}")
+    print(f"   SL Distance: {sl_pips_sell:.1f} pips")
+    print(f"   Account Balance: ${account_balance:,.2f}")
+    print(f"   Risk: {risk_percent}% = ${risk_money_sell:.2f}")
+    print(f"   Pip Value: ${pip_value_sell:.2f} per lot")
+    print(f"   Formula: Lot = ${risk_money_sell:.2f} / ({sl_pips_sell:.1f} pips × ${pip_value_sell:.2f})")
+    print(f"   ✅ Calculated Lot: {lot_size_sell:.2f}")
+    
+    # Verify
+    expected_risk_sell = lot_size_sell * sl_pips_sell * pip_value_sell
+    print(f"   ✅ Verification: {lot_size_sell:.2f} lot × {sl_pips_sell:.1f} pips × ${pip_value_sell:.2f} = ${expected_risk_sell:.2f} risk")
     
     print(f"\n{'='*80}")
     print("✅ TEST COMPLETED")
     print(f"{'='*80}\n")
     
     # Cleanup
-    if MT5_AVAILABLE and mt5.terminal_info():
-        mt5.shutdown()
+    mt5.shutdown()
 
 if __name__ == "__main__":
     test_risk_lot_calculation()
