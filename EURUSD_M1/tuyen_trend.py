@@ -380,60 +380,57 @@ def calculate_atr(df, period=14):
     atr_series = df['tr'].rolling(window=period).mean()
     return atr_series
 
-def get_pip_value_per_lot(symbol):
+def calculate_sl_pips(entry_price, sl_price, symbol, symbol_info=None):
     """
-    Get pip value per lot for a symbol
-    EURUSD: 1 pip = $10 per lot (standard)
-    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
-    """
-    symbol_upper = symbol.upper()
-    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
-        return 10.0  # $10 per pip per lot for major pairs
-    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        return 1.0   # $1 per pip per lot for gold (may vary)
-    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
-        # For JPY pairs, pip value depends on current price
-        # Approximate: $10 per pip per lot (but varies with price)
-        return 10.0
-    else:
-        # Default: try to get from MT5
-        symbol_info = mt5.symbol_info(symbol)
-        if symbol_info:
-            # Contract size / 100000 for most pairs
-            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
-            if contract_size == 100000:
-                return 10.0  # Standard
-            else:
-                return contract_size / 10000  # Approximate
-        return 10.0  # Default fallback
-
-def calculate_sl_pips(entry_price, sl_price, symbol):
-    """
-    Calculate SL distance in pips
+    Calculate SL distance in pips - lấy pip size từ MT5 nếu có
     
     Args:
         entry_price: Entry price
         sl_price: Stop Loss price
         symbol: Trading symbol
+        symbol_info: MT5 symbol_info object (optional, sẽ lấy nếu None)
     
     Returns:
         sl_pips: Stop Loss in pips
     """
-    symbol_upper = symbol.upper()
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
     
-    # For JPY pairs, 1 pip = 0.01
+    if symbol_info:
+        # Lấy point từ MT5
+        point = getattr(symbol_info, 'point', 0.0001)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            # XAUUSD: pip thường là 0.1 (10 points) hoặc 0.01 (1 point) tùy broker
+            if point >= 0.01:
+                pip_size = point  # 1 point = 1 pip
+            else:
+                pip_size = 0.1  # 10 points = 1 pip (standard)
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001  # Standard for most pairs (10 points)
+        
+        distance = abs(entry_price - sl_price)
+        sl_pips = distance / pip_size
+        return sl_pips
+    
+    # Fallback nếu không lấy được từ MT5
+    symbol_upper = symbol.upper()
     if 'JPY' in symbol_upper:
         pip_size = 0.01
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        pip_size = 0.1  # XAUUSD: 1 pip = 0.1
     else:
-        pip_size = 0.0001  # Standard for most pairs
+        pip_size = 0.0001
     
-    # Calculate distance
     distance = abs(entry_price - sl_price)
     sl_pips = distance / pip_size
-    
     return sl_pips
 
-def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info=None):
     """
     Calculate lot size based on risk management formula:
     Lot size = RiskMoney / (SL pips × Pip Value per Lot)
@@ -450,8 +447,8 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
     # Calculate risk money
     risk_money = account_balance * (risk_percent / 100.0)
     
-    # Get pip value per lot
-    pip_value_per_lot = get_pip_value_per_lot(symbol)
+    # Get pip value per lot (từ MT5 nếu có)
+    pip_value_per_lot = get_pip_value_per_lot(symbol, symbol_info)
     
     # Calculate lot size
     if sl_pips > 0 and pip_value_per_lot > 0:
@@ -468,93 +465,55 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
     
     return lot_size
 
-def get_pip_value_per_lot(symbol):
+def get_pip_value_per_lot(symbol, symbol_info=None):
     """
-    Get pip value per lot for a symbol
+    Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
     EURUSD: 1 pip = $10 per lot (standard)
     XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
     """
-    symbol_upper = symbol.upper()
-    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
-        return 10.0  # $10 per pip per lot for major pairs
-    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        return 1.0   # $1 per pip per lot for gold (may vary)
-    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
-        # For JPY pairs, pip value depends on current price
-        # Approximate: $10 per pip per lot (but varies with price)
-        return 10.0
-    else:
-        # Default: try to get from MT5
+    if symbol_info is None:
         symbol_info = mt5.symbol_info(symbol)
-        if symbol_info:
-            # Contract size / 100000 for most pairs
-            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
-            if contract_size == 100000:
-                return 10.0  # Standard
+    
+    if symbol_info:
+        # Lấy từ MT5 symbol_info (chính xác nhất)
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        point = getattr(symbol_info, 'point', 0.0001)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            pip_size = 0.1 if point < 0.01 else point
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001
+        
+        # Tính pip value từ tick_value và tick_size
+        if tick_value is not None and tick_size is not None and tick_size > 0:
+            pip_value = tick_value * (pip_size / tick_size)
+            if pip_value > 0:
+                return pip_value
+        
+        # Fallback: tính từ contract_size
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            if contract_size == 100:
+                return 1.0
             else:
-                return contract_size / 10000  # Approximate
-        return 10.0  # Default fallback
-
-def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
-    """
-    Calculate lot size based on risk management formula:
-    Lot size = RiskMoney / (SL pips × Pip Value per Lot)
+                return contract_size / 100
+        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+            return 10.0
+        else:
+            return 10.0
     
-    Args:
-        account_balance: Account balance in USD
-        risk_percent: Risk percentage (e.g., 1.0 for 1%)
-        sl_pips: Stop Loss in pips
-        symbol: Trading symbol (EURUSD, XAUUSD, etc.)
-    
-    Returns:
-        lot_size: Calculated lot size
-    """
-    # Calculate risk money
-    risk_money = account_balance * (risk_percent / 100.0)
-    
-    # Get pip value per lot
-    pip_value_per_lot = get_pip_value_per_lot(symbol)
-    
-    # Calculate lot size
-    if sl_pips > 0 and pip_value_per_lot > 0:
-        lot_size = risk_money / (sl_pips * pip_value_per_lot)
-    else:
-        lot_size = 0.01  # Default minimum
-    
-    # Round to 2 decimal places (standard lot step is 0.01)
-    lot_size = round(lot_size, 2)
-    
-    # Ensure minimum lot size
-    if lot_size < 0.01:
-        lot_size = 0.01
-    
-    return lot_size
-
-def calculate_sl_pips(entry_price, sl_price, symbol):
-    """
-    Calculate SL distance in pips
-    
-    Args:
-        entry_price: Entry price
-        sl_price: Stop Loss price
-        symbol: Trading symbol
-    
-    Returns:
-        sl_pips: Stop Loss in pips
-    """
+    # Default fallback nếu không lấy được từ MT5
     symbol_upper = symbol.upper()
-    
-    # For JPY pairs, 1 pip = 0.01
-    if 'JPY' in symbol_upper:
-        pip_size = 0.01
-    else:
-        pip_size = 0.0001  # Standard for most pairs
-    
-    # Calculate distance
-    distance = abs(entry_price - sl_price)
-    sl_pips = distance / pip_size
-    
-    return sl_pips
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+        return 10.0
+    return 10.0
 
 def is_doji(row, body_percent=0.1):
     """Body is less than 10% of total range"""
