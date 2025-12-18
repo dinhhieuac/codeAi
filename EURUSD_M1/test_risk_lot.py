@@ -135,10 +135,17 @@ def test_risk_lot_calculation():
     risk_percent = config.get('risk_percent', 1.0)
     use_risk_based_lot = config.get('use_risk_based_lot', True)
     
+    # Load parameters config
+    parameters_config = config.get('parameters', {})
+    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)
+    reward_ratio = parameters_config.get('reward_ratio', 2.0)
+    
     print(f"\n📋 Config:")
     print(f"   Symbol: {symbol}")
     print(f"   Risk Percent: {risk_percent}%")
     print(f"   Use Risk-Based Lot: {use_risk_based_lot}")
+    print(f"   ATR Multiplier: {atr_multiplier}x (for SL)")
+    print(f"   Reward Ratio: {reward_ratio} (R:R = 1:{reward_ratio})")
     
     # Connect to MT5
     if not connect_mt5(config):
@@ -205,16 +212,20 @@ def test_risk_lot_calculation():
     df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
     atr_val = df['tr'].rolling(window=14).mean().iloc[-1]
     
-    # Calculate SL và TP (giống bot: SL = 2x ATR, TP = 4x ATR)
-    sl_buy = current_price - (2 * atr_val)
-    tp_buy = current_price + (4 * atr_val)
-    sl_sell = current_price + (2 * atr_val)
-    tp_sell = current_price - (4 * atr_val)
+    # Calculate SL và TP using config parameters (giống bot)
+    sl_distance = atr_multiplier * atr_val
+    tp_distance = atr_multiplier * atr_val * reward_ratio
+    
+    sl_buy = current_price - sl_distance
+    tp_buy = current_price + tp_distance
+    sl_sell = current_price + sl_distance
+    tp_sell = current_price - tp_distance
     
     print(f"\n📈 Market Data:")
     print(f"   ATR (14): {atr_val:.5f}")
-    print(f"   SL Distance (2x ATR): {2 * atr_val:.5f}")
-    print(f"   TP Distance (4x ATR): {4 * atr_val:.5f}")
+    print(f"   SL Distance ({atr_multiplier}x ATR): {sl_distance:.5f}")
+    print(f"   TP Distance ({atr_multiplier * reward_ratio}x ATR): {tp_distance:.5f}")
+    print(f"   Risk:Reward = 1:{reward_ratio:.1f}")
     
     # Test BUY scenario
     print(f"\n{'='*80}")
@@ -227,8 +238,8 @@ def test_risk_lot_calculation():
     risk_money_buy = account_balance * (risk_percent / 100.0)
     
     print(f"   Entry Price: {current_price:.5f}")
-    print(f"   SL Price: {sl_buy:.5f}")
-    print(f"   TP Price: {tp_buy:.5f}")
+    print(f"   SL Price: {sl_buy:.5f} ({atr_multiplier}x ATR = {sl_distance:.5f})")
+    print(f"   TP Price: {tp_buy:.5f} ({atr_multiplier * reward_ratio}x ATR = {tp_distance:.5f})")
     print(f"   SL Distance: {sl_pips_buy:.1f} pips")
     print(f"   Account Balance: ${account_balance:,.2f}")
     print(f"   Risk: {risk_percent}% = ${risk_money_buy:.2f}")
@@ -238,7 +249,11 @@ def test_risk_lot_calculation():
     
     # Verify
     expected_risk_buy = lot_size_buy * sl_pips_buy * pip_value_buy
-    print(f"   ✅ Verification: {lot_size_buy:.2f} lot × {sl_pips_buy:.1f} pips × ${pip_value_buy:.2f} = ${expected_risk_buy:.2f} risk")
+    expected_reward_buy = lot_size_buy * (sl_pips_buy * reward_ratio) * pip_value_buy
+    print(f"   ✅ Verification:")
+    print(f"      Risk: {lot_size_buy:.2f} lot × {sl_pips_buy:.1f} pips × ${pip_value_buy:.2f} = ${expected_risk_buy:.2f}")
+    print(f"      Reward: {lot_size_buy:.2f} lot × {sl_pips_buy * reward_ratio:.1f} pips × ${pip_value_buy:.2f} = ${expected_reward_buy:.2f}")
+    print(f"      R:R = ${expected_risk_buy:.2f} : ${expected_reward_buy:.2f} = 1:{reward_ratio:.1f}")
     
     # Test SELL scenario
     print(f"\n{'='*80}")
@@ -251,8 +266,8 @@ def test_risk_lot_calculation():
     risk_money_sell = account_balance * (risk_percent / 100.0)
     
     print(f"   Entry Price: {current_price:.5f}")
-    print(f"   SL Price: {sl_sell:.5f}")
-    print(f"   TP Price: {tp_sell:.5f}")
+    print(f"   SL Price: {sl_sell:.5f} ({atr_multiplier}x ATR = {sl_distance:.5f})")
+    print(f"   TP Price: {tp_sell:.5f} ({atr_multiplier * reward_ratio}x ATR = {tp_distance:.5f})")
     print(f"   SL Distance: {sl_pips_sell:.1f} pips")
     print(f"   Account Balance: ${account_balance:,.2f}")
     print(f"   Risk: {risk_percent}% = ${risk_money_sell:.2f}")
@@ -262,7 +277,11 @@ def test_risk_lot_calculation():
     
     # Verify
     expected_risk_sell = lot_size_sell * sl_pips_sell * pip_value_sell
-    print(f"   ✅ Verification: {lot_size_sell:.2f} lot × {sl_pips_sell:.1f} pips × ${pip_value_sell:.2f} = ${expected_risk_sell:.2f} risk")
+    expected_reward_sell = lot_size_sell * (sl_pips_sell * reward_ratio) * pip_value_sell
+    print(f"   ✅ Verification:")
+    print(f"      Risk: {lot_size_sell:.2f} lot × {sl_pips_sell:.1f} pips × ${pip_value_sell:.2f} = ${expected_risk_sell:.2f}")
+    print(f"      Reward: {lot_size_sell:.2f} lot × {sl_pips_sell * reward_ratio:.1f} pips × ${pip_value_sell:.2f} = ${expected_reward_sell:.2f}")
+    print(f"      R:R = ${expected_risk_sell:.2f} : ${expected_reward_sell:.2f} = 1:{reward_ratio:.1f}")
     
     print(f"\n{'='*80}")
     print("✅ TEST COMPLETED")
