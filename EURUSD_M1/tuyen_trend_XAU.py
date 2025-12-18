@@ -3,6 +3,7 @@ import time
 import sys
 import numpy as np
 import pandas as pd
+import re
 from datetime import datetime
 
 # Import local modules
@@ -379,60 +380,107 @@ def calculate_atr(df, period=14):
     atr_series = df['tr'].rolling(window=period).mean()
     return atr_series
 
-def get_pip_value_per_lot(symbol):
+def get_pip_value_per_lot(symbol, symbol_info=None):
     """
-    Get pip value per lot for a symbol
+    Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
     EURUSD: 1 pip = $10 per lot (standard)
     XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
     """
-    symbol_upper = symbol.upper()
-    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
-        return 10.0  # $10 per pip per lot for major pairs
-    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        return 1.0   # $1 per pip per lot for gold (may vary)
-    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
-        # For JPY pairs, pip value depends on current price
-        # Approximate: $10 per pip per lot (but varies with price)
-        return 10.0
-    else:
-        # Default: try to get from MT5
+    if symbol_info is None:
         symbol_info = mt5.symbol_info(symbol)
-        if symbol_info:
-            # Contract size / 100000 for most pairs
-            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
-            if contract_size == 100000:
-                return 10.0  # Standard
+    
+    if symbol_info:
+        # Lấy từ MT5 symbol_info (chính xác nhất)
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        point = getattr(symbol_info, 'point', 0.0001)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            pip_size = 0.1 if point < 0.01 else point
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001
+        
+        # Tính pip value từ tick_value và tick_size
+        if tick_value is not None and tick_size is not None and tick_size > 0:
+            pip_value = tick_value * (pip_size / tick_size)
+            if pip_value > 0:
+                return pip_value
+        
+        # Fallback: tính từ contract_size
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            if contract_size == 100:
+                return 1.0
             else:
-                return contract_size / 10000  # Approximate
-        return 10.0  # Default fallback
+                return contract_size / 100
+        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+            return 10.0
+        else:
+            return 10.0
+    
+    # Default fallback
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+        return 10.0
+    return 10.0
 
-def calculate_sl_pips(entry_price, sl_price, symbol):
+def calculate_sl_pips(entry_price, sl_price, symbol, symbol_info=None):
     """
-    Calculate SL distance in pips
+    Calculate SL distance in pips - lấy pip size từ MT5 nếu có
     
     Args:
         entry_price: Entry price
         sl_price: Stop Loss price
         symbol: Trading symbol
+        symbol_info: MT5 symbol_info object (optional, sẽ lấy nếu None)
     
     Returns:
         sl_pips: Stop Loss in pips
     """
-    symbol_upper = symbol.upper()
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
     
-    # For JPY pairs, 1 pip = 0.01
+    if symbol_info:
+        # Lấy point từ MT5
+        point = getattr(symbol_info, 'point', 0.0001)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            # XAUUSD: pip thường là 0.1 (10 points) hoặc 0.01 (1 point) tùy broker
+            if point >= 0.01:
+                pip_size = point  # 1 point = 1 pip
+            else:
+                pip_size = 0.1  # 10 points = 1 pip (standard)
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001  # Standard for most pairs (10 points)
+        
+        distance = abs(entry_price - sl_price)
+        sl_pips = distance / pip_size
+        return sl_pips
+    
+    # Fallback nếu không lấy được từ MT5
+    symbol_upper = symbol.upper()
     if 'JPY' in symbol_upper:
         pip_size = 0.01
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        pip_size = 0.1  # XAUUSD: 1 pip = 0.1
     else:
-        pip_size = 0.0001  # Standard for most pairs
+        pip_size = 0.0001
     
-    # Calculate distance
     distance = abs(entry_price - sl_price)
     sl_pips = distance / pip_size
-    
     return sl_pips
 
-def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info=None):
     """
     Calculate lot size based on risk management formula:
     Lot size = RiskMoney / (SL pips × Pip Value per Lot)
@@ -442,6 +490,7 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
         risk_percent: Risk percentage (e.g., 1.0 for 1%)
         sl_pips: Stop Loss in pips
         symbol: Trading symbol (EURUSD, XAUUSD, etc.)
+        symbol_info: MT5 symbol_info object (optional, để tính pip value chính xác)
     
     Returns:
         lot_size: Calculated lot size
@@ -449,8 +498,8 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
     # Calculate risk money
     risk_money = account_balance * (risk_percent / 100.0)
     
-    # Get pip value per lot
-    pip_value_per_lot = get_pip_value_per_lot(symbol)
+    # Get pip value per lot (từ MT5 nếu có)
+    pip_value_per_lot = get_pip_value_per_lot(symbol, symbol_info)
     
     # Calculate lot size
     if sl_pips > 0 and pip_value_per_lot > 0:
@@ -1897,40 +1946,117 @@ def tuyen_trend_logic(config, error_count=0):
         sl = round(sl, digits)
         tp = round(tp, digits)
         
+        # 5.5. Calculate lot size based on risk management (if enabled)
+        if use_risk_based_lot:
+            # Get account balance
+            account_info = mt5.account_info()
+            if account_info:
+                account_balance = account_info.balance
+                # Calculate SL in pips (truyền symbol_info để tính chính xác)
+                sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+                # Get pip value (truyền symbol_info để tính chính xác)
+                pip_value = get_pip_value_per_lot(symbol, symbol_info)
+                # Calculate lot size (truyền symbol_info để tính chính xác)
+                calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info)
+                volume = calculated_volume
+                
+                # Get pip size for display
+                point = symbol_info.point
+                symbol_upper = symbol.upper()
+                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                    pip_size = 0.1 if point < 0.01 else point
+                elif 'JPY' in symbol_upper:
+                    pip_size = 0.01
+                else:
+                    pip_size = 0.0001
+                
+                print(f"   💰 Risk-Based Lot Calculation:")
+                print(f"      Account Balance: ${account_balance:.2f}")
+                print(f"      Risk: {risk_percent}% = ${account_balance * risk_percent / 100:.2f}")
+                print(f"      SL Distance: {sl_pips:.1f} pips (pip_size: {pip_size:.5f})")
+                print(f"      Pip Value: ${pip_value:.2f} per lot")
+                print(f"      Point: {point:.5f} | Contract Size: {getattr(symbol_info, 'trade_contract_size', 'N/A')}")
+                print(f"      Formula: Lot = ${account_balance * risk_percent / 100:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
+                print(f"      Calculated Lot: {volume:.2f}")
+            else:
+                print(f"   ⚠️ Không thể lấy account balance, sử dụng volume mặc định: {volume}")
+        else:
+            print(f"   📊 Sử dụng volume cố định từ config: {volume}")
+        
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
-        # Remove special characters, emojis, and limit to 31 chars
+        # MT5 is very strict: comment must be pure ASCII, max 31 chars, no special chars
         # Ensure reason is a string
         if not isinstance(reason, str):
             reason = str(reason) if reason else ""
         
-        # Remove all non-ASCII and special characters, keep only alphanumeric, underscore, hyphen
-        sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason)  # Only keep alphanumeric, underscore, hyphen
+        # Step 1: Remove all non-ASCII characters first
+        try:
+            # Encode to ASCII, ignore errors, then decode back
+            reason_ascii = reason.encode('ascii', 'ignore').decode('ascii')
+        except:
+            reason_ascii = ""
         
-        # If empty after sanitization, use default
+        # Step 2: Remove all special characters, keep only alphanumeric, underscore, hyphen
+        sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason_ascii)
+        
+        # Step 3: Remove leading/trailing hyphens and underscores (MT5 may not like them)
+        sanitized_comment = sanitized_comment.strip('_-')
+        
+        # Step 4: Replace multiple consecutive underscores/hyphens with single one
+        sanitized_comment = re.sub(r'[_-]+', '_', sanitized_comment)
+        
+        # Step 5: If empty or too short after sanitization, use default
         if not sanitized_comment or len(sanitized_comment.strip()) == 0:
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = f"TuyenTrend{signal_type}"
         
-        # Limit to 31 chars and ensure it's a valid string
+        # Step 6: Limit to 31 chars (MT5 max length)
         sanitized_comment = sanitized_comment[:31].strip()
         
-        # Final validation: ensure it's not empty and contains only valid chars
+        # Step 7: Final validation - ensure it's not empty and valid ASCII
         if not sanitized_comment or len(sanitized_comment) == 0:
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
         
-        # Final check: ensure comment is pure ASCII and valid
+        # Step 8: Final ASCII check - encode/decode to ensure pure ASCII
         try:
-            # Encode to ASCII to ensure no special characters
-            sanitized_comment.encode('ascii')
-        except UnicodeEncodeError:
-            # If encoding fails, use default
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = sanitized_comment.encode('ascii', 'strict').decode('ascii')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # If encoding fails, use safe default
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Step 9: Final length check (must be <= 31)
+        if len(sanitized_comment) > 31:
+            sanitized_comment = sanitized_comment[:31]
+        
+        # Step 10: Final validation - ensure it's not empty
+        if not sanitized_comment or len(sanitized_comment) == 0:
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Step 11: If comment starts with a number, prepend a letter (MT5 may reject numbers at start)
+        if sanitized_comment and len(sanitized_comment) > 0 and sanitized_comment[0].isdigit():
+            # Cut to 30 chars first, then add prefix to make it 31 max
+            sanitized_comment = sanitized_comment[:30] if len(sanitized_comment) > 30 else sanitized_comment
+            sanitized_comment = f"T{sanitized_comment}"[:31]
+        
+        # Step 12: Final length check again after any modifications
+        sanitized_comment = sanitized_comment[:31] if len(sanitized_comment) > 31 else sanitized_comment
         
         # Log for debugging
         print(f"   📝 Comment: Original='{reason}' → Sanitized='{sanitized_comment}' (length: {len(sanitized_comment)})")
         
-        # Final validation before adding to request
+        # Final check before adding to request - use safe default if still invalid
         if not sanitized_comment or len(sanitized_comment) == 0 or len(sanitized_comment) > 31:
-            sanitized_comment = f"TuyenTrend_{signal_type}"[:31]
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Ultimate safety: if comment is still invalid, use minimal safe comment
+        try:
+            # Final ASCII validation
+            sanitized_comment.encode('ascii', 'strict')
+            # Check length
+            if len(sanitized_comment) > 31 or len(sanitized_comment) == 0:
+                sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        except:
+            # If anything fails, use absolute safe default
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

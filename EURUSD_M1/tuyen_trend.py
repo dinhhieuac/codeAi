@@ -1993,16 +1993,31 @@ def tuyen_trend_logic(config, error_count=0):
             account_info = mt5.account_info()
             if account_info:
                 account_balance = account_info.balance
-                # Calculate SL in pips
-                sl_pips = calculate_sl_pips(price, sl, symbol)
-                # Calculate lot size
-                calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol)
+                # Calculate SL in pips (truyền symbol_info để tính chính xác)
+                sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+                # Get pip value (truyền symbol_info để tính chính xác)
+                pip_value = get_pip_value_per_lot(symbol, symbol_info)
+                # Calculate lot size (truyền symbol_info để tính chính xác)
+                calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info)
                 volume = calculated_volume
+                
+                # Get pip size for display
+                point = symbol_info.point
+                symbol_upper = symbol.upper()
+                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                    pip_size = 0.1 if point < 0.01 else point
+                elif 'JPY' in symbol_upper:
+                    pip_size = 0.01
+                else:
+                    pip_size = 0.0001
+                
                 print(f"   💰 Risk-Based Lot Calculation:")
                 print(f"      Account Balance: ${account_balance:.2f}")
                 print(f"      Risk: {risk_percent}% = ${account_balance * risk_percent / 100:.2f}")
-                print(f"      SL: {sl_pips:.1f} pips")
-                print(f"      Pip Value: ${get_pip_value_per_lot(symbol):.2f} per lot")
+                print(f"      SL Distance: {sl_pips:.1f} pips (pip_size: {pip_size:.5f})")
+                print(f"      Pip Value: ${pip_value:.2f} per lot")
+                print(f"      Point: {point:.5f} | Contract Size: {getattr(symbol_info, 'trade_contract_size', 'N/A')}")
+                print(f"      Formula: Lot = ${account_balance * risk_percent / 100:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
                 print(f"      Calculated Lot: {volume:.2f}")
             else:
                 print(f"   ⚠️ Không thể lấy account balance, sử dụng volume mặc định: {volume}")
@@ -2010,39 +2025,79 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   📊 Sử dụng volume cố định từ config: {volume}")
         
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
-        # Remove special characters, emojis, and limit to 31 chars
+        # MT5 is very strict: comment must be pure ASCII, max 31 chars, no special chars
         # Ensure reason is a string
         if not isinstance(reason, str):
             reason = str(reason) if reason else ""
         
-        # Remove all non-ASCII and special characters, keep only alphanumeric, underscore, hyphen
-        sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason)  # Only keep alphanumeric, underscore, hyphen
+        # Step 1: Remove all non-ASCII characters first
+        try:
+            # Encode to ASCII, ignore errors, then decode back
+            reason_ascii = reason.encode('ascii', 'ignore').decode('ascii')
+        except:
+            reason_ascii = ""
         
-        # If empty after sanitization, use default
+        # Step 2: Remove all special characters, keep only alphanumeric, underscore, hyphen
+        sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason_ascii)
+        
+        # Step 3: Remove leading/trailing hyphens and underscores (MT5 may not like them)
+        sanitized_comment = sanitized_comment.strip('_-')
+        
+        # Step 4: Replace multiple consecutive underscores/hyphens with single one
+        sanitized_comment = re.sub(r'[_-]+', '_', sanitized_comment)
+        
+        # Step 5: If empty or too short after sanitization, use default
         if not sanitized_comment or len(sanitized_comment.strip()) == 0:
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = f"TuyenTrend{signal_type}"
         
-        # Limit to 31 chars and ensure it's a valid string
+        # Step 6: Limit to 31 chars (MT5 max length)
         sanitized_comment = sanitized_comment[:31].strip()
         
-        # Final validation: ensure it's not empty and contains only valid chars
+        # Step 7: Final validation - ensure it's not empty and valid ASCII
         if not sanitized_comment or len(sanitized_comment) == 0:
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
         
-        # Final check: ensure comment is pure ASCII and valid
+        # Step 8: Final ASCII check - encode/decode to ensure pure ASCII
         try:
-            # Encode to ASCII to ensure no special characters
-            sanitized_comment.encode('ascii')
-        except UnicodeEncodeError:
-            # If encoding fails, use default
-            sanitized_comment = f"TuyenTrend_{signal_type}"
+            sanitized_comment = sanitized_comment.encode('ascii', 'strict').decode('ascii')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # If encoding fails, use safe default
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Step 9: Final length check (must be <= 31)
+        if len(sanitized_comment) > 31:
+            sanitized_comment = sanitized_comment[:31]
+        
+        # Step 10: Final validation - ensure it's not empty
+        if not sanitized_comment or len(sanitized_comment) == 0:
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Step 11: If comment starts with a number, prepend a letter (MT5 may reject numbers at start)
+        if sanitized_comment and len(sanitized_comment) > 0 and sanitized_comment[0].isdigit():
+            # Cut to 30 chars first, then add prefix to make it 31 max
+            sanitized_comment = sanitized_comment[:30] if len(sanitized_comment) > 30 else sanitized_comment
+            sanitized_comment = f"T{sanitized_comment}"[:31]
+        
+        # Step 12: Final length check again after any modifications
+        sanitized_comment = sanitized_comment[:31] if len(sanitized_comment) > 31 else sanitized_comment
         
         # Log for debugging
         print(f"   📝 Comment: Original='{reason}' → Sanitized='{sanitized_comment}' (length: {len(sanitized_comment)})")
         
-        # Final validation before adding to request
+        # Final check before adding to request - use safe default if still invalid
         if not sanitized_comment or len(sanitized_comment) == 0 or len(sanitized_comment) > 31:
-            sanitized_comment = f"TuyenTrend_{signal_type}"[:31]
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        
+        # Ultimate safety: if comment is still invalid, use minimal safe comment
+        try:
+            # Final ASCII validation
+            sanitized_comment.encode('ascii', 'strict')
+            # Check length
+            if len(sanitized_comment) > 31 or len(sanitized_comment) == 0:
+                sanitized_comment = f"TuyenTrend{signal_type}"[:31]
+        except:
+            # If anything fails, use absolute safe default
+            sanitized_comment = f"TuyenTrend{signal_type}"[:31]
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,

@@ -59,40 +59,98 @@ def calculate_atr(df, period=14):
     atr_series = df['tr'].rolling(window=period).mean()
     return atr_series
 
-def get_pip_value_per_lot(symbol):
-    """Get pip value per lot for a symbol"""
-    symbol_upper = symbol.upper()
-    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
-        return 10.0
-    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        return 1.0
-    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
-        return 10.0
-    else:
+def get_pip_value_per_lot(symbol, symbol_info=None):
+    """Get pip value per lot for a symbol - lấy từ MT5 nếu có"""
+    if symbol_info is None:
         symbol_info = mt5.symbol_info(symbol)
-        if symbol_info:
-            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
-            if contract_size == 100000:
-                return 10.0
+    
+    if symbol_info:
+        # Lấy từ MT5 symbol_info (chính xác nhất)
+        # trade_tick_value = giá trị của 1 tick movement
+        # trade_tick_size = kích thước của 1 tick
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+        point = getattr(symbol_info, 'point', 0.0001)
+        
+        # Với XAUUSD: thường 1 lot = 100 oz, 1 point = 0.01, tick_value = $0.01 per point per lot
+        # Pip value = tick_value * (pip_size / tick_size)
+        if tick_value and tick_size and tick_size > 0:
+            # Pip size thường là 10x point (0.1 cho XAUUSD, 0.0001 cho EURUSD)
+            pip_size = point * 10 if 'XAU' in symbol.upper() or 'GOLD' in symbol.upper() else point * 10
+            pip_value = tick_value * (pip_size / tick_size)
+            if pip_value > 0:
+                return pip_value
+        
+        # Fallback: tính từ contract_size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            # XAUUSD: 1 lot = 100 oz, 1 pip (0.1) = $1 per lot
+            # Nhưng có thể khác tùy broker
+            if contract_size == 100:
+                return 1.0  # $1 per pip per lot
             else:
-                return contract_size / 10000
-        return 10.0
+                return contract_size / 100  # Approximate
+        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+            return 10.0
+        else:
+            return 10.0
+    
+    # Default fallback
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    return 10.0
 
-def calculate_sl_pips(entry_price, sl_price, symbol):
-    """Calculate SL distance in pips"""
+def calculate_sl_pips(entry_price, sl_price, symbol, symbol_info=None):
+    """Calculate SL distance in pips - lấy pip size từ MT5"""
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
+    
+    if symbol_info:
+        # Lấy point và digits từ MT5
+        point = getattr(symbol_info, 'point', 0.0001)
+        digits = getattr(symbol_info, 'digits', 5)
+        
+        # Pip size: thường là 10x point
+        # XAUUSD: point = 0.01, pip = 0.1 (10 points)
+        # EURUSD: point = 0.00001, pip = 0.0001 (10 points)
+        pip_size = point * 10
+        
+        # Một số broker XAUUSD dùng point = 0.01, pip = 0.01 (1 point = 1 pip)
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            # Kiểm tra: nếu point = 0.01, có thể pip = 0.01 hoặc 0.1
+            if point >= 0.01:
+                pip_size = point  # 1 point = 1 pip
+            else:
+                pip_size = point * 10  # 10 points = 1 pip
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01  # JPY pairs
+        else:
+            pip_size = 0.0001  # Standard for most pairs
+        
+        distance = abs(entry_price - sl_price)
+        sl_pips = distance / pip_size
+        return sl_pips
+    
+    # Fallback
     symbol_upper = symbol.upper()
     if 'JPY' in symbol_upper:
         pip_size = 0.01
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        pip_size = 0.1  # XAUUSD: 1 pip = 0.1
     else:
         pip_size = 0.0001
+    
     distance = abs(entry_price - sl_price)
     sl_pips = distance / pip_size
     return sl_pips
 
-def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info=None):
     """Calculate lot size based on risk management"""
     risk_money = account_balance * (risk_percent / 100.0)
-    pip_value_per_lot = get_pip_value_per_lot(symbol)
+    pip_value_per_lot = get_pip_value_per_lot(symbol, symbol_info)
     
     if sl_pips > 0 and pip_value_per_lot > 0:
         lot_size = risk_money / (sl_pips * pip_value_per_lot)
@@ -262,18 +320,35 @@ def open_test_order():
     
     # Calculate lot size
     if use_risk_based_lot:
-        sl_pips = calculate_sl_pips(price, sl, symbol)
-        volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol)
-        pip_value = get_pip_value_per_lot(symbol)
+        # Lấy pip size và pip value từ MT5 (chính xác hơn)
+        point = symbol_info.point
+        digits = symbol_info.digits
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100)
+        
+        # Tính pip size
+        if 'XAUUSD' in symbol.upper() or 'GOLD' in symbol.upper():
+            if point >= 0.01:
+                pip_size = point  # 1 point = 1 pip
+            else:
+                pip_size = point * 10  # 10 points = 1 pip
+        else:
+            pip_size = point * 10
+        
+        sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+        pip_value = get_pip_value_per_lot(symbol, symbol_info)
         risk_money = account_balance * (risk_percent / 100.0)
+        volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info)
         
         print(f"\n{'='*80}")
         print("💰 RISK-BASED LOT CALCULATION")
         print(f"{'='*80}")
         print(f"   Account Balance: ${account_balance:,.2f}")
         print(f"   Risk: {risk_percent}% = ${risk_money:.2f}")
-        print(f"   SL Distance: {sl_pips:.1f} pips")
+        print(f"   SL Distance: {sl_pips:.1f} pips (pip_size: {pip_size:.5f})")
         print(f"   Pip Value: ${pip_value:.2f} per lot")
+        print(f"   Point: {point:.5f} | Tick Value: {tick_value} | Tick Size: {tick_size} | Contract Size: {contract_size}")
         print(f"   Formula: Lot = ${risk_money:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
         print(f"   ✅ Calculated Lot: {volume:.2f}")
     else:
@@ -292,12 +367,18 @@ def open_test_order():
     print(f"   Volume: {volume:.2f} lot")
     print(f"   Risk:Reward = 1:{reward_ratio:.1f}")
     
-    # Calculate expected risk/reward
-    sl_pips = calculate_sl_pips(price, sl, symbol)
-    tp_pips = sl_pips * reward_ratio
-    pip_value = get_pip_value_per_lot(symbol)
-    expected_risk = volume * sl_pips * pip_value
-    expected_reward = volume * tp_pips * pip_value
+    # Calculate expected risk/reward (dùng lại giá trị đã tính)
+    if use_risk_based_lot:
+        # sl_pips và pip_value đã được tính ở trên
+        tp_pips = sl_pips * reward_ratio
+        expected_risk = volume * sl_pips * pip_value
+        expected_reward = volume * tp_pips * pip_value
+    else:
+        sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+        tp_pips = sl_pips * reward_ratio
+        pip_value = get_pip_value_per_lot(symbol, symbol_info)
+        expected_risk = volume * sl_pips * pip_value
+        expected_reward = volume * tp_pips * pip_value
     
     print(f"\n   💰 Expected Risk: ${expected_risk:.2f}")
     print(f"   💰 Expected Reward: ${expected_reward:.2f}")
