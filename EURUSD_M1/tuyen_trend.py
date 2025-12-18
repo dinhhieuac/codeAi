@@ -951,6 +951,11 @@ def tuyen_trend_logic(config, error_count=0):
     risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
     use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
     
+    # Load parameters config
+    parameters_config = config.get('parameters', {})
+    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)  # Default 2.0 for SL
+    reward_ratio = parameters_config.get('reward_ratio', 2.0)  # Default 2.0 for R:R (1:2)
+    
     # Language setting (Vietnamese or English)
     lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
     
@@ -1837,19 +1842,23 @@ def tuyen_trend_logic(config, error_count=0):
         atr_val = recent_range / 14 if recent_range > 0 else 0.0001
         print(f"   ⚠️ ATR is NaN, using fallback: {atr_val:.5f}")
     
+    # Calculate SL and TP using config parameters
+    sl_distance = atr_multiplier * atr_val
+    tp_distance = atr_multiplier * atr_val * reward_ratio
+    
     if signal_type == "BUY":
         if price > trigger_high:
             execute = True
-            sl = price - (2 * atr_val)
-            tp = price + (4 * atr_val)
+            sl = price - sl_distance
+            tp = price + tp_distance
         else:
             distance = trigger_high - price
             print(f"   {t('waiting_breakout', lang)} > {trigger_high:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
     elif signal_type == "SELL":
         if price < trigger_low:
             execute = True
-            sl = price + (2 * atr_val)
-            tp = price - (4 * atr_val)
+            sl = price + sl_distance
+            tp = price - tp_distance
         else:
             distance = price - trigger_low
             print(f"   {t('waiting_breakout', lang)} < {trigger_low:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
@@ -1887,7 +1896,7 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   {t('no_recent_trades', lang)}")
 
         print(f"\n{t('signal_execute', lang)} {signal_type} @ {price:.5f} | {reason}")
-        print(f"   SL: {sl:.5f} (2x ATR) | TP: {tp:.5f} (4x ATR) | R:R = 1:2")
+        print(f"   📊 ATR: {atr_val:.5f} | SL: {sl:.5f} ({atr_multiplier}x ATR = {sl_distance:.5f}) | TP: {tp:.5f} ({atr_multiplier * reward_ratio}x ATR = {tp_distance:.5f}) | R:R = 1:{reward_ratio:.1f}")
         
         # === PRE-ORDER VALIDATION ===
         # Helper function để gửi error notification
