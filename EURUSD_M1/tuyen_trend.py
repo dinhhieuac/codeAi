@@ -901,49 +901,57 @@ def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
     return False
 
 def tuyen_trend_logic(config, error_count=0):
-    symbol = config['symbol']
-    volume = config.get('volume', 0.01)  # Default volume (will be overridden by risk-based calculation if enabled)
-    magic = config['magic']
-    max_positions = config.get('max_positions', 1)
-    
-    # Risk management parameters
-    risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
-    use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
-    
-    # Load parameters config
-    parameters_config = config.get('parameters', {})
-    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)  # Default 2.0 for SL
-    reward_ratio = parameters_config.get('reward_ratio', 2.0)  # Default 2.0 for R:R (1:2)
-    
-    # Language setting (Vietnamese or English)
-    lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
-    
-    # Load filter configs with defaults
-    filters_config = config.get('filters', {})
-    m1_structure_require_both = filters_config.get('m1_structure_require_both', True)
-    signal_cluster_count = filters_config.get('signal_cluster_count', 2)
-    signal_cluster_window = filters_config.get('signal_cluster_window', 3)
-    min_zone_distance_pips = filters_config.get('min_zone_distance_pips', 10)
-    breakout_lookback_candles = filters_config.get('breakout_lookback_candles', 100)
-    signal_candle_min_criteria = filters_config.get('signal_candle_min_criteria', 6)
-    smooth_pullback_max_candle_multiplier = filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)
-    smooth_pullback_max_gap_multiplier = filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)
-    
-    # --- 1. Manage Existing Positions ---
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions:
-        for pos in positions:
-            manage_position(pos.ticket, symbol, magic, config)
-        if len(positions) >= max_positions:
-            return error_count, 0
+    try:
+        symbol = config['symbol']
+        volume = config.get('volume', 0.01)  # Default volume (will be overridden by risk-based calculation if enabled)
+        magic = config['magic']
+        max_positions = config.get('max_positions', 1)
+        
+        # Risk management parameters
+        risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
+        use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
+        
+        # Load parameters config
+        parameters_config = config.get('parameters', {})
+        atr_multiplier = parameters_config.get('atr_multiplier', 2.0)  # Default 2.0 for SL
+        reward_ratio = parameters_config.get('reward_ratio', 2.0)  # Default 2.0 for R:R (1:2)
+        
+        # Language setting (Vietnamese or English)
+        lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
+        
+        # Load filter configs with defaults
+        filters_config = config.get('filters', {})
+        m1_structure_require_both = filters_config.get('m1_structure_require_both', True)
+        signal_cluster_count = filters_config.get('signal_cluster_count', 2)
+        signal_cluster_window = filters_config.get('signal_cluster_window', 3)
+        min_zone_distance_pips = filters_config.get('min_zone_distance_pips', 10)
+        breakout_lookback_candles = filters_config.get('breakout_lookback_candles', 100)
+        signal_candle_min_criteria = filters_config.get('signal_candle_min_criteria', 6)
+        smooth_pullback_max_candle_multiplier = filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)
+        smooth_pullback_max_gap_multiplier = filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)
+        
+        # --- 1. Manage Existing Positions ---
+        positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if positions:
+            for pos in positions:
+                manage_position(pos.ticket, symbol, magic, config)
+            if len(positions) >= max_positions:
+                return error_count, 0
 
-    # --- 2. Data Fetching ---
-    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # H1 for higher-timeframe bias
-    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
-    df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
-    
-    if df_m1 is None or df_m5 is None: return error_count, 0
-    if df_h1 is None: df_h1 = df_m5  # Fallback to M5 if H1 not available
+        # --- 2. Data Fetching ---
+        df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # H1 for higher-timeframe bias
+        df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
+        df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+        
+        if df_m1 is None or df_m5 is None:
+            print(f"⚠️ Không thể lấy dữ liệu M1 hoặc M5 cho {symbol}")
+            return error_count, 0
+        if df_h1 is None: df_h1 = df_m5  # Fallback to M5 if H1 not available
+    except Exception as e:
+        print(f"❌ Lỗi trong tuyen_trend_logic (phần đầu): {e}")
+        import traceback
+        traceback.print_exc()
+        return error_count + 1, 0
 
     # --- 3. H1 Higher-timeframe Bias (Supply/Demand) ---
     h1_bias = None
@@ -2219,8 +2227,13 @@ if __name__ == "__main__":
             
             print("🔄 Bắt đầu vòng lặp chính...\n")
             
+            loop_count = 0
             while True:
                 try:
+                    loop_count += 1
+                    if loop_count % 60 == 0:  # Print every 60 iterations (~1 minute)
+                        print(f"⏳ Bot đang chạy... (vòng lặp #{loop_count})")
+                    
                     consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
                     if consecutive_errors >= 5:
                         print("⚠️ Too many errors. Pausing...")
