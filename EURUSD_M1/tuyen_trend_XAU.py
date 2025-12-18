@@ -1798,10 +1798,38 @@ def tuyen_trend_logic(config, error_count=0):
         
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
         # Remove special characters, emojis, and limit to 31 chars
+        # Ensure reason is a string
+        if not isinstance(reason, str):
+            reason = str(reason) if reason else ""
+        
+        # Remove all non-ASCII and special characters, keep only alphanumeric, underscore, hyphen
         sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason)  # Only keep alphanumeric, underscore, hyphen
-        if not sanitized_comment:  # If empty after sanitization, use default
+        
+        # If empty after sanitization, use default
+        if not sanitized_comment or len(sanitized_comment.strip()) == 0:
             sanitized_comment = f"TuyenTrend_{signal_type}"
-        sanitized_comment = sanitized_comment[:31]  # Limit to 31 chars
+        
+        # Limit to 31 chars and ensure it's a valid string
+        sanitized_comment = sanitized_comment[:31].strip()
+        
+        # Final validation: ensure it's not empty and contains only valid chars
+        if not sanitized_comment or len(sanitized_comment) == 0:
+            sanitized_comment = f"TuyenTrend_{signal_type}"
+        
+        # Final check: ensure comment is pure ASCII and valid
+        try:
+            # Encode to ASCII to ensure no special characters
+            sanitized_comment.encode('ascii')
+        except UnicodeEncodeError:
+            # If encoding fails, use default
+            sanitized_comment = f"TuyenTrend_{signal_type}"
+        
+        # Log for debugging
+        print(f"   📝 Comment: Original='{reason}' → Sanitized='{sanitized_comment}' (length: {len(sanitized_comment)})")
+        
+        # Final validation before adding to request
+        if not sanitized_comment or len(sanitized_comment) == 0 or len(sanitized_comment) > 31:
+            sanitized_comment = f"TuyenTrend_{signal_type}"[:31]
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
