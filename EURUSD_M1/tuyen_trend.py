@@ -2203,24 +2203,49 @@ if __name__ == "__main__":
     
     consecutive_errors = 0
     if connect_mt5(config):
-        print("\n" + "="*80)
-        print(f"✅ Tuyen Trend Bot (V2) - Started")
-        print(f"📋 Chế độ: {mode_name}")
-        print(f"📁 Config: {config_filename}")
-        print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
-        print(f"📊 Volume: {config.get('volume', 'N/A')}")
-        print("="*80 + "\n")
         try:
+            print("\n" + "="*80)
+            print(f"✅ Tuyen Trend Bot (V2) - Started")
+            print(f"📋 Chế độ: {mode_name}")
+            print(f"📁 Config: {config_filename}")
+            print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
+            print(f"📊 Volume: {config.get('volume', 'N/A')}")
+            print("="*80 + "\n")
+            
+            # Verify MT5 connection is still active
+            if not mt5.terminal_info():
+                print("❌ MT5 Terminal không còn kết nối sau khi khởi động")
+                sys.exit(1)
+            
+            print("🔄 Bắt đầu vòng lặp chính...\n")
+            
             while True:
-                consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
-                if consecutive_errors >= 5:
-                    print("⚠️ Too many errors. Pausing...")
-                    time.sleep(120)
-                    consecutive_errors = 0
-                time.sleep(1)
+                try:
+                    consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
+                    if consecutive_errors >= 5:
+                        print("⚠️ Too many errors. Pausing...")
+                        time.sleep(120)
+                        consecutive_errors = 0
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"❌ Lỗi trong tuyen_trend_logic: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    consecutive_errors += 1
+                    if consecutive_errors >= 5:
+                        print("⚠️ Too many errors. Pausing...")
+                        time.sleep(120)
+                        consecutive_errors = 0
+                    time.sleep(5)  # Wait longer on error
         except KeyboardInterrupt:
             print("\n\n⚠️ Bot stopped by user")
             mt5.shutdown()
+        except Exception as e:
+            print(f"\n❌ Lỗi nghiêm trọng trong bot: {e}")
+            import traceback
+            traceback.print_exc()
+            mt5.shutdown()
+            sys.exit(1)
     else:
         print("❌ Không thể kết nối MT5. Vui lòng kiểm tra lại.")
         sys.exit(1)
