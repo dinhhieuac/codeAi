@@ -2067,7 +2067,7 @@ def tuyen_trend_logic(config, error_count=0):
             "sl": sl,
             "tp": tp,
             "magic": magic,
-            "comment": sanitized_comment,
+            # "comment": sanitized_comment,  # Removed to avoid MT5 comment validation errors
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
