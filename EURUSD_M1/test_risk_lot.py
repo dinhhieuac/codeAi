@@ -5,9 +5,50 @@ Không gửi lệnh thật lên MT5, chỉ in log để test
 
 import sys
 import os
-sys.path.append('..')
-from utils import load_config, connect_mt5
-import MetaTrader5 as mt5
+import json
+
+# Try to import MT5 (optional)
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
+    print("⚠️ MetaTrader5 module not available, using test values only")
+
+def load_config(config_path):
+    """Load configuration from JSON file"""
+    if not os.path.exists(config_path):
+        print(f"❌ Config file not found: {config_path}")
+        return None
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"❌ Error loading config: {e}")
+        return None
+
+def connect_mt5(config):
+    """Try to connect to MT5 (optional)"""
+    if not MT5_AVAILABLE:
+        return False
+    try:
+        login = config.get("account")
+        password = config.get("password")
+        server = config.get("server")
+        path = config.get("mt5_path")
+        
+        if not all([login, password, server]):
+            return False
+        
+        if path:
+            if not mt5.initialize(path=path, login=login, password=password, server=server):
+                return False
+        else:
+            if not mt5.initialize(login=login, password=password, server=server):
+                return False
+        return True
+    except:
+        return False
 
 def get_pip_value_per_lot(symbol):
     """
@@ -138,10 +179,10 @@ def test_risk_lot_calculation():
             "risk_percent": risk_percent
         },
         {
-            "name": "XAUUSD - SL 20 pips",
+            "name": "XAUUSD - SL 20 USD (200 pips)",
             "symbol": "XAUUSD",
             "entry_price": 2000.00,
-            "sl_price": 1998.00,  # 20 pips (20 USD)
+            "sl_price": 1998.00,  # 20 USD = 200 pips (vì 1 pip = $0.1 với XAUUSD)
             "account_balance": account_balance,
             "risk_percent": risk_percent
         },
@@ -209,7 +250,7 @@ def test_risk_lot_calculation():
     print(f"{'='*80}\n")
     
     # Cleanup
-    if mt5.terminal_info():
+    if MT5_AVAILABLE and mt5.terminal_info():
         mt5.shutdown()
 
 if __name__ == "__main__":
