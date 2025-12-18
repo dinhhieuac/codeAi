@@ -85,11 +85,7 @@ def main():
     # Map Strategy Names to Config Files
     # (Must match the names used in your strategy scripts)
     strategies = {
-        "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
-        "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
-        "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
-        "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),
-        "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
+        "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json")
     }
     
     from datetime import datetime
