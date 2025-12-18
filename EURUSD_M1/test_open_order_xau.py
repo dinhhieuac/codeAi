@@ -405,15 +405,7 @@ def open_test_order():
             mt5.shutdown()
             return
     
-    # Sanitize comment
-    import re
-    reason = f"TestXAU_{signal_type}_RiskBased"
-    sanitized_comment = re.sub(r'[^a-zA-Z0-9_\-]', '', reason)
-    if not sanitized_comment:
-        sanitized_comment = f"TestXAU{signal_type}"
-    sanitized_comment = sanitized_comment[:31]
-    
-    # Prepare request
+    # Prepare request (comment removed to avoid MT5 validation errors)
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -423,7 +415,7 @@ def open_test_order():
         "sl": sl,
         "tp": tp,
         "magic": magic,
-        "comment": sanitized_comment,
+        # "comment": sanitized_comment,  # Removed to avoid MT5 comment validation errors
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_FOK,
     }
@@ -466,7 +458,6 @@ def open_test_order():
         print(f"   💰 Expected Risk: ${expected_risk:.2f}")
         print(f"   💰 Expected Reward: ${expected_reward:.2f}")
         print(f"   📊 R:R = 1:{reward_ratio:.1f}")
-        print(f"   📋 Comment: {sanitized_comment}")
         
         # Get position info
         positions = mt5.positions_get(symbol=symbol, magic=magic)
