@@ -380,6 +380,182 @@ def calculate_atr(df, period=14):
     atr_series = df['tr'].rolling(window=period).mean()
     return atr_series
 
+def get_pip_value_per_lot(symbol):
+    """
+    Get pip value per lot for a symbol
+    EURUSD: 1 pip = $10 per lot (standard)
+    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
+    """
+    symbol_upper = symbol.upper()
+    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
+        return 10.0  # $10 per pip per lot for major pairs
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0   # $1 per pip per lot for gold (may vary)
+    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
+        # For JPY pairs, pip value depends on current price
+        # Approximate: $10 per pip per lot (but varies with price)
+        return 10.0
+    else:
+        # Default: try to get from MT5
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            # Contract size / 100000 for most pairs
+            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+            if contract_size == 100000:
+                return 10.0  # Standard
+            else:
+                return contract_size / 10000  # Approximate
+        return 10.0  # Default fallback
+
+def calculate_sl_pips(entry_price, sl_price, symbol):
+    """
+    Calculate SL distance in pips
+    
+    Args:
+        entry_price: Entry price
+        sl_price: Stop Loss price
+        symbol: Trading symbol
+    
+    Returns:
+        sl_pips: Stop Loss in pips
+    """
+    symbol_upper = symbol.upper()
+    
+    # For JPY pairs, 1 pip = 0.01
+    if 'JPY' in symbol_upper:
+        pip_size = 0.01
+    else:
+        pip_size = 0.0001  # Standard for most pairs
+    
+    # Calculate distance
+    distance = abs(entry_price - sl_price)
+    sl_pips = distance / pip_size
+    
+    return sl_pips
+
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
+    """
+    Calculate lot size based on risk management formula:
+    Lot size = RiskMoney / (SL pips × Pip Value per Lot)
+    
+    Args:
+        account_balance: Account balance in USD
+        risk_percent: Risk percentage (e.g., 1.0 for 1%)
+        sl_pips: Stop Loss in pips
+        symbol: Trading symbol (EURUSD, XAUUSD, etc.)
+    
+    Returns:
+        lot_size: Calculated lot size
+    """
+    # Calculate risk money
+    risk_money = account_balance * (risk_percent / 100.0)
+    
+    # Get pip value per lot
+    pip_value_per_lot = get_pip_value_per_lot(symbol)
+    
+    # Calculate lot size
+    if sl_pips > 0 and pip_value_per_lot > 0:
+        lot_size = risk_money / (sl_pips * pip_value_per_lot)
+    else:
+        lot_size = 0.01  # Default minimum
+    
+    # Round to 2 decimal places (standard lot step is 0.01)
+    lot_size = round(lot_size, 2)
+    
+    # Ensure minimum lot size
+    if lot_size < 0.01:
+        lot_size = 0.01
+    
+    return lot_size
+
+def get_pip_value_per_lot(symbol):
+    """
+    Get pip value per lot for a symbol
+    EURUSD: 1 pip = $10 per lot (standard)
+    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
+    """
+    symbol_upper = symbol.upper()
+    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'AUDUSD' in symbol_upper or 'NZDUSD' in symbol_upper:
+        return 10.0  # $10 per pip per lot for major pairs
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0   # $1 per pip per lot for gold (may vary)
+    elif 'USDJPY' in symbol_upper or 'USDCHF' in symbol_upper or 'USDCAD' in symbol_upper:
+        # For JPY pairs, pip value depends on current price
+        # Approximate: $10 per pip per lot (but varies with price)
+        return 10.0
+    else:
+        # Default: try to get from MT5
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            # Contract size / 100000 for most pairs
+            contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+            if contract_size == 100000:
+                return 10.0  # Standard
+            else:
+                return contract_size / 10000  # Approximate
+        return 10.0  # Default fallback
+
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol):
+    """
+    Calculate lot size based on risk management formula:
+    Lot size = RiskMoney / (SL pips × Pip Value per Lot)
+    
+    Args:
+        account_balance: Account balance in USD
+        risk_percent: Risk percentage (e.g., 1.0 for 1%)
+        sl_pips: Stop Loss in pips
+        symbol: Trading symbol (EURUSD, XAUUSD, etc.)
+    
+    Returns:
+        lot_size: Calculated lot size
+    """
+    # Calculate risk money
+    risk_money = account_balance * (risk_percent / 100.0)
+    
+    # Get pip value per lot
+    pip_value_per_lot = get_pip_value_per_lot(symbol)
+    
+    # Calculate lot size
+    if sl_pips > 0 and pip_value_per_lot > 0:
+        lot_size = risk_money / (sl_pips * pip_value_per_lot)
+    else:
+        lot_size = 0.01  # Default minimum
+    
+    # Round to 2 decimal places (standard lot step is 0.01)
+    lot_size = round(lot_size, 2)
+    
+    # Ensure minimum lot size
+    if lot_size < 0.01:
+        lot_size = 0.01
+    
+    return lot_size
+
+def calculate_sl_pips(entry_price, sl_price, symbol):
+    """
+    Calculate SL distance in pips
+    
+    Args:
+        entry_price: Entry price
+        sl_price: Stop Loss price
+        symbol: Trading symbol
+    
+    Returns:
+        sl_pips: Stop Loss in pips
+    """
+    symbol_upper = symbol.upper()
+    
+    # For JPY pairs, 1 pip = 0.01
+    if 'JPY' in symbol_upper:
+        pip_size = 0.01
+    else:
+        pip_size = 0.0001  # Standard for most pairs
+    
+    # Calculate distance
+    distance = abs(entry_price - sl_price)
+    sl_pips = distance / pip_size
+    
+    return sl_pips
+
 def is_doji(row, body_percent=0.1):
     """Body is less than 10% of total range"""
     rng = row['high'] - row['low']
@@ -767,9 +943,13 @@ def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
 
 def tuyen_trend_logic(config, error_count=0):
     symbol = config['symbol']
-    volume = config['volume']
+    volume = config.get('volume', 0.01)  # Default volume (will be overridden by risk-based calculation if enabled)
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
+    
+    # Risk management parameters
+    risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
+    use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
     
     # Language setting (Vietnamese or English)
     lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
@@ -1797,6 +1977,28 @@ def tuyen_trend_logic(config, error_count=0):
         price = round(price, digits)
         sl = round(sl, digits)
         tp = round(tp, digits)
+        
+        # 5.5. Calculate lot size based on risk management (if enabled)
+        if use_risk_based_lot:
+            # Get account balance
+            account_info = mt5.account_info()
+            if account_info:
+                account_balance = account_info.balance
+                # Calculate SL in pips
+                sl_pips = calculate_sl_pips(price, sl, symbol)
+                # Calculate lot size
+                calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol)
+                volume = calculated_volume
+                print(f"   💰 Risk-Based Lot Calculation:")
+                print(f"      Account Balance: ${account_balance:.2f}")
+                print(f"      Risk: {risk_percent}% = ${account_balance * risk_percent / 100:.2f}")
+                print(f"      SL: {sl_pips:.1f} pips")
+                print(f"      Pip Value: ${get_pip_value_per_lot(symbol):.2f} per lot")
+                print(f"      Calculated Lot: {volume:.2f}")
+            else:
+                print(f"   ⚠️ Không thể lấy account balance, sử dụng volume mặc định: {volume}")
+        else:
+            print(f"   📊 Sử dụng volume cố định từ config: {volume}")
         
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
         # Remove special characters, emojis, and limit to 31 chars

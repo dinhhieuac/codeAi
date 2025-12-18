@@ -14,8 +14,14 @@
     "_comment_symbol": "Cặp tiền giao dịch (EURUSD, XAUUSD, ...)",
     "symbol": "EURUSD",
     
-    "_comment_volume": "Khối lượng giao dịch (lot). 0.01 = 1 micro lot",
+    "_comment_volume": "Khối lượng giao dịch (lot). 0.01 = 1 micro lot. Chỉ dùng khi use_risk_based_lot = false",
     "volume": 0.01,
+    
+    "_comment_risk_percent": "Tỷ lệ rủi ro mỗi lệnh (%). 1.0 = rủi ro 1% vốn. Ví dụ: vốn $10,000, risk 1% = $100",
+    "risk_percent": 1.0,
+    
+    "_comment_use_risk_based_lot": "true = Tính lot size tự động theo risk management. false = Dùng volume cố định từ config",
+    "use_risk_based_lot": true,
     
     "_comment_magic": "Magic number để phân biệt lệnh của bot này với bot khác",
     "magic": 400006,
