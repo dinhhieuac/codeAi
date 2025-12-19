@@ -1212,6 +1212,7 @@ def tuyen_trend_logic(config, error_count=0):
     pass_fib_strat2 = False
     pattern_type = None
     fib_levels = None
+    fib_levels_strat2 = None  # Initialize for Strategy 2 Fibonacci
     
     # Higher-timeframe bias filter: Only trade in direction of H1 bias
     if h1_bias is not None:
@@ -1955,6 +1956,12 @@ def tuyen_trend_logic(config, error_count=0):
         tp = round(tp, digits)
         
         # 5.5. Calculate lot size based on risk management (if enabled)
+        # Initialize variables for Telegram message
+        sl_pips = 0.0
+        account_balance = 0.0
+        pip_value = 0.0
+        risk_money = 0.0
+        
         if use_risk_based_lot:
             # Get account balance
             account_info = mt5.account_info()
@@ -1967,6 +1974,7 @@ def tuyen_trend_logic(config, error_count=0):
                 # Calculate lot size (truyền symbol_info để tính chính xác)
                 calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info)
                 volume = calculated_volume
+                risk_money = account_balance * risk_percent / 100.0
                 
                 # Get pip size for display
                 point = symbol_info.point
@@ -1980,16 +1988,23 @@ def tuyen_trend_logic(config, error_count=0):
                 
                 print(f"   💰 Risk-Based Lot Calculation:")
                 print(f"      Account Balance: ${account_balance:.2f}")
-                print(f"      Risk: {risk_percent}% = ${account_balance * risk_percent / 100:.2f}")
+                print(f"      Risk: {risk_percent}% = ${risk_money:.2f}")
                 print(f"      SL Distance: {sl_pips:.1f} pips (pip_size: {pip_size:.5f})")
                 print(f"      Pip Value: ${pip_value:.2f} per lot")
                 print(f"      Point: {point:.5f} | Contract Size: {getattr(symbol_info, 'trade_contract_size', 'N/A')}")
-                print(f"      Formula: Lot = ${account_balance * risk_percent / 100:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
+                print(f"      Formula: Lot = ${risk_money:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
                 print(f"      Calculated Lot: {volume:.2f}")
             else:
                 print(f"   ⚠️ Không thể lấy account balance, sử dụng volume mặc định: {volume}")
         else:
             print(f"   📊 Sử dụng volume cố định từ config: {volume}")
+            # Still calculate sl_pips for display
+            if symbol_info:
+                sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+                pip_value = get_pip_value_per_lot(symbol, symbol_info)
+                account_info = mt5.account_info()
+                if account_info:
+                    account_balance = account_info.balance
         
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
         # MT5 is very strict: comment must be pure ASCII, max 31 chars, no special chars
@@ -2116,15 +2131,114 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
             
-             # Telegram
-            msg = (
-                f"✅ <b>Tuyen Trend Bot Triggered</b>\n"
-                f"🆔 <b>Ticket:</b> {result.order}\n"
-                f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
-                f"📋 <b>Reason:</b> {reason}\n"
-                f"💵 <b>Price:</b> {price}\n"
-                f"🛑 <b>SL:</b> {sl:.5f} | 🎯 <b>TP:</b> {tp:.5f}\n"
-            )
+            # === DETAILED TELEGRAM MESSAGE ===
+            # Build detailed message with all conditions met
+            msg_parts = []
+            msg_parts.append(f"✅ <b>Tuyen Trend Bot - Lệnh Đã Được Thực Hiện</b>\n")
+            msg_parts.append(f"{'='*50}\n")
+            
+            # Basic Order Info
+            msg_parts.append(f"🆔 <b>Ticket:</b> {result.order}\n")
+            msg_parts.append(f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n")
+            msg_parts.append(f"💵 <b>Entry Price:</b> {price:.5f}\n")
+            msg_parts.append(f"🛑 <b>SL:</b> {sl:.5f} ({atr_multiplier}x ATR = {sl_distance:.5f})\n")
+            msg_parts.append(f"🎯 <b>TP:</b> {tp:.5f} ({atr_multiplier * reward_ratio}x ATR = {tp_distance:.5f})\n")
+            msg_parts.append(f"📊 <b>R:R Ratio:</b> 1:{reward_ratio:.1f}\n")
+            msg_parts.append(f"📦 <b>Volume:</b> {volume:.2f} lot\n")
+            msg_parts.append(f"\n")
+            
+            # Strategy Info
+            strategy_name = "Strategy 1 (Pullback + Doji/Pinbar Cluster)" if is_strat1 else "Strategy 2 (Continuation + Structure)"
+            msg_parts.append(f"📈 <b>Strategy:</b> {strategy_name}\n")
+            msg_parts.append(f"📋 <b>Reason:</b> {reason}\n")
+            msg_parts.append(f"\n")
+            
+            # Market Context
+            msg_parts.append(f"📊 <b>Market Context:</b>\n")
+            msg_parts.append(f"   📈 M5 Trend: {m5_trend}\n")
+            msg_parts.append(f"   🎯 H1 Bias: {h1_bias if h1_bias else 'None'}\n")
+            msg_parts.append(f"   📊 ATR: {atr_val:.5f}\n")
+            msg_parts.append(f"\n")
+            
+            # Strategy 1 Conditions (if applicable)
+            if is_strat1:
+                msg_parts.append(f"✅ <b>Strategy 1 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Fibonacci 38.2-62%: PASS\n")
+                if fib_levels:
+                    if m5_trend == "BULLISH":
+                        msg_parts.append(f"      Zone: {fib_levels['618']:.5f} - {fib_levels['382']:.5f}\n")
+                    else:
+                        msg_parts.append(f"      Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f}\n")
+                msg_parts.append(f"   ✅ Signal Cluster: {signal_count}/{signal_cluster_count} candles (cần {signal_cluster_count})\n")
+                msg_parts.append(f"   ✅ EMA Touch: {'Có nến chạm EMA21/EMA50' if is_touch else 'N/A'}\n")
+                msg_parts.append(f"   ✅ Smooth Pullback: PASS\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 2 Conditions (if applicable)
+            if is_strat2:
+                msg_parts.append(f"✅ <b>Strategy 2 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ EMA200 Filter: PASS\n")
+                if has_breakout_retest:
+                    msg_parts.append(f"   ✅ Breakout+Retest: Tìm thấy\n")
+                if is_compressed:
+                    msg_parts.append(f"   ✅ Compression Block: Phát hiện\n")
+                    if has_signal_candle:
+                        msg_parts.append(f"      ✅ Signal Candle: Hợp lệ ({signal_candle_min_criteria}/8 điều kiện)\n")
+                if is_pattern:
+                    pattern_name = pattern_type if pattern_type else 'M/W'
+                    msg_parts.append(f"   ✅ Pattern ({pattern_name}): Phát hiện\n")
+                if pass_fib_strat2:
+                    msg_parts.append(f"   ✅ Fibonacci 38.2-79%: PASS\n")
+                    if fib_levels_strat2:
+                        if m5_trend == "BULLISH":
+                            msg_parts.append(f"      Zone: {fib_levels_strat2['786']:.5f} - {fib_levels_strat2['382']:.5f}\n")
+                        else:
+                            msg_parts.append(f"      Zone: {fib_levels_strat2['382']:.5f} - {fib_levels_strat2['786']:.5f}\n")
+                msg_parts.append(f"\n")
+            
+            # Risk Management Details
+            if use_risk_based_lot and account_balance > 0:
+                msg_parts.append(f"💰 <b>Risk Management:</b>\n")
+                msg_parts.append(f"   💵 Account Balance: ${account_balance:,.2f}\n")
+                msg_parts.append(f"   ⚠️ Risk: {risk_percent}% = ${risk_money:,.2f}\n")
+                msg_parts.append(f"   📏 SL Distance: {sl_pips:.1f} pips\n")
+                msg_parts.append(f"   💲 Pip Value: ${pip_value:.2f} per lot\n")
+                msg_parts.append(f"   📐 Formula: Lot = ${risk_money:,.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})\n")
+                msg_parts.append(f"   📊 Calculated Lot: {volume:.2f}\n")
+                expected_risk = sl_pips * pip_value * volume
+                expected_reward = (tp_distance / sl_distance) * expected_risk if sl_distance > 0 else 0
+                msg_parts.append(f"   💰 Expected Risk: ${expected_risk:.2f}\n")
+                msg_parts.append(f"   💰 Expected Reward: ${expected_reward:.2f}\n")
+                msg_parts.append(f"\n")
+            else:
+                msg_parts.append(f"💰 <b>Risk Management:</b>\n")
+                msg_parts.append(f"   📊 Volume: {volume:.2f} lot (cố định từ config)\n")
+                if sl_pips > 0:
+                    msg_parts.append(f"   📏 SL Distance: {sl_pips:.1f} pips\n")
+                msg_parts.append(f"\n")
+            
+            # M1 Structure Info
+            if m1_swing_highs and m1_swing_lows:
+                last_high = m1_swing_highs[-1]['price']
+                last_low = m1_swing_lows[-1]['price']
+                msg_parts.append(f"📊 <b>M1 Structure:</b>\n")
+                msg_parts.append(f"   📈 Swing High: {last_high:.5f}\n")
+                msg_parts.append(f"   📉 Swing Low: {last_low:.5f}\n")
+                msg_parts.append(f"\n")
+            
+            # Execution Details
+            msg_parts.append(f"⚡ <b>Execution:</b>\n")
+            if is_strat1:
+                msg_parts.append(f"   🎯 Trigger: Breakout {signal_type} {'>' if signal_type == 'BUY' else '<'} {trigger_high if signal_type == 'BUY' else trigger_low:.5f}\n")
+            else:
+                msg_parts.append(f"   🎯 Trigger: Breakout {signal_type} {'>' if signal_type == 'BUY' else '<'} {trigger_high if signal_type == 'BUY' else trigger_low:.5f}\n")
+            msg_parts.append(f"   ✅ Executed at: {price:.5f}\n")
+            msg_parts.append(f"\n")
+            
+            msg_parts.append(f"{'='*50}\n")
+            msg_parts.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
+            msg = "".join(msg_parts)
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0
         else:
