@@ -175,10 +175,11 @@ def m1_scalp_logic(config, error_count=0):
         log_details = []
         
         # --- 5. BUY Signal Check ---
-        # Điều kiện 1: EMA50 > EMA200
+        # Điều kiện 1: EMA50 > EMA200 VÀ Giá hiện tại > EMA50
         ema50_val = curr_candle['ema50']
         ema200_val = curr_candle['ema200']
-        buy_condition1 = ema50_val > ema200_val
+        current_price_close = curr_candle['close']  # Giá hiện tại (close của nến đã đóng cửa)
+        buy_condition1 = (ema50_val > ema200_val) and (current_price_close > ema50_val)
         
         if buy_condition1:
             # Điều kiện 2: RSI từ vùng quá mua (≥70) hồi về 40-50, RSI KHÔNG < 32
@@ -211,6 +212,7 @@ def m1_scalp_logic(config, error_count=0):
                 
                 log_details.append(f"✅ BUY Signal Detected")
                 log_details.append(f"   ✅ EMA50 ({ema50_val:.2f}) > EMA200 ({ema200_val:.2f})")
+                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.2f}) > EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≥70) về {current_rsi:.1f} (40-50, không <32)")
                 log_details.append(f"   ✅ RSI quay đầu lên ({prev_rsi:.1f} -> {current_rsi:.1f})")
                 log_details.append(f"   ✅ ATR: {atr_val:.2f} >= {min_atr:.2f}")
@@ -218,8 +220,8 @@ def m1_scalp_logic(config, error_count=0):
                 log_details.append(f"   ✅ Volume: {curr_candle['tick_volume']:.0f} >= MA10: {vol_ma_val:.0f}")
         
         # --- 6. SELL Signal Check ---
-        # Điều kiện 1: EMA50 < EMA200
-        sell_condition1 = ema50_val < ema200_val
+        # Điều kiện 1: EMA50 < EMA200 VÀ Giá hiện tại < EMA50
+        sell_condition1 = (ema50_val < ema200_val) and (current_price_close < ema50_val)
         
         if sell_condition1 and signal_type is None:
             # Điều kiện 2: RSI từ vùng quá bán (≤30) hồi về 50-60, RSI KHÔNG > 68
@@ -252,6 +254,7 @@ def m1_scalp_logic(config, error_count=0):
                 
                 log_details.append(f"✅ SELL Signal Detected")
                 log_details.append(f"   ✅ EMA50 ({ema50_val:.2f}) < EMA200 ({ema200_val:.2f})")
+                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.2f}) < EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≤30) về {current_rsi:.1f} (50-60, không >68)")
                 log_details.append(f"   ✅ RSI quay đầu xuống ({prev_rsi:.1f} -> {current_rsi:.1f})")
                 log_details.append(f"   ✅ ATR: {atr_val:.2f} >= {min_atr:.2f}")
