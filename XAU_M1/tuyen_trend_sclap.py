@@ -105,10 +105,10 @@ def find_previous_rsi_extreme(rsi_series, lookback=20, min_rsi=70, max_rsi=30):
 
 def m1_scalp_logic(config, error_count=0):
     """
-    M1 Scalp Strategy Logic
-    BUY: EMA50 > EMA200, RSI từ ≥70 về 40-50 (không <32), RSI quay đầu lên, ATR ≥ 0.00011, 
+    M1 Scalp Strategy Logic for XAUUSD
+    BUY: EMA50 > EMA200, RSI từ ≥70 về 40-50 (không <32), RSI quay đầu lên, ATR ≥ threshold, 
          Bullish engulfing + Close > EMA50, Volume tăng
-    SELL: EMA50 < EMA200, RSI từ ≤30 về 50-60 (không >68), RSI quay đầu xuống, ATR ≥ 0.00011,
+    SELL: EMA50 < EMA200, RSI từ ≤30 về 50-60 (không >68), RSI quay đầu xuống, ATR ≥ threshold,
           Bearish engulfing + Close < EMA50, Volume tăng
     SL = 2ATR + 6 point, TP = 2SL
     """
@@ -163,8 +163,10 @@ def m1_scalp_logic(config, error_count=0):
         point = symbol_info.point
         
         # --- 4. Check ATR Condition (Điều kiện 4) ---
+        # For XAUUSD, ATR threshold should be adjusted (Gold typically has ATR around 0.1-2.0)
+        # Default: 0.00011 for EURUSD, for XAUUSD use 0.1 (adjust based on typical Gold price ~2000-2500)
         atr_val = curr_candle['atr']
-        min_atr = 0.00011
+        min_atr = config.get('min_atr', 0.1)  # Default 0.1 for XAUUSD
         if pd.isna(atr_val) or atr_val < min_atr:
             return error_count, 0
         
@@ -209,12 +211,12 @@ def m1_scalp_logic(config, error_count=0):
                 current_price = tick.ask
                 
                 log_details.append(f"✅ BUY Signal Detected")
-                log_details.append(f"   ✅ EMA50 ({ema50_val:.5f}) > EMA200 ({ema200_val:.5f})")
-                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.5f}) > EMA50 ({ema50_val:.5f})")
+                log_details.append(f"   ✅ EMA50 ({ema50_val:.2f}) > EMA200 ({ema200_val:.2f})")
+                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.2f}) > EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≥70) về {current_rsi:.1f} (40-50, không <32)")
                 log_details.append(f"   ✅ RSI quay đầu lên ({prev_rsi:.1f} -> {current_rsi:.1f})")
-                log_details.append(f"   ✅ ATR: {atr_val:.5f} >= {min_atr:.5f}")
-                log_details.append(f"   ✅ Bullish Engulfing + Close ({curr_candle['close']:.5f}) > EMA50 ({ema50_val:.5f})")
+                log_details.append(f"   ✅ ATR: {atr_val:.2f} >= {min_atr:.2f}")
+                log_details.append(f"   ✅ Bullish Engulfing + Close ({curr_candle['close']:.2f}) > EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ Volume: {curr_candle['tick_volume']:.0f} >= MA10: {vol_ma_val:.0f}")
         
         # --- 6. SELL Signal Check ---
@@ -251,18 +253,18 @@ def m1_scalp_logic(config, error_count=0):
                 current_price = tick.bid
                 
                 log_details.append(f"✅ SELL Signal Detected")
-                log_details.append(f"   ✅ EMA50 ({ema50_val:.5f}) < EMA200 ({ema200_val:.5f})")
-                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.5f}) < EMA50 ({ema50_val:.5f})")
+                log_details.append(f"   ✅ EMA50 ({ema50_val:.2f}) < EMA200 ({ema200_val:.2f})")
+                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.2f}) < EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≤30) về {current_rsi:.1f} (50-60, không >68)")
                 log_details.append(f"   ✅ RSI quay đầu xuống ({prev_rsi:.1f} -> {current_rsi:.1f})")
-                log_details.append(f"   ✅ ATR: {atr_val:.5f} >= {min_atr:.5f}")
-                log_details.append(f"   ✅ Bearish Engulfing + Close ({curr_candle['close']:.5f}) < EMA50 ({ema50_val:.5f})")
+                log_details.append(f"   ✅ ATR: {atr_val:.2f} >= {min_atr:.2f}")
+                log_details.append(f"   ✅ Bearish Engulfing + Close ({curr_candle['close']:.2f}) < EMA50 ({ema50_val:.2f})")
                 log_details.append(f"   ✅ Volume: {curr_candle['tick_volume']:.0f} >= MA10: {vol_ma_val:.0f}")
         
         # --- 7. No Signal ---
         if signal_type is None:
             # Log current status for debugging
-            print(f"📊 [M1 Scalp] Price: {curr_candle['close']:.5f} | EMA50: {ema50_val:.5f} | EMA200: {ema200_val:.5f} | RSI: {current_rsi:.1f} | ATR: {atr_val:.5f}")
+            print(f"📊 [M1 Scalp XAU] Price: {curr_candle['close']:.2f} | EMA50: {ema50_val:.2f} | EMA200: {ema200_val:.2f} | RSI: {current_rsi:.1f} | ATR: {atr_val:.2f}")
             return error_count, 0
         
         # --- 8. Calculate SL and TP ---
@@ -293,12 +295,12 @@ def m1_scalp_logic(config, error_count=0):
         
         # --- 10. Print Log Details ---
         print(f"\n{'='*80}")
-        print(f"🚀 [M1 SCALP SIGNAL] {signal_type} @ {current_price:.5f}")
+        print(f"🚀 [M1 SCALP XAU SIGNAL] {signal_type} @ {current_price:.2f}")
         print(f"{'='*80}")
         for detail in log_details:
             print(f"   {detail}")
-        print(f"   🛑 SL: {sl:.5f} (2ATR + 6pt = {sl_distance:.5f})")
-        print(f"   🎯 TP: {tp:.5f} (2SL = {tp_distance:.5f})")
+        print(f"   🛑 SL: {sl:.2f} (2ATR + 6pt = {sl_distance:.2f})")
+        print(f"   🎯 TP: {tp:.2f} (2SL = {tp_distance:.2f})")
         print(f"   📊 Volume: {volume:.2f} lot")
         print(f"{'='*80}\n")
         
@@ -321,7 +323,7 @@ def m1_scalp_logic(config, error_count=0):
             error_msg = "MT5 Terminal không kết nối"
             print(f"❌ {error_msg}")
             send_telegram(
-                f"❌ <b>M1 Scalp Bot - Lỗi</b>\n{error_msg}",
+                f"❌ <b>M1 Scalp XAU Bot - Lỗi</b>\n{error_msg}",
                 config.get('telegram_token'),
                 config.get('telegram_chat_id')
             )
@@ -352,7 +354,7 @@ def m1_scalp_logic(config, error_count=0):
             error_msg = f"Order validation failed: {check_result.comment}"
             print(f"❌ {error_msg}")
             send_telegram(
-                f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
+                f"❌ <b>M1 Scalp XAU Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 Symbol: {symbol} ({signal_type})\n"
                 f"❌ Lỗi: {error_msg}",
                 config.get('telegram_token'),
@@ -364,17 +366,17 @@ def m1_scalp_logic(config, error_count=0):
         
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "M1_Scalp", symbol, signal_type, volume, current_price, sl, tp, reason, account_id=config.get('account'))
+            db.log_order(result.order, "M1_Scalp_XAU", symbol, signal_type, volume, current_price, sl, tp, reason, account_id=config.get('account'))
             
             # Detailed Telegram Message
             msg_parts = []
-            msg_parts.append(f"✅ <b>M1 Scalp Bot - Lệnh Đã Được Thực Hiện</b>\n")
+            msg_parts.append(f"✅ <b>M1 Scalp XAU Bot - Lệnh Đã Được Thực Hiện</b>\n")
             msg_parts.append(f"{'='*50}\n")
             msg_parts.append(f"🆔 <b>Ticket:</b> {result.order}\n")
             msg_parts.append(f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n")
-            msg_parts.append(f"💵 <b>Entry Price:</b> {current_price:.5f}\n")
-            msg_parts.append(f"🛑 <b>SL:</b> {sl:.5f} (2ATR + 6pt = {sl_distance:.5f})\n")
-            msg_parts.append(f"🎯 <b>TP:</b> {tp:.5f} (2SL = {tp_distance:.5f})\n")
+            msg_parts.append(f"💵 <b>Entry Price:</b> {current_price:.2f}\n")
+            msg_parts.append(f"🛑 <b>SL:</b> {sl:.2f} (2ATR + 6pt = {sl_distance:.2f})\n")
+            msg_parts.append(f"🎯 <b>TP:</b> {tp:.2f} (2SL = {tp_distance:.2f})\n")
             msg_parts.append(f"📊 <b>Volume:</b> {volume:.2f} lot\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"📈 <b>Điều Kiện Đã Thỏa:</b>\n")
@@ -384,10 +386,10 @@ def m1_scalp_logic(config, error_count=0):
                 msg_parts.append(f"{clean_detail}\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"📊 <b>Indicators:</b>\n")
-            msg_parts.append(f"   • EMA50: {ema50_val:.5f}\n")
-            msg_parts.append(f"   • EMA200: {ema200_val:.5f}\n")
+            msg_parts.append(f"   • EMA50: {ema50_val:.2f}\n")
+            msg_parts.append(f"   • EMA200: {ema200_val:.2f}\n")
             msg_parts.append(f"   • RSI: {current_rsi:.1f}\n")
-            msg_parts.append(f"   • ATR: {atr_val:.5f}\n")
+            msg_parts.append(f"   • ATR: {atr_val:.2f}\n")
             msg_parts.append(f"   • Volume: {curr_candle['tick_volume']:.0f} (MA10: {vol_ma_val:.0f})\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"{'='*50}\n")
@@ -401,10 +403,10 @@ def m1_scalp_logic(config, error_count=0):
             error_detail = f"{result.comment if hasattr(result, 'comment') else 'Unknown error'}"
             print(f"❌ {error_msg} - {error_detail}")
             send_telegram(
-                f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
+                f"❌ <b>M1 Scalp XAU Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 Symbol: {symbol} ({signal_type})\n"
-                f"💵 Price: {current_price:.5f}\n"
-                f"🛑 SL: {sl:.5f} | 🎯 TP: {tp:.5f}\n"
+                f"💵 Price: {current_price:.2f}\n"
+                f"🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n"
                 f"❌ Lỗi: {error_msg}\n"
                 f"📝 Chi tiết: {error_detail}",
                 config.get('telegram_token'),
@@ -421,14 +423,17 @@ def m1_scalp_logic(config, error_count=0):
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
+    # Try to find config file (use config_1.json as default, or create new one)
+    config_path = os.path.join(script_dir, "configs", "config_1.json")
+    if not os.path.exists(config_path):
+        config_path = os.path.join(script_dir, "configs", "config_template.json")
     config = load_config(config_path)
     
     consecutive_errors = 0
     if config and connect_mt5(config):
         print("\n" + "="*80)
-        print(f"✅ M1 Scalp Bot - Started")
-        print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
+        print(f"✅ M1 Scalp XAU Bot - Started")
+        print(f"💱 Symbol: {config.get('symbol', 'XAUUSD')}")
         print(f"📊 Volume: {config.get('volume', 'N/A')}")
         print("="*80 + "\n")
         
