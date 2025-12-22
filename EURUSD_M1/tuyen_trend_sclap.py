@@ -203,12 +203,16 @@ def m1_scalp_logic(config, error_count=0):
                 buy_condition2c = (current_rsi >= 32)
             buy_condition2 = buy_condition2a and buy_condition2b and buy_condition2c
             
-            log_details.append(f"{'✅' if buy_condition2a else '❌'} [BUY] ĐK2a: RSI trước đó ≥70 (tìm thấy: {extreme_rsi:.1f if buy_condition2a else 'Không'})")
-            if buy_condition2a:
-                log_details.append(f"{'✅' if buy_condition2b else '❌'} [BUY] ĐK2b: RSI hiện tại ({current_rsi:.1f}) trong [40-50]")
-                log_details.append(f"{'✅' if buy_condition2c else '❌'} [BUY] ĐK2c: RSI hiện tại ({current_rsi:.1f}) KHÔNG < 32")
-            else:
-                log_details.append(f"   ⏭️ [BUY] ĐK2b, 2c: Bỏ qua (chưa tìm thấy RSI ≥70)")
+                if buy_condition2a and extreme_rsi is not None:
+                    log_details.append(f"{'✅' if buy_condition2a else '❌'} [BUY] ĐK2a: RSI trước đó ≥70 (tìm thấy: {extreme_rsi:.1f})")
+                else:
+                    log_details.append(f"❌ [BUY] ĐK2a: RSI trước đó ≥70 (không tìm thấy)")
+                
+                if buy_condition2a and extreme_rsi is not None:
+                    log_details.append(f"{'✅' if buy_condition2b else '❌'} [BUY] ĐK2b: RSI hiện tại ({current_rsi:.1f}) trong [40-50]")
+                    log_details.append(f"{'✅' if buy_condition2c else '❌'} [BUY] ĐK2c: RSI hiện tại ({current_rsi:.1f}) KHÔNG < 32")
+                else:
+                    log_details.append(f"   ⏭️ [BUY] ĐK2b, 2c: Bỏ qua (chưa tìm thấy RSI ≥70)")
             
             # Điều kiện 3: RSI quay đầu lên
             buy_condition3 = check_rsi_reversal_up(df_m1['rsi'])
@@ -283,8 +287,12 @@ def m1_scalp_logic(config, error_count=0):
                     sell_condition2c = (current_rsi <= 68)
                 sell_condition2 = sell_condition2a and sell_condition2b and sell_condition2c
                 
-                log_details.append(f"{'✅' if sell_condition2a else '❌'} [SELL] ĐK2a: RSI trước đó ≤30 (tìm thấy: {extreme_rsi:.1f if sell_condition2a else 'Không'})")
-                if sell_condition2a:
+                if sell_condition2a and extreme_rsi is not None:
+                    log_details.append(f"{'✅' if sell_condition2a else '❌'} [SELL] ĐK2a: RSI trước đó ≤30 (tìm thấy: {extreme_rsi:.1f})")
+                else:
+                    log_details.append(f"❌ [SELL] ĐK2a: RSI trước đó ≤30 (không tìm thấy)")
+                
+                if sell_condition2a and extreme_rsi is not None:
                     log_details.append(f"{'✅' if sell_condition2b else '❌'} [SELL] ĐK2b: RSI hiện tại ({current_rsi:.1f}) trong [50-60]")
                     log_details.append(f"{'✅' if sell_condition2c else '❌'} [SELL] ĐK2c: RSI hiện tại ({current_rsi:.1f}) KHÔNG > 68")
                 else:
