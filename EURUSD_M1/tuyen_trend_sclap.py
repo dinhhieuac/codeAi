@@ -173,96 +173,177 @@ def m1_scalp_logic(config, error_count=0):
         log_details = []
         
         # --- 5. BUY Signal Check ---
-        # Điều kiện 1: EMA50 > EMA200 VÀ Giá hiện tại > EMA50
+        log_details.append(f"{'='*80}")
+        log_details.append(f"🔍 [BUY] Kiểm tra điều kiện BUY...")
+        log_details.append(f"{'='*80}")
+        
         ema50_val = curr_candle['ema50']
         ema200_val = curr_candle['ema200']
         current_price_close = curr_candle['close']  # Giá hiện tại (close của nến đã đóng cửa)
-        buy_condition1 = (ema50_val > ema200_val) and (current_price_close > ema50_val)
+        
+        # Điều kiện 1: EMA50 > EMA200 VÀ Giá hiện tại > EMA50
+        buy_condition1a = ema50_val > ema200_val
+        buy_condition1b = current_price_close > ema50_val
+        buy_condition1 = buy_condition1a and buy_condition1b
+        
+        log_details.append(f"{'✅' if buy_condition1a else '❌'} [BUY] ĐK1a: EMA50 ({ema50_val:.5f}) > EMA200 ({ema200_val:.5f})")
+        log_details.append(f"{'✅' if buy_condition1b else '❌'} [BUY] ĐK1b: Giá hiện tại ({current_price_close:.5f}) > EMA50 ({ema50_val:.5f})")
         
         if buy_condition1:
             # Điều kiện 2: RSI từ vùng quá mua (≥70) hồi về 40-50, RSI KHÔNG < 32
             found_extreme, extreme_rsi, extreme_type = find_previous_rsi_extreme(
                 df_m1['rsi'], lookback=20, min_rsi=70, max_rsi=30
             )
-            buy_condition2 = False
-            if found_extreme and extreme_type == 'overbought':
+            buy_condition2a = found_extreme and extreme_type == 'overbought'
+            buy_condition2b = False
+            buy_condition2c = False
+            if buy_condition2a:
                 # RSI was ≥70 before, now should be in 40-50 range, and not < 32
-                buy_condition2 = (40 <= current_rsi <= 50) and (current_rsi >= 32)
+                buy_condition2b = (40 <= current_rsi <= 50)
+                buy_condition2c = (current_rsi >= 32)
+            buy_condition2 = buy_condition2a and buy_condition2b and buy_condition2c
+            
+            log_details.append(f"{'✅' if buy_condition2a else '❌'} [BUY] ĐK2a: RSI trước đó ≥70 (tìm thấy: {extreme_rsi:.1f if buy_condition2a else 'Không'})")
+            if buy_condition2a:
+                log_details.append(f"{'✅' if buy_condition2b else '❌'} [BUY] ĐK2b: RSI hiện tại ({current_rsi:.1f}) trong [40-50]")
+                log_details.append(f"{'✅' if buy_condition2c else '❌'} [BUY] ĐK2c: RSI hiện tại ({current_rsi:.1f}) KHÔNG < 32")
+            else:
+                log_details.append(f"   ⏭️ [BUY] ĐK2b, 2c: Bỏ qua (chưa tìm thấy RSI ≥70)")
             
             # Điều kiện 3: RSI quay đầu lên
             buy_condition3 = check_rsi_reversal_up(df_m1['rsi'])
+            log_details.append(f"{'✅' if buy_condition3 else '❌'} [BUY] ĐK3: RSI quay đầu lên ({prev_rsi:.1f} -> {current_rsi:.1f})")
+            
+            # Điều kiện 4: ATR (đã check ở trên)
+            log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [BUY] ĐK4: ATR ({atr_val:.5f}) >= {min_atr:.5f}")
             
             # Điều kiện 5: Bullish engulfing + Close > EMA50
             buy_condition5a = is_bullish_engulfing(prev_candle, curr_candle)
             buy_condition5b = curr_candle['close'] > ema50_val
             buy_condition5 = buy_condition5a and buy_condition5b
             
+            log_details.append(f"{'✅' if buy_condition5a else '❌'} [BUY] ĐK5a: Bullish Engulfing pattern")
+            log_details.append(f"{'✅' if buy_condition5b else '❌'} [BUY] ĐK5b: Close ({curr_candle['close']:.5f}) > EMA50 ({ema50_val:.5f})")
+            
             # Điều kiện 6: Volume tăng (volume nến entry ≥ volume trung bình 10 nến)
             vol_ma_val = curr_candle['vol_ma']
             buy_condition6 = False
             if not pd.isna(vol_ma_val) and vol_ma_val > 0:
                 buy_condition6 = curr_candle['tick_volume'] >= vol_ma_val
+                log_details.append(f"{'✅' if buy_condition6 else '❌'} [BUY] ĐK6: Volume ({curr_candle['tick_volume']:.0f}) >= MA10 ({vol_ma_val:.0f})")
+            else:
+                log_details.append(f"❌ [BUY] ĐK6: Volume MA không hợp lệ (vol_ma: {vol_ma_val})")
             
-            if buy_condition1 and buy_condition2 and buy_condition3 and buy_condition5 and buy_condition6:
+            # Tổng hợp kết quả BUY
+            all_buy_conditions = [buy_condition1, buy_condition2, buy_condition3, buy_condition5, buy_condition6]
+            buy_passed = all(all_buy_conditions)
+            
+            if buy_passed:
                 signal_type = "BUY"
                 reason = "M1_Scalp_BullishEngulfing"
                 current_price = tick.ask
                 
-                log_details.append(f"✅ BUY Signal Detected")
-                log_details.append(f"   ✅ EMA50 ({ema50_val:.5f}) > EMA200 ({ema200_val:.5f})")
-                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.5f}) > EMA50 ({ema50_val:.5f})")
-                log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≥70) về {current_rsi:.1f} (40-50, không <32)")
-                log_details.append(f"   ✅ RSI quay đầu lên ({prev_rsi:.1f} -> {current_rsi:.1f})")
-                log_details.append(f"   ✅ ATR: {atr_val:.5f} >= {min_atr:.5f}")
-                log_details.append(f"   ✅ Bullish Engulfing + Close ({curr_candle['close']:.5f}) > EMA50 ({ema50_val:.5f})")
-                log_details.append(f"   ✅ Volume: {curr_candle['tick_volume']:.0f} >= MA10: {vol_ma_val:.0f}")
+                log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+            else:
+                failed_conditions = []
+                if not buy_condition1: failed_conditions.append("ĐK1 (Xu hướng)")
+                if not buy_condition2: failed_conditions.append("ĐK2 (RSI extreme)")
+                if not buy_condition3: failed_conditions.append("ĐK3 (RSI reversal)")
+                if not buy_condition5: failed_conditions.append("ĐK5 (Engulfing)")
+                if not buy_condition6: failed_conditions.append("ĐK6 (Volume)")
+                log_details.append(f"\n❌ [BUY] Không đủ điều kiện. Thiếu: {', '.join(failed_conditions)}")
+        else:
+            log_details.append(f"   ⏭️ [BUY] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
         # --- 6. SELL Signal Check ---
-        # Điều kiện 1: EMA50 < EMA200 VÀ Giá hiện tại < EMA50
-        sell_condition1 = (ema50_val < ema200_val) and (current_price_close < ema50_val)
-        
-        if sell_condition1 and signal_type is None:
-            # Điều kiện 2: RSI từ vùng quá bán (≤30) hồi về 50-60, RSI KHÔNG > 68
-            found_extreme, extreme_rsi, extreme_type = find_previous_rsi_extreme(
-                df_m1['rsi'], lookback=20, min_rsi=70, max_rsi=30
-            )
-            sell_condition2 = False
-            if found_extreme and extreme_type == 'oversold':
-                # RSI was ≤30 before, now should be in 50-60 range, and not > 68
-                sell_condition2 = (50 <= current_rsi <= 60) and (current_rsi <= 68)
-            
-            # Điều kiện 3: RSI quay đầu xuống
-            sell_condition3 = check_rsi_reversal_down(df_m1['rsi'])
-            
-            # Điều kiện 5: Bearish engulfing + Close < EMA50
-            sell_condition5a = is_bearish_engulfing(prev_candle, curr_candle)
-            sell_condition5b = curr_candle['close'] < ema50_val
-            sell_condition5 = sell_condition5a and sell_condition5b
-            
-            # Điều kiện 6: Volume tăng
-            vol_ma_val = curr_candle['vol_ma']
-            sell_condition6 = False
-            if not pd.isna(vol_ma_val) and vol_ma_val > 0:
-                sell_condition6 = curr_candle['tick_volume'] >= vol_ma_val
-            
-            if sell_condition1 and sell_condition2 and sell_condition3 and sell_condition5 and sell_condition6:
-                signal_type = "SELL"
-                reason = "M1_Scalp_BearishEngulfing"
-                current_price = tick.bid
-                
-                log_details.append(f"✅ SELL Signal Detected")
-                log_details.append(f"   ✅ EMA50 ({ema50_val:.5f}) < EMA200 ({ema200_val:.5f})")
-                log_details.append(f"   ✅ Giá hiện tại ({current_price_close:.5f}) < EMA50 ({ema50_val:.5f})")
-                log_details.append(f"   ✅ RSI từ {extreme_rsi:.1f} (≤30) về {current_rsi:.1f} (50-60, không >68)")
-                log_details.append(f"   ✅ RSI quay đầu xuống ({prev_rsi:.1f} -> {current_rsi:.1f})")
-                log_details.append(f"   ✅ ATR: {atr_val:.5f} >= {min_atr:.5f}")
-                log_details.append(f"   ✅ Bearish Engulfing + Close ({curr_candle['close']:.5f}) < EMA50 ({ema50_val:.5f})")
-                log_details.append(f"   ✅ Volume: {curr_candle['tick_volume']:.0f} >= MA10: {vol_ma_val:.0f}")
-        
-        # --- 7. No Signal ---
         if signal_type is None:
-            # Log current status for debugging
-            print(f"📊 [M1 Scalp] Price: {curr_candle['close']:.5f} | EMA50: {ema50_val:.5f} | EMA200: {ema200_val:.5f} | RSI: {current_rsi:.1f} | ATR: {atr_val:.5f}")
+            log_details.append(f"\n{'='*80}")
+            log_details.append(f"🔍 [SELL] Kiểm tra điều kiện SELL...")
+            log_details.append(f"{'='*80}")
+            
+            # Điều kiện 1: EMA50 < EMA200 VÀ Giá hiện tại < EMA50
+            sell_condition1a = ema50_val < ema200_val
+            sell_condition1b = current_price_close < ema50_val
+            sell_condition1 = sell_condition1a and sell_condition1b
+            
+            log_details.append(f"{'✅' if sell_condition1a else '❌'} [SELL] ĐK1a: EMA50 ({ema50_val:.5f}) < EMA200 ({ema200_val:.5f})")
+            log_details.append(f"{'✅' if sell_condition1b else '❌'} [SELL] ĐK1b: Giá hiện tại ({current_price_close:.5f}) < EMA50 ({ema50_val:.5f})")
+            
+            if sell_condition1:
+                # Điều kiện 2: RSI từ vùng quá bán (≤30) hồi về 50-60, RSI KHÔNG > 68
+                found_extreme, extreme_rsi, extreme_type = find_previous_rsi_extreme(
+                    df_m1['rsi'], lookback=20, min_rsi=70, max_rsi=30
+                )
+                sell_condition2a = found_extreme and extreme_type == 'oversold'
+                sell_condition2b = False
+                sell_condition2c = False
+                if sell_condition2a:
+                    # RSI was ≤30 before, now should be in 50-60 range, and not > 68
+                    sell_condition2b = (50 <= current_rsi <= 60)
+                    sell_condition2c = (current_rsi <= 68)
+                sell_condition2 = sell_condition2a and sell_condition2b and sell_condition2c
+                
+                log_details.append(f"{'✅' if sell_condition2a else '❌'} [SELL] ĐK2a: RSI trước đó ≤30 (tìm thấy: {extreme_rsi:.1f if sell_condition2a else 'Không'})")
+                if sell_condition2a:
+                    log_details.append(f"{'✅' if sell_condition2b else '❌'} [SELL] ĐK2b: RSI hiện tại ({current_rsi:.1f}) trong [50-60]")
+                    log_details.append(f"{'✅' if sell_condition2c else '❌'} [SELL] ĐK2c: RSI hiện tại ({current_rsi:.1f}) KHÔNG > 68")
+                else:
+                    log_details.append(f"   ⏭️ [SELL] ĐK2b, 2c: Bỏ qua (chưa tìm thấy RSI ≤30)")
+                
+                # Điều kiện 3: RSI quay đầu xuống
+                sell_condition3 = check_rsi_reversal_down(df_m1['rsi'])
+                log_details.append(f"{'✅' if sell_condition3 else '❌'} [SELL] ĐK3: RSI quay đầu xuống ({prev_rsi:.1f} -> {current_rsi:.1f})")
+                
+                # Điều kiện 4: ATR (đã check ở trên)
+                log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [SELL] ĐK4: ATR ({atr_val:.5f}) >= {min_atr:.5f}")
+                
+                # Điều kiện 5: Bearish engulfing + Close < EMA50
+                sell_condition5a = is_bearish_engulfing(prev_candle, curr_candle)
+                sell_condition5b = curr_candle['close'] < ema50_val
+                sell_condition5 = sell_condition5a and sell_condition5b
+                
+                log_details.append(f"{'✅' if sell_condition5a else '❌'} [SELL] ĐK5a: Bearish Engulfing pattern")
+                log_details.append(f"{'✅' if sell_condition5b else '❌'} [SELL] ĐK5b: Close ({curr_candle['close']:.5f}) < EMA50 ({ema50_val:.5f})")
+                
+                # Điều kiện 6: Volume tăng
+                vol_ma_val = curr_candle['vol_ma']
+                sell_condition6 = False
+                if not pd.isna(vol_ma_val) and vol_ma_val > 0:
+                    sell_condition6 = curr_candle['tick_volume'] >= vol_ma_val
+                    log_details.append(f"{'✅' if sell_condition6 else '❌'} [SELL] ĐK6: Volume ({curr_candle['tick_volume']:.0f}) >= MA10 ({vol_ma_val:.0f})")
+                else:
+                    log_details.append(f"❌ [SELL] ĐK6: Volume MA không hợp lệ (vol_ma: {vol_ma_val})")
+                
+                # Tổng hợp kết quả SELL
+                all_sell_conditions = [sell_condition1, sell_condition2, sell_condition3, sell_condition5, sell_condition6]
+                sell_passed = all(all_sell_conditions)
+                
+                if sell_passed:
+                    signal_type = "SELL"
+                    reason = "M1_Scalp_BearishEngulfing"
+                    current_price = tick.bid
+                    
+                    log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
+                else:
+                    failed_conditions = []
+                    if not sell_condition1: failed_conditions.append("ĐK1 (Xu hướng)")
+                    if not sell_condition2: failed_conditions.append("ĐK2 (RSI extreme)")
+                    if not sell_condition3: failed_conditions.append("ĐK3 (RSI reversal)")
+                    if not sell_condition5: failed_conditions.append("ĐK5 (Engulfing)")
+                    if not sell_condition6: failed_conditions.append("ĐK6 (Volume)")
+                    log_details.append(f"\n❌ [SELL] Không đủ điều kiện. Thiếu: {', '.join(failed_conditions)}")
+            else:
+                log_details.append(f"   ⏭️ [SELL] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
+        
+        # --- 7. No Signal - Print Detailed Log ---
+        if signal_type is None:
+            print(f"\n{'='*80}")
+            print(f"📊 [M1 Scalp] Không có tín hiệu - Chi tiết điều kiện:")
+            print(f"{'='*80}")
+            for detail in log_details:
+                print(f"   {detail}")
+            print(f"\n📈 [Indicators] Price: {curr_candle['close']:.5f} | EMA50: {ema50_val:.5f} | EMA200: {ema200_val:.5f} | RSI: {current_rsi:.1f} | ATR: {atr_val:.5f}")
+            print(f"{'='*80}\n")
             return error_count, 0
         
         # --- 8. Calculate SL and TP ---
@@ -297,6 +378,7 @@ def m1_scalp_logic(config, error_count=0):
         print(f"{'='*80}")
         for detail in log_details:
             print(f"   {detail}")
+        print(f"\n   💰 [Risk Management]")
         print(f"   🛑 SL: {sl:.5f} (2ATR + 6pt = {sl_distance:.5f})")
         print(f"   🎯 TP: {tp:.5f} (2SL = {tp_distance:.5f})")
         print(f"   📊 Volume: {volume:.2f} lot")
