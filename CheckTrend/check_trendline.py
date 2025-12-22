@@ -196,41 +196,56 @@ def calculate_trendline(swing_points: List[Tuple[int, float]], current_index: in
         'strength': abs(slope)  # Độ dốc càng lớn, trendline càng mạnh
     }
 
-def check_trendline_break(df, trendline: Dict, tolerance=0.001) -> Tuple[bool, str]:
+def check_trendline_break(df, trendline: Dict, tolerance=0.001) -> Tuple[bool, bool, str]:
     """
-    Kiểm tra giá có phá vỡ trendline không
+    Kiểm tra giá có phá vỡ trendline không (V2 - Rule Cứng)
     
     Returns:
-        (is_broken, message)
+        (is_broken, is_invalidated, message)
+        - is_broken: Giá đã phá trendline
+        - is_invalidated: Trendline mất hiệu lực (giá đóng nến phá)
     """
     if trendline is None:
-        return False, "Không có trendline"
+        return False, False, "Không có trendline"
     
-    current_price = df.iloc[-1]['close']
+    # Lấy nến đã đóng cửa (nến cuối cùng đã hoàn thành)
+    if len(df) < 2:
+        current_price = df.iloc[-1]['close']
+    else:
+        current_price = df.iloc[-2]['close']  # Nến đã đóng cửa
+    
     trendline_value = trendline['value_at_current']
     direction = trendline['direction']
     
-    # Kiểm tra break
+    # Kiểm tra break (giá đóng nến phá trendline)
+    is_broken = False
+    is_invalidated = False
+    
     if direction == "UP":
         # Uptrend: giá phá xuống dưới trendline
         if current_price < trendline_value * (1 - tolerance):
-            return True, f"⚠️ Giá phá vỡ trendline tăng (Giá: {current_price:.5f} < Trendline: {trendline_value:.5f})"
+            is_broken = True
+            is_invalidated = True  # Rule cứng: giá đóng nến phá → mất hiệu lực
+            return True, True, f"⛔ Trendline TĂNG đã bị PHÁ (mất hiệu lực) - Giá: {current_price:.5f} < Trendline: {trendline_value:.5f} - KHÔNG trade BUY theo hướng cũ"
     elif direction == "DOWN":
         # Downtrend: giá phá lên trên trendline
         if current_price > trendline_value * (1 + tolerance):
-            return True, f"⚠️ Giá phá vỡ trendline giảm (Giá: {current_price:.5f} > Trendline: {trendline_value:.5f})"
+            is_broken = True
+            is_invalidated = True  # Rule cứng: giá đóng nến phá → mất hiệu lực
+            return True, True, f"⛔ Trendline GIẢM đã bị PHÁ (mất hiệu lực) - Giá: {current_price:.5f} > Trendline: {trendline_value:.5f} - KHÔNG trade SELL theo hướng cũ"
     
-    return False, f"✅ Giá vẫn trong trendline ({direction})"
+    return False, False, f"✅ Giá vẫn trong trendline ({direction})"
 
 # ==============================================================================
 # 4. B2: PHÁT HIỆN MÔ HÌNH GIÁ
 # ==============================================================================
 
-def detect_price_patterns(df, swing_highs, swing_lows):
+def detect_price_patterns(df, swing_highs, swing_lows, trendline_direction=None):
     """
-    Phát hiện các mô hình giá:
-    - Tiếp diễn: Flag, Triangle, Channel
+    Phát hiện các mô hình giá (V2):
+    - Tiếp diễn: Flag, Triangle, Channel → Trade theo hướng trendline
     - Đảo chiều: Head & Shoulders, Double Top/Bottom, Falling/Rising Wedge
+      → Ngược trend → độ tin cậy thấp, chỉ dùng khi trùng Supply/Demand mạnh
     """
     patterns = []
     
@@ -246,11 +261,17 @@ def detect_price_patterns(df, swing_highs, swing_lows):
             price_diff = abs(price1 - price2) / max(price1, price2)
             
             if price_diff < 0.01:  # 2 đỉnh gần bằng nhau (< 1%)
+                # V2: Kiểm tra nếu ngược trend → giảm confidence
+                confidence = 'HIGH' if price_diff < 0.005 else 'MEDIUM'
+                if trendline_direction == "DOWN":
+                    # Đảo chiều ngược trend → độ tin cậy thấp
+                    confidence = 'LOW'
+                
                 patterns.append({
                     'type': 'DOUBLE_TOP',
                     'pattern': 'Đảo chiều',
                     'signal': 'BEARISH',
-                    'confidence': 'HIGH' if price_diff < 0.005 else 'MEDIUM',
+                    'confidence': confidence,
                     'price1': price1,
                     'price2': price2,
                     'neckline': min(df.iloc[idx1]['low'], df.iloc[idx2]['low'])
@@ -264,11 +285,17 @@ def detect_price_patterns(df, swing_highs, swing_lows):
             price_diff = abs(price1 - price2) / max(price1, price2)
             
             if price_diff < 0.01:  # 2 đáy gần bằng nhau
+                # V2: Kiểm tra nếu ngược trend → giảm confidence
+                confidence = 'HIGH' if price_diff < 0.005 else 'MEDIUM'
+                if trendline_direction == "UP":
+                    # Đảo chiều ngược trend → độ tin cậy thấp
+                    confidence = 'LOW'
+                
                 patterns.append({
                     'type': 'DOUBLE_BOTTOM',
                     'pattern': 'Đảo chiều',
                     'signal': 'BULLISH',
-                    'confidence': 'HIGH' if price_diff < 0.005 else 'MEDIUM',
+                    'confidence': confidence,
                     'price1': price1,
                     'price2': price2,
                     'neckline': max(df.iloc[idx1]['high'], df.iloc[idx2]['high'])
@@ -414,16 +441,18 @@ def calculate_fibonacci_levels(swing_high, swing_low):
 
 def find_current_fib_level(current_price, fib_levels):
     """
-    Tìm Fibonacci level gần nhất với giá hiện tại
+    Tìm Fibonacci level gần nhất với giá hiện tại (V2)
     
     Returns:
-        (level_name, distance_pips)
+        (level_name, distance, is_premium_zone)
+        - is_premium_zone: True nếu trong vùng 0.5-0.618 (vùng đẹp nhất)
     """
     if fib_levels is None:
-        return None, None
+        return None, None, False
     
     min_distance = float('inf')
     closest_level = None
+    is_premium_zone = False
     
     for level_name, level_price in fib_levels.items():
         if level_name in ['trend', 'swing_high', 'swing_low']:
@@ -433,15 +462,20 @@ def find_current_fib_level(current_price, fib_levels):
         if distance < min_distance:
             min_distance = distance
             closest_level = level_name
+            # V2: Vùng 0.5-0.618 là vùng đẹp nhất
+            is_premium_zone = (level_name in ['0.5', '0.618'])
     
-    return closest_level, min_distance
+    return closest_level, min_distance, is_premium_zone
 
 # ==============================================================================
 # 6. B4: SUPPLY/DEMAND ZONES (Tái sử dụng từ check_trend.py)
 # ==============================================================================
 
-def find_supply_demand_zones(df, lookback=100):
-    """Tìm vùng supply và demand"""
+def find_supply_demand_zones(df, lookback=100, fib_levels=None, trendline=None):
+    """
+    Tìm vùng supply và demand (V2)
+    Tín hiệu mạnh nhất khi trùng Fibo hoặc trùng trendline retest
+    """
     supply_zones = []
     demand_zones = []
     
@@ -475,12 +509,32 @@ def find_supply_demand_zones(df, lookback=100):
             if zone_size >= min_zone_size:
                 volume = recent_data.iloc[i]['tick_volume']
                 if volume > avg_volume * 1.2:
-                    supply_zones.append({
+                    zone_info = {
                         'price': high_price,
                         'zone_low': low_price,
                         'volume_ratio': volume / avg_volume if avg_volume > 0 else 0,
-                        'index': i
-                    })
+                        'index': i,
+                        'strength': 1.0  # Base strength
+                    }
+                    
+                    # V2: Tín hiệu mạnh nhất khi trùng Fibo hoặc trendline
+                    if fib_levels:
+                        # Check if zone trùng với Fibo levels
+                        for level_name, fib_price in fib_levels.items():
+                            if level_name not in ['trend', 'swing_high', 'swing_low']:
+                                if abs(high_price - fib_price) / high_price < 0.01:  # Trùng trong 1%
+                                    zone_info['strength'] = 2.0
+                                    zone_info['fib_level'] = level_name
+                                    break
+                    
+                    if trendline:
+                        # Check if zone trùng với trendline retest
+                        trendline_value = trendline.get('value_at_current', 0)
+                        if abs(high_price - trendline_value) / high_price < 0.01:
+                            zone_info['strength'] = max(zone_info['strength'], 2.0)
+                            zone_info['trendline_retest'] = True
+                    
+                    supply_zones.append(zone_info)
     
     # Tìm demand zones (đáy với volume cao)
     for i in range(7, len(recent_data) - 7):
@@ -499,12 +553,32 @@ def find_supply_demand_zones(df, lookback=100):
             if zone_size >= min_zone_size:
                 volume = recent_data.iloc[i]['tick_volume']
                 if volume > avg_volume * 1.2:
-                    demand_zones.append({
+                    zone_info = {
                         'price': low_price,
                         'zone_high': high_price,
                         'volume_ratio': volume / avg_volume if avg_volume > 0 else 0,
-                        'index': i
-                    })
+                        'index': i,
+                        'strength': 1.0  # Base strength
+                    }
+                    
+                    # V2: Tín hiệu mạnh nhất khi trùng Fibo hoặc trendline
+                    if fib_levels:
+                        # Check if zone trùng với Fibo levels
+                        for level_name, fib_price in fib_levels.items():
+                            if level_name not in ['trend', 'swing_high', 'swing_low']:
+                                if abs(low_price - fib_price) / low_price < 0.01:  # Trùng trong 1%
+                                    zone_info['strength'] = 2.0
+                                    zone_info['fib_level'] = level_name
+                                    break
+                    
+                    if trendline:
+                        # Check if zone trùng với trendline retest
+                        trendline_value = trendline.get('value_at_current', 0)
+                        if abs(low_price - trendline_value) / low_price < 0.01:
+                            zone_info['strength'] = max(zone_info['strength'], 2.0)
+                            zone_info['trendline_retest'] = True
+                    
+                    demand_zones.append(zone_info)
     
     # Sắp xếp theo index (gần nhất)
     supply_zones.sort(key=lambda x: x['index'], reverse=True)
@@ -518,7 +592,7 @@ def find_supply_demand_zones(df, lookback=100):
 
 def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zones, current_price):
     """
-    Tổng hợp tất cả thông tin để đưa ra quyết định Long/Short
+    Tổng hợp tất cả thông tin để đưa ra quyết định Long/Short (V2 - Checklist A+)
     
     Returns:
         Dict với signal, confidence, và lý do
@@ -528,70 +602,170 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
         'confidence': 'LOW',
         'reasons': [],
         'entry_levels': [],
-        'tp_levels': []
+        'tp_levels': [],
+        'sl_levels': [],
+        'checklist_buy': [],
+        'checklist_sell': []
     }
     
     buy_score = 0
     sell_score = 0
     reasons_buy = []
     reasons_sell = []
+    checklist_buy = []
+    checklist_sell = []
     
-    # 1. Trendline
+    # V2: Rule cứng - Kiểm tra trendline break trước
+    trendline_invalidated = False
+    trendline_broken = False
+    
+    # 1. Trendline (V2 - Rule Cứng)
     if trendline:
-        if trendline['direction'] == "UP":
-            buy_score += 2
-            reasons_buy.append("✅ Trendline tăng")
-        elif trendline['direction'] == "DOWN":
-            sell_score += 2
-            reasons_sell.append("✅ Trendline giảm")
+        # Kiểm tra break (giá đóng nến phá trendline)
+        is_broken, is_invalidated, break_msg = check_trendline_break(df, trendline)
+        trendline_broken = is_broken
+        trendline_invalidated = is_invalidated
         
-        # Kiểm tra break
-        is_broken, break_msg = check_trendline_break(df, trendline)
-        if is_broken:
-            reasons_buy.append("⚠️ " + break_msg)
-            reasons_sell.append("⚠️ " + break_msg)
+        if is_invalidated:
+            # Rule cứng: Trendline mất hiệu lực → KHÔNG trade theo hướng cũ
+            if trendline['direction'] == "UP":
+                reasons_sell.append("⛔ " + break_msg)
+                checklist_sell.append("❌ Trendline TĂNG đã bị phá - CẤM SELL")
+            elif trendline['direction'] == "DOWN":
+                reasons_buy.append("⛔ " + break_msg)
+                checklist_buy.append("❌ Trendline GIẢM đã bị phá - CẤM BUY")
+        else:
+            # Trendline còn hiệu lực
+            if trendline['direction'] == "UP":
+                buy_score += 3  # Tăng điểm vì là điều kiện quan trọng
+                reasons_buy.append("✅ Trendline TĂNG (chưa bị phá)")
+                checklist_buy.append("✅ Trendline TĂNG hoặc breakout + retest thành công")
+            elif trendline['direction'] == "DOWN":
+                sell_score += 3
+                reasons_sell.append("✅ Trendline GIẢM (chưa bị phá)")
+                checklist_sell.append("✅ Trendline GIẢM (chưa bị phá)")
     
-    # 2. Mô hình giá
+    # 2. Mô hình giá (V2 - Phân biệt tiếp diễn/đảo chiều)
     for pattern in patterns:
-        if pattern['signal'] == 'BULLISH':
-            buy_score += 2 if pattern['confidence'] == 'HIGH' else 1
-            reasons_buy.append(f"✅ {pattern['type']} ({pattern['pattern']})")
-        elif pattern['signal'] == 'BEARISH':
-            sell_score += 2 if pattern['confidence'] == 'HIGH' else 1
-            reasons_sell.append(f"✅ {pattern['type']} ({pattern['pattern']})")
-    
-    # 3. Fibonacci
-    if fib_levels:
-        closest_level, distance = find_current_fib_level(current_price, fib_levels)
+        pattern_type = pattern.get('pattern', '')
+        is_continuation = pattern_type == 'Tiếp diễn'
+        is_reversal = pattern_type == 'Đảo chiều'
         
-        # Entry levels cho LONG: 0.382, 0.5, 0.618
+        if pattern['signal'] == 'BULLISH':
+            if is_continuation:
+                # Mô hình tiếp diễn tăng → điểm cao hơn
+                buy_score += 3 if pattern['confidence'] == 'HIGH' else 2
+                reasons_buy.append(f"✅ {pattern['type']} ({pattern_type} - tăng)")
+                checklist_buy.append(f"✅ Mô hình tiếp diễn tăng / đảo chiều tăng tại Demand")
+            elif is_reversal:
+                # Mô hình đảo chiều → chỉ điểm nếu confidence cao hoặc trùng Supply/Demand
+                if pattern['confidence'] == 'HIGH':
+                    buy_score += 2
+                    reasons_buy.append(f"✅ {pattern['type']} ({pattern_type} - tăng)")
+                    checklist_buy.append(f"✅ Mô hình đảo chiều tăng tại Demand")
+                else:
+                    buy_score += 1
+                    reasons_buy.append(f"⚠️ {pattern['type']} ({pattern_type} - độ tin cậy thấp)")
+        elif pattern['signal'] == 'BEARISH':
+            if is_continuation:
+                # Mô hình tiếp diễn giảm → điểm cao hơn
+                sell_score += 3 if pattern['confidence'] == 'HIGH' else 2
+                reasons_sell.append(f"✅ {pattern['type']} ({pattern_type} - giảm)")
+                checklist_sell.append(f"✅ Mô hình tiếp diễn giảm / đảo chiều giảm tại Supply")
+            elif is_reversal:
+                # Mô hình đảo chiều → chỉ điểm nếu confidence cao hoặc trùng Supply/Demand
+                if pattern['confidence'] == 'HIGH':
+                    sell_score += 2
+                    reasons_sell.append(f"✅ {pattern['type']} ({pattern_type} - giảm)")
+                    checklist_sell.append(f"✅ Mô hình đảo chiều giảm tại Supply")
+                else:
+                    sell_score += 1
+                    reasons_sell.append(f"⚠️ {pattern['type']} ({pattern_type} - độ tin cậy thấp)")
+    
+    # 3. Fibonacci (V2 - Ưu tiên 0.5-0.618, Rule cứng TP)
+    if fib_levels:
+        closest_level, distance, is_premium_zone = find_current_fib_level(current_price, fib_levels)
+        
+        # Entry levels cho LONG: 0.382, 0.5, 0.618 (V2: ưu tiên 0.5-0.618)
         if closest_level in ['0.382', '0.5', '0.618']:
             if fib_levels['trend'] == "UP":
-                buy_score += 1
-                reasons_buy.append(f"✅ Giá tại Fibo {closest_level} (entry tốt cho LONG)")
+                if is_premium_zone:
+                    buy_score += 3  # Vùng đẹp nhất
+                    reasons_buy.append(f"🔥 Giá tại Fibo {closest_level} (vùng đẹp nhất 0.5-0.618)")
+                    checklist_buy.append(f"✅ Giá hồi về Fibo 0.382-0.618 (hiện tại: {closest_level})")
+                else:
+                    buy_score += 2
+                    reasons_buy.append(f"✅ Giá tại Fibo {closest_level} (entry tốt cho LONG)")
+                    checklist_buy.append(f"✅ Giá hồi về Fibo 0.382-0.618 (hiện tại: {closest_level})")
                 decision['entry_levels'].append(f"Fibo {closest_level}: {fib_levels[closest_level]:.5f}")
+                
+                # V2: Rule cứng - TP PHẢI > Entry cho BUY
+                entry_price = fib_levels[closest_level]
+                tp1 = fib_levels.get('1.0', entry_price)
+                tp2 = fib_levels.get('1.272', entry_price)
+                tp3 = fib_levels.get('1.618', entry_price)
+                
+                if tp1 > entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.0: {tp1:.5f} ✅")
+                if tp2 > entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.272: {tp2:.5f} ✅")
+                if tp3 > entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.618: {tp3:.5f} ✅")
+                
+                # SL: dưới Demand hoặc dưới 0.786
+                sl_fib786 = fib_levels.get('0.786', entry_price * 0.99)
+                decision['sl_levels'].append(f"Fibo 0.786: {sl_fib786:.5f} (dưới entry)")
         
-        # Entry levels cho SHORT: 0.382, 0.5, 0.618 (khi downtrend)
+        # Entry levels cho SHORT: 0.382, 0.5, 0.618 (V2: ưu tiên 0.5-0.618)
         if closest_level in ['0.382', '0.5', '0.618']:
             if fib_levels['trend'] == "DOWN":
-                sell_score += 1
-                reasons_sell.append(f"✅ Giá tại Fibo {closest_level} (entry tốt cho SHORT)")
+                if is_premium_zone:
+                    sell_score += 3  # Vùng đẹp nhất
+                    reasons_sell.append(f"🔥 Giá tại Fibo {closest_level} (vùng đẹp nhất 0.5-0.618)")
+                    checklist_sell.append(f"✅ Giá hồi lên Fibo 0.5-0.618 (hiện tại: {closest_level})")
+                else:
+                    sell_score += 2
+                    reasons_sell.append(f"✅ Giá tại Fibo {closest_level} (entry tốt cho SHORT)")
+                    checklist_sell.append(f"✅ Giá hồi lên Fibo 0.5-0.618 (hiện tại: {closest_level})")
                 decision['entry_levels'].append(f"Fibo {closest_level}: {fib_levels[closest_level]:.5f}")
-        
-        # TP levels
-        decision['tp_levels'].append(f"Fibo 1.0: {fib_levels['1.0']:.5f}")
-        decision['tp_levels'].append(f"Fibo 1.272: {fib_levels['1.272']:.5f}")
-        decision['tp_levels'].append(f"Fibo 1.618: {fib_levels['1.618']:.5f}")
+                
+                # V2: Rule cứng - TP PHẢI < Entry cho SELL
+                entry_price = fib_levels[closest_level]
+                tp1 = fib_levels.get('1.0', entry_price)
+                tp2 = fib_levels.get('1.272', entry_price)
+                tp3 = fib_levels.get('1.618', entry_price)
+                
+                if tp1 < entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.0: {tp1:.5f} ✅")
+                if tp2 < entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.272: {tp2:.5f} ✅")
+                if tp3 < entry_price:
+                    decision['tp_levels'].append(f"Fibo 1.618: {tp3:.5f} ✅")
+                
+                # SL: trên Supply hoặc trên đỉnh gần nhất
+                sl_fib786 = fib_levels.get('0.786', entry_price * 1.01)
+                decision['sl_levels'].append(f"Fibo 0.786: {sl_fib786:.5f} (trên entry)")
     
-    # 4. Supply/Demand zones
+    # 4. Supply/Demand zones (V2 - Mạnh nhất khi trùng Fibo/trendline)
     # Kiểm tra giá có nằm trong zone không
     for zone in demand_zones:
         # Demand zone: price là low, zone_high là high
         zone_low = zone['price']
         zone_high = zone.get('zone_high', zone_low * 1.01)
         if zone_low <= current_price <= zone_high:
-            buy_score += 2
-            reasons_buy.append(f"✅ Giá trong Demand Zone ({zone_low:.5f} - {zone_high:.5f})")
+            zone_strength = zone.get('strength', 1.0)
+            # V2: Tín hiệu mạnh nhất khi trùng Fibo hoặc trendline
+            if zone_strength >= 2.0:
+                buy_score += 4  # Tăng điểm khi trùng Fibo/trendline
+                if 'fib_level' in zone:
+                    reasons_buy.append(f"🔥 Giá trong Demand Zone TRÙNG Fibo {zone['fib_level']} ({zone_low:.5f} - {zone_high:.5f})")
+                if zone.get('trendline_retest', False):
+                    reasons_buy.append(f"🔥 Giá trong Demand Zone TRÙNG Trendline Retest ({zone_low:.5f} - {zone_high:.5f})")
+                checklist_buy.append(f"✅ Nằm trong Demand Zone (trùng Fibo/trendline)")
+            else:
+                buy_score += 2
+                reasons_buy.append(f"✅ Giá trong Demand Zone ({zone_low:.5f} - {zone_high:.5f})")
+                checklist_buy.append(f"✅ Nằm trong Demand Zone")
             decision['entry_levels'].append(f"Demand Zone: {zone_low:.5f}")
     
     for zone in supply_zones:
@@ -599,39 +773,129 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
         zone_high = zone['price']
         zone_low = zone.get('zone_low', zone_high * 0.99)
         if zone_low <= current_price <= zone_high:
-            sell_score += 2
-            reasons_sell.append(f"✅ Giá trong Supply Zone ({zone_low:.5f} - {zone_high:.5f})")
+            zone_strength = zone.get('strength', 1.0)
+            # V2: Tín hiệu mạnh nhất khi trùng Fibo hoặc trendline
+            if zone_strength >= 2.0:
+                sell_score += 4  # Tăng điểm khi trùng Fibo/trendline
+                if 'fib_level' in zone:
+                    reasons_sell.append(f"🔥 Giá trong Supply Zone TRÙNG Fibo {zone['fib_level']} ({zone_low:.5f} - {zone_high:.5f})")
+                if zone.get('trendline_retest', False):
+                    reasons_sell.append(f"🔥 Giá trong Supply Zone TRÙNG Trendline Retest ({zone_low:.5f} - {zone_high:.5f})")
+                checklist_sell.append(f"✅ Chạm Supply Zone (trùng Fibo/trendline)")
+            else:
+                sell_score += 2
+                reasons_sell.append(f"✅ Giá trong Supply Zone ({zone_low:.5f} - {zone_high:.5f})")
+                checklist_sell.append(f"✅ Chạm Supply Zone")
             decision['entry_levels'].append(f"Supply Zone: {zone_high:.5f}")
     
-    # 5. Nến xác nhận (candlestick pattern)
+    # 5. Nến xác nhận (V2 - Pin bar / Engulfing / BOS)
     if len(df) >= 2:
         last_candle = df.iloc[-1]
-        prev_candle = df.iloc[-2]
+        prev_candle = df.iloc[-2] if len(df) >= 2 else None
         
-        # Bullish confirmation
-        if (last_candle['close'] > last_candle['open'] and 
-            last_candle['close'] > prev_candle['close']):
-            buy_score += 1
-            reasons_buy.append("✅ Nến xác nhận tăng")
+        # Phát hiện Bullish Engulfing
+        if prev_candle is not None:
+            prev_bearish = prev_candle['close'] < prev_candle['open']
+            curr_bullish = last_candle['close'] > last_candle['open']
+            engulfs = (last_candle['open'] < prev_candle['close']) and (last_candle['close'] > prev_candle['open'])
+            if prev_bearish and curr_bullish and engulfs:
+                buy_score += 2
+                reasons_buy.append("✅ Bullish Engulfing")
+                checklist_buy.append("✅ Có nến xác nhận tăng (Engulfing)")
         
-        # Bearish confirmation
-        elif (last_candle['close'] < last_candle['open'] and 
-              last_candle['close'] < prev_candle['close']):
-            sell_score += 1
-            reasons_sell.append("✅ Nến xác nhận giảm")
+        # Phát hiện Bearish Engulfing
+        if prev_candle is not None:
+            prev_bullish = prev_candle['close'] > prev_candle['open']
+            curr_bearish = last_candle['close'] < last_candle['open']
+            engulfs = (last_candle['open'] > prev_candle['close']) and (last_candle['close'] < prev_candle['open'])
+            if prev_bullish and curr_bearish and engulfs:
+                sell_score += 2
+                reasons_sell.append("✅ Bearish Engulfing")
+                checklist_sell.append("✅ Có nến xác nhận giảm (Engulfing)")
+        
+        # Phát hiện Pin bar (Bullish)
+        if len(df) >= 1:
+            candle_range = last_candle['high'] - last_candle['low']
+            if candle_range > 0:
+                body = abs(last_candle['close'] - last_candle['open'])
+                lower_wick = min(last_candle['open'], last_candle['close']) - last_candle['low']
+                upper_wick = last_candle['high'] - max(last_candle['open'], last_candle['close'])
+                
+                # Bullish Pin bar: Lower wick >= 60% range, small body
+                if lower_wick / candle_range >= 0.6 and body / candle_range < 0.3:
+                    buy_score += 2
+                    reasons_buy.append("✅ Bullish Pin bar")
+                    checklist_buy.append("✅ Có nến xác nhận tăng (Pin bar)")
+                
+                # Bearish Pin bar: Upper wick >= 60% range, small body
+                if upper_wick / candle_range >= 0.6 and body / candle_range < 0.3:
+                    sell_score += 2
+                    reasons_sell.append("✅ Bearish Pin bar")
+                    checklist_sell.append("✅ Có nến xác nhận giảm (Pin bar)")
+        
+        # BOS (Break of Structure) - Giá phá vỡ cấu trúc
+        if len(df) >= 5:
+            recent_highs = df.iloc[-5:]['high'].values
+            recent_lows = df.iloc[-5:]['low'].values
+            prev_high = max(recent_highs[:-1])
+            prev_low = min(recent_lows[:-1])
+            
+            # Bullish BOS: Giá phá vỡ đỉnh trước
+            if last_candle['close'] > prev_high:
+                buy_score += 2
+                reasons_buy.append("✅ BOS (Break of Structure) - Phá đỉnh")
+                checklist_buy.append("✅ Có nến xác nhận tăng (BOS)")
+            
+            # Bearish BOS: Giá phá vỡ đáy trước
+            if last_candle['close'] < prev_low:
+                sell_score += 2
+                reasons_sell.append("✅ BOS (Break of Structure) - Phá đáy")
+                checklist_sell.append("✅ Có nến xác nhận giảm (BOS)")
     
-    # Quyết định cuối cùng
-    if buy_score > sell_score and buy_score >= 3:
+    # V2: Rule cứng - NO TRADE nếu trendline bị phá nhưng chưa retest
+    if trendline_broken and not any([z.get('trendline_retest', False) for z in demand_zones + supply_zones]):
+        decision['signal'] = 'NO_TRADE'
+        decision['confidence'] = 'LOW'
+        decision['reasons'] = ["🚫 Trendline bị phá nhưng chưa retest - BỎ QUA"]
+        return decision
+    
+    # V2: Rule cứng - NO TRADE nếu BUY & SELL cùng xuất hiện
+    if buy_score >= 3 and sell_score >= 3:
+        decision['signal'] = 'NO_TRADE'
+        decision['confidence'] = 'LOW'
+        decision['reasons'] = ["🚫 BUY & SELL cùng xuất hiện - BỎ QUA"]
+        return decision
+    
+    # V2: Rule cứng - NO TRADE nếu TP nằm sai phía entry
+    if decision['tp_levels']:
+        # Kiểm tra xem có TP hợp lệ không
+        valid_tp_count = len([tp for tp in decision['tp_levels'] if '✅' in tp])
+        if valid_tp_count == 0:
+            decision['signal'] = 'NO_TRADE'
+            decision['confidence'] = 'LOW'
+            decision['reasons'] = ["🚫 TP nằm sai phía entry - BỎ QUA"]
+            return decision
+    
+    # Quyết định cuối cùng (V2 - Checklist A+)
+    # BUY A+: Cần đủ các điều kiện trong checklist
+    buy_checklist_count = len([c for c in checklist_buy if c.startswith('✅')])
+    sell_checklist_count = len([c for c in checklist_sell if c.startswith('✅')])
+    
+    if buy_score > sell_score and buy_score >= 5 and buy_checklist_count >= 4:
         decision['signal'] = 'BUY'
-        decision['confidence'] = 'HIGH' if buy_score >= 5 else 'MEDIUM'
+        decision['confidence'] = 'A+' if buy_checklist_count >= 5 else 'HIGH' if buy_score >= 8 else 'MEDIUM'
         decision['reasons'] = reasons_buy
-    elif sell_score > buy_score and sell_score >= 3:
+        decision['checklist_buy'] = checklist_buy
+    elif sell_score > buy_score and sell_score >= 5 and sell_checklist_count >= 4:
         decision['signal'] = 'SELL'
-        decision['confidence'] = 'HIGH' if sell_score >= 5 else 'MEDIUM'
+        decision['confidence'] = 'A+' if sell_checklist_count >= 5 else 'HIGH' if sell_score >= 8 else 'MEDIUM'
         decision['reasons'] = reasons_sell
+        decision['checklist_sell'] = checklist_sell
     else:
         decision['signal'] = 'NEUTRAL'
-        decision['reasons'] = reasons_buy + reasons_sell if reasons_buy or reasons_sell else ["⚠️ Không đủ tín hiệu rõ ràng"]
+        decision['reasons'] = reasons_buy + reasons_sell if reasons_buy or reasons_sell else ["⚠️ Không đủ tín hiệu rõ ràng (chưa đạt checklist A+)"]
+        decision['checklist_buy'] = checklist_buy
+        decision['checklist_sell'] = checklist_sell
     
     return decision
 
@@ -678,7 +942,8 @@ def analyze_symbol(symbol_base):
     
     # B2: Phát hiện mô hình giá
     print("  🔍 B2: Phát hiện mô hình giá...")
-    patterns = detect_price_patterns(df, swing_highs, swing_lows)
+    trendline_direction = trendline['direction'] if trendline else None
+    patterns = detect_price_patterns(df, swing_highs, swing_lows, trendline_direction)
     
     # B3: Tính Fibonacci
     print("  🔍 B3: Tính Fibonacci levels...")
@@ -691,7 +956,7 @@ def analyze_symbol(symbol_base):
     
     # B4: Tìm Supply/Demand zones
     print("  🔍 B4: Tìm Supply/Demand zones...")
-    supply_zones, demand_zones = find_supply_demand_zones(df)
+    supply_zones, demand_zones = find_supply_demand_zones(df, lookback=100, fib_levels=fib_levels, trendline=trendline)
     
     # B5: Tổng hợp quyết định
     print("  🔍 B5: Tổng hợp quyết định...")
@@ -860,10 +1125,12 @@ def format_telegram_message(symbol, analysis):
         direction_emoji = "🟢" if tl['direction'] == "UP" else "🔴" if tl['direction'] == "DOWN" else "🟡"
         msg += f"{direction_emoji} Hướng: {tl['direction']}\n"
         msg += f"📊 Giá trị trendline: {tl['value_at_current']:.5f}\n"
-        # Tạo df tạm để check break (chỉ cần current price)
-        temp_df = pd.DataFrame({'close': [analysis['current_price']]})
-        is_broken, break_msg = check_trendline_break(temp_df, tl, 0.001)
-        if is_broken:
+        # Tạo df tạm để check break (cần nến đã đóng cửa)
+        temp_df = pd.DataFrame({'close': [analysis['current_price'], analysis['current_price']]})
+        is_broken, is_invalidated, break_msg = check_trendline_break(temp_df, tl, 0.001)
+        if is_invalidated:
+            msg += f"⛔ {escape_html(break_msg)}\n"
+        elif is_broken:
             msg += f"⚠️ {escape_html(break_msg)}\n"
     else:
         msg += "⚠️ Không tìm thấy trendline rõ ràng\n"
@@ -920,6 +1187,19 @@ def format_telegram_message(symbol, analysis):
     
     msg += f"{signal_emoji} <b>Signal: {escape_html(decision['signal'])}</b> {confidence_emoji} ({escape_html(decision['confidence'])})\n\n"
     
+    # V2: Hiển thị Checklist
+    if decision.get('checklist_buy'):
+        msg += "<b>📋 Checklist BUY:</b>\n"
+        for item in decision['checklist_buy']:
+            msg += f"• {escape_html(item)}\n"
+        msg += "\n"
+    
+    if decision.get('checklist_sell'):
+        msg += "<b>📋 Checklist SELL:</b>\n"
+        for item in decision['checklist_sell']:
+            msg += f"• {escape_html(item)}\n"
+        msg += "\n"
+    
     msg += "<b>Lý do:</b>\n"
     for reason in decision['reasons']:
         msg += f"• {escape_html(reason)}\n"
@@ -932,6 +1212,11 @@ def format_telegram_message(symbol, analysis):
     if decision['tp_levels']:
         msg += "\n<b>🎯 Take Profit Levels:</b>\n"
         for level in decision['tp_levels'][:3]:
+            msg += f"• {escape_html(level)}\n"
+    
+    if decision.get('sl_levels'):
+        msg += "\n<b>🛑 Stop Loss Levels:</b>\n"
+        for level in decision['sl_levels']:
             msg += f"• {escape_html(level)}\n"
     
     return msg
