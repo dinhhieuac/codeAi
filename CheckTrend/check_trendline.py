@@ -1150,9 +1150,13 @@ def format_telegram_message(symbol, analysis):
     msg += "<b>📊 B3: FIBONACCI</b>\n"
     if analysis['fib_levels']:
         fib = analysis['fib_levels']
-        closest_level, distance = find_current_fib_level(analysis['current_price'], fib)
+        closest_level, distance, is_premium_zone = find_current_fib_level(analysis['current_price'], fib)
         if closest_level:
-            msg += f"📍 Level gần nhất: {escape_html(closest_level)}\n"
+            premium_emoji = "🔥" if is_premium_zone else "📍"
+            msg += f"{premium_emoji} Level gần nhất: {escape_html(closest_level)}"
+            if is_premium_zone:
+                msg += " (vùng đẹp nhất 0.5-0.618)"
+            msg += "\n"
         msg += f"💰 Entry levels (0.382-0.618):\n"
         for level in ['0.382', '0.5', '0.618']:
             if level in fib:
