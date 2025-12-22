@@ -106,9 +106,9 @@ def find_previous_rsi_extreme(rsi_series, lookback=20, min_rsi=70, max_rsi=30):
 def m1_scalp_logic(config, error_count=0):
     """
     M1 Scalp Strategy Logic
-    BUY: EMA50 > EMA200, RSI từ ≥70 về 40-50 (không <32), RSI quay đầu lên, ATR ≥ 0.00011, 
+    BUY: EMA50 > EMA200, RSI từ ≥70 về 40-50 (không <32), RSI quay đầu lên, ATR ≥ 1.5 pips, 
          Bullish engulfing + Close > EMA50, Volume tăng
-    SELL: EMA50 < EMA200, RSI từ ≤30 về 50-60 (không >68), RSI quay đầu xuống, ATR ≥ 0.00011,
+    SELL: EMA50 < EMA200, RSI từ ≤30 về 50-60 (không >68), RSI quay đầu xuống, ATR ≥ 1.5 pips,
           Bearish engulfing + Close < EMA50, Volume tăng
     SL = 2ATR + 6 point, TP = 2SL
     """
@@ -164,7 +164,8 @@ def m1_scalp_logic(config, error_count=0):
         
         # --- 4. Check ATR Condition (Điều kiện 4) ---
         atr_val = curr_candle['atr']
-        min_atr = 0.00011
+        # 1.5 pips = 1.5 * 0.0001 = 0.00015 (cho EURUSD, 1 pip = 0.0001)
+        min_atr = 0.00015  # 1.5 pips
         if pd.isna(atr_val) or atr_val < min_atr:
             return error_count, 0
         
@@ -219,7 +220,8 @@ def m1_scalp_logic(config, error_count=0):
             log_details.append(f"{'✅' if buy_condition3 else '❌'} [BUY] ĐK3: RSI quay đầu lên ({prev_rsi:.1f} -> {current_rsi:.1f})")
             
             # Điều kiện 4: ATR (đã check ở trên)
-            log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [BUY] ĐK4: ATR ({atr_val:.5f}) >= {min_atr:.5f}")
+            atr_pips = atr_val / 0.0001  # Convert to pips
+            log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [BUY] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 1.5 pips ({min_atr:.5f})")
             
             # Điều kiện 5: Bullish engulfing + Close > EMA50
             buy_condition5a = is_bullish_engulfing(prev_candle, curr_candle)
@@ -303,7 +305,8 @@ def m1_scalp_logic(config, error_count=0):
                 log_details.append(f"{'✅' if sell_condition3 else '❌'} [SELL] ĐK3: RSI quay đầu xuống ({prev_rsi:.1f} -> {current_rsi:.1f})")
                 
                 # Điều kiện 4: ATR (đã check ở trên)
-                log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [SELL] ĐK4: ATR ({atr_val:.5f}) >= {min_atr:.5f}")
+                atr_pips = atr_val / 0.0001  # Convert to pips
+                log_details.append(f"{'✅' if atr_val >= min_atr else '❌'} [SELL] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 1.5 pips ({min_atr:.5f})")
                 
                 # Điều kiện 5: Bearish engulfing + Close < EMA50
                 sell_condition5a = is_bearish_engulfing(prev_candle, curr_candle)
