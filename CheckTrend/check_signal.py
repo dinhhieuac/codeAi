@@ -631,11 +631,13 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
         if is_invalidated:
             # Rule cứng: Trendline mất hiệu lực → KHÔNG trade theo hướng cũ
             if trendline['direction'] == "UP":
-                reasons_sell.append("⛔ " + break_msg)
-                checklist_sell.append("❌ Trendline TĂNG đã bị phá - CẤM SELL")
-            elif trendline['direction'] == "DOWN":
+                # Trendline UP bị phá → CẤM BUY (không trade theo hướng cũ), nhưng SELL vẫn OK
                 reasons_buy.append("⛔ " + break_msg)
-                checklist_buy.append("❌ Trendline GIẢM đã bị phá - CẤM BUY")
+                checklist_buy.append("❌ Trendline TĂNG đã bị phá - CẤM BUY")
+            elif trendline['direction'] == "DOWN":
+                # Trendline DOWN bị phá → CẤM SELL (không trade theo hướng cũ), nhưng BUY vẫn OK
+                reasons_sell.append("⛔ " + break_msg)
+                checklist_sell.append("❌ Trendline GIẢM đã bị phá - CẤM SELL")
         else:
             # Trendline còn hiệu lực
             if trendline['direction'] == "UP":
@@ -878,24 +880,52 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
             decision['reasons'] = ["🚫 TP nằm sai phía entry - BỎ QUA"]
             return decision
     
+    # V2: Rule cứng - NO TRADE nếu có "CẤM" trong checklist
+    buy_forbidden = any(['CẤM' in c for c in checklist_buy])
+    sell_forbidden = any(['CẤM' in c for c in checklist_sell])
+    
+    if buy_forbidden:
+        buy_score = 0  # Reset score nếu bị cấm
+        reasons_buy.insert(0, "🚫 BUY bị CẤM (trendline đã bị phá)")
+    
+    if sell_forbidden:
+        sell_score = 0  # Reset score nếu bị cấm
+        reasons_sell.insert(0, "🚫 SELL bị CẤM (trendline đã bị phá)")
+    
     # Quyết định cuối cùng (V2 - Checklist A+)
     # BUY A+: Cần đủ các điều kiện trong checklist
     buy_checklist_count = len([c for c in checklist_buy if c.startswith('✅')])
     sell_checklist_count = len([c for c in checklist_sell if c.startswith('✅')])
     
-    if buy_score > sell_score and buy_score >= 5 and buy_checklist_count >= 4:
+    if buy_forbidden:
+        # BUY bị cấm → không thể BUY
+        pass
+    elif buy_score > sell_score and buy_score >= 5 and buy_checklist_count >= 4:
         decision['signal'] = 'BUY'
         decision['confidence'] = 'A+' if buy_checklist_count >= 5 else 'HIGH' if buy_score >= 8 else 'MEDIUM'
         decision['reasons'] = reasons_buy
         decision['checklist_buy'] = checklist_buy
+    
+    if sell_forbidden:
+        # SELL bị cấm → không thể SELL
+        pass
     elif sell_score > buy_score and sell_score >= 5 and sell_checklist_count >= 4:
         decision['signal'] = 'SELL'
         decision['confidence'] = 'A+' if sell_checklist_count >= 5 else 'HIGH' if sell_score >= 8 else 'MEDIUM'
         decision['reasons'] = reasons_sell
         decision['checklist_sell'] = checklist_sell
-    else:
-        decision['signal'] = 'NEUTRAL'
-        decision['reasons'] = reasons_buy + reasons_sell if reasons_buy or reasons_sell else ["⚠️ Không đủ tín hiệu rõ ràng (chưa đạt checklist A+)"]
+    
+    # Nếu cả 2 đều bị cấm hoặc không đủ điều kiện
+    if decision['signal'] == 'NEUTRAL':
+        if buy_forbidden and sell_forbidden:
+            decision['signal'] = 'NO_TRADE'
+            decision['reasons'] = ["🚫 Cả BUY và SELL đều bị CẤM (trendline đã bị phá)"]
+        elif buy_forbidden:
+            decision['reasons'] = reasons_sell if reasons_sell else ["⚠️ BUY bị CẤM, SELL không đủ điều kiện"]
+        elif sell_forbidden:
+            decision['reasons'] = reasons_buy if reasons_buy else ["⚠️ SELL bị CẤM, BUY không đủ điều kiện"]
+        else:
+            decision['reasons'] = reasons_buy + reasons_sell if reasons_buy or reasons_sell else ["⚠️ Không đủ tín hiệu rõ ràng (chưa đạt checklist A+)"]
         decision['checklist_buy'] = checklist_buy
         decision['checklist_sell'] = checklist_sell
     
