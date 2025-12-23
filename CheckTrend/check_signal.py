@@ -746,9 +746,29 @@ def make_decision(df, trendline, patterns, fib_levels, supply_zones, demand_zone
                 if tp3 < entry_price:
                     decision['tp_levels'].append(f"Fibo 1.618: {tp3:.5f} ✅")
                 
-                # SL: trên Supply hoặc trên đỉnh gần nhất
-                sl_fib786 = fib_levels.get('0.786', entry_price * 1.01)
-                decision['sl_levels'].append(f"Fibo 0.786: {sl_fib786:.5f} (trên entry)")
+                # SL: trên Supply hoặc trên đỉnh gần nhất (phải > entry)
+                # Tìm SL hợp lệ: trên swing high (Fibo 1.0) hoặc Supply zone
+                sl_candidates = []
+                
+                # Option 1: Trên swing high (Fibo 1.0) + buffer nhỏ
+                fib_1_0 = fib_levels.get('1.0', None)
+                if fib_1_0 and fib_1_0 > entry_price:
+                    sl_candidates.append((fib_1_0 * 1.005, f"Fibo 1.0 + buffer: {fib_1_0:.5f}"))
+                
+                # Option 2: Tìm Supply zone gần nhất trên entry
+                for zone in supply_zones:
+                    zone_high = zone['price']
+                    if zone_high > entry_price:
+                        sl_candidates.append((zone_high * 1.002, f"Supply Zone: {zone_high:.5f}"))
+                
+                # Option 3: Fallback - entry * 1.01 (1% trên entry)
+                if not sl_candidates:
+                    sl_candidates.append((entry_price * 1.01, f"Entry + 1%: {entry_price:.5f}"))
+                
+                # Chọn SL gần entry nhất (nhưng vẫn > entry)
+                if sl_candidates:
+                    sl_price, sl_note = min(sl_candidates, key=lambda x: x[0])
+                    decision['sl_levels'].append(f"{sl_note} (trên entry)")
     
     # 4. Supply/Demand zones (V2 - Mạnh nhất khi trùng Fibo/trendline)
     # Kiểm tra giá có nằm trong zone không
@@ -1282,11 +1302,13 @@ def format_telegram_message(symbol, analysis):
             sl_price = None
             sl_note = ""
             for sl in decision['sl_levels']:
-                # Parse: "Fibo 0.786: 2959.14390 (dưới entry)"
+                # Parse: "Fibo 0.786: 2959.14390 (dưới entry)" hoặc "Fibo 1.0 + buffer: 2959.14390 (trên entry)"
                 try:
-                    parts = sl.split(':')
-                    if len(parts) >= 2:
-                        sl_price = float(parts[1].split()[0].strip())
+                    # Tìm số thập phân trong chuỗi
+                    import re
+                    numbers = re.findall(r'\d+\.\d+', sl)
+                    if numbers:
+                        sl_price = float(numbers[0])
                         sl_note = sl
                         break
                 except:
