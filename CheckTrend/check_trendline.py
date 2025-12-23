@@ -1137,10 +1137,22 @@ def escape_html(text):
     text = text.replace(">", "&gt;")
     return text
 
+def get_pip_size(symbol):
+    """Xác định pip size cho symbol"""
+    symbol_upper = symbol.upper()
+    if 'BTC' in symbol_upper or 'ETH' in symbol_upper or 'BNB' in symbol_upper:
+        return 1.0  # Crypto: 1 unit = 1 pip
+    elif 'XAU' in symbol_upper or 'GOLD' in symbol_upper:
+        return 0.01  # Gold: 0.01 = 1 pip
+    else:
+        return 0.0001  # Forex: 0.0001 = 1 pip
+
 def format_telegram_message(symbol, analysis):
     """Định dạng tin nhắn Telegram"""
     if analysis is None:
         return f"❌ {symbol}: Không lấy được dữ liệu"
+    
+    pip_size = get_pip_size(symbol)
     
     msg = f"<b>📊 TRENDLINE ANALYSIS - {escape_html(symbol)}</b>\n"
     msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -1220,6 +1232,109 @@ def format_telegram_message(symbol, analysis):
     confidence_emoji = "💪" if decision['confidence'] == 'HIGH' else "⚡" if decision['confidence'] == 'MEDIUM' else "💤"
     
     msg += f"{signal_emoji} <b>Signal: {escape_html(decision['signal'])}</b> {confidence_emoji} ({escape_html(decision['confidence'])})\n\n"
+    
+    # Bổ sung thông tin lệnh chi tiết (Entry, SL, TP)
+    if decision['signal'] in ['BUY', 'SELL']:
+        msg += "<b>📋 THÔNG TIN LỆNH CHI TIẾT:</b>\n"
+        
+        # Tìm Entry point tốt nhất
+        entry_price = None
+        entry_note = ""
+        if decision['entry_levels']:
+            # Ưu tiên Fibo level
+            for entry in decision['entry_levels']:
+                if 'Fibo' in entry:
+                    # Parse: "Fibo 0.382: 2988.97930"
+                    try:
+                        parts = entry.split(':')
+                        if len(parts) == 2:
+                            entry_price = float(parts[1].strip())
+                            entry_note = entry
+                            break
+                    except:
+                        pass
+            
+            # Nếu không có Fibo, lấy Supply/Demand zone đầu tiên
+            if entry_price is None:
+                for entry in decision['entry_levels']:
+                    if 'Zone' in entry:
+                        try:
+                            parts = entry.split(':')
+                            if len(parts) == 2:
+                                entry_price = float(parts[1].strip())
+                                entry_note = entry
+                                break
+                        except:
+                            pass
+            
+            # Nếu vẫn không có, dùng giá hiện tại
+            if entry_price is None:
+                entry_price = analysis['current_price']
+                entry_note = f"Giá hiện tại: {entry_price:.5f}"
+        
+        if entry_price is not None:
+            msg += f"📍 <b>Entry:</b> {entry_price:.5f} ({escape_html(entry_note)})\n"
+        
+        # Tìm SL tốt nhất
+        if decision.get('sl_levels'):
+            sl_price = None
+            sl_note = ""
+            for sl in decision['sl_levels']:
+                # Parse: "Fibo 0.786: 2959.14390 (dưới entry)"
+                try:
+                    parts = sl.split(':')
+                    if len(parts) >= 2:
+                        sl_price = float(parts[1].split()[0].strip())
+                        sl_note = sl
+                        break
+                except:
+                    pass
+            
+            if sl_price is not None:
+                # Tính khoảng cách SL
+                if decision['signal'] == 'BUY':
+                    sl_distance = entry_price - sl_price if entry_price else 0
+                else:  # SELL
+                    sl_distance = sl_price - entry_price if entry_price else 0
+                
+                sl_pips = sl_distance / pip_size if pip_size > 0 else 0
+                
+                msg += f"🛑 <b>SL:</b> {sl_price:.5f} ({escape_html(sl_note)})\n"
+                if sl_distance > 0:
+                    msg += f"   📏 Khoảng cách: {sl_distance:.5f} ({sl_pips:.1f} pips)\n"
+        
+        # Hiển thị TP levels
+        if decision.get('tp_levels'):
+            msg += f"🎯 <b>Take Profit:</b>\n"
+            tp_count = 0
+            for tp in decision['tp_levels'][:3]:  # Tối đa 3 TP
+                # Parse: "Fibo 1.0: 2943.34000 ✅"
+                try:
+                    parts = tp.split(':')
+                    if len(parts) >= 2:
+                        tp_price = float(parts[1].split()[0].strip())
+                        tp_note = parts[0].strip()
+                        tp_count += 1
+                        
+                        # Tính khoảng cách TP
+                        if entry_price:
+                            if decision['signal'] == 'BUY':
+                                tp_distance = tp_price - entry_price
+                            else:  # SELL
+                                tp_distance = entry_price - tp_price
+                            
+                            tp_pips = tp_distance / pip_size if pip_size > 0 else 0
+                            
+                            # Tính R:R ratio
+                            if sl_price and sl_distance > 0:
+                                rr_ratio = tp_distance / sl_distance
+                                msg += f"   🎯 TP{tp_count}: {tp_price:.5f} ({escape_html(tp_note)}) - R:R = 1:{rr_ratio:.2f} ({tp_pips:.1f} pips)\n"
+                            else:
+                                msg += f"   🎯 TP{tp_count}: {tp_price:.5f} ({escape_html(tp_note)}) ({tp_pips:.1f} pips)\n"
+                except:
+                    pass
+        
+        msg += "\n"
     
     # V2: Hiển thị Checklist
     if decision.get('checklist_buy'):
