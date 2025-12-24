@@ -1326,9 +1326,13 @@ def format_telegram_message(symbol, analysis):
             if entry_price is None:
                 entry_price = analysis['current_price']
                 entry_note = f"Giá hiện tại: {entry_price:.5f}"
+        else:
+            # Nếu không có entry_levels, dùng giá hiện tại
+            entry_price = analysis['current_price']
+            entry_note = f"Giá hiện tại: {entry_price:.5f}"
         
-        if entry_price is not None:
-            msg += f"📍 <b>Entry:</b> {entry_price:.5f} ({escape_html(entry_note)})\n"
+        # Luôn hiển thị Entry
+        msg += f"📍 <b>Entry:</b> {entry_price:.5f} ({escape_html(entry_note)})\n"
         
         # Tìm SL tốt nhất
         sl_price = None
@@ -1381,6 +1385,16 @@ def format_telegram_message(symbol, analysis):
                     sl_price = entry_price * 1.02  # 2% trên entry
                     sl_note = f"Entry + 2%: {entry_price:.5f}"
         
+        # Luôn tính SL (nếu chưa có)
+        if sl_price is None and entry_price:
+            # Fallback: Tính SL dựa trên entry
+            if signal_type == "BUY":
+                sl_price = entry_price * 0.98  # 2% dưới entry
+                sl_note = f"Entry - 2%: {entry_price:.5f}"
+            else:  # SELL
+                sl_price = entry_price * 1.02  # 2% trên entry
+                sl_note = f"Entry + 2%: {entry_price:.5f}"
+        
         if sl_price is not None:
             # Tính khoảng cách SL
             if signal_type == "BUY":
@@ -1393,6 +1407,8 @@ def format_telegram_message(symbol, analysis):
             msg += f"🛑 <b>SL:</b> {sl_price:.5f} ({escape_html(sl_note)})\n"
             if sl_distance > 0:
                 msg += f"   📏 Khoảng cách: {sl_distance:.5f} ({sl_pips:.1f} pips)\n"
+        else:
+            msg += f"🛑 <b>SL:</b> Chưa xác định\n"
         
         # Hiển thị TP levels
         tp_list = []
@@ -1426,17 +1442,27 @@ def format_telegram_message(symbol, analysis):
                     pass
         
         # Nếu không có TP từ Fibo, tạo từ zones hoặc R:R
-        if not tp_list and entry_price and sl_price and sl_distance > 0:
-            # Tính TP dựa trên R:R = 1:2
-            if signal_type == "BUY":
-                tp_price = entry_price + (sl_distance * 2)
-            else:  # SELL
-                tp_price = entry_price - (sl_distance * 2)
-            
-            tp_pips = (sl_distance * 2) / pip_size if pip_size > 0 else 0
-            tp_list.append((tp_price, "R:R 1:2", tp_pips, 2.0))
+        if not tp_list and entry_price:
+            if sl_price and sl_distance > 0:
+                # Tính TP dựa trên R:R = 1:2
+                if signal_type == "BUY":
+                    tp_price = entry_price + (sl_distance * 2)
+                else:  # SELL
+                    tp_price = entry_price - (sl_distance * 2)
+                
+                tp_pips = (sl_distance * 2) / pip_size if pip_size > 0 else 0
+                tp_list.append((tp_price, "R:R 1:2", tp_pips, 2.0))
+            else:
+                # Nếu không có SL, tính TP dựa trên % của entry
+                if signal_type == "BUY":
+                    tp_price = entry_price * 1.04  # 4% trên entry
+                    tp_pips = (entry_price * 0.04) / pip_size if pip_size > 0 else 0
+                else:  # SELL
+                    tp_price = entry_price * 0.96  # 4% dưới entry
+                    tp_pips = (entry_price * 0.04) / pip_size if pip_size > 0 else 0
+                tp_list.append((tp_price, "Entry ± 4%", tp_pips, None))
         
-        # Hiển thị TP
+        # Luôn hiển thị TP
         if tp_list:
             msg += f"🎯 <b>Take Profit:</b>\n"
             for idx, (tp_price, tp_note, tp_pips, rr_ratio) in enumerate(tp_list, 1):
@@ -1444,6 +1470,8 @@ def format_telegram_message(symbol, analysis):
                     msg += f"   🎯 TP{idx}: {tp_price:.5f} ({escape_html(tp_note)}) - R:R = 1:{rr_ratio:.2f} ({tp_pips:.1f} pips)\n"
                 else:
                     msg += f"   🎯 TP{idx}: {tp_price:.5f} ({escape_html(tp_note)}) ({tp_pips:.1f} pips)\n"
+        else:
+            msg += f"🎯 <b>Take Profit:</b> Chưa xác định\n"
         
         msg += "\n"
     
