@@ -252,7 +252,7 @@ class XAUUSD_Bot:
                 logging.info(f"      Trạng thái: {status_1}")
                 logging.info(f"      Ngưỡng: {daily_loss_limit}% tài khoản")
                 logging.info("")
-                
+        
                 # Rule 2: Win Streak & Profit Target
                 status_2 = "✅ BẬT" if enable_win_streak else "❌ TẮT"
                 logging.info(f"   2. Thắng {win_streak_limit} lệnh liên tiếp HOẶC đạt +{profit_target}% → Dừng hoặc giảm lot size 50%")
@@ -274,7 +274,7 @@ class XAUUSD_Bot:
                 logging.info(f"      Trạng thái: {status_4}")
                 logging.info(f"      Thời gian nghỉ: {two_losses_cooldown} phút")
                 logging.info("")
-                
+        
                 # Rule 5: Big Win Cooldown
                 status_5 = "✅ BẬT" if enable_big_win else "❌ TẮT"
                 logging.info(f"   5. Chốt lệnh ≥ {big_win_r}R → Nghỉ {big_win_cooldown} phút")
@@ -282,7 +282,7 @@ class XAUUSD_Bot:
                 logging.info(f"      Ngưỡng R-multiple: ≥ {big_win_r}R")
                 logging.info(f"      Thời gian nghỉ: {big_win_cooldown} phút")
                 logging.info("")
-                
+        
                 # Rule 6: Trading Hours Limit
                 status_6 = "✅ BẬT" if enable_trading_hours else "❌ TẮT"
                 logging.info(f"   6. Chỉ trade {trading_hours_start}h-{trading_hours_end}h VN")
@@ -297,7 +297,7 @@ class XAUUSD_Bot:
                 logging.info(f"      Block trước: {news_block_before} giờ")
                 logging.info(f"      Block sau: {news_block_after} giờ")
                 logging.info("")
-                
+        
                 # Lấy magic number
                 bot_magic_val = getattr(tc_mod, 'BOT_MAGIC', 202411)
                 logging.info(f"   ⏱️  Check interval: {CHECK_INTERVAL} giây")
