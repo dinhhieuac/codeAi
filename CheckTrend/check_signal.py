@@ -1262,6 +1262,8 @@ def format_telegram_message(symbol, analysis):
         # Tìm Entry point tốt nhất
         entry_price = None
         entry_note = ""
+        signal_type = decision['signal']
+        
         if decision['entry_levels']:
             # Ưu tiên Fibo level
             for entry in decision['entry_levels']:
@@ -1276,10 +1278,15 @@ def format_telegram_message(symbol, analysis):
                     except:
                         pass
             
-            # Nếu không có Fibo, lấy Supply/Demand zone đầu tiên
+            # Nếu không có Fibo, lấy zone phù hợp với signal type
             if entry_price is None:
+                # BUY → ưu tiên Demand Zone, SELL → ưu tiên Supply Zone
+                zone_priority = "Demand Zone" if signal_type == "BUY" else "Supply Zone"
+                zone_fallback = "Supply Zone" if signal_type == "BUY" else "Demand Zone"
+                
+                # Tìm zone ưu tiên trước
                 for entry in decision['entry_levels']:
-                    if 'Zone' in entry:
+                    if zone_priority in entry:
                         try:
                             parts = entry.split(':')
                             if len(parts) == 2:
@@ -1288,6 +1295,32 @@ def format_telegram_message(symbol, analysis):
                                 break
                         except:
                             pass
+                
+                # Nếu không có zone ưu tiên, lấy zone fallback
+                if entry_price is None:
+                    for entry in decision['entry_levels']:
+                        if zone_fallback in entry:
+                            try:
+                                parts = entry.split(':')
+                                if len(parts) == 2:
+                                    entry_price = float(parts[1].strip())
+                                    entry_note = entry
+                                    break
+                            except:
+                                pass
+                
+                # Nếu vẫn không có, lấy zone đầu tiên
+                if entry_price is None:
+                    for entry in decision['entry_levels']:
+                        if 'Zone' in entry:
+                            try:
+                                parts = entry.split(':')
+                                if len(parts) == 2:
+                                    entry_price = float(parts[1].strip())
+                                    entry_note = entry
+                                    break
+                            except:
+                                pass
             
             # Nếu vẫn không có, dùng giá hiện tại
             if entry_price is None:
@@ -1298,9 +1331,11 @@ def format_telegram_message(symbol, analysis):
             msg += f"📍 <b>Entry:</b> {entry_price:.5f} ({escape_html(entry_note)})\n"
         
         # Tìm SL tốt nhất
+        sl_price = None
+        sl_note = ""
+        sl_distance = 0
+        
         if decision.get('sl_levels'):
-            sl_price = None
-            sl_note = ""
             for sl in decision['sl_levels']:
                 # Parse: "Fibo 0.786: 2959.14390 (dưới entry)" hoặc "Fibo 1.0 + buffer: 2959.14390 (trên entry)"
                 try:
@@ -1308,29 +1343,62 @@ def format_telegram_message(symbol, analysis):
                     import re
                     numbers = re.findall(r'\d+\.\d+', sl)
                     if numbers:
+                        # Lấy số đầu tiên (có thể có nhiều số trong chuỗi)
                         sl_price = float(numbers[0])
                         sl_note = sl
                         break
                 except:
                     pass
+        
+        # Nếu không có SL từ sl_levels, tính từ entry và zones
+        if sl_price is None and entry_price:
+            if signal_type == "BUY":
+                # BUY: SL dưới entry
+                # Tìm Demand Zone dưới entry hoặc tính từ entry - 2%
+                if analysis.get('demand_zones'):
+                    for zone in analysis['demand_zones']:
+                        zone_low = zone['price']
+                        if zone_low < entry_price:
+                            sl_price = zone_low * 0.998  # 0.2% dưới zone
+                            sl_note = f"Demand Zone - 0.2%: {zone_low:.5f}"
+                            break
+                
+                if sl_price is None:
+                    sl_price = entry_price * 0.98  # 2% dưới entry
+                    sl_note = f"Entry - 2%: {entry_price:.5f}"
+            else:  # SELL
+                # SELL: SL trên entry
+                # Tìm Supply Zone trên entry hoặc tính từ entry + 2%
+                if analysis.get('supply_zones'):
+                    for zone in analysis['supply_zones']:
+                        zone_high = zone['price']
+                        if zone_high > entry_price:
+                            sl_price = zone_high * 1.002  # 0.2% trên zone
+                            sl_note = f"Supply Zone + 0.2%: {zone_high:.5f}"
+                            break
+                
+                if sl_price is None:
+                    sl_price = entry_price * 1.02  # 2% trên entry
+                    sl_note = f"Entry + 2%: {entry_price:.5f}"
+        
+        if sl_price is not None:
+            # Tính khoảng cách SL
+            if signal_type == "BUY":
+                sl_distance = entry_price - sl_price if entry_price else 0
+            else:  # SELL
+                sl_distance = sl_price - entry_price if entry_price else 0
             
-            if sl_price is not None:
-                # Tính khoảng cách SL
-                if decision['signal'] == 'BUY':
-                    sl_distance = entry_price - sl_price if entry_price else 0
-                else:  # SELL
-                    sl_distance = sl_price - entry_price if entry_price else 0
-                
-                sl_pips = sl_distance / pip_size if pip_size > 0 else 0
-                
-                msg += f"🛑 <b>SL:</b> {sl_price:.5f} ({escape_html(sl_note)})\n"
-                if sl_distance > 0:
-                    msg += f"   📏 Khoảng cách: {sl_distance:.5f} ({sl_pips:.1f} pips)\n"
+            sl_pips = sl_distance / pip_size if pip_size > 0 else 0
+            
+            msg += f"🛑 <b>SL:</b> {sl_price:.5f} ({escape_html(sl_note)})\n"
+            if sl_distance > 0:
+                msg += f"   📏 Khoảng cách: {sl_distance:.5f} ({sl_pips:.1f} pips)\n"
         
         # Hiển thị TP levels
+        tp_list = []
+        
+        # Lấy TP từ decision['tp_levels']
         if decision.get('tp_levels'):
-            msg += f"🎯 <b>Take Profit:</b>\n"
-            tp_count = 0
             for tp in decision['tp_levels'][:3]:  # Tối đa 3 TP
                 # Parse: "Fibo 1.0: 2943.34000 ✅"
                 try:
@@ -1338,11 +1406,10 @@ def format_telegram_message(symbol, analysis):
                     if len(parts) >= 2:
                         tp_price = float(parts[1].split()[0].strip())
                         tp_note = parts[0].strip()
-                        tp_count += 1
                         
                         # Tính khoảng cách TP
                         if entry_price:
-                            if decision['signal'] == 'BUY':
+                            if signal_type == 'BUY':
                                 tp_distance = tp_price - entry_price
                             else:  # SELL
                                 tp_distance = entry_price - tp_price
@@ -1352,11 +1419,31 @@ def format_telegram_message(symbol, analysis):
                             # Tính R:R ratio
                             if sl_price and sl_distance > 0:
                                 rr_ratio = tp_distance / sl_distance
-                                msg += f"   🎯 TP{tp_count}: {tp_price:.5f} ({escape_html(tp_note)}) - R:R = 1:{rr_ratio:.2f} ({tp_pips:.1f} pips)\n"
+                                tp_list.append((tp_price, tp_note, tp_pips, rr_ratio))
                             else:
-                                msg += f"   🎯 TP{tp_count}: {tp_price:.5f} ({escape_html(tp_note)}) ({tp_pips:.1f} pips)\n"
+                                tp_list.append((tp_price, tp_note, tp_pips, None))
                 except:
                     pass
+        
+        # Nếu không có TP từ Fibo, tạo từ zones hoặc R:R
+        if not tp_list and entry_price and sl_price and sl_distance > 0:
+            # Tính TP dựa trên R:R = 1:2
+            if signal_type == "BUY":
+                tp_price = entry_price + (sl_distance * 2)
+            else:  # SELL
+                tp_price = entry_price - (sl_distance * 2)
+            
+            tp_pips = (sl_distance * 2) / pip_size if pip_size > 0 else 0
+            tp_list.append((tp_price, "R:R 1:2", tp_pips, 2.0))
+        
+        # Hiển thị TP
+        if tp_list:
+            msg += f"🎯 <b>Take Profit:</b>\n"
+            for idx, (tp_price, tp_note, tp_pips, rr_ratio) in enumerate(tp_list, 1):
+                if rr_ratio is not None:
+                    msg += f"   🎯 TP{idx}: {tp_price:.5f} ({escape_html(tp_note)}) - R:R = 1:{rr_ratio:.2f} ({tp_pips:.1f} pips)\n"
+                else:
+                    msg += f"   🎯 TP{idx}: {tp_price:.5f} ({escape_html(tp_note)}) ({tp_pips:.1f} pips)\n"
         
         msg += "\n"
     
