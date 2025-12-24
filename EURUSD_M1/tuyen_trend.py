@@ -708,6 +708,118 @@ def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_v
     # Configurable: require at least min_criteria out of total_criteria
     return criteria_met >= min_criteria
 
+def check_external_bos(df_m1, signal_type, lookback=50):
+    """
+    EXTERNAL BOS FILTER
+    BUY: close > last_external_swing_high (cấu trúc lớn)
+    SELL: close < last_external_swing_low (cấu trúc lớn)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    # External structure: look at candles before recent 10 (avoid recent noise)
+    external_range = df_m1.iloc[-lookback:-10]
+    if len(external_range) < 5:
+        return False, "Không đủ dữ liệu external"
+    
+    external_swing_high = external_range['high'].max()
+    external_swing_low = external_range['low'].min()
+    current_close = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        if current_close > external_swing_high:
+            return True, f"External BOS confirmed: Close {current_close:.5f} > External High {external_swing_high:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} <= External High {external_swing_high:.5f}"
+    elif signal_type == "SELL":
+        if current_close < external_swing_low:
+            return True, f"External BOS confirmed: Close {current_close:.5f} < External Low {external_swing_low:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} >= External Low {external_swing_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_liquidity_filter(df_m1, entry_price, signal_type, min_distance_pips=2.5):
+    """
+    LIQUIDITY FILTER
+    BUY: distance(entry, nearest_low) >= 2.5 pips
+    SELL: distance(entry, nearest_high) >= 2.5 pips
+    """
+    if len(df_m1) < 20:
+        return True, "Không đủ dữ liệu, bỏ qua filter"
+    
+    # Get pip size (estimate from price)
+    current_price = df_m1.iloc[-1]['close']
+    if current_price > 100:  # JPY pairs
+        pip_size = 0.01
+    elif current_price > 10:  # XAUUSD
+        pip_size = 0.1
+    else:  # EURUSD, etc.
+        pip_size = 0.0001
+    
+    min_distance = min_distance_pips * pip_size
+    
+    if signal_type == "BUY":
+        # Find nearest swing low below entry
+        recent_lows = df_m1.iloc[-20:]['low']
+        nearest_low = recent_lows[recent_lows < entry_price].max() if (recent_lows < entry_price).any() else None
+        
+        if nearest_low is not None:
+            distance = entry_price - nearest_low
+            if distance < min_distance:
+                return False, f"Too close to liquidity: Entry {entry_price:.5f} - Low {nearest_low:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    elif signal_type == "SELL":
+        # Find nearest swing high above entry
+        recent_highs = df_m1.iloc[-20:]['high']
+        nearest_high = recent_highs[recent_highs > entry_price].min() if (recent_highs > entry_price).any() else None
+        
+        if nearest_high is not None:
+            distance = nearest_high - entry_price
+            if distance < min_distance:
+                return False, f"Too close to liquidity: High {nearest_high:.5f} - Entry {entry_price:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    return True, "Signal type không hợp lệ, bỏ qua filter"
+
+def find_nearest_structure_level(df_m1, signal_type, lookback=30):
+    """
+    Find nearest structure level for SL calculation
+    BUY: Find nearest swing low below current price
+    SELL: Find nearest swing high above current price
+    """
+    if len(df_m1) < lookback:
+        return None
+    
+    recent = df_m1.iloc[-lookback:]
+    current_price = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        # Find swing lows
+        lows = recent['low'].values
+        swing_lows = []
+        for i in range(1, len(lows) - 1):
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                swing_lows.append(lows[i])
+        
+        if swing_lows:
+            valid_lows = [low for low in swing_lows if low < current_price]
+            if valid_lows:
+                return max(valid_lows)  # Nearest swing low below entry
+        return None
+    elif signal_type == "SELL":
+        # Find swing highs
+        highs = recent['high'].values
+        swing_highs = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                swing_highs.append(highs[i])
+        
+        if swing_highs:
+            valid_highs = [high for high in swing_highs if high > current_price]
+            if valid_highs:
+                return min(valid_highs)  # Nearest swing high above entry
+        return None
+    return None
+
 def check_compression_block(df_slice):
     """
     Check for Price Action Compression (Block of 3+ candles)
@@ -768,6 +880,260 @@ def check_compression_block(df_slice):
         return False
     
     return criteria_met >= 3  # At least 3 compression criteria met
+
+def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_threshold=0.7):
+    """
+    CHOP / RANGE FILTER (CHUNG)
+    IF last 10 candles:
+    - body_avg < 0.5 × ATR
+    - overlap > 70%
+    → MARKET = CHOP → NO TRADE
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    recent_candles = df_m1.iloc[-lookback:]
+    
+    # Tính body trung bình
+    bodies = abs(recent_candles['close'] - recent_candles['open'])
+    body_avg = bodies.mean()
+    
+    # Tính overlap (tỷ lệ nến chồng lên nhau)
+    overlaps = 0
+    total_pairs = 0
+    for i in range(len(recent_candles) - 1):
+        candle1 = recent_candles.iloc[i]
+        candle2 = recent_candles.iloc[i + 1]
+        
+        # Tính overlap range
+        range1 = (candle1['low'], candle1['high'])
+        range2 = (candle2['low'], candle2['high'])
+        
+        overlap_low = max(range1[0], range2[0])
+        overlap_high = min(range1[1], range2[1])
+        
+        if overlap_low < overlap_high:
+            overlap_size = overlap_high - overlap_low
+            range1_size = range1[1] - range1[0]
+            range2_size = range2[1] - range2[0]
+            avg_range = (range1_size + range2_size) / 2
+            
+            if avg_range > 0:
+                overlap_ratio = overlap_size / avg_range
+                overlaps += overlap_ratio
+                total_pairs += 1
+    
+    avg_overlap = overlaps / total_pairs if total_pairs > 0 else 0
+    
+    # Kiểm tra điều kiện chop
+    body_condition = body_avg < (body_threshold * atr_val)
+    overlap_condition = avg_overlap > overlap_threshold
+    
+    if body_condition and overlap_condition:
+        return True, f"CHOP: body_avg={body_avg:.5f} < {body_threshold * atr_val:.5f}, overlap={avg_overlap:.1%} > {overlap_threshold:.1%}"
+    return False, f"Not CHOP: body_avg={body_avg:.5f}, overlap={avg_overlap:.1%}"
+
+def check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val, buffer_multiplier=0.00005):
+    """
+    BUY - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_low < previous_swing_low - buffer
+    AND lower_wick >= 1.5 × ATR
+    AND close > open
+    → BUY_SWEEP_CONFIRMED = TRUE
+    """
+    if prev_swing_low is None:
+        return False, "Không có previous swing low"
+    
+    current_candle = df_m1.iloc[-1]
+    current_low = current_candle['low']
+    lower_wick = min(current_candle['open'], current_candle['close']) - current_low
+    buffer = buffer_multiplier
+    
+    # Check if swept below previous swing low
+    if current_low < (prev_swing_low - buffer):
+        # Check lower wick >= 1.5 × ATR
+        if lower_wick >= 1.5 * atr_val:
+            # Check close > open (bullish candle)
+            if current_candle['close'] > current_candle['open']:
+                return True, f"Sweep confirmed: Low {current_low:.5f} < {prev_swing_low:.5f}, wick={lower_wick:.5f} >= {1.5 * atr_val:.5f}"
+            else:
+                return False, f"Sweep low OK nhưng nến không bullish (close <= open)"
+        else:
+            return False, f"Sweep low OK nhưng wick {lower_wick:.5f} < {1.5 * atr_val:.5f}"
+    else:
+        return False, f"Chưa sweep: Low {current_low:.5f} >= {prev_swing_low - buffer:.5f}"
+
+def check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val, buffer_multiplier=0.00005):
+    """
+    SELL - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_high > previous_swing_high + buffer
+    AND upper_wick >= 1.5 × ATR
+    AND close < open
+    → SELL_SWEEP_CONFIRMED = TRUE
+    """
+    if prev_swing_high is None:
+        return False, "Không có previous swing high"
+    
+    current_candle = df_m1.iloc[-1]
+    current_high = current_candle['high']
+    upper_wick = current_high - max(current_candle['open'], current_candle['close'])
+    buffer = buffer_multiplier
+    
+    # Check if swept above previous swing high
+    if current_high > (prev_swing_high + buffer):
+        # Check upper wick >= 1.5 × ATR
+        if upper_wick >= 1.5 * atr_val:
+            # Check close < open (bearish candle)
+            if current_candle['close'] < current_candle['open']:
+                return True, f"Sweep confirmed: High {current_high:.5f} > {prev_swing_high:.5f}, wick={upper_wick:.5f} >= {1.5 * atr_val:.5f}"
+            else:
+                return False, f"Sweep high OK nhưng nến không bearish (close >= open)"
+        else:
+            return False, f"Sweep high OK nhưng wick {upper_wick:.5f} < {1.5 * atr_val:.5f}"
+    else:
+        return False, f"Chưa sweep: High {current_high:.5f} <= {prev_swing_high + buffer:.5f}"
+
+def check_displacement_candle(df_m1, atr_val, signal_type):
+    """
+    DISPLACEMENT CANDLE CHECK
+    BUY: breakout_body >= 1.2 × ATR AND close > previous_range_high
+    SELL: breakout_body >= 1.2 × ATR AND close < previous_range_low
+    """
+    if len(df_m1) < 10:
+        return False, "Không đủ dữ liệu"
+    
+    breakout_candle = df_m1.iloc[-1]
+    body = abs(breakout_candle['close'] - breakout_candle['open'])
+    
+    # Get previous range (last 10 candles before current)
+    prev_range = df_m1.iloc[-10:-1]
+    prev_range_high = prev_range['high'].max()
+    prev_range_low = prev_range['low'].min()
+    
+    if signal_type == "BUY":
+        if body >= 1.2 * atr_val and breakout_candle['close'] > prev_range_high:
+            return True, f"Displacement confirmed: Body={body:.5f} >= {1.2 * atr_val:.5f}, Close={breakout_candle['close']:.5f} > {prev_range_high:.5f}"
+        else:
+            return False, f"No displacement: Body={body:.5f} < {1.2 * atr_val:.5f} hoặc Close={breakout_candle['close']:.5f} <= {prev_range_high:.5f}"
+    elif signal_type == "SELL":
+        if body >= 1.2 * atr_val and breakout_candle['close'] < prev_range_low:
+            return True, f"Displacement confirmed: Body={body:.5f} >= {1.2 * atr_val:.5f}, Close={breakout_candle['close']:.5f} < {prev_range_low:.5f}"
+        else:
+            return False, f"No displacement: Body={body:.5f} < {1.2 * atr_val:.5f} hoặc Close={breakout_candle['close']:.5f} >= {prev_range_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_external_bos(df_m1, signal_type, lookback=50):
+    """
+    EXTERNAL BOS FILTER
+    BUY: close > last_external_swing_high (cấu trúc lớn)
+    SELL: close < last_external_swing_low (cấu trúc lớn)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    # External structure: look at candles before recent 10 (avoid recent noise)
+    external_range = df_m1.iloc[-lookback:-10]
+    if len(external_range) < 5:
+        return False, "Không đủ dữ liệu external"
+    
+    external_swing_high = external_range['high'].max()
+    external_swing_low = external_range['low'].min()
+    current_close = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        if current_close > external_swing_high:
+            return True, f"External BOS confirmed: Close {current_close:.5f} > External High {external_swing_high:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} <= External High {external_swing_high:.5f}"
+    elif signal_type == "SELL":
+        if current_close < external_swing_low:
+            return True, f"External BOS confirmed: Close {current_close:.5f} < External Low {external_swing_low:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} >= External Low {external_swing_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_liquidity_filter(df_m1, entry_price, signal_type, min_distance_pips=2.5):
+    """
+    LIQUIDITY FILTER
+    BUY: distance(entry, nearest_low) >= 2.5 pips
+    SELL: distance(entry, nearest_high) >= 2.5 pips
+    """
+    if len(df_m1) < 20:
+        return True, "Không đủ dữ liệu, bỏ qua filter"
+    
+    # Get pip size
+    symbol = df_m1.attrs.get('symbol', 'EURUSD') if hasattr(df_m1, 'attrs') else 'EURUSD'
+    symbol_upper = symbol.upper()
+    if 'JPY' in symbol_upper:
+        pip_size = 0.01
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        pip_size = 0.1
+    else:
+        pip_size = 0.0001
+    
+    min_distance = min_distance_pips * pip_size
+    
+    if signal_type == "BUY":
+        # Find nearest swing low below entry
+        recent_lows = df_m1.iloc[-20:]['low']
+        nearest_low = recent_lows[recent_lows < entry_price].max() if (recent_lows < entry_price).any() else None
+        
+        if nearest_low is not None:
+            distance = entry_price - nearest_low
+            if distance < min_distance:
+                return False, f"Too close to liquidity: Entry {entry_price:.5f} - Low {nearest_low:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    elif signal_type == "SELL":
+        # Find nearest swing high above entry
+        recent_highs = df_m1.iloc[-20:]['high']
+        nearest_high = recent_highs[recent_highs > entry_price].min() if (recent_highs > entry_price).any() else None
+        
+        if nearest_high is not None:
+            distance = nearest_high - entry_price
+            if distance < min_distance:
+                return False, f"Too close to liquidity: High {nearest_high:.5f} - Entry {entry_price:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    return True, "Signal type không hợp lệ, bỏ qua filter"
+
+def find_nearest_structure_level(df_m1, signal_type, lookback=30):
+    """
+    Find nearest structure level for SL calculation
+    BUY: Find nearest swing low below current price
+    SELL: Find nearest swing high above current price
+    """
+    if len(df_m1) < lookback:
+        return None
+    
+    recent = df_m1.iloc[-lookback:]
+    current_price = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        # Find swing lows
+        lows = recent['low'].values
+        swing_lows = []
+        for i in range(1, len(lows) - 1):
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                swing_lows.append(lows[i])
+        
+        if swing_lows:
+            valid_lows = [low for low in swing_lows if low < current_price]
+            if valid_lows:
+                return max(valid_lows)  # Nearest swing low below entry
+        return None
+    elif signal_type == "SELL":
+        # Find swing highs
+        highs = recent['high'].values
+        swing_highs = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                swing_highs.append(highs[i])
+        
+        if swing_highs:
+            valid_highs = [high for high in swing_highs if high > current_price]
+            if valid_highs:
+                return min(valid_highs)  # Nearest swing high above entry
+        return None
+    return None
 
 def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
     """
@@ -1351,6 +1717,78 @@ def tuyen_trend_logic(config, error_count=0):
             reason = "Strat1_Pullback_Cluster_Fib"
             print(f"\n{t('strategy_1_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
             print(f"   {t('reason', lang)}: {reason}")
+            
+            # === V3 FILTERS - Tránh vào lệnh trong sóng ngắn/chop ===
+            print(f"\n{'='*80}")
+            print(f"🔍 [V3 FILTERS - Tránh sóng ngắn/chop]")
+            print(f"{'='*80}")
+            
+            # Calculate ATR for V3 checks
+            atr_val_v3 = c1['atr']
+            if pd.isna(atr_val_v3) or atr_val_v3 <= 0:
+                recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+                atr_val_v3 = recent_range / 14 if recent_range > 0 else 0.0001
+            
+            # 1. Check CHOP/RANGE (chung cho cả BUY và SELL)
+            is_chop, chop_msg = check_chop_range(df_m1, atr_val_v3)
+            if is_chop:
+                print(f"   ❌ CHOP detected: {chop_msg}")
+                signal_type = None
+                is_strat1 = False
+                log_details.append(f"V3 Filter: CHOP detected - {chop_msg}")
+            else:
+                print(f"   ✅ Không phải CHOP: {chop_msg}")
+            
+            # 2. Check Liquidity Sweep (BẮT BUỘC)
+            if signal_type:
+                if signal_type == "BUY":
+                    # Find previous swing low
+                    prev_swing_lows = [s['price'] for s in m1_swing_lows[-5:]] if m1_swing_lows else []
+                    prev_swing_low = min(prev_swing_lows) if prev_swing_lows else None
+                    
+                    sweep_ok, sweep_msg = check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val_v3)
+                    if not sweep_ok:
+                        print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                        signal_type = None
+                        is_strat1 = False
+                        log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                    else:
+                        print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                elif signal_type == "SELL":
+                    # Find previous swing high
+                    prev_swing_highs = [s['price'] for s in m1_swing_highs[-5:]] if m1_swing_highs else []
+                    prev_swing_high = max(prev_swing_highs) if prev_swing_highs else None
+                    
+                    sweep_ok, sweep_msg = check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val_v3)
+                    if not sweep_ok:
+                        print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                        signal_type = None
+                        is_strat1 = False
+                        log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                    else:
+                        print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+            
+            # 3. Check Displacement Candle (warning only)
+            if signal_type:
+                disp_ok, disp_msg = check_displacement_candle(df_m1, atr_val_v3, signal_type)
+                if not disp_ok:
+                    print(f"   ⚠️ Displacement: {disp_msg} (không bắt buộc cho Strat1)")
+                else:
+                    print(f"   ✅ Displacement: {disp_msg}")
+            
+            # 4. Check External BOS (warning only)
+            if signal_type:
+                bos_ok, bos_msg = check_external_bos(df_m1, signal_type)
+                if not bos_ok:
+                    print(f"   ⚠️ External BOS: {bos_msg} (không bắt buộc cho Strat1)")
+                else:
+                    print(f"   ✅ External BOS: {bos_msg}")
+            
+            if not signal_type:
+                print(f"\n   ❌ V3 Filters: Signal bị loại bỏ")
+                strat1_fail_reasons.append("V3 Filters failed")
+            else:
+                print(f"\n   ✅ V3 Filters: PASS")
         else:
             print(f"\n{t('strategy_1_fail', lang)} {t('missing_conditions', lang)}:")
             for reason in strat1_fail_reasons:
@@ -1613,6 +2051,76 @@ def tuyen_trend_logic(config, error_count=0):
                  reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}_BreakoutRetest"
                  print(f"\n{t('strategy_2_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
                  print(f"   {t('reason', lang)}: {reason}")
+                 
+                 # === V3 FILTERS - Tránh vào lệnh trong sóng ngắn/chop ===
+                 print(f"\n{'='*80}")
+                 print(f"🔍 [V3 FILTERS - Tránh sóng ngắn/chop]")
+                 print(f"{'='*80}")
+                 
+                 # Calculate ATR for V3 checks
+                 atr_val_v3 = c1['atr']
+                 if pd.isna(atr_val_v3) or atr_val_v3 <= 0:
+                     recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+                     atr_val_v3 = recent_range / 14 if recent_range > 0 else 0.0001
+                 
+                 # 1. Check CHOP/RANGE (chung cho cả BUY và SELL)
+                 is_chop, chop_msg = check_chop_range(df_m1, atr_val_v3)
+                 if is_chop:
+                     print(f"   ❌ CHOP detected: {chop_msg}")
+                     signal_type = None
+                     is_strat2 = False
+                     log_details.append(f"V3 Filter: CHOP detected - {chop_msg}")
+                 else:
+                     print(f"   ✅ Không phải CHOP: {chop_msg}")
+                 
+                 # 2. Check Liquidity Sweep (BẮT BUỘC)
+                 if signal_type:
+                     if signal_type == "BUY":
+                         prev_swing_lows = [s['price'] for s in m1_swing_lows[-5:]] if m1_swing_lows else []
+                         prev_swing_low = min(prev_swing_lows) if prev_swing_lows else None
+                         
+                         sweep_ok, sweep_msg = check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val_v3)
+                         if not sweep_ok:
+                             print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                             signal_type = None
+                             is_strat2 = False
+                             log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                         else:
+                             print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                     elif signal_type == "SELL":
+                         prev_swing_highs = [s['price'] for s in m1_swing_highs[-5:]] if m1_swing_highs else []
+                         prev_swing_high = max(prev_swing_highs) if prev_swing_highs else None
+                         
+                         sweep_ok, sweep_msg = check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val_v3)
+                         if not sweep_ok:
+                             print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                             signal_type = None
+                             is_strat2 = False
+                             log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                         else:
+                             print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                 
+                 # 3. Check Displacement Candle (warning only)
+                 if signal_type:
+                     disp_ok, disp_msg = check_displacement_candle(df_m1, atr_val_v3, signal_type)
+                     if not disp_ok:
+                         print(f"   ⚠️ Displacement: {disp_msg}")
+                     else:
+                         print(f"   ✅ Displacement: {disp_msg}")
+                 
+                 # 4. Check External BOS (warning only)
+                 if signal_type:
+                     bos_ok, bos_msg = check_external_bos(df_m1, signal_type)
+                     if not bos_ok:
+                         print(f"   ⚠️ External BOS: {bos_msg}")
+                     else:
+                         print(f"   ✅ External BOS: {bos_msg}")
+                 
+                 if not signal_type:
+                     print(f"\n   ❌ V3 Filters: Signal bị loại bỏ")
+                     strat2_fail_reasons.append("V3 Filters failed")
+                 else:
+                     print(f"\n   ✅ V3 Filters: PASS")
             else:
                 print(f"\n{t('strategy_2_fail', lang)} {t('missing_conditions', lang)}:")
                 for reason in strat2_fail_reasons:
@@ -1811,22 +2319,72 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"   ⚠️ ATR is NaN, using fallback: {atr_val:.5f}")
     
     # Calculate SL and TP using config parameters
-    sl_distance = atr_multiplier * atr_val
-    tp_distance = atr_multiplier * atr_val * reward_ratio
+    # V3: Improved SL logic - based on structure + ATR
+    structure_level = find_nearest_structure_level(df_m1, signal_type, lookback=30)
     
     if signal_type == "BUY":
         if price > trigger_high:
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
             execute = True
-            sl = price - sl_distance
+            
+            # V3: Improved SL calculation
+            # SL = min(structure_low - buffer, entry - 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level - buffer
+            sl_from_atr = price - (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = min(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure Low={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
             tp = price + tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = price - sl
         else:
             distance = trigger_high - price
             print(f"   {t('waiting_breakout', lang)} > {trigger_high:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
     elif signal_type == "SELL":
         if price < trigger_low:
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
             execute = True
-            sl = price + sl_distance
+            
+            # V3: Improved SL calculation
+            # SL = max(structure_high + buffer, entry + 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level + buffer
+            sl_from_atr = price + (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = max(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure High={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
             tp = price - tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = sl - price
         else:
             distance = price - trigger_low
             print(f"   {t('waiting_breakout', lang)} < {trigger_low:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
