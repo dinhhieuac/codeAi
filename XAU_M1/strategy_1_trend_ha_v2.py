@@ -114,15 +114,21 @@ def strategy_1_logic(config, error_count=0):
     ha_df['rsi'] = calculate_rsi(df_m1['close'], period=14)
     
     # V2: Calculate ATR for CHOP detection and SL buffer
-    df_m1['atr'] = calculate_atr(df_m1, period=14)
+    atr_period = config['parameters'].get('atr_period', 14)
+    df_m1['atr'] = calculate_atr(df_m1, period=atr_period)
     atr_val = df_m1.iloc[-1]['atr']
     if pd.isna(atr_val) or atr_val <= 0:
         # Fallback: use recent range
-        recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
-        atr_val = recent_range / 14 if recent_range > 0 else 0.1
+        recent_range = df_m1.iloc[-atr_period:]['high'].max() - df_m1.iloc[-atr_period:]['low'].min()
+        atr_val = recent_range / atr_period if recent_range > 0 else 0.1
     
     # V2: CHOP/RANGE Filter (BẮT BUỘC)
-    is_chop, chop_msg = check_chop_range(df_m1, atr_val, lookback=10)
+    chop_lookback = config['parameters'].get('chop_lookback', 10)
+    chop_body_threshold = config['parameters'].get('chop_body_threshold', 0.5)
+    chop_overlap_threshold = config['parameters'].get('chop_overlap_threshold', 0.7)
+    is_chop, chop_msg = check_chop_range(df_m1, atr_val, lookback=chop_lookback, 
+                                         body_threshold=chop_body_threshold, 
+                                         overlap_threshold=chop_overlap_threshold)
     if is_chop:
         print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
         return error_count, 0
@@ -163,11 +169,13 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: Improved RSI filter (> 55 thay vì > 50)
-                    filter_status.append(f"{'✅' if last_ha['rsi'] > 55 else '❌'} RSI > 55: {last_ha['rsi']:.1f} (V2: stricter)")
-                    if last_ha['rsi'] > 55:
+                    # V2: Improved RSI filter (configurable)
+                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V2: stricter)")
+                    if last_ha['rsi'] > rsi_buy_threshold:
                         # V2: Confirmation check - đợi 1 nến sau breakout
-                        if len(ha_df) >= 2:
+                        confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
+                        if confirmation_enabled and len(ha_df) >= 2:
                             confirmation_candle = ha_df.iloc[-1]
                             breakout_level = last_ha['sma55_high']
                             if confirmation_candle['ha_close'] > breakout_level:
@@ -179,7 +187,7 @@ def strategy_1_logic(config, error_count=0):
                             signal = "BUY"
                             print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > 55, hiện tại: {last_ha['rsi']:.1f})")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else: 
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -203,11 +211,13 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: Improved RSI filter (< 45 thay vì < 50)
-                    filter_status.append(f"{'✅' if last_ha['rsi'] < 45 else '❌'} RSI < 45: {last_ha['rsi']:.1f} (V2: stricter)")
-                    if last_ha['rsi'] < 45:
+                    # V2: Improved RSI filter (configurable)
+                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V2: stricter)")
+                    if last_ha['rsi'] < rsi_sell_threshold:
                         # V2: Confirmation check - đợi 1 nến sau breakout
-                        if len(ha_df) >= 2:
+                        confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
+                        if confirmation_enabled and len(ha_df) >= 2:
                             confirmation_candle = ha_df.iloc[-1]
                             breakout_level = last_ha['sma55_low']
                             if confirmation_candle['ha_close'] < breakout_level:
@@ -219,7 +229,7 @@ def strategy_1_logic(config, error_count=0):
                             signal = "SELL"
                             print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < 45, hiện tại: {last_ha['rsi']:.1f})")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else:
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -241,8 +251,10 @@ def strategy_1_logic(config, error_count=0):
         print(f"   📈 M5 Trend: {current_trend}")
         print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V2: BUY cần > 55, SELL cần < 45)")
-        print(f"   📊 ADX: {adx_value:.1f} (cần >= 20)")
+        rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+        rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V2: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold})")
         print(f"   📊 ATR: {atr_val:.2f}")
         if current_trend == "BULLISH":
             print(f"   📊 Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f} = {is_above_channel}")
@@ -259,7 +271,8 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
-        # --- SPAM FILTER: V2 - Check if we traded in the last 5 minutes (300s) ---
+        # --- SPAM FILTER: V2 - Check if we traded in the last N seconds (configurable) ---
+        spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 300)
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
@@ -277,8 +290,8 @@ def strategy_1_logic(config, error_count=0):
                 current_timestamp = current_server_time
             
             time_since_last = current_timestamp - last_trade_timestamp
-            if time_since_last < 300:  # V2: 5 phút thay vì 60s
-                print(f"   ⏳ Skipping: Trade already taken {time_since_last:.0f}s ago (V2: Wait 5 minutes)")
+            if time_since_last < spam_filter_seconds:
+                print(f"   ⏳ Skipping: Trade already taken {time_since_last:.0f}s ago (V2: Wait {spam_filter_seconds}s)")
                 return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
@@ -297,16 +310,18 @@ def strategy_1_logic(config, error_count=0):
             prev_m5_low = df_m5.iloc[-2]['low']
             
             # V2: Calculate ATR on M5 for better buffer
-            df_m5['atr'] = calculate_atr(df_m5, period=14)
+            atr_period_m5 = config['parameters'].get('atr_period', 14)
+            atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 1.5)
+            df_m5['atr'] = calculate_atr(df_m5, period=atr_period_m5)
             atr_m5 = df_m5.iloc[-2]['atr']
             if pd.isna(atr_m5) or atr_m5 <= 0:
                 # Fallback: use M5 range
                 m5_range = prev_m5_high - prev_m5_low
-                atr_m5 = m5_range / 14 if m5_range > 0 else 0.1
+                atr_m5 = m5_range / atr_period_m5 if m5_range > 0 else 0.1
             
-            # V2: Buffer dựa trên ATR (1.5x ATR) thay vì fixed 20 points
-            buffer = 1.5 * atr_m5
-            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} (1.5x ATR)")
+            # V2: Buffer dựa trên ATR (configurable multiplier) thay vì fixed 20 points
+            buffer = atr_buffer_multiplier * atr_m5
+            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR)")
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer
@@ -386,11 +401,11 @@ def strategy_1_logic(config, error_count=0):
     
     return error_count, 0
 
-if __name__ == "__main__":
+    if __name__ == "__main__":
     import os
     # Load separate config for this strategy
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "configs", "config_1.json")
+    config_path = os.path.join(script_dir, "configs", "config_1_v2.json")
     config = load_config(config_path)
     
     consecutive_errors = 0

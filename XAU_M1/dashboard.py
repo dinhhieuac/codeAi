@@ -132,9 +132,10 @@ def index():
         bot_stats[-1]['chart_data'] = points
         
     # Sort by Net Profit
-    # Sort by User Defined Order (1, 4, 2, 5)
+    # Sort by User Defined Order (1, 1_V2, 4, 2, 5)
     desired_order = [
         "Strategy_1_Trend_HA",
+        "Strategy_1_Trend_HA_V2",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR", 
         "Strategy_5_Filter_First"
@@ -142,7 +143,7 @@ def index():
     
     # Filter only requested bots and sort
     bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
-    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']))
+    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']) if x['raw_name'] in desired_order else 999)
 
     # --- HOURLY STATS (VIETNAM TIME) ---
     hourly_stats = process_hourly_stats(orders)

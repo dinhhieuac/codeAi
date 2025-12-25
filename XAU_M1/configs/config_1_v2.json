@@ -1,0 +1,33 @@
+{
+    "account": 270589269,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial17",
+    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100002,
+    "max_positions": 1,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "1887610382",
+    "parameters": {
+        "sl_mode": "auto_m5",
+        "reward_ratio": 1.5,
+        "sl_pips": 20,
+        "tp_pips": 30,
+        "rsi_period": 14,
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "adx_period": 14,
+        "adx_min_threshold": 20,
+        "atr_period": 14,
+        "atr_buffer_multiplier": 1.5,
+        "chop_lookback": 10,
+        "chop_body_threshold": 0.5,
+        "chop_overlap_threshold": 0.7,
+        "spam_filter_seconds": 300,
+        "confirmation_enabled": true
+    },
+    "version": "V2",
+    "description": "Strategy 1 Trend HA V2 - Improved with ADX, CHOP filters, better RSI, ATR-based SL, and confirmation"
+}
+
