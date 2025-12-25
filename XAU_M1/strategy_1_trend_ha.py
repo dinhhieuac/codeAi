@@ -20,7 +20,9 @@ def strategy_1_logic(config, error_count=0):
     max_positions = config.get('max_positions', 1)
     
     # 2. Check Global Max Positions & Manage Existing
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    all_positions = mt5.positions_get(symbol=symbol)
+    positions = [pos for pos in (all_positions or []) if pos.magic == magic]  # Chỉ lấy positions do bot này mở
+    #positions = mt5.positions_get(symbol=symbol, magic=magic)
     if positions:
         # Manage Trailing SL for all open positions of this strategy
         for pos in positions:

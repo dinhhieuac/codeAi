@@ -99,12 +99,14 @@ def strategy_1_logic(config, error_count=0):
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
     
     # V2: ADX Filter (BẮT BUỘC - chỉ trade khi có trend)
-    df_m5 = calculate_adx(df_m5, period=14)
+    adx_period = config['parameters'].get('adx_period', 14)
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 20)
+    df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
-    if pd.isna(adx_value) or adx_value < 20:
-        print(f"❌ ADX Filter: ADX={adx_value:.1f} < 20 (No trend, skipping)")
+    if pd.isna(adx_value) or adx_value < adx_min_threshold:
+        print(f"❌ ADX Filter: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
         return error_count, 0
-    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= 20 (Trend confirmed)")
+    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
