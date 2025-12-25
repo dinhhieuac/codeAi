@@ -401,7 +401,7 @@ def strategy_1_logic(config, error_count=0):
     
     return error_count, 0
 
-    if __name__ == "__main__":
+if __name__ == "__main__":
     import os
     # Load separate config for this strategy
     script_dir = os.path.dirname(os.path.abspath(__file__))
