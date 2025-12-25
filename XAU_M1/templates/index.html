@@ -32,6 +32,61 @@
         .badge-sell {
             background-color: #dc3545;
         }
+        
+        .pnl-calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+        }
+        
+        .calendar-day {
+            aspect-ratio: 1;
+            border: 1px solid #dee2e6;
+            padding: 8px;
+            text-align: center;
+            background-color: #fff;
+            position: relative;
+            min-height: 60px;
+        }
+        
+        .calendar-day.has-pnl {
+            font-weight: bold;
+        }
+        
+        .calendar-day.profit {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .calendar-day.loss {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .calendar-day-number {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        
+        .calendar-day-pnl {
+            font-size: 11px;
+            margin-top: 4px;
+        }
+        
+        .calendar-header {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        
+        .calendar-header-day {
+            text-align: center;
+            font-weight: bold;
+            font-size: 12px;
+            color: #6c757d;
+            padding: 4px;
+        }
     </style>
 </head>
 
@@ -328,6 +383,18 @@
                     </div>
                 </div>
 
+                <!-- Daily PNL Calendar -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-calendar"></i> PNL hằng ngày - {{ bot.name }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="calendar-{{ loop.index }}" class="mb-3">
+                            <!-- Calendar will be rendered by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card mb-4">
                     <div class="card-header bg-white">
                         <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
@@ -426,6 +493,116 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        // Daily PNL Calendar for each bot
+        {% for bot in bot_stats %}
+        (function() {
+            const dailyPnl = {{ bot.daily_pnl | tojson }};
+            const calendarId = 'calendar-{{ loop.index }}';
+            const container = document.getElementById(calendarId);
+            
+            if (!container || !dailyPnl || Object.keys(dailyPnl).length === 0) {
+                container.innerHTML = '<p class="text-muted text-center">No data available</p>';
+                return;
+            }
+            
+            // Get current month from first available date or use current month
+            let currentDate = new Date();
+            const firstDate = Object.keys(dailyPnl).sort()[0];
+            if (firstDate) {
+                currentDate = new Date(firstDate + 'T00:00:00');
+            }
+            
+            let currentMonth = currentDate.getMonth();
+            let currentYear = currentDate.getFullYear();
+            
+            function renderCalendar(month, year) {
+                const firstDay = new Date(year, month, 1);
+                const lastDay = new Date(year, month + 1, 0);
+                const daysInMonth = lastDay.getDate();
+                const startingDayOfWeek = firstDay.getDay(); // 0 = Sunday, 1 = Monday, etc.
+                
+                // Adjust for Monday = 0 (instead of Sunday = 0)
+                const adjustedStartDay = (startingDayOfWeek + 6) % 7; // Convert Sunday=0 to Monday=0
+                
+                let html = '<div class="d-flex justify-content-between align-items-center mb-3">';
+                html += '<button class="btn btn-sm btn-outline-secondary" onclick="prevMonth{{ loop.index }}()"><i class="fas fa-chevron-left"></i></button>';
+                html += `<h5 class="mb-0">${year}-${String(month + 1).padStart(2, '0')}</h5>`;
+                html += '<button class="btn btn-sm btn-outline-secondary" onclick="nextMonth{{ loop.index }}()"><i class="fas fa-chevron-right"></i></button>';
+                html += '</div>';
+                
+                // Calendar header
+                html += '<div class="calendar-header">';
+                const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+                weekDays.forEach(day => {
+                    html += `<div class="calendar-header-day">${day}</div>`;
+                });
+                html += '</div>';
+                
+                // Calendar grid
+                html += '<div class="pnl-calendar">';
+                
+                // Empty cells for days before month starts
+                for (let i = 0; i < adjustedStartDay; i++) {
+                    html += '<div class="calendar-day"></div>';
+                }
+                
+                // Days of the month
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const pnl = dailyPnl[dateKey];
+                    
+                    let dayClass = 'calendar-day';
+                    let pnlHtml = '';
+                    
+                    if (pnl !== undefined) {
+                        dayClass += ' has-pnl';
+                        if (pnl > 0) {
+                            dayClass += ' profit';
+                        } else if (pnl < 0) {
+                            dayClass += ' loss';
+                        }
+                        pnlHtml = `<div class="calendar-day-pnl">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>`;
+                    }
+                    
+                    html += `<div class="${dayClass}">`;
+                    html += `<div class="calendar-day-number">${day}</div>`;
+                    html += pnlHtml;
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+                container.innerHTML = html;
+            }
+            
+            // Store current month/year in global scope for navigation
+            window['currentMonth{{ loop.index }}'] = currentMonth;
+            window['currentYear{{ loop.index }}'] = currentYear;
+            
+            window['prevMonth{{ loop.index }}'] = function() {
+                window['currentMonth{{ loop.index }}']--;
+                if (window['currentMonth{{ loop.index }}'] < 0) {
+                    window['currentMonth{{ loop.index }}'] = 11;
+                    window['currentYear{{ loop.index }}']--;
+                }
+                renderCalendar(window['currentMonth{{ loop.index }}'], window['currentYear{{ loop.index }}']);
+            };
+            
+            window['nextMonth{{ loop.index }}'] = function() {
+                window['currentMonth{{ loop.index }}']++;
+                if (window['currentMonth{{ loop.index }}'] > 11) {
+                    window['currentMonth{{ loop.index }}'] = 0;
+                    window['currentYear{{ loop.index }}']++;
+                }
+                renderCalendar(window['currentMonth{{ loop.index }}'], window['currentYear{{ loop.index }}']);
+            };
+            
+            // Initial render
+            renderCalendar(currentMonth, currentYear);
+        })();
+        {% endfor %}
+    </script>
 
     <script>
         {% for bot in bot_stats %}

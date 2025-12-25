@@ -131,6 +131,10 @@ def index():
         # Update the last added bot_stats entry with chart data
         bot_stats[-1]['chart_data'] = points
         
+        # Calculate Daily PNL Calendar for this strategy
+        daily_pnl = process_daily_pnl(s_orders)
+        bot_stats[-1]['daily_pnl'] = daily_pnl
+        
     # Sort by Net Profit
     # Sort by User Defined Order (1, 1_V2, 4, 2, 5)
     desired_order = [
@@ -211,6 +215,36 @@ def process_hourly_stats(orders):
         result.append(s)
         
     return result
+
+def process_daily_pnl(orders):
+    """
+    Aggregate trade stats by day (Vietnam Time UTC+7).
+    Returns a dictionary with date keys (YYYY-MM-DD) and PNL values.
+    """
+    daily_stats = {}
+    
+    for order in orders:
+        if order['profit'] is None:
+            continue
+            
+        try:
+            # Parse open_time (UTC)
+            utc_time = datetime.strptime(order['open_time'], "%Y-%m-%d %H:%M:%S")
+            
+            # Convert to Vietnam Time (UTC+7)
+            vn_time = utc_time + timedelta(hours=7)
+            date_key = vn_time.strftime("%Y-%m-%d")
+            
+            if date_key not in daily_stats:
+                daily_stats[date_key] = 0.0
+            
+            daily_stats[date_key] += order['profit']
+                
+        except Exception as e:
+            print(f"Error processing time for order {order['ticket']}: {e}")
+            continue
+    
+    return daily_stats
 
 def format_vn_time(value):
     """
