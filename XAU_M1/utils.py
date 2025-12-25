@@ -86,6 +86,16 @@ def calculate_heiken_ashi(df):
     
     return ha_df
 
+def calculate_atr(df, period=14):
+    """Calculate ATR (Average True Range)"""
+    df = df.copy()
+    df['tr0'] = abs(df['high'] - df['low'])
+    df['tr1'] = abs(df['high'] - df['close'].shift(1))
+    df['tr2'] = abs(df['low'] - df['close'].shift(1))
+    df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
+    atr_series = df['tr'].rolling(window=period).mean()
+    return atr_series
+
 def calculate_adx(df, period=14):
     """Calculate ADX Indicator"""
     df = df.copy()
