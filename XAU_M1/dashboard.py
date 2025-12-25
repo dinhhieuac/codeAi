@@ -84,8 +84,19 @@ def index():
     
     bot_stats = []
     
+    # Get last 30 days data for Daily PNL Calendar (independent of filter)
+    now_vn_30d = datetime.utcnow() + timedelta(hours=7)
+    start_of_today_vn_30d = now_vn_30d.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_date_vn_30d = start_of_today_vn_30d - timedelta(days=29)  # 30 days including today
+    cutoff_date_30d = start_date_vn_30d - timedelta(hours=7)
+    cutoff_str_30d = cutoff_date_30d.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Fetch orders for last 30 days for Daily PNL
+    cur.execute("SELECT * FROM orders WHERE open_time >= ? AND profit IS NOT NULL ORDER BY open_time DESC", (cutoff_str_30d,))
+    orders_30d = cur.fetchall()
+    
     for strat in strategies:
-        # Get trades for this strategy
+        # Get trades for this strategy (using filtered orders for stats)
         s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
         
         s_total = len(s_orders)
@@ -131,8 +142,9 @@ def index():
         # Update the last added bot_stats entry with chart data
         bot_stats[-1]['chart_data'] = points
         
-        # Calculate Daily PNL Calendar for this strategy
-        daily_pnl = process_daily_pnl(s_orders)
+        # Calculate Daily PNL Calendar for this strategy (always last 30 days)
+        s_orders_30d = [o for o in orders_30d if o['strategy_name'] == strat]
+        daily_pnl = process_daily_pnl(s_orders_30d)
         bot_stats[-1]['daily_pnl'] = daily_pnl
         
     # Sort by Net Profit

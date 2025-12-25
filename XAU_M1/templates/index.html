@@ -42,11 +42,12 @@
         .calendar-day {
             aspect-ratio: 1;
             border: 1px solid #dee2e6;
-            padding: 8px;
+            padding: 4px;
             text-align: center;
             background-color: #fff;
             position: relative;
-            min-height: 60px;
+            min-height: 45px;
+            font-size: 11px;
         }
         
         .calendar-day.has-pnl {
@@ -64,13 +65,15 @@
         }
         
         .calendar-day-number {
-            font-size: 14px;
-            margin-bottom: 4px;
+            font-size: 11px;
+            margin-bottom: 2px;
+            line-height: 1.2;
         }
         
         .calendar-day-pnl {
-            font-size: 11px;
-            margin-top: 4px;
+            font-size: 9px;
+            margin-top: 2px;
+            line-height: 1.1;
         }
         
         .calendar-header {
@@ -83,9 +86,14 @@
         .calendar-header-day {
             text-align: center;
             font-weight: bold;
-            font-size: 12px;
+            font-size: 10px;
             color: #6c757d;
-            padding: 4px;
+            padding: 2px;
+        }
+        
+        .pnl-calendar {
+            max-width: 600px;
+            margin: 0 auto;
         }
     </style>
 </head>
@@ -386,10 +394,10 @@
                 <!-- Daily PNL Calendar -->
                 <div class="card mb-4">
                     <div class="card-header bg-white">
-                        <h5 class="mb-0"><i class="fas fa-calendar"></i> PNL hằng ngày - {{ bot.name }}</h5>
+                        <h6 class="mb-0"><i class="fas fa-calendar"></i> PNL hằng ngày (30 ngày gần nhất) - {{ bot.name }}</h6>
                     </div>
-                    <div class="card-body">
-                        <div id="calendar-{{ loop.index }}" class="mb-3">
+                    <div class="card-body p-2">
+                        <div id="calendar-{{ loop.index }}">
                             <!-- Calendar will be rendered by JavaScript -->
                         </div>
                     </div>
@@ -526,10 +534,10 @@
                 // Adjust for Monday = 0 (instead of Sunday = 0)
                 const adjustedStartDay = (startingDayOfWeek + 6) % 7; // Convert Sunday=0 to Monday=0
                 
-                let html = '<div class="d-flex justify-content-between align-items-center mb-3">';
-                html += '<button class="btn btn-sm btn-outline-secondary" onclick="prevMonth{{ loop.index }}()"><i class="fas fa-chevron-left"></i></button>';
-                html += `<h5 class="mb-0">${year}-${String(month + 1).padStart(2, '0')}</h5>`;
-                html += '<button class="btn btn-sm btn-outline-secondary" onclick="nextMonth{{ loop.index }}()"><i class="fas fa-chevron-right"></i></button>';
+                let html = '<div class="d-flex justify-content-between align-items-center mb-2">';
+                html += '<button class="btn btn-sm btn-outline-secondary btn-sm" onclick="prevMonth{{ loop.index }}()" style="padding: 2px 8px; font-size: 11px;"><i class="fas fa-chevron-left"></i></button>';
+                html += `<h6 class="mb-0" style="font-size: 13px;">${year}-${String(month + 1).padStart(2, '0')}</h6>`;
+                html += '<button class="btn btn-sm btn-outline-secondary btn-sm" onclick="nextMonth{{ loop.index }}()" style="padding: 2px 8px; font-size: 11px;"><i class="fas fa-chevron-right"></i></button>';
                 html += '</div>';
                 
                 // Calendar header
