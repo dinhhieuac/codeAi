@@ -73,7 +73,10 @@ def strategy_1_logic(config, error_count=0):
     max_positions = config.get('max_positions', 1)
     
     # 2. Check Global Max Positions & Manage Existing
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    # Lấy tất cả positions của symbol, sau đó filter theo magic để chỉ xử lý positions do bot này mở
+    all_positions = mt5.positions_get(symbol=symbol)
+    positions = [pos for pos in (all_positions or []) if pos.magic == magic]  # Chỉ lấy positions do bot này mở
+    
     if positions:
         # Manage Trailing SL for all open positions of this strategy
         for pos in positions:
@@ -273,7 +276,9 @@ def strategy_1_logic(config, error_count=0):
     if signal:
         # --- SPAM FILTER: V2 - Check if we traded in the last N seconds (configurable) ---
         spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 300)
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        # Chỉ lấy positions do bot này mở (filter theo magic)
+        all_strat_positions = mt5.positions_get(symbol=symbol)
+        strat_positions = [pos for pos in (all_strat_positions or []) if pos.magic == magic]
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
             last_trade_time = strat_positions[0].time
