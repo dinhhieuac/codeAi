@@ -10,6 +10,7 @@ def main():
     # List of strategy scripts to run
     scripts = [
         os.path.join(base_dir, "strategy_1_trend_ha.py"),
+        os.path.join(base_dir, "strategy_1_trend_ha_v2.py"),
         os.path.join(base_dir, "strategy_2_ema_atr.py"),
         os.path.join(base_dir, "strategy_3_pa_volume.py"),
         os.path.join(base_dir, "strategy_4_ut_bot.py"),
