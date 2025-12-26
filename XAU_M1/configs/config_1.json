@@ -18,10 +18,15 @@
         "rsi_threshold": 50,
         "trailing_enabled": true,
         "breakeven_enabled": true,
-        "breakeven_trigger_pips": 30,
-        "trailing_trigger_pips": 50,
+        "breakeven_trigger_pips": "auto",
+        "breakeven_trigger_percent": 0.5,
+        "trailing_trigger_pips": "auto",
+        "trailing_trigger_multiplier": 1.2,
         "trailing_mode": "atr",
+        "trailing_atr_timeframe": "M5",
         "trailing_distance_pips": 50,
-        "trailing_atr_multiplier": 1.5
+        "trailing_atr_multiplier": 1.5,
+        "trailing_min_pips": 30,
+        "trailing_max_pips": 100
     }
 }

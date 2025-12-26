@@ -25,7 +25,19 @@
         "chop_body_threshold": 0.5,
         "chop_overlap_threshold": 0.7,
         "spam_filter_seconds": 300,
-        "confirmation_enabled": true
+        "confirmation_enabled": true,
+        "trailing_enabled": true,
+        "breakeven_enabled": true,
+        "breakeven_trigger_pips": "auto",
+        "breakeven_trigger_percent": 0.5,
+        "trailing_trigger_pips": "auto",
+        "trailing_trigger_multiplier": 1.2,
+        "trailing_mode": "atr",
+        "trailing_atr_timeframe": "M5",
+        "trailing_distance_pips": 50,
+        "trailing_atr_multiplier": 1.5,
+        "trailing_min_pips": 30,
+        "trailing_max_pips": 100
     },
     "version": "V2",
     "description": "Strategy 1 Trend HA V2 - Improved with ADX, CHOP filters, better RSI, ATR-based SL, and confirmation"
