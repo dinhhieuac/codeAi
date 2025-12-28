@@ -3,6 +3,7 @@ import sqlite3
 import json
 import os
 import time
+from datetime import datetime
 from db import Database
 from utils import connect_mt5
 
@@ -92,8 +93,6 @@ def main():
         "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
     }
     
-    from datetime import datetime
-    
     for strat_name, config_file in strategies.items():
         if os.path.exists(config_file):
             print(f"\n--- Processing {strat_name} ---")
@@ -106,7 +105,6 @@ def main():
     mt5.shutdown()
 
 if __name__ == "__main__":
-    from datetime import datetime # Re-import for safety inside main scope if needed
     while True:
         main()
         print("Sleeping for 600 seconds...") 

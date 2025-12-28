@@ -3,6 +3,7 @@ import sqlite3
 import json
 import os
 import time
+from datetime import datetime
 from db import Database
 from utils import connect_mt5
 
@@ -106,7 +107,6 @@ def main():
     mt5.shutdown()
 
 if __name__ == "__main__":
-    from datetime import datetime # Re-import for safety inside main scope if needed
     while True:
         main()
         print("Sleeping for 600 seconds...") 
