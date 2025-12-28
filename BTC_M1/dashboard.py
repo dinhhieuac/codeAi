@@ -4,9 +4,12 @@ import json
 import sqlite3
 import os
 
-app = Flask(__name__)
+# Use absolute path for templates folder
+dashboard_dir = os.path.dirname(os.path.abspath(__file__))
+templates_dir = os.path.join(dashboard_dir, 'templates')
+app = Flask(__name__, template_folder=templates_dir)
 # Use absolute path to ensure we always find the correct trades.db
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trades.db')
+DB_PATH = os.path.join(dashboard_dir, 'trades.db')
 
 def get_db():
     db = getattr(g, '_database', None)
