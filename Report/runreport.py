@@ -2,10 +2,11 @@ import subprocess
 import time
 import sys
 import os
+from pathlib import Path
 
 def main():
     # Get the directory where main.py is located
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path
     
     # List of strategy scripts to run
     scripts = [
@@ -31,14 +32,11 @@ def main():
         print("\n✅ All bots are running!")
         print("Press Ctrl+C to stop all bots.\n")
 
-        # Keep main process alive to monitor
-        while True:
-            time.sleep(1)
-            # Check if any process has died
-            for i, p in enumerate(processes):
-                if p.poll() is not None:
-                    print(f"⚠️ Process {scripts[i]} ended unexpected (Code: {p.returncode})")
-                    # Optional: Restart logic could go here
+        for i, p in enumerate(processes):
+            if p.poll() is not None:
+                print(f"⚠️ Process {scripts[i]} ended unexpected (Code: {p.returncode})")
+                # Optional: Restart logic could go here
+                    
                     
     except KeyboardInterrupt:
         print("\n🛑 Stopping all bots...")
