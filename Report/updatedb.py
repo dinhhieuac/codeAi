@@ -11,136 +11,101 @@ Each script updates trade profits from MT5 history for their respective strategi
 import sys
 import os
 import threading
+import subprocess
 from pathlib import Path
 
 # Add parent directory to path to import update_db modules
 project_root = Path(__file__).parent.parent
 
 def run_xau_update():
-    """Run XAU_M1 update_db.py in a loop"""
-    import time
+    """Run XAU_M1 update_db.py using subprocess"""
+    import subprocess
     try:
-        # Save current directory
-        original_dir = os.getcwd()
-        xau_dir = project_root / "XAU_M1"
+        xau_script = project_root / "XAU_M1" / "update_db.py"
         
-        # Change to XAU_M1 directory to ensure correct imports and DB paths
-        os.chdir(str(xau_dir))
-        sys.path.insert(0, str(xau_dir))
-        
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("xau_update_db", xau_dir / "update_db.py")
-        xau_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(xau_module)
+        if not xau_script.exists():
+            print(f"❌ Script not found: {xau_script}")
+            return
         
         print("🚀 Starting XAU_M1 update_db...")
-        # Run in loop like the original script
-        while True:
-            try:
-                xau_module.main()
-                print("⏳ XAU_M1: Sleeping for 600 seconds...")
-                time.sleep(600)
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                print(f"❌ Error in XAU_M1 update_db loop: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
+        # Run the script as a subprocess (it has its own while True loop)
+        process = subprocess.Popen(
+            [sys.executable, str(xau_script)],
+            cwd=str(xau_script.parent)  # Set working directory to XAU_M1
+        )
+        
+        # Wait for process to complete (it runs forever until Ctrl+C)
+        process.wait()
     except KeyboardInterrupt:
         print("🛑 XAU_M1 update_db stopped")
+        if 'process' in locals():
+            process.terminate()
     except Exception as e:
         print(f"❌ Fatal error in XAU_M1 update_db: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Restore original directory
-        try:
-            os.chdir(original_dir)
-        except:
-            pass
+        if 'process' in locals():
+            process.terminate()
 
 def run_btc_update():
-    """Run BTC_M1 update_db.py in a loop"""
-    import time
+    """Run BTC_M1 update_db.py using subprocess"""
+    import subprocess
     try:
-        # Save current directory
-        original_dir = os.getcwd()
-        btc_dir = project_root / "BTC_M1"
+        btc_script = project_root / "BTC_M1" / "update_db.py"
         
-        # Change to BTC_M1 directory to ensure correct imports and DB paths
-        os.chdir(str(btc_dir))
-        sys.path.insert(0, str(btc_dir))
-        
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("btc_update_db", btc_dir / "update_db.py")
-        btc_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(btc_module)
+        if not btc_script.exists():
+            print(f"❌ Script not found: {btc_script}")
+            return
         
         print("🚀 Starting BTC_M1 update_db...")
-        # Run in loop like the original script
-        while True:
-            try:
-                btc_module.main()
-                print("⏳ BTC_M1: Sleeping for 600 seconds...")
-                time.sleep(600)
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                print(f"❌ Error in BTC_M1 update_db loop: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
+        # Run the script as a subprocess (it has its own while True loop)
+        process = subprocess.Popen(
+            [sys.executable, str(btc_script)],
+            cwd=str(btc_script.parent)  # Set working directory to BTC_M1
+        )
+        
+        # Wait for process to complete (it runs forever until Ctrl+C)
+        process.wait()
     except KeyboardInterrupt:
         print("🛑 BTC_M1 update_db stopped")
+        if 'process' in locals():
+            process.terminate()
     except Exception as e:
         print(f"❌ Fatal error in BTC_M1 update_db: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Restore original directory
-        try:
-            os.chdir(original_dir)
-        except:
-            pass
+        if 'process' in locals():
+            process.terminate()
 
 def run_eth_update():
-    """Run ETH_M1 update_db.py in a loop"""
-    import time
+    """Run ETH_M1 update_db.py using subprocess"""
+    import subprocess
     try:
-        # Save current directory
-        original_dir = os.getcwd()
-        eth_dir = project_root / "ETH_M1"
+        eth_script = project_root / "ETH_M1" / "update_db.py"
         
-        # Change to ETH_M1 directory to ensure correct imports and DB paths
-        os.chdir(str(eth_dir))
-        sys.path.insert(0, str(eth_dir))
-        
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("eth_update_db", eth_dir / "update_db.py")
-        eth_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(eth_module)
+        if not eth_script.exists():
+            print(f"❌ Script not found: {eth_script}")
+            return
         
         print("🚀 Starting ETH_M1 update_db...")
-        # Run in loop like the original script
-        while True:
-            try:
-                eth_module.main()
-                print("⏳ ETH_M1: Sleeping for 600 seconds...")
-                time.sleep(600)
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                print(f"❌ Error in ETH_M1 update_db loop: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
+        # Run the script as a subprocess (it has its own while True loop)
+        process = subprocess.Popen(
+            [sys.executable, str(eth_script)],
+            cwd=str(eth_script.parent)  # Set working directory to ETH_M1
+        )
+        
+        # Wait for process to complete (it runs forever until Ctrl+C)
+        process.wait()
     except KeyboardInterrupt:
         print("🛑 ETH_M1 update_db stopped")
+        if 'process' in locals():
+            process.terminate()
     except Exception as e:
         print(f"❌ Fatal error in ETH_M1 update_db: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Restore original directory
-        try:
-            os.chdir(original_dir)
-        except:
-            pass
+        if 'process' in locals():
+            process.terminate()
 
 if __name__ == '__main__':
     print("=" * 60)
@@ -175,7 +140,7 @@ if __name__ == '__main__':
     print()
     
     try:
-        # Keep main thread alive
+        # Keep main thread alive and monitor processes
         while True:
             xau_thread.join(timeout=1)
             btc_thread.join(timeout=1)
@@ -185,6 +150,7 @@ if __name__ == '__main__':
                 break
     except KeyboardInterrupt:
         print("\n\n🛑 Shutting down update scripts...")
+        # Note: Subprocesses will be terminated when threads exit
         print("✅ Update scripts stopped")
         sys.exit(0)
 
