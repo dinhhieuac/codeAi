@@ -941,18 +941,27 @@ def m1_scalp_logic(config, error_count=0):
                     return error_count + 1, 0
         
         # Validate order
+        print(f"   🔍 Đang validate request...")
         check_result = mt5.order_check(request)
-        if check_result.retcode != mt5.TRADE_RETCODE_DONE:
-            error_msg = f"Order validation failed: {check_result.comment}"
-            print(f"❌ {error_msg}")
+        if check_result is None:
+            error = mt5.last_error()
+            print(f"   ⚠️ order_check() trả về None. Lỗi: {error}")
+            print(f"   ⚠️ Vẫn thử gửi lệnh...")
+        elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
+            error_msg = f"order_check() không hợp lệ"
+            error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
+            print(f"   ❌ {error_msg}: {error_detail}")
             send_telegram(
                 f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 Symbol: {symbol} ({signal_type})\n"
-                f"❌ Lỗi: {error_msg}",
+                f"❌ Lỗi: {error_msg}\n"
+                f"📝 Chi tiết: {error_detail}",
                 config.get('telegram_token'),
                 config.get('telegram_chat_id')
             )
-            return error_count + 1, 0
+            return error_count + 1, check_result.retcode
+        else:
+            print(f"   ✅ Request hợp lệ")
         
         result = mt5.order_send(request)
         
