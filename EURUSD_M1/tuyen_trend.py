@@ -1322,6 +1322,70 @@ def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
     
     return swing_lows
 
+def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+    """
+    Kiểm tra sóng hồi hợp lệ cho BUY:
+    - Giá không tạo đỉnh cao hơn swing high
+    - Số nến hồi tối đa: ≤ max_candles (default 30)
+    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 40-50)
+    - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
+    - Giá không phá cấu trúc xu hướng tăng chính
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    """
+    if swing_high_idx >= len(df_m1) - 1:
+        return False, None, None, "Swing high quá gần cuối"
+    
+    swing_high_price = df_m1.iloc[swing_high_idx]['high']
+    
+    # Tìm điểm kết thúc sóng hồi (từ swing high đến hiện tại hoặc max_candles)
+    pullback_start = swing_high_idx + 1
+    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
+    
+    if len(pullback_candles) == 0:
+        return False, None, None, "Không có nến sau swing high"
+    
+    # 1. Kiểm tra: Giá không tạo đỉnh cao hơn swing high
+    max_high_after_swing = pullback_candles['high'].max()
+    if max_high_after_swing > swing_high_price:
+        return False, None, None, f"Giá tạo đỉnh cao hơn swing high: {max_high_after_swing:.5f} > {swing_high_price:.5f}"
+    
+    # 2. Kiểm tra số nến hồi ≤ max_candles
+    if len(pullback_candles) > max_candles:
+        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
+    
+    # 3. Kiểm tra RSI trong quá trình hồi > rsi_min_during_pullback
+    pullback_rsi = pullback_candles.get('rsi', pd.Series())
+    if len(pullback_rsi) > 0:
+        min_rsi_during_pullback = pullback_rsi.min()
+        if min_rsi_during_pullback <= rsi_min_during_pullback:
+            return False, None, None, f"RSI trong quá trình hồi ({min_rsi_during_pullback:.1f}) <= {rsi_min_during_pullback}"
+    
+    # 4. Kiểm tra RSI hồi về vùng target (40-50) - kiểm tra nến cuối hoặc gần cuối
+    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
+    if pd.notna(last_rsi):
+        if not (rsi_target_min <= last_rsi <= rsi_target_max):
+            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
+            # Kiểm tra xem có nến nào trong vùng target không
+            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
+            if len(rsi_in_target) == 0:
+                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
+    
+    # 5. Kiểm tra giá không phá cấu trúc xu hướng tăng (kiểm tra Lower Lows)
+    if swing_high_idx > 10:
+        before_swing = df_m1.iloc[swing_high_idx - 20:swing_high_idx]
+        if len(before_swing) > 0:
+            prev_swing_low = before_swing['low'].min()
+            pullback_low = pullback_candles['low'].min()
+            if pullback_low < prev_swing_low * 0.9999:  # 0.1 pip buffer
+                return False, None, None, f"Giá phá cấu trúc: Pullback low {pullback_low:.5f} < Prev swing low {prev_swing_low:.5f}"
+    
+    pullback_end_idx = pullback_end
+    
+    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+
 def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
     """
     Kiểm tra sóng hồi hợp lệ cho SELL:
@@ -1386,6 +1450,70 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     
     return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
 
+def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
+    """
+    Vẽ trendline sóng hồi (giảm) nối từ swing high qua các đỉnh thấp dần
+    
+    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
+    """
+    if swing_high_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
+        return None
+    
+    pullback_candles = df_m1.iloc[swing_high_idx:pullback_end_idx + 1]
+    
+    # Tìm các đỉnh (local maxima) trong pullback
+    highs = pullback_candles['high'].values
+    
+    local_maxs = []
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            idx_in_df = pullback_candles.index[i]
+            pos_in_df = df_m1.index.get_loc(idx_in_df) if hasattr(df_m1.index, 'get_loc') else i + swing_high_idx
+            local_maxs.append({'pos': pos_in_df, 'price': highs[i], 'idx': idx_in_df})
+    
+    # Thêm swing high vào đầu
+    swing_high_pos = swing_high_idx
+    swing_high_price = df_m1.iloc[swing_high_idx]['high']
+    local_maxs.insert(0, {'pos': swing_high_pos, 'price': swing_high_price, 'idx': df_m1.index[swing_high_idx] if hasattr(df_m1.index[swing_high_idx], '__iter__') else swing_high_idx})
+    
+    local_maxs = sorted(local_maxs, key=lambda x: x['pos'])
+    
+    # Lọc các đỉnh thấp dần
+    filtered_maxs = [local_maxs[0]]
+    for i in range(1, len(local_maxs)):
+        if local_maxs[i]['price'] <= filtered_maxs[-1]['price']:
+            filtered_maxs.append(local_maxs[i])
+    
+    if len(filtered_maxs) < 2:
+        return None
+    
+    # Linear regression
+    x_values = np.array([m['pos'] for m in filtered_maxs])
+    y_values = np.array([m['price'] for m in filtered_maxs])
+    
+    n = len(x_values)
+    sum_x = x_values.sum()
+    sum_y = y_values.sum()
+    sum_xy = (x_values * y_values).sum()
+    sum_x2 = (x_values * x_values).sum()
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if abs(denominator) < 1e-10:
+        return None
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    
+    def trendline_func(pos):
+        return slope * pos + intercept
+    
+    return {
+        'slope': slope,
+        'intercept': intercept,
+        'func': trendline_func,
+        'points': filtered_maxs
+    }
+
 def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
     """
     Vẽ trendline sóng hồi (tăng) nối từ swing low qua các đáy cao dần
@@ -1449,6 +1577,54 @@ def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
         'func': trendline_func,
         'points': filtered_mins
     }
+
+def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val):
+    """
+    Kiểm tra nến phá vỡ trendline sóng hồi cho BUY:
+    ✅ Giá đóng cửa vượt lên trên trendline sóng hồi
+    ✅ Giá đóng cửa ≥ EMA 50
+    ✅ RSI đang hướng lên (RSI hiện tại > RSI nến trước)
+    
+    Returns: (is_break, message)
+    """
+    if trendline_info is None:
+        return False, "Không có trendline"
+    
+    if current_candle_idx >= len(df_m1):
+        return False, "Index vượt quá"
+    
+    current_candle = df_m1.iloc[current_candle_idx]
+    prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
+    
+    trendline_value = trendline_info['func'](current_candle_idx)
+    
+    # 1. Giá đóng cửa vượt lên trên trendline
+    close_above_trendline = current_candle['close'] > trendline_value
+    if not close_above_trendline:
+        return False, f"Close ({current_candle['close']:.5f}) không vượt lên trên trendline ({trendline_value:.5f})"
+    
+    # 2. Giá đóng cửa ≥ EMA 50
+    if ema50_val is None or pd.isna(ema50_val):
+        return False, "EMA50 không có giá trị"
+    
+    close_above_ema50 = current_candle['close'] >= ema50_val
+    if not close_above_ema50:
+        return False, f"Close ({current_candle['close']:.5f}) < EMA50 ({ema50_val:.5f})"
+    
+    # 3. RSI đang hướng lên
+    current_rsi = current_candle.get('rsi', None)
+    if prev_candle is not None:
+        prev_rsi = prev_candle.get('rsi', None)
+        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+            rsi_rising = current_rsi > prev_rsi
+            if not rsi_rising:
+                return False, f"RSI không hướng lên: {current_rsi:.1f} <= {prev_rsi:.1f}"
+        else:
+            return False, "RSI không có giá trị"
+    else:
+        return False, "Không có nến trước để so sánh RSI"
+    
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
 
 def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val):
     """
