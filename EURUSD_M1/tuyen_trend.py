@@ -9,7 +9,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
 
 # Initialize Database
 db = Database()
@@ -1266,6 +1266,238 @@ def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
                  
     return False
 
+def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
+    """
+    Tìm swing high với RSI > min_rsi (default 70)
+    Returns: list of dicts với {'index': i, 'price': high, 'time': time, 'rsi': rsi_value}
+    """
+    swing_highs = []
+    
+    for i in range(lookback, len(df_m1) - lookback):
+        # Check if it's a swing high
+        is_swing_high = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df_m1.iloc[j]['high'] >= df_m1.iloc[i]['high']:
+                is_swing_high = False
+                break
+        
+        if is_swing_high:
+            # Check RSI at swing high
+            rsi_val = df_m1.iloc[i].get('rsi', None)
+            if pd.notna(rsi_val) and rsi_val > min_rsi:
+                swing_highs.append({
+                    'index': i,
+                    'price': df_m1.iloc[i]['high'],
+                    'time': df_m1.index[i],
+                    'rsi': rsi_val
+                })
+    
+    return swing_highs
+
+def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
+    """
+    Tìm swing low với RSI < min_rsi (default 30)
+    Returns: list of dicts với {'index': i, 'price': low, 'time': time, 'rsi': rsi_value}
+    """
+    swing_lows = []
+    
+    for i in range(lookback, len(df_m1) - lookback):
+        # Check if it's a swing low
+        is_swing_low = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df_m1.iloc[j]['low'] <= df_m1.iloc[i]['low']:
+                is_swing_low = False
+                break
+        
+        if is_swing_low:
+            # Check RSI at swing low
+            rsi_val = df_m1.iloc[i].get('rsi', None)
+            if pd.notna(rsi_val) and rsi_val < min_rsi:
+                swing_lows.append({
+                    'index': i,
+                    'price': df_m1.iloc[i]['low'],
+                    'time': df_m1.index[i],
+                    'rsi': rsi_val
+                })
+    
+    return swing_lows
+
+def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
+    """
+    Kiểm tra sóng hồi hợp lệ cho SELL:
+    - Giá không tạo đáy thấp hơn swing low
+    - Số nến hồi tối đa: ≤ max_candles (default 30)
+    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 50-60)
+    - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
+    - Giá không phá cấu trúc xu hướng giảm chính
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    """
+    if swing_low_idx >= len(df_m1) - 1:
+        return False, None, None, "Swing low quá gần cuối"
+    
+    swing_low_price = df_m1.iloc[swing_low_idx]['low']
+    
+    # Tìm điểm kết thúc sóng hồi (từ swing low đến hiện tại hoặc max_candles)
+    pullback_start = swing_low_idx + 1
+    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
+    
+    if len(pullback_candles) == 0:
+        return False, None, None, "Không có nến sau swing low"
+    
+    # 1. Kiểm tra: Giá không tạo đáy thấp hơn swing low
+    min_low_after_swing = pullback_candles['low'].min()
+    if min_low_after_swing < swing_low_price:
+        return False, None, None, f"Giá tạo đáy thấp hơn swing low: {min_low_after_swing:.5f} < {swing_low_price:.5f}"
+    
+    # 2. Kiểm tra số nến hồi ≤ max_candles
+    if len(pullback_candles) > max_candles:
+        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
+    
+    # 3. Kiểm tra RSI trong quá trình hồi < rsi_max_during_pullback
+    pullback_rsi = pullback_candles.get('rsi', pd.Series())
+    if len(pullback_rsi) > 0:
+        max_rsi_during_pullback = pullback_rsi.max()
+        if max_rsi_during_pullback >= rsi_max_during_pullback:
+            return False, None, None, f"RSI trong quá trình hồi ({max_rsi_during_pullback:.1f}) >= {rsi_max_during_pullback}"
+    
+    # 4. Kiểm tra RSI hồi về vùng target (50-60) - kiểm tra nến cuối hoặc gần cuối
+    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
+    if pd.notna(last_rsi):
+        if not (rsi_target_min <= last_rsi <= rsi_target_max):
+            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
+            # Kiểm tra xem có nến nào trong vùng target không
+            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
+            if len(rsi_in_target) == 0:
+                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
+    
+    # 5. Kiểm tra giá không phá cấu trúc xu hướng giảm (kiểm tra Higher Highs)
+    if swing_low_idx > 10:
+        before_swing = df_m1.iloc[swing_low_idx - 20:swing_low_idx]
+        if len(before_swing) > 0:
+            prev_swing_high = before_swing['high'].max()
+            pullback_high = pullback_candles['high'].max()
+            if pullback_high > prev_swing_high * 1.0001:  # 0.1 pip buffer
+                return False, None, None, f"Giá phá cấu trúc: Pullback high {pullback_high:.5f} > Prev swing high {prev_swing_high:.5f}"
+    
+    pullback_end_idx = pullback_end
+    
+    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+
+def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
+    """
+    Vẽ trendline sóng hồi (tăng) nối từ swing low qua các đáy cao dần
+    
+    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
+    """
+    if swing_low_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
+        return None
+    
+    pullback_candles = df_m1.iloc[swing_low_idx:pullback_end_idx + 1]
+    
+    # Tìm các đáy (local minima) trong pullback
+    lows = pullback_candles['low'].values
+    
+    local_mins = []
+    for i in range(1, len(lows) - 1):
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            idx_in_df = pullback_candles.index[i]
+            pos_in_df = df_m1.index.get_loc(idx_in_df)
+            local_mins.append({'pos': pos_in_df, 'price': lows[i], 'idx': idx_in_df})
+    
+    # Thêm swing low vào đầu
+    swing_low_pos = swing_low_idx
+    swing_low_price = df_m1.iloc[swing_low_idx]['low']
+    local_mins.insert(0, {'pos': swing_low_pos, 'price': swing_low_price, 'idx': df_m1.index[swing_low_idx]})
+    
+    local_mins = sorted(local_mins, key=lambda x: x['pos'])
+    
+    # Lọc các đáy cao dần
+    filtered_mins = [local_mins[0]]
+    for i in range(1, len(local_mins)):
+        if local_mins[i]['price'] >= filtered_mins[-1]['price']:
+            filtered_mins.append(local_mins[i])
+    
+    if len(filtered_mins) < 2:
+        return None
+    
+    # Linear regression
+    x_values = np.array([m['pos'] for m in filtered_mins])
+    y_values = np.array([m['price'] for m in filtered_mins])
+    
+    n = len(x_values)
+    sum_x = x_values.sum()
+    sum_y = y_values.sum()
+    sum_xy = (x_values * y_values).sum()
+    sum_x2 = (x_values * x_values).sum()
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if abs(denominator) < 1e-10:
+        return None
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    
+    def trendline_func(pos):
+        return slope * pos + intercept
+    
+    return {
+        'slope': slope,
+        'intercept': intercept,
+        'func': trendline_func,
+        'points': filtered_mins
+    }
+
+def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val):
+    """
+    Kiểm tra nến phá vỡ trendline sóng hồi cho SELL:
+    ✅ Giá đóng cửa phá xuống dưới trendline sóng hồi
+    ✅ Giá đóng cửa ≤ EMA 50
+    ✅ RSI đang hướng xuống (RSI hiện tại < RSI nến trước)
+    
+    Returns: (is_break, message)
+    """
+    if trendline_info is None:
+        return False, "Không có trendline"
+    
+    if current_candle_idx >= len(df_m1):
+        return False, "Index vượt quá"
+    
+    current_candle = df_m1.iloc[current_candle_idx]
+    prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
+    
+    trendline_value = trendline_info['func'](current_candle_idx)
+    
+    # 1. Giá đóng cửa phá xuống dưới trendline
+    close_below_trendline = current_candle['close'] < trendline_value
+    if not close_below_trendline:
+        return False, f"Close ({current_candle['close']:.5f}) không phá xuống dưới trendline ({trendline_value:.5f})"
+    
+    # 2. Giá đóng cửa ≤ EMA 50
+    if ema50_val is None or pd.isna(ema50_val):
+        return False, "EMA50 không có giá trị"
+    
+    close_below_ema50 = current_candle['close'] <= ema50_val
+    if not close_below_ema50:
+        return False, f"Close ({current_candle['close']:.5f}) > EMA50 ({ema50_val:.5f})"
+    
+    # 3. RSI đang hướng xuống
+    current_rsi = current_candle.get('rsi', None)
+    if prev_candle is not None:
+        prev_rsi = prev_candle.get('rsi', None)
+        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+            rsi_declining = current_rsi < prev_rsi
+            if not rsi_declining:
+                return False, f"RSI không hướng xuống: {current_rsi:.1f} >= {prev_rsi:.1f}"
+        else:
+            return False, "RSI không có giá trị"
+    else:
+        return False, "Không có nến trước để so sánh RSI"
+    
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} < Trendline {trendline_value:.5f}, Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}"
+
 def tuyen_trend_logic(config, error_count=0):
     try:
         symbol = config['symbol']
@@ -1410,6 +1642,7 @@ def tuyen_trend_logic(config, error_count=0):
     df_m1['ema50'] = calculate_ema(df_m1['close'], 50)
     df_m1['ema200'] = calculate_ema(df_m1['close'], 200) 
     df_m1['atr'] = calculate_atr(df_m1, 14)
+    df_m1['rsi'] = calculate_rsi(df_m1['close'], period=14)  # Add RSI for new SELL strategy
     
     # M1 Structure Detection (Lower Highs/Lows for SELL, Higher Highs/Lows for BUY)
     m1_swing_highs, m1_swing_lows = find_swing_points(df_m1, lookback=5)
@@ -2132,6 +2365,224 @@ def tuyen_trend_logic(config, error_count=0):
         if not is_strat2:
              log_details.append(f"Strat 2 Fail: {', '.join(strat2_fail_reasons)}")
 
+    # === STRATEGY 3: SELL - SWING LOW + PULLBACK + TRENDLINE BREAK ===
+    is_strat3_sell = False
+    strat3_fail_reasons = []
+    
+    # Chỉ kiểm tra Strategy 3 nếu:
+    # - M5 Trend = BEARISH
+    # - Chưa có signal từ Strategy 1 hoặc 2
+    # - H1 Bias không xung đột (SELL hoặc None)
+    if m5_trend == "BEARISH" and not is_strat1 and not is_strat2:
+        if h1_bias is None or h1_bias == "SELL":
+            print(f"\n{'='*80}")
+            print(f"📉 [STRATEGY 3: SELL - Swing Low + Pullback + Trendline Break]")
+            print(f"{'='*80}")
+            
+            # 1. Tìm swing low với RSI < 30
+            print(f"\n🔍 [Tìm Swing Low với RSI < 30]")
+            swing_lows_with_rsi = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30)
+            
+            if len(swing_lows_with_rsi) == 0:
+                strat3_fail_reasons.append("Không tìm thấy swing low với RSI < 30")
+                print(f"   ❌ Không tìm thấy swing low với RSI < 30")
+            else:
+                # Lấy swing low gần nhất
+                latest_swing_low = swing_lows_with_rsi[-1]
+                swing_low_idx = latest_swing_low['index']
+                swing_low_price = latest_swing_low['price']
+                swing_low_rsi = latest_swing_low['rsi']
+                
+                print(f"   ✅ Tìm thấy swing low: Index={swing_low_idx}, Price={swing_low_price:.5f}, RSI={swing_low_rsi:.1f}")
+                
+                # 2. Kiểm tra sóng hồi hợp lệ
+                print(f"\n🔍 [Kiểm Tra Sóng Hồi Hợp Lệ]")
+                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
+                    df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
+                )
+                
+                if not pullback_valid:
+                    strat3_fail_reasons.append(f"Sóng hồi không hợp lệ: {pullback_msg}")
+                    print(f"   ❌ {pullback_msg}")
+                else:
+                    print(f"   ✅ {pullback_msg}")
+                    print(f"      Số nến hồi: {len(pullback_candles)}")
+                    if len(pullback_candles) > 0:
+                        last_pullback_rsi = pullback_candles.iloc[-1].get('rsi', None)
+                        if pd.notna(last_pullback_rsi):
+                            print(f"      RSI cuối: {last_pullback_rsi:.1f}")
+                    
+                    # 3. Vẽ trendline sóng hồi
+                    print(f"\n🔍 [Vẽ Trendline Sóng Hồi]")
+                    trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx)
+                    
+                    if trendline_info is None:
+                        strat3_fail_reasons.append("Không thể vẽ trendline (không đủ đáy cao dần)")
+                        print(f"   ❌ Không thể vẽ trendline")
+                    else:
+                        print(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                        for i, point in enumerate(trendline_info['points']):
+                            print(f"      Điểm {i+1}: Index={point['pos']}, Price={point['price']:.5f}")
+                        
+                        # 4. Kiểm tra nến phá vỡ trendline (nến hiện tại - nến cuối cùng đã hoàn thành)
+                        current_candle_idx = len(df_m1) - 2  # Nến cuối cùng đã hoàn thành
+                        ema50_val = df_m1.iloc[current_candle_idx]['ema50']
+                        
+                        print(f"\n🔍 [Kiểm Tra Nến Phá Vỡ Trendline]")
+                        print(f"   Nến hiện tại (Index {current_candle_idx}):")
+                        current_candle = df_m1.iloc[current_candle_idx]
+                        print(f"      Close: {current_candle['close']:.5f}")
+                        print(f"      EMA50: {ema50_val:.5f}")
+                        current_rsi = current_candle.get('rsi', None)
+                        prev_rsi = df_m1.iloc[current_candle_idx - 1].get('rsi', None) if current_candle_idx > 0 else None
+                        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                            print(f"      RSI: {current_rsi:.1f} (trước: {prev_rsi:.1f})")
+                        
+                        trendline_value = trendline_info['func'](current_candle_idx)
+                        print(f"      Trendline value: {trendline_value:.5f}")
+                        
+                        break_ok, break_msg = check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val)
+                        
+                        if not break_ok:
+                            strat3_fail_reasons.append(f"Nến chưa phá vỡ trendline: {break_msg}")
+                            print(f"   ❌ {break_msg}")
+                        else:
+                            print(f"   ✅ {break_msg}")
+                            
+                            # Tất cả điều kiện đã thỏa
+                            is_strat3_sell = True
+                            signal_type = "SELL"
+                            reason = "Strat3_SwingLow_Pullback_TrendlineBreak"
+                            
+                            print(f"\n✅ [TÍN HIỆU CHIẾN LƯỢC 3 - SELL]")
+                            print(f"   Entry: {current_candle['close']:.5f} (giá đóng cửa nến phá vỡ)")
+                            print(f"   Swing Low: {swing_low_price:.5f} (RSI: {swing_low_rsi:.1f})")
+                            print(f"   Trendline Break: {current_candle['close']:.5f} < {trendline_value:.5f}")
+                            print(f"   Close <= EMA50: {current_candle['close']:.5f} <= {ema50_val:.5f}")
+                            if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                                print(f"   RSI declining: {prev_rsi:.1f} -> {current_rsi:.1f}")
+        else:
+            if h1_bias == "BUY":
+                strat3_fail_reasons.append("H1 Bias = BUY (xung đột với SELL)")
+                print(f"\n⚠️ Strategy 3: Bỏ qua (H1 Bias = BUY, xung đột với SELL)")
+    else:
+        if m5_trend != "BEARISH":
+            strat3_fail_reasons.append(f"M5 Trend = {m5_trend} (cần BEARISH)")
+        if is_strat1 or is_strat2:
+            strat3_fail_reasons.append("Strategy 1 hoặc 2 đã pass")
+    
+    if not is_strat3_sell and len(strat3_fail_reasons) > 0:
+        log_details.append(f"Strat 3 Fail: {', '.join(strat3_fail_reasons)}")
+
+    # === STRATEGY 4: BUY - SWING HIGH + PULLBACK + TRENDLINE BREAK ===
+    is_strat4_buy = False
+    strat4_fail_reasons = []
+    
+    # Chỉ kiểm tra Strategy 4 (BUY) nếu:
+    # - M5 Trend = BULLISH
+    # - Chưa có signal từ Strategy 1, 2, hoặc 3
+    # - H1 Bias không xung đột (BUY hoặc None)
+    if m5_trend == "BULLISH" and not is_strat1 and not is_strat2 and not is_strat3_sell:
+        if h1_bias is None or h1_bias == "BUY":
+            print(f"\n{'='*80}")
+            print(f"📈 [STRATEGY 4: BUY - Swing High + Pullback + Trendline Break]")
+            print(f"{'='*80}")
+            
+            # 1. Tìm swing high với RSI > 70
+            print(f"\n🔍 [Tìm Swing High với RSI > 70]")
+            swing_highs_with_rsi = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70)
+            
+            if len(swing_highs_with_rsi) == 0:
+                strat4_fail_reasons.append("Không tìm thấy swing high với RSI > 70")
+                print(f"   ❌ Không tìm thấy swing high với RSI > 70")
+            else:
+                # Lấy swing high gần nhất
+                latest_swing_high = swing_highs_with_rsi[-1]
+                swing_high_idx = latest_swing_high['index']
+                swing_high_price = latest_swing_high['price']
+                swing_high_rsi = latest_swing_high['rsi']
+                
+                print(f"   ✅ Tìm thấy swing high: Index={swing_high_idx}, Price={swing_high_price:.5f}, RSI={swing_high_rsi:.1f}")
+                
+                # 2. Kiểm tra sóng hồi hợp lệ
+                print(f"\n🔍 [Kiểm Tra Sóng Hồi Hợp Lệ]")
+                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
+                    df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32
+                )
+                
+                if not pullback_valid:
+                    strat4_fail_reasons.append(f"Sóng hồi không hợp lệ: {pullback_msg}")
+                    print(f"   ❌ {pullback_msg}")
+                else:
+                    print(f"   ✅ {pullback_msg}")
+                    print(f"      Số nến hồi: {len(pullback_candles)}")
+                    if len(pullback_candles) > 0:
+                        last_pullback_rsi = pullback_candles.iloc[-1].get('rsi', None)
+                        if pd.notna(last_pullback_rsi):
+                            print(f"      RSI cuối: {last_pullback_rsi:.1f}")
+                    
+                    # 3. Vẽ trendline sóng hồi
+                    print(f"\n🔍 [Vẽ Trendline Sóng Hồi]")
+                    trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx)
+                    
+                    if trendline_info is None:
+                        strat4_fail_reasons.append("Không thể vẽ trendline (không đủ đỉnh thấp dần)")
+                        print(f"   ❌ Không thể vẽ trendline")
+                    else:
+                        print(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                        for i, point in enumerate(trendline_info['points']):
+                            print(f"      Điểm {i+1}: Index={point['pos']}, Price={point['price']:.5f}")
+                        
+                        # 4. Kiểm tra nến phá vỡ trendline (nến hiện tại - nến cuối cùng đã hoàn thành)
+                        current_candle_idx = len(df_m1) - 2  # Nến cuối cùng đã hoàn thành
+                        ema50_val = df_m1.iloc[current_candle_idx]['ema50']
+                        
+                        print(f"\n🔍 [Kiểm Tra Nến Phá Vỡ Trendline]")
+                        print(f"   Nến hiện tại (Index {current_candle_idx}):")
+                        current_candle = df_m1.iloc[current_candle_idx]
+                        print(f"      Close: {current_candle['close']:.5f}")
+                        print(f"      EMA50: {ema50_val:.5f}")
+                        current_rsi = current_candle.get('rsi', None)
+                        prev_rsi = df_m1.iloc[current_candle_idx - 1].get('rsi', None) if current_candle_idx > 0 else None
+                        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                            print(f"      RSI: {current_rsi:.1f} (trước: {prev_rsi:.1f})")
+                        
+                        trendline_value = trendline_info['func'](current_candle_idx)
+                        print(f"      Trendline value: {trendline_value:.5f}")
+                        
+                        break_ok, break_msg = check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val)
+                        
+                        if not break_ok:
+                            strat4_fail_reasons.append(f"Nến chưa phá vỡ trendline: {break_msg}")
+                            print(f"   ❌ {break_msg}")
+                        else:
+                            print(f"   ✅ {break_msg}")
+                            
+                            # Tất cả điều kiện đã thỏa
+                            is_strat4_buy = True
+                            signal_type = "BUY"
+                            reason = "Strat4_SwingHigh_Pullback_TrendlineBreak"
+                            
+                            print(f"\n✅ [TÍN HIỆU CHIẾN LƯỢC 4 - BUY]")
+                            print(f"   Entry: {current_candle['close']:.5f} (giá đóng cửa nến phá vỡ)")
+                            print(f"   Swing High: {swing_high_price:.5f} (RSI: {swing_high_rsi:.1f})")
+                            print(f"   Trendline Break: {current_candle['close']:.5f} > {trendline_value:.5f}")
+                            print(f"   Close >= EMA50: {current_candle['close']:.5f} >= {ema50_val:.5f}")
+                            if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                                print(f"   RSI rising: {prev_rsi:.1f} -> {current_rsi:.1f}")
+        else:
+            if h1_bias == "SELL":
+                strat4_fail_reasons.append("H1 Bias = SELL (xung đột với BUY)")
+                print(f"\n⚠️ Strategy 4: Bỏ qua (H1 Bias = SELL, xung đột với BUY)")
+    else:
+        if m5_trend != "BULLISH":
+            strat4_fail_reasons.append(f"M5 Trend = {m5_trend} (cần BULLISH)")
+        if is_strat1 or is_strat2 or is_strat3_sell:
+            strat4_fail_reasons.append("Strategy 1, 2 hoặc 3 đã pass")
+    
+    if not is_strat4_buy and len(strat4_fail_reasons) > 0:
+        log_details.append(f"Strat 4 Fail: {', '.join(strat4_fail_reasons)}")
+
     # --- Logging ---
     # Fix: Use signal_type only, not m5_trend (could be wrong if signal is SELL but trend is BULLISH)
     price = mt5.symbol_info_tick(symbol).ask if signal_type == "BUY" else mt5.symbol_info_tick(symbol).bid
@@ -2199,6 +2650,30 @@ def tuyen_trend_logic(config, error_count=0):
                     print(f"      {i}. {reason}")
             else:
                 print(f"      - Không đủ điều kiện cho Strategy 2")
+        
+        # Tier 4: Strategy 3 Filters (SELL only)
+        print(f"\n🔴 [TIER 4: STRATEGY 3 - SELL (Swing Low + Pullback + Trendline Break)]")
+        if is_strat3_sell:
+            print(f"   ✅ Strategy 3: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 3: FAIL")
+            if strat3_fail_reasons:
+                for i, reason in enumerate(strat3_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 3 (SELL)")
+        
+        # Tier 5: Strategy 4 Filters (BUY only)
+        print(f"\n🟢 [TIER 5: STRATEGY 4 - BUY (Swing High + Pullback + Trendline Break)]")
+        if is_strat4_buy:
+            print(f"   ✅ Strategy 4: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 4: FAIL")
+            if strat4_fail_reasons:
+                for i, reason in enumerate(strat4_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 4 (BUY)")
         
         # Chi tiết các giá trị quan trọng
         print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
@@ -2296,16 +2771,40 @@ def tuyen_trend_logic(config, error_count=0):
     else:
         print(f"\n✅ [TÌM THẤY TÍN HIỆU] {signal_type} | Reason: {reason}")
         print(f"   💱 Price: {price:.5f}")
-        print(f"   📈 Strategy: {'Strategy 1 (Pullback)' if is_strat1 else 'Strategy 2 (Continuation)'}")
+        if is_strat1:
+            strategy_name = "Strategy 1 (Pullback)"
+        elif is_strat2:
+            strategy_name = "Strategy 2 (Continuation)"
+        elif is_strat3_sell:
+            strategy_name = "Strategy 3 (Swing Low + Pullback + Trendline Break)"
+        elif is_strat4_buy:
+            strategy_name = "Strategy 4 (Swing High + Pullback + Trendline Break)"
+        else:
+            strategy_name = "Unknown"
+        print(f"   📈 Strategy: {strategy_name}")
         
     # --- 5. Execution Trigger ---
     if is_strat1:
         trigger_high = max(c1['high'], c2['high'])
         trigger_low = min(c1['low'], c2['low'])
-    else: # Strat 2
+    elif is_strat2:
         recent_block = df_m1.iloc[-5:-1]
         trigger_high = recent_block['high'].max()
         trigger_low = recent_block['low'].min()
+    elif is_strat3_sell:
+        # Strategy 3: Entry tại giá đóng cửa của nến phá vỡ trendline (đã hoàn thành)
+        current_candle = df_m1.iloc[-2]  # Nến cuối cùng đã hoàn thành
+        trigger_high = current_candle['close']  # Không cần trigger, entry ngay tại close
+        trigger_low = current_candle['close']
+    elif is_strat4_buy:
+        # Strategy 4: Entry tại giá đóng cửa của nến phá vỡ trendline (đã hoàn thành)
+        current_candle = df_m1.iloc[-2]  # Nến cuối cùng đã hoàn thành
+        trigger_high = current_candle['close']  # Không cần trigger, entry ngay tại close
+        trigger_low = current_candle['close']
+    else:
+        # Fallback
+        trigger_high = c1['high']
+        trigger_low = c1['low']
         
     execute = False
     sl = 0.0
@@ -2323,7 +2822,41 @@ def tuyen_trend_logic(config, error_count=0):
     structure_level = find_nearest_structure_level(df_m1, signal_type, lookback=30)
     
     if signal_type == "BUY":
-        if price > trigger_high:
+        # Strategy 4: Entry ngay tại giá đóng cửa (không cần chờ breakout)
+        if is_strat4_buy:
+            # Entry tại giá đóng cửa của nến phá vỡ (đã hoàn thành)
+            current_candle = df_m1.iloc[-2]
+            price = current_candle['close']  # Entry tại close của nến phá vỡ
+            
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
+            execute = True
+            
+            # V3: Improved SL calculation for Strategy 4
+            # SL = min(structure_low - buffer, entry - 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level - buffer
+            sl_from_atr = price - (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = min(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure Low={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
+            tp = price + tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = price - sl
+        elif price > trigger_high:
             # V3: Check Liquidity Filter before execution
             liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
             if not liquidity_ok:
@@ -2356,7 +2889,41 @@ def tuyen_trend_logic(config, error_count=0):
             distance = trigger_high - price
             print(f"   {t('waiting_breakout', lang)} > {trigger_high:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
     elif signal_type == "SELL":
-        if price < trigger_low:
+        # Strategy 3: Entry ngay tại giá đóng cửa (không cần chờ breakout)
+        if is_strat3_sell:
+            # Entry tại giá đóng cửa của nến phá vỡ (đã hoàn thành)
+            current_candle = df_m1.iloc[-2]
+            price = current_candle['close']  # Entry tại close của nến phá vỡ
+            
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
+            execute = True
+            
+            # V3: Improved SL calculation for Strategy 3
+            # SL = max(structure_high + buffer, entry + 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level + buffer
+            sl_from_atr = price + (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = max(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure High={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
+            tp = price - tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = sl - price
+        elif price < trigger_low:
             # V3: Check Liquidity Filter before execution
             liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
             if not liquidity_ok:
@@ -2706,7 +3273,14 @@ def tuyen_trend_logic(config, error_count=0):
             msg_parts.append(f"\n")
             
             # Strategy Info
-            strategy_name = "Strategy 1 (Pullback + Doji/Pinbar Cluster)" if is_strat1 else "Strategy 2 (Continuation + Structure)"
+            if is_strat1:
+                strategy_name = "Strategy 1 (Pullback + Doji/Pinbar Cluster)"
+            elif is_strat2:
+                strategy_name = "Strategy 2 (Continuation + Structure)"
+            elif is_strat3_sell:
+                strategy_name = "Strategy 3 (Swing Low + Pullback + Trendline Break)"
+            else:
+                strategy_name = "Unknown Strategy"
             msg_parts.append(f"📈 <b>Strategy:</b> {strategy_name}\n")
             msg_parts.append(f"📋 <b>Reason:</b> {reason}\n")
             msg_parts.append(f"\n")
@@ -2752,6 +3326,30 @@ def tuyen_trend_logic(config, error_count=0):
                             msg_parts.append(f"      Zone: {fib_levels_strat2['786']:.5f} - {fib_levels_strat2['382']:.5f}\n")
                         else:
                             msg_parts.append(f"      Zone: {fib_levels_strat2['382']:.5f} - {fib_levels_strat2['786']:.5f}\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 3 Conditions (if applicable)
+            if is_strat3_sell:
+                msg_parts.append(f"✅ <b>Strategy 3 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Swing Low với RSI < 30: Tìm thấy\n")
+                msg_parts.append(f"   ✅ Sóng hồi hợp lệ: PASS\n")
+                msg_parts.append(f"   ✅ Trendline sóng hồi: Đã vẽ\n")
+                msg_parts.append(f"   ✅ Nến phá vỡ trendline: PASS\n")
+                msg_parts.append(f"      - Close phá xuống dưới trendline\n")
+                msg_parts.append(f"      - Close <= EMA50\n")
+                msg_parts.append(f"      - RSI đang hướng xuống\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 4 Conditions (if applicable)
+            if is_strat4_buy:
+                msg_parts.append(f"✅ <b>Strategy 4 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Swing High với RSI > 70: Tìm thấy\n")
+                msg_parts.append(f"   ✅ Sóng hồi hợp lệ: PASS\n")
+                msg_parts.append(f"   ✅ Trendline sóng hồi: Đã vẽ\n")
+                msg_parts.append(f"   ✅ Nến phá vỡ trendline: PASS\n")
+                msg_parts.append(f"      - Close vượt lên trên trendline\n")
+                msg_parts.append(f"      - Close >= EMA50\n")
+                msg_parts.append(f"      - RSI đang hướng lên\n")
                 msg_parts.append(f"\n")
             
             # Risk Management Details
