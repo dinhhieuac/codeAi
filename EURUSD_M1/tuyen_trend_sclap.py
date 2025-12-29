@@ -648,7 +648,10 @@ def m1_scalp_logic(config, error_count=0):
                         # Điều kiện 4: ATR (đã check ở trên)
                         buy_dk4_ok = atr_ok
                         if not buy_dk4_ok:
-                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f if pd.notna(atr_val) else 'N/A'}) < 0.00011"
+                            if pd.notna(atr_val):
+                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                            else:
+                                buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                         
                         # Điều kiện 5: Nến xác nhận phá vỡ trendline
                         log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -661,13 +664,20 @@ def m1_scalp_logic(config, error_count=0):
                             buy_dk5_ok = True
                             log_details.append(f"   ✅ {break_msg}")
                             
-                            # Tất cả điều kiện đã thỏa
-                            signal_type = "BUY"
-                            reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
-                            current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
-                            
-                            log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
-                            log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                            # Tất cả điều kiện đã thỏa (bao gồm ATR)
+                            if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok:
+                                signal_type = "BUY"
+                                reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
+                                current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
+                                
+                                log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+                                log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                            else:
+                                if not buy_dk4_ok:
+                                    if pd.notna(atr_val):
+                                        buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                    else:
+                                        buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
         else:
             log_details.append(f"   ⏭️ [BUY] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -727,7 +737,10 @@ def m1_scalp_logic(config, error_count=0):
                             # Điều kiện 4: ATR (đã check ở trên)
                             sell_dk4_ok = atr_ok
                             if not sell_dk4_ok:
-                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f if pd.notna(atr_val) else 'N/A'}) < 0.00011"
+                                if pd.notna(atr_val):
+                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                else:
+                                    sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                             
                             # Điều kiện 5: Nến xác nhận phá vỡ trendline
                             log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -750,7 +763,10 @@ def m1_scalp_logic(config, error_count=0):
                                     log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
                                 else:
                                     if not sell_dk4_ok:
-                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f if pd.notna(atr_val) else 'N/A'}) < 0.00011"
+                                        if pd.notna(atr_val):
+                                            sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                        else:
+                                            sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
             else:
                 log_details.append(f"   ⏭️ [SELL] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -771,8 +787,11 @@ def m1_scalp_logic(config, error_count=0):
             
             # Check ATR first (common condition)
             if not atr_ok:
-                atr_pips = (atr_val / 0.0001) if pd.notna(atr_val) else 0
-                print(f"   ❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f if pd.notna(atr_val) else 'N/A'}) < {min_atr:.5f}")
+                if pd.notna(atr_val):
+                    atr_pips = atr_val / 0.0001
+                    print(f"   ❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) < {min_atr:.5f}")
+                else:
+                    print(f"   ❌ ĐK4 (Chung): ATR (N/A pips = N/A) < {min_atr:.5f}")
             
             # BUY Summary
             print(f"\n   🔴 [BUY] Trạng thái điều kiện:")
@@ -816,7 +835,10 @@ def m1_scalp_logic(config, error_count=0):
                 print(f"   📊 RSI: {current_rsi_display:.1f}")
             else:
                 print(f"   📊 RSI: N/A")
-            print(f"   📊 ATR: {atr_val:.5f if pd.notna(atr_val) else 'N/A'}")
+            if pd.notna(atr_val):
+                print(f"   📊 ATR: {atr_val:.5f}")
+            else:
+                print(f"   📊 ATR: N/A")
             if pd.notna(atr_val):
                 print(f"   📊 ATR Pips: {(atr_val / 0.0001):.1f} pips")
             else:
