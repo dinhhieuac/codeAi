@@ -3582,6 +3582,112 @@ def tuyen_trend_logic(config, error_count=0):
 
     return error_count, 0
 
+def log_initial_conditions(config):
+    """
+    Log tất cả các điều kiện và parameters của bot trước khi bắt đầu chạy
+    """
+    print("\n" + "="*100)
+    print("📋 [CHI TIẾT ĐIỀU KIỆN VÀ THAM SỐ CỦA BOT]")
+    print("="*100)
+    
+    # Basic Config
+    print("\n🔧 [CẤU HÌNH CƠ BẢN]")
+    print(f"   💱 Symbol: {config.get('symbol', 'N/A')}")
+    print(f"   📊 Volume: {config.get('volume', 'N/A')} lot")
+    print(f"   🆔 Magic Number: {config.get('magic', 'N/A')}")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    print(f"   🌐 Language: {config.get('language', 'en')}")
+    
+    # Risk Management
+    print("\n💰 [QUẢN LÝ RỦI RO]")
+    risk_percent = config.get('risk_percent', 1.0)
+    use_risk_based_lot = config.get('use_risk_based_lot', True)
+    print(f"   ⚠️ Risk Percent: {risk_percent}%")
+    print(f"   📊 Use Risk-Based Lot: {use_risk_based_lot}")
+    
+    # Parameters Config
+    parameters_config = config.get('parameters', {})
+    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)
+    reward_ratio = parameters_config.get('reward_ratio', 2.0)
+    print("\n📐 [THAM SỐ TÍNH TOÁN]")
+    print(f"   📊 ATR Multiplier (SL): {atr_multiplier}x")
+    print(f"   🎯 Reward Ratio (R:R): 1:{reward_ratio:.1f}")
+    
+    # Filters Config
+    filters_config = config.get('filters', {})
+    print("\n🔍 [BỘ LỌC (FILTERS)]")
+    print(f"   📊 M1 Structure Require Both: {filters_config.get('m1_structure_require_both', True)}")
+    print(f"   📊 Signal Cluster Count: {filters_config.get('signal_cluster_count', 2)}")
+    print(f"   📊 Signal Cluster Window: {filters_config.get('signal_cluster_window', 3)} candles")
+    print(f"   📊 Min Zone Distance: {filters_config.get('min_zone_distance_pips', 10)} pips")
+    print(f"   📊 Breakout Lookback: {filters_config.get('breakout_lookback_candles', 100)} candles")
+    print(f"   📊 Signal Candle Min Criteria: {filters_config.get('signal_candle_min_criteria', 6)}/10")
+    print(f"   📊 Smooth Pullback Max Candle Multiplier: {filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)}x")
+    print(f"   📊 Smooth Pullback Max Gap Multiplier: {filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)}x")
+    
+    # Strategies
+    print("\n📈 [CHIẾN LƯỢC (STRATEGIES)]")
+    print("   ✅ Strategy 1: Pullback + Doji/Pinbar Cluster")
+    print("      - M5 Trend phù hợp")
+    print("      - M1 Structure hợp lệ")
+    print("      - Fibonacci Retracement (0.382-0.786)")
+    print("      - Signal Candle (Doji/Pinbar)")
+    print("      - EMA Touch (EMA21 hoặc EMA50)")
+    print("      - Smooth Pullback")
+    print("      - EMA200 Filter (BUY: price > EMA200, SELL: price < EMA200)")
+    
+    print("\n   ✅ Strategy 2: Continuation + Structure (M/W + Compression)")
+    print("      - M5 Trend phù hợp")
+    print("      - M1 Structure hợp lệ")
+    print("      - Pattern Detection (M/W)")
+    print("      - Compression Block")
+    print("      - Signal Candle trong Compression")
+    print("      - Breakout + Retest")
+    print("      - Block chạm EMA hoặc Breakout Level")
+    
+    print("\n   ✅ Strategy 3: SELL - Swing Low + Pullback + Trendline Break")
+    print("      - M5 Trend: BEARISH")
+    print("      - Swing Low với RSI < 30")
+    print("      - Sóng hồi hợp lệ (≤ 30 nến, RSI 50-60, RSI < 68 trong quá trình hồi)")
+    print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
+    print("      - Nến phá vỡ: Close < trendline, Close ≤ EMA50, RSI hướng xuống")
+    print("      - Entry: Close của nến phá vỡ trendline")
+    
+    print("\n   ✅ Strategy 4: BUY - Swing High + Pullback + Trendline Break")
+    print("      - M5 Trend: BULLISH")
+    print("      - Swing High với RSI > 70")
+    print("      - Sóng hồi hợp lệ (≤ 30 nến, RSI 40-50, RSI > 32 trong quá trình hồi)")
+    print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
+    print("      - Nến phá vỡ: Close > trendline, Close ≥ EMA50, RSI hướng lên")
+    print("      - Entry: Close của nến phá vỡ trendline")
+    
+    # V3 Filters (if applicable)
+    print("\n🛡️ [BỘ LỌC V3 (Nếu có)]")
+    print("   ✅ CHOP/RANGE Filter: Tránh trade trong market sideways")
+    print("   ✅ Liquidity Sweep: Kiểm tra sweep liquidity trước khi vào lệnh")
+    print("   ✅ Displacement Candle: Kiểm tra nến displacement")
+    print("   ✅ External BOS: Kiểm tra break of structure lớn")
+    print("   ✅ Liquidity Filter: Kiểm tra khoảng cách đến opposing liquidity")
+    
+    # SL/TP Calculation
+    print("\n🎯 [TÍNH TOÁN SL/TP]")
+    print(f"   🛑 SL = Structure Level + Buffer HOẶC Entry ± ({atr_multiplier}x ATR)")
+    print(f"   🎯 TP = Entry ± ({atr_multiplier * reward_ratio}x ATR)")
+    print(f"   📊 R:R Ratio = 1:{reward_ratio:.1f}")
+    
+    # Spam Filter
+    print("\n⏱️ [SPAM FILTER]")
+    print("   ⏳ Cooldown: 60 giây giữa các lệnh")
+    
+    # Position Management
+    print("\n📊 [QUẢN LÝ VỊ THẾ]")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    print("   🔄 Auto Trailing SL: Enabled (nếu có)")
+    
+    print("\n" + "="*100)
+    print("⏳ Đang chờ 20 giây trước khi bắt đầu...")
+    print("="*100 + "\n")
+
 if __name__ == "__main__":
     import os
     
@@ -3670,6 +3776,15 @@ if __name__ == "__main__":
             if not mt5.terminal_info():
                 print("❌ MT5 Terminal không còn kết nối sau khi khởi động")
                 sys.exit(1)
+            
+            # Log tất cả điều kiện trước khi bắt đầu
+            log_initial_conditions(config)
+            
+            # Sleep 20 giây
+            for i in range(20, 0, -1):
+                print(f"   ⏳ Còn {i} giây...", end='\r')
+                time.sleep(1)
+            print("\n")
             
             print("🔄 Bắt đầu vòng lặp chính...\n")
             

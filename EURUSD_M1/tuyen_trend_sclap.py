@@ -1022,6 +1022,97 @@ def m1_scalp_logic(config, error_count=0):
         traceback.print_exc()
         return error_count + 1, 0
 
+def log_initial_conditions(config):
+    """
+    Log tất cả các điều kiện và parameters của bot trước khi bắt đầu chạy
+    """
+    print("\n" + "="*100)
+    print("📋 [CHI TIẾT ĐIỀU KIỆN VÀ THAM SỐ CỦA BOT - M1 SCALP]")
+    print("="*100)
+    
+    # Basic Config
+    print("\n🔧 [CẤU HÌNH CƠ BẢN]")
+    print(f"   💱 Symbol: {config.get('symbol', 'N/A')}")
+    print(f"   📊 Volume: {config.get('volume', 'N/A')} lot")
+    print(f"   🆔 Magic Number: {config.get('magic', 'N/A')}")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    
+    # ATR Condition
+    print("\n📊 [ĐIỀU KIỆN ATR]")
+    min_atr = 0.00011
+    print(f"   ✅ ATR 14 >= {min_atr} (1.1 pips)")
+    print(f"   ⚠️ Nếu ATR < {min_atr}, bot sẽ không có signal")
+    
+    # BUY Strategy Conditions
+    print("\n📈 [CHIẾN LƯỢC BUY]")
+    print("   ✅ Điều kiện 1: EMA50 > EMA200")
+    print("   ✅ Điều kiện 2: Giá phá vỡ đỉnh trước đó tạo Swing High với RSI > 70")
+    print("   ✅ Điều kiện 3: Sóng hồi hợp lệ (Pullback hợp lệ)")
+    print("      - Giá không tạo đỉnh cao hơn swing high")
+    print("      - Số nến hồi tối đa: ≤ 30 nến")
+    print("      - RSI hồi về vùng 40 – 50")
+    print("      - Trong quá trình hồi: RSI > 32")
+    print("      - Giá không phá cấu trúc xu hướng tăng chính")
+    print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
+    print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
+    print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
+    print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
+    print("      - Giá đóng cửa ≥ EMA 50")
+    print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
+    print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
+    
+    # SELL Strategy Conditions
+    print("\n📉 [CHIẾN LƯỢC SELL]")
+    print("   ✅ Điều kiện 1: EMA50 < EMA200")
+    print("   ✅ Điều kiện 2: Giá phá vỡ đáy trước đó tạo Swing Low với RSI < 30")
+    print("   ✅ Điều kiện 3: Sóng hồi hợp lệ (Pullback hợp lệ)")
+    print("      - Giá không tạo đáy thấp hơn swing low")
+    print("      - Số nến hồi tối đa: ≤ 30 nến")
+    print("      - RSI hồi về vùng 50 – 60")
+    print("      - Trong quá trình hồi: RSI < 68")
+    print("      - Giá không phá cấu trúc xu hướng giảm chính")
+    print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
+    print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
+    print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
+    print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
+    print("      - Giá đóng cửa ≤ EMA 50")
+    print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
+    print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
+    
+    # SL/TP Calculation
+    print("\n🎯 [TÍNH TOÁN SL/TP]")
+    print("   🛑 SL = 2 × ATR + 6 × point")
+    print("   🎯 TP = 2 × SL distance")
+    print("   📊 R:R Ratio = 1:2")
+    
+    # Spam Filter
+    print("\n⏱️ [SPAM FILTER]")
+    print("   ⏳ Cooldown: 60 giây giữa các lệnh")
+    
+    # Position Management
+    print("\n📊 [QUẢN LÝ VỊ THẾ]")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    print("   🔄 Auto Trailing SL: Enabled (nếu có)")
+    
+    # Swing Detection Parameters
+    print("\n🔍 [THAM SỐ PHÁT HIỆN SWING]")
+    print("   📊 Swing High Lookback: 5 nến")
+    print("   📊 Swing High Min RSI: 70")
+    print("   📊 Swing Low Lookback: 5 nến")
+    print("   📊 Swing Low Max RSI: 30")
+    
+    # Pullback Parameters
+    print("\n📉 [THAM SỐ SÓNG HỒI]")
+    print("   📊 Max Pullback Candles: 30 nến")
+    print("   📊 BUY Pullback RSI Target: 40-50")
+    print("   📊 BUY Pullback Min RSI During: > 32")
+    print("   📊 SELL Pullback RSI Target: 50-60")
+    print("   📊 SELL Pullback Max RSI During: < 68")
+    
+    print("\n" + "="*100)
+    print("⏳ Đang chờ 20 giây trước khi bắt đầu...")
+    print("="*100 + "\n")
+
 if __name__ == "__main__":
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1041,6 +1132,15 @@ if __name__ == "__main__":
             if not mt5.terminal_info():
                 print("❌ MT5 Terminal không còn kết nối sau khi khởi động")
                 sys.exit(1)
+            
+            # Log tất cả điều kiện trước khi bắt đầu
+            log_initial_conditions(config)
+            
+            # Sleep 20 giây
+            for i in range(20, 0, -1):
+                print(f"   ⏳ Còn {i} giây...", end='\r')
+                time.sleep(1)
+            print("\n")
             
             print("🔄 Bắt đầu vòng lặp chính...\n")
             
