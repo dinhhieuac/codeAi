@@ -76,6 +76,83 @@ def update_trades_for_strategy(db, config, strategy_name):
             if not active_pos:
                 print(f"❓ Trade {ticket} not in Open Positions and not in History (Manual Check Needed or date range issue)")
 
+def load_strategy_configs(script_dir):
+    """
+    Load strategy configs mapping from file or auto-detect from configs directory.
+    Returns a dictionary mapping strategy_name -> config_file_path
+    """
+    # Try to load from strategy_configs.json first
+    config_mapping_file = os.path.join(script_dir, "strategy_configs.json")
+    if os.path.exists(config_mapping_file):
+        try:
+            with open(config_mapping_file, 'r') as f:
+                mapping = json.load(f)
+                # Convert relative paths to absolute
+                strategies = {}
+                for strat_name, config_path in mapping.items():
+                    if not os.path.isabs(config_path):
+                        config_path = os.path.join(script_dir, config_path)
+                    strategies[strat_name] = config_path
+                return strategies
+        except Exception as e:
+            print(f"⚠️ Could not load strategy_configs.json: {e}")
+    
+    # Fallback: Auto-detect from configs directory
+    configs_dir = os.path.join(script_dir, "configs")
+    strategies = {}
+    
+    if os.path.exists(configs_dir):
+        # Scan for config files
+        for filename in os.listdir(configs_dir):
+            if filename.startswith("config_") and filename.endswith(".json"):
+                config_path = os.path.join(configs_dir, filename)
+                try:
+                    config = load_config(config_path)
+                    # Try to extract strategy name from config
+                    # Check if there's a 'version' or 'description' field that might contain strategy name
+                    strategy_name = None
+                    
+                    # Method 1: Check if config has a 'strategy_name' field
+                    if 'strategy_name' in config:
+                        strategy_name = config['strategy_name']
+                    # Method 2: Try to infer from filename (e.g., config_1_v2.json -> Strategy_1_Trend_HA_V2)
+                    elif filename.startswith("config_1"):
+                        if "v2.1" in filename.lower() or "v2_1" in filename.lower():
+                            strategy_name = "Strategy_1_Trend_HA_V2.1"
+                        elif "v2" in filename.lower():
+                            strategy_name = "Strategy_1_Trend_HA_V2"
+                        else:
+                            strategy_name = "Strategy_1_Trend_HA"
+                    elif filename.startswith("config_2"):
+                        strategy_name = "Strategy_2_EMA_ATR"
+                    elif filename.startswith("config_3"):
+                        strategy_name = "Strategy_3_PA_Volume"
+                    elif filename.startswith("config_4"):
+                        strategy_name = "Strategy_4_UT_Bot"
+                    elif filename.startswith("config_5"):
+                        strategy_name = "Strategy_5_Filter_First"
+                    
+                    if strategy_name:
+                        strategies[strategy_name] = config_path
+                        print(f"📋 Auto-detected: {strategy_name} -> {filename}")
+                except Exception as e:
+                    print(f"⚠️ Could not parse {filename}: {e}")
+    
+    # If still empty, use default mapping
+    if not strategies:
+        print("⚠️ No strategies auto-detected, using default mapping")
+        strategies = {
+            "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
+            "Strategy_1_Trend_HA_V2": os.path.join(script_dir, "configs", "config_1_v2.json"),
+            "Strategy_1_Trend_HA_V2.1": os.path.join(script_dir, "configs", "config_1_v2.1.json"),
+            "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
+            "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
+            "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),
+            "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
+        }
+    
+    return strategies
+
 def main():
     # Pass None so db.py uses the internal absolute path logic
     db = Database(None)
@@ -83,16 +160,8 @@ def main():
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Map Strategy Names to Config Files
-    # (Must match the names used in your strategy scripts)
-    strategies = {
-        "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
-        "Strategy_1_Trend_HA_V2": os.path.join(script_dir, "configs", "config_1_v2.json"),
-        "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
-        "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
-        "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),
-        "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
-    }
+    # Auto-load strategy configs mapping
+    strategies = load_strategy_configs(script_dir)
     
     from datetime import datetime
     
@@ -102,7 +171,7 @@ def main():
             config = load_config(config_file)
             update_trades_for_strategy(db, config, strat_name)
         else:
-            print(f"⚠️ Config not found: {config_file}")
+            print(f"⚠️ Config not found: {config_file} (skipping {strat_name})")
 
     print("\n✅ Update Complete!")
     mt5.shutdown()

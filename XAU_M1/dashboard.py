@@ -82,8 +82,13 @@ def index():
     signals = cur.fetchall()
 
     # --- ADVANCED STATS PER STRATEGY ---
-    cur.execute("SELECT DISTINCT strategy_name FROM orders")
+    # Auto-detect all strategies from database
+    cur.execute("SELECT DISTINCT strategy_name FROM orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
     strategies = [row['strategy_name'] for row in cur.fetchall()]
+    
+    # Optional: Load display order from config file (if exists)
+    # This allows custom ordering without hardcoding in code
+    display_order_config = load_display_order_config()
     
     bot_stats = []
     
@@ -118,9 +123,12 @@ def index():
         pf = (s_gross_profit / s_gross_loss) if s_gross_loss > 0 else 99.9
         win_rate = (len(s_wins) / s_total) * 100
         
+        # Auto-format strategy name for display
+        display_name = format_strategy_name(strat)
+        
         bot_stats.append({
             "raw_name": strat, # Added for template filtering
-            "name": strat.replace("Strategy_", "").replace("_", " "),
+            "name": display_name,
             "trades": s_total,
             "win_rate": win_rate,
             "pf": pf,
@@ -150,19 +158,20 @@ def index():
         daily_pnl = process_daily_pnl(s_orders_30d)
         bot_stats[-1]['daily_pnl'] = daily_pnl
         
-    # Sort by Net Profit
-    # Sort by User Defined Order (1, 1_V2, 4, 2, 5)
-    desired_order = [
-        "Strategy_1_Trend_HA",
-        "Strategy_1_Trend_HA_V2",
-        "Strategy_4_UT_Bot",
-        "Strategy_2_EMA_ATR", 
-        "Strategy_5_Filter_First"
-    ]
-    
-    # Filter only requested bots and sort
-    bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
-    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']) if x['raw_name'] in desired_order else 999)
+    # Auto-sort strategies
+    # Priority: Use display_order_config if available, otherwise sort by net profit (descending)
+    if display_order_config and len(display_order_config) > 0:
+        # Sort by custom order from config
+        def get_sort_key(bot):
+            raw_name = bot['raw_name']
+            if raw_name in display_order_config:
+                return (0, display_order_config.index(raw_name))  # Custom order first
+            else:
+                return (1, -bot['net_profit'])  # Then by net profit (descending)
+        bot_stats.sort(key=get_sort_key)
+    else:
+        # Default: Sort by net profit (descending), then by trades (descending)
+        bot_stats.sort(key=lambda x: (-x['net_profit'], -x['trades']))
 
     # --- HOURLY STATS (VIETNAM TIME) ---
     hourly_stats = process_hourly_stats(orders)
@@ -260,6 +269,49 @@ def process_daily_pnl(orders):
             continue
     
     return daily_stats
+
+def load_display_order_config():
+    """
+    Load display order configuration from config file (optional).
+    Returns a list of strategy names in desired display order.
+    If config file doesn't exist, returns empty list (will use default sorting).
+    """
+    config_path = os.path.join(dashboard_dir, 'display_order.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                return config.get('strategy_order', [])
+        except Exception as e:
+            print(f"Warning: Could not load display_order.json: {e}")
+    return []
+
+def format_strategy_name(raw_name):
+    """
+    Auto-format strategy name for display.
+    Examples:
+    - "Strategy_1_Trend_HA" -> "1 Trend HA"
+    - "Strategy_1_Trend_HA_V2" -> "1 Trend HA V2"
+    - "Strategy_4_UT_Bot" -> "4 UT Bot"
+    """
+    # Remove "Strategy_" prefix if present
+    name = raw_name.replace("Strategy_", "")
+    
+    # Replace underscores with spaces
+    name = name.replace("_", " ")
+    
+    # Capitalize first letter of each word
+    words = name.split()
+    formatted_words = []
+    for word in words:
+        # Keep version numbers (V2, V3, etc.) uppercase
+        if word.upper().startswith('V') and len(word) > 1 and word[1:].isdigit():
+            formatted_words.append(word.upper())
+        else:
+            # Capitalize first letter, lowercase rest
+            formatted_words.append(word.capitalize())
+    
+    return " ".join(formatted_words)
 
 def format_vn_time(value):
     """
