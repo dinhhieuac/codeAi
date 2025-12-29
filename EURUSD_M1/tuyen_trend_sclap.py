@@ -553,6 +553,24 @@ def m1_scalp_logic(config, error_count=0):
         reason = ""
         log_details = []
         
+        # Track BUY conditions status
+        buy_dk1_ok = False
+        buy_dk2_ok = False
+        buy_dk3_ok = False
+        buy_dk3b_ok = False
+        buy_dk4_ok = False
+        buy_dk5_ok = False
+        buy_fail_reason = ""
+        
+        # Track SELL conditions status
+        sell_dk1_ok = False
+        sell_dk2_ok = False
+        sell_dk3_ok = False
+        sell_dk3b_ok = False
+        sell_dk4_ok = False
+        sell_dk5_ok = False
+        sell_fail_reason = ""
+        
         ema50_val = curr_candle['ema50']
         ema200_val = curr_candle['ema200']
         current_candle_idx = len(df_m1) - 2  # Last completed candle index
@@ -564,6 +582,7 @@ def m1_scalp_logic(config, error_count=0):
         
         # Điều kiện 1: EMA50 > EMA200
         buy_condition1 = ema50_val > ema200_val
+        buy_dk1_ok = buy_condition1
         log_details.append(f"{'✅' if buy_condition1 else '❌'} [BUY] ĐK1: EMA50 ({ema50_val:.5f}) > EMA200 ({ema200_val:.5f})")
         
         if buy_condition1:
@@ -573,7 +592,9 @@ def m1_scalp_logic(config, error_count=0):
             
             if len(swing_highs_with_rsi) == 0:
                 log_details.append(f"   ❌ Không tìm thấy swing high với RSI > 70")
+                buy_fail_reason = "Không tìm thấy Swing High với RSI > 70"
             else:
+                buy_dk2_ok = True
                 # Lấy swing high gần nhất
                 latest_swing_high = swing_highs_with_rsi[-1]
                 swing_high_idx = latest_swing_high['index']
@@ -590,7 +611,9 @@ def m1_scalp_logic(config, error_count=0):
                 
                 if not pullback_valid:
                     log_details.append(f"   ❌ {pullback_msg}")
+                    buy_fail_reason = f"ĐK3: {pullback_msg}"
                 else:
+                    buy_dk3_ok = True
                     log_details.append(f"   ✅ {pullback_msg}")
                     
                     # Vẽ trendline sóng hồi
@@ -599,12 +622,17 @@ def m1_scalp_logic(config, error_count=0):
                     
                     if trendline_info is None:
                         log_details.append(f"   ❌ Không thể vẽ trendline")
+                        buy_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đỉnh thấp dần)"
                     else:
+                        buy_dk3b_ok = True
                         log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                         
                         # Điều kiện 4: ATR (đã check ở trên)
                         atr_pips = atr_val / 0.0001
-                        log_details.append(f"\n{'✅' if atr_val >= min_atr else '❌'} [BUY] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 0.00011")
+                        buy_dk4_ok = atr_val >= min_atr
+                        log_details.append(f"\n{'✅' if buy_dk4_ok else '❌'} [BUY] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 0.00011")
+                        if not buy_dk4_ok:
+                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
                         
                         # Điều kiện 5: Nến xác nhận phá vỡ trendline
                         log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -612,7 +640,9 @@ def m1_scalp_logic(config, error_count=0):
                         
                         if not break_ok:
                             log_details.append(f"   ❌ {break_msg}")
+                            buy_fail_reason = f"ĐK5: {break_msg}"
                         else:
+                            buy_dk5_ok = True
                             log_details.append(f"   ✅ {break_msg}")
                             
                             # Tất cả điều kiện đã thỏa
@@ -633,6 +663,7 @@ def m1_scalp_logic(config, error_count=0):
             
             # Điều kiện 1: EMA50 < EMA200
             sell_condition1 = ema50_val < ema200_val
+            sell_dk1_ok = sell_condition1
             log_details.append(f"{'✅' if sell_condition1 else '❌'} [SELL] ĐK1: EMA50 ({ema50_val:.5f}) < EMA200 ({ema200_val:.5f})")
             
             if sell_condition1:
@@ -642,7 +673,9 @@ def m1_scalp_logic(config, error_count=0):
                 
                 if len(swing_lows_with_rsi) == 0:
                     log_details.append(f"   ❌ Không tìm thấy swing low với RSI < 30")
+                    sell_fail_reason = "Không tìm thấy Swing Low với RSI < 30"
                 else:
+                    sell_dk2_ok = True
                     # Lấy swing low gần nhất
                     latest_swing_low = swing_lows_with_rsi[-1]
                     swing_low_idx = latest_swing_low['index']
@@ -659,7 +692,9 @@ def m1_scalp_logic(config, error_count=0):
                     
                     if not pullback_valid:
                         log_details.append(f"   ❌ {pullback_msg}")
+                        sell_fail_reason = f"ĐK3: {pullback_msg}"
                     else:
+                        sell_dk3_ok = True
                         log_details.append(f"   ✅ {pullback_msg}")
                         
                         # Vẽ trendline sóng hồi
@@ -668,12 +703,17 @@ def m1_scalp_logic(config, error_count=0):
                         
                         if trendline_info is None:
                             log_details.append(f"   ❌ Không thể vẽ trendline")
+                            sell_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đáy cao dần)"
                         else:
+                            sell_dk3b_ok = True
                             log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                             
                             # Điều kiện 4: ATR (đã check ở trên)
                             atr_pips = atr_val / 0.0001
-                            log_details.append(f"\n{'✅' if atr_val >= min_atr else '❌'} [SELL] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 0.00011")
+                            sell_dk4_ok = atr_val >= min_atr
+                            log_details.append(f"\n{'✅' if sell_dk4_ok else '❌'} [SELL] ĐK4: ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= 0.00011")
+                            if not sell_dk4_ok:
+                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
                             
                             # Điều kiện 5: Nến xác nhận phá vỡ trendline
                             log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -681,7 +721,9 @@ def m1_scalp_logic(config, error_count=0):
                             
                             if not break_ok:
                                 log_details.append(f"   ❌ {break_msg}")
+                                sell_fail_reason = f"ĐK5: {break_msg}"
                             else:
+                                sell_dk5_ok = True
                                 log_details.append(f"   ✅ {break_msg}")
                                 
                                 # Tất cả điều kiện đã thỏa
@@ -699,14 +741,70 @@ def m1_scalp_logic(config, error_count=0):
             print(f"\n{'='*80}")
             print(f"📊 [M1 Scalp] Không có tín hiệu - Chi tiết điều kiện:")
             print(f"{'='*80}")
+            
+            # Print all log details
             for detail in log_details:
                 print(f"   {detail}")
+            
+            # Summary of why no signal
+            print(f"\n{'─'*80}")
+            print(f"📋 TÓM TẮT LÝ DO KHÔNG CÓ LỆNH:")
+            print(f"{'─'*80}")
+            
+            # Check ATR first (common condition)
+            atr_ok = pd.notna(atr_val) and atr_val >= min_atr
+            if not atr_ok:
+                print(f"   ❌ ĐK4 (Chung): ATR ({atr_val:.5f if pd.notna(atr_val) else 'N/A'}) < {min_atr:.5f}")
+            
+            # BUY Summary
+            print(f"\n   🔴 [BUY] Trạng thái điều kiện:")
+            print(f"      {'✅' if buy_dk1_ok else '❌'} ĐK1: EMA50 > EMA200")
+            if buy_dk1_ok:
+                print(f"      {'✅' if buy_dk2_ok else '❌'} ĐK2: Tìm thấy Swing High với RSI > 70")
+                if buy_dk2_ok:
+                    print(f"      {'✅' if buy_dk3_ok else '❌'} ĐK3: Sóng hồi hợp lệ")
+                    if buy_dk3_ok:
+                        print(f"      {'✅' if buy_dk3b_ok else '❌'} ĐK3b: Vẽ được trendline")
+                        if buy_dk3b_ok:
+                            print(f"      {'✅' if buy_dk4_ok else '❌'} ĐK4: ATR >= 0.00011")
+                            if buy_dk4_ok:
+                                print(f"      {'✅' if buy_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
+            if buy_fail_reason:
+                print(f"      💡 Lý do chính: {buy_fail_reason}")
+            
+            # SELL Summary
+            print(f"\n   🔴 [SELL] Trạng thái điều kiện:")
+            print(f"      {'✅' if sell_dk1_ok else '❌'} ĐK1: EMA50 < EMA200")
+            if sell_dk1_ok:
+                print(f"      {'✅' if sell_dk2_ok else '❌'} ĐK2: Tìm thấy Swing Low với RSI < 30")
+                if sell_dk2_ok:
+                    print(f"      {'✅' if sell_dk3_ok else '❌'} ĐK3: Sóng hồi hợp lệ")
+                    if sell_dk3_ok:
+                        print(f"      {'✅' if sell_dk3b_ok else '❌'} ĐK3b: Vẽ được trendline")
+                        if sell_dk3b_ok:
+                            print(f"      {'✅' if sell_dk4_ok else '❌'} ĐK4: ATR >= 0.00011")
+                            if sell_dk4_ok:
+                                print(f"      {'✅' if sell_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
+            if sell_fail_reason:
+                print(f"      💡 Lý do chính: {sell_fail_reason}")
+            
+            # Current indicators
             current_rsi_display = curr_candle.get('rsi', 0)
+            print(f"\n📈 [Indicators Hiện Tại]")
+            print(f"   💱 Price: {curr_candle['close']:.5f}")
+            print(f"   📊 EMA50: {ema50_val:.5f}")
+            print(f"   📊 EMA200: {ema200_val:.5f}")
             if pd.notna(current_rsi_display):
-                print(f"\n📈 [Indicators] Price: {curr_candle['close']:.5f} | EMA50: {ema50_val:.5f} | EMA200: {ema200_val:.5f} | RSI: {current_rsi_display:.1f} | ATR: {atr_val:.5f}")
+                print(f"   📊 RSI: {current_rsi_display:.1f}")
             else:
-                print(f"\n📈 [Indicators] Price: {curr_candle['close']:.5f} | EMA50: {ema50_val:.5f} | EMA200: {ema200_val:.5f} | RSI: N/A | ATR: {atr_val:.5f}")
-            print(f"{'='*80}\n")
+                print(f"   📊 RSI: N/A")
+            print(f"   📊 ATR: {atr_val:.5f if pd.notna(atr_val) else 'N/A'}")
+            if pd.notna(atr_val):
+                print(f"   📊 ATR Pips: {(atr_val / 0.0001):.1f} pips")
+            else:
+                print(f"   📊 ATR Pips: N/A")
+            
+            print(f"\n{'='*80}\n")
             return error_count, 0
         
         # --- 8. Calculate SL and TP ---
