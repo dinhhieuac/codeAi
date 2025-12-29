@@ -498,7 +498,9 @@ def m1_scalp_logic(config, error_count=0):
         max_positions = config.get('max_positions', 1)
         
         # --- 1. Manage Existing Positions ---
-        positions = mt5.positions_get(symbol=symbol, magic=magic)
+        # Chỉ quản lý positions do bot này mở (theo magic number)
+        all_positions = mt5.positions_get(symbol=symbol)
+        positions = [pos for pos in (all_positions or []) if pos.magic == magic]
         if positions:
             for pos in positions:
                 manage_position(pos.ticket, symbol, magic, config)
@@ -734,9 +736,12 @@ def m1_scalp_logic(config, error_count=0):
             execution_price = tick.bid
         
         # --- 9. Spam Filter (60s) ---
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
+        # Chỉ kiểm tra positions do bot này mở (theo magic number)
+        all_strat_positions = mt5.positions_get(symbol=symbol)
+        strat_positions = [pos for pos in (all_strat_positions or []) if pos.magic == magic]
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
+            tick = mt5.symbol_info_tick(symbol)
             if (tick.time - strat_positions[0].time) < 60:
                 print("   ⏳ Trade taken recently. Waiting.")
                 return error_count, 0
