@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import json
+import time
 
 # Import local modules
 sys.path.append('..')
@@ -661,24 +662,73 @@ def main():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # Get all losing orders for Strategy_1_Trend_HA
-    query = """
-    SELECT * FROM orders 
+    # Get total count of losing orders
+    count_query = """
+    SELECT COUNT(*) as total FROM orders 
     WHERE strategy_name = ? AND profit IS NOT NULL AND profit < 0
-    ORDER BY open_time DESC
     """
-    cursor.execute(query, (STRATEGY_NAME,))
-    losing_orders = cursor.fetchall()
+    cursor.execute(count_query, (STRATEGY_NAME,))
+    total_losing = cursor.fetchone()['total']
     
-    if not losing_orders:
+    if total_losing == 0:
         print(f"✅ Không có lệnh thua nào cho {STRATEGY_NAME}")
         conn.close()
         return
     
+    # Ask user how many orders to analyze
     print(f"\n{'='*100}")
     print(f"🔍 PHÂN TÍCH LỆNH THUA: {STRATEGY_NAME}")
     print(f"{'='*100}")
-    print(f"📊 Tổng số lệnh thua: {len(losing_orders)}")
+    print(f"📊 Tổng số lệnh thua trong database: {total_losing}")
+    print(f"{'='*100}\n")
+    
+    while True:
+        try:
+            num_orders_input = input(f"📝 Nhập số lệnh thua muốn phân tích (1-{total_losing}, Enter để phân tích tất cả): ").strip()
+            
+            if num_orders_input == "":
+                # Analyze all orders
+                num_orders = total_losing
+                print(f"✅ Sẽ phân tích tất cả {num_orders} lệnh thua\n")
+                break
+            else:
+                num_orders = int(num_orders_input)
+                if num_orders < 1:
+                    print(f"❌ Số lệnh phải >= 1")
+                    continue
+                elif num_orders > total_losing:
+                    print(f"❌ Số lệnh ({num_orders}) vượt quá tổng số lệnh thua ({total_losing})")
+                    print(f"   Sẽ phân tích {total_losing} lệnh thua gần nhất\n")
+                    num_orders = total_losing
+                    break
+                else:
+                    print(f"✅ Sẽ phân tích {num_orders} lệnh thua gần nhất\n")
+                    break
+        except ValueError:
+            print(f"❌ Vui lòng nhập số hợp lệ")
+            continue
+        except KeyboardInterrupt:
+            print(f"\n❌ Đã hủy")
+            conn.close()
+            return
+    
+    # Get losing orders (limited to num_orders)
+    query = """
+    SELECT * FROM orders 
+    WHERE strategy_name = ? AND profit IS NOT NULL AND profit < 0
+    ORDER BY open_time DESC
+    LIMIT ?
+    """
+    cursor.execute(query, (STRATEGY_NAME, num_orders))
+    losing_orders = cursor.fetchall()
+    
+    if not losing_orders:
+        print(f"✅ Không có lệnh thua nào để phân tích")
+        conn.close()
+        return
+    
+    print(f"{'='*100}")
+    print(f"📊 Số lệnh sẽ phân tích: {len(losing_orders)}")
     print(f"{'='*100}\n")
     
     # Load config and connect to MT5
@@ -733,8 +783,11 @@ def main():
         if stat:
             all_stats.append(stat)
         
-        if idx < len(losing_orders):
-            input("\n⏸️  Nhấn Enter để tiếp tục...")
+        # Auto-continue if analyzing multiple orders (no pause needed)
+        # Only pause if user wants to see details for each order
+        if len(losing_orders) > 1 and idx < len(losing_orders):
+            # Optional: Add a small delay for readability
+            time.sleep(0.5)  # 0.5 second pause between orders
     
     # Generate summary report
     output_file = os.path.join(script_dir, f"improvement_report_{STRATEGY_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
