@@ -1,0 +1,78 @@
+====================================================================================================
+📊 BÁO CÁO TỔNG KẾT PHÂN TÍCH LỆNH THUA
+Strategy: Strategy_5_Filter_First
+Ngày tạo: 2025-12-30 16:51:04
+====================================================================================================
+
+## 1. TỔNG QUAN
+----------------------------------------------------------------------------------------------------
+Tổng số lệnh thua phân tích: 198
+Tổng lỗ: $-350.76
+Lỗ trung bình: $-1.77
+Khoảng cách SL trung bình: 666.2 pips
+
+## 2. PHÂN TÍCH LÝ DO THOÁT LỆNH
+----------------------------------------------------------------------------------------------------
+  👤 Manual/Script Close: 134 lệnh (67.7%)
+  🔴 Hit Stop Loss: 64 lệnh (32.3%)
+
+## 3. PHÂN TÍCH ĐIỀU KIỆN KHÔNG ĐẠT
+----------------------------------------------------------------------------------------------------
+  ❌ Donchian Breakout không đúng: 190 lệnh (96.0%)
+  ❌ Volume không đủ (cần > 1.3x MA): 154 lệnh (77.8%)
+  ❌ RSI không đạt ngưỡng (BUY > 50, SELL < 50): 96 lệnh (48.5%)
+  ❌ M5 Trend không đúng: 83 lệnh (41.9%)
+  ❌ ATR Filter không đạt (10-200 pips): 39 lệnh (19.7%)
+  ❌ ADX không đạt (cần >= 20): 37 lệnh (18.7%)
+
+## 4. ĐỀ XUẤT CẢI THIỆN
+----------------------------------------------------------------------------------------------------
+
+### 1. [HIGH] Donchian Breakout không đúng (190 lệnh - 96.0%)
+
+  • Tăng Donchian period từ 40 lên 50 để giảm false signals
+  • Thêm confirmation: chờ 1-2 nến sau breakout
+  • Tăng buffer từ 50 points lên 100 points
+
+
+### 2. [HIGH] M5 Trend không đúng (83 lệnh - 41.9%)
+
+  • Thêm ADX filter trên M5 để xác nhận trend strength
+  • Kiểm tra trend trên timeframe cao hơn (H1/H4)
+
+
+### 3. [MEDIUM] RSI không đạt ngưỡng (96 lệnh - 48.5%)
+
+  • Tăng RSI threshold: BUY > 55, SELL < 45
+  • Thêm RSI momentum check (RSI đang tăng/giảm)
+
+
+### 4. [MEDIUM] Volume không đủ (154 lệnh - 77.8%)
+
+  • Tăng volume threshold từ 1.3x lên 1.5x MA
+  • Thêm check: volume phải tăng trong 2-3 nến liên tiếp
+
+
+### 5. [MEDIUM] Cải thiện chung
+
+  • Thêm consecutive loss management
+  • Thêm session filter (tránh Asian session)
+  • Thêm liquidity zone check để tránh stop hunt
+
+## 5. KẾT LUẬN
+----------------------------------------------------------------------------------------------------
+
+Dựa trên phân tích, các cải thiện ưu tiên:
+
+🔴 ƯU TIÊN CAO:
+  - Donchian Breakout không đúng: 190 lệnh (96.0%)
+  - M5 Trend không đúng: 83 lệnh (41.9%)
+
+💡 Khuyến nghị:
+  1. Cải thiện false breakout detection
+  2. Tăng Donchian period hoặc buffer
+  3. Tăng ADX threshold
+  4. Test trên demo account trước khi áp dụng
+  5. Monitor kết quả và điều chỉnh thêm
+
+====================================================================================================
