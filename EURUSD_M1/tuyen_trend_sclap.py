@@ -435,6 +435,100 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     
     return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
 
+def check_bearish_divergence(df_m1, lookback=50):
+    """
+    Kiểm tra Bearish Divergence:
+    - Giá tạo Higher High (HH) nhưng RSI tạo Lower High (LH) hoặc không tạo Higher High
+    
+    Returns: (has_divergence, message)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu để kiểm tra divergence"
+    
+    recent_df = df_m1.iloc[-lookback:]
+    recent_rsi = recent_df['rsi']
+    
+    # Tìm các đỉnh (peaks) trong giá và RSI
+    peaks = []
+    for i in range(2, len(recent_df) - 2):
+        if (recent_df.iloc[i]['high'] > recent_df.iloc[i-1]['high'] and 
+            recent_df.iloc[i]['high'] > recent_df.iloc[i+1]['high']):
+            rsi_val = recent_rsi.iloc[i]
+            if pd.notna(rsi_val):
+                peaks.append({
+                    'idx': i,
+                    'price': recent_df.iloc[i]['high'],
+                    'rsi': rsi_val
+                })
+    
+    # Cần ít nhất 2 đỉnh để so sánh
+    if len(peaks) < 2:
+        return False, "Không đủ đỉnh để kiểm tra divergence"
+    
+    # So sánh 2 đỉnh gần nhất
+    last_peak = peaks[-1]
+    prev_peak = peaks[-2]
+    
+    # Bearish Divergence: Giá tạo HH nhưng RSI tạo LH hoặc không tạo HH
+    price_higher = last_peak['price'] > prev_peak['price']
+    rsi_lower = last_peak['rsi'] < prev_peak['rsi']
+    
+    if price_higher and rsi_lower:
+        return True, f"Bearish Divergence: Giá HH ({prev_peak['price']:.5f} → {last_peak['price']:.5f}), RSI LH ({prev_peak['rsi']:.1f} → {last_peak['rsi']:.1f})"
+    
+    # Nếu giá tạo HH nhưng RSI không tạo HH (RSI bằng hoặc thấp hơn)
+    if price_higher and last_peak['rsi'] <= prev_peak['rsi']:
+        return True, f"Bearish Divergence: Giá HH ({prev_peak['price']:.5f} → {last_peak['price']:.5f}), RSI không tạo HH ({prev_peak['rsi']:.1f} → {last_peak['rsi']:.1f})"
+    
+    return False, "Không có Bearish Divergence"
+
+def check_bullish_divergence(df_m1, lookback=50):
+    """
+    Kiểm tra Bullish Divergence:
+    - Giá tạo Lower Low (LL) nhưng RSI tạo Higher Low (HL) hoặc không tạo Lower Low
+    
+    Returns: (has_divergence, message)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu để kiểm tra divergence"
+    
+    recent_df = df_m1.iloc[-lookback:]
+    recent_rsi = recent_df['rsi']
+    
+    # Tìm các đáy (troughs) trong giá và RSI
+    troughs = []
+    for i in range(2, len(recent_df) - 2):
+        if (recent_df.iloc[i]['low'] < recent_df.iloc[i-1]['low'] and 
+            recent_df.iloc[i]['low'] < recent_df.iloc[i+1]['low']):
+            rsi_val = recent_rsi.iloc[i]
+            if pd.notna(rsi_val):
+                troughs.append({
+                    'idx': i,
+                    'price': recent_df.iloc[i]['low'],
+                    'rsi': rsi_val
+                })
+    
+    # Cần ít nhất 2 đáy để so sánh
+    if len(troughs) < 2:
+        return False, "Không đủ đáy để kiểm tra divergence"
+    
+    # So sánh 2 đáy gần nhất
+    last_trough = troughs[-1]
+    prev_trough = troughs[-2]
+    
+    # Bullish Divergence: Giá tạo LL nhưng RSI tạo HL hoặc không tạo LL
+    price_lower = last_trough['price'] < prev_trough['price']
+    rsi_higher = last_trough['rsi'] > prev_trough['rsi']
+    
+    if price_lower and rsi_higher:
+        return True, f"Bullish Divergence: Giá LL ({prev_trough['price']:.5f} → {last_trough['price']:.5f}), RSI HL ({prev_trough['rsi']:.1f} → {last_trough['rsi']:.1f})"
+    
+    # Nếu giá tạo LL nhưng RSI không tạo LL (RSI bằng hoặc cao hơn)
+    if price_lower and last_trough['rsi'] >= prev_trough['rsi']:
+        return True, f"Bullish Divergence: Giá LL ({prev_trough['price']:.5f} → {last_trough['price']:.5f}), RSI không tạo LL ({prev_trough['rsi']:.1f} → {last_trough['rsi']:.1f})"
+    
+    return False, "Không có Bullish Divergence"
+
 def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val):
     """
     Kiểm tra nến phá vỡ trendline sóng hồi cho SELL:
@@ -578,6 +672,7 @@ def m1_scalp_logic(config, error_count=0):
         buy_dk3b_ok = False
         buy_dk4_ok = False
         buy_dk5_ok = False
+        buy_dk6_ok = False  # Điều kiện 6: Không có Bearish Divergence
         buy_fail_reason = ""
         
         # Track SELL conditions status
@@ -587,6 +682,7 @@ def m1_scalp_logic(config, error_count=0):
         sell_dk3b_ok = False
         sell_dk4_ok = False
         sell_dk5_ok = False
+        sell_dk6_ok = False  # Điều kiện 6: Không có Bullish Divergence
         sell_fail_reason = ""
         
         ema50_val = curr_candle['ema50']
@@ -664,20 +760,33 @@ def m1_scalp_logic(config, error_count=0):
                             buy_dk5_ok = True
                             log_details.append(f"   ✅ {break_msg}")
                             
-                            # Tất cả điều kiện đã thỏa (bao gồm ATR)
-                            if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok:
-                                signal_type = "BUY"
-                                reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
-                                current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
-                                
-                                log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
-                                log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                            # Điều kiện 6: Không có Bearish Divergence
+                            log_details.append(f"\n🔍 [BUY] ĐK6: Kiểm tra Bearish Divergence")
+                            has_bearish_div, bearish_div_msg = check_bearish_divergence(df_m1, lookback=50)
+                            
+                            if has_bearish_div:
+                                log_details.append(f"   ❌ {bearish_div_msg}")
+                                buy_fail_reason = f"ĐK6: {bearish_div_msg}"
                             else:
-                                if not buy_dk4_ok:
-                                    if pd.notna(atr_val):
-                                        buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
-                                    else:
-                                        buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                buy_dk6_ok = True
+                                log_details.append(f"   ✅ {bearish_div_msg}")
+                                
+                                # Tất cả điều kiện đã thỏa (bao gồm ATR và không có Bearish Divergence)
+                                if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok and buy_dk6_ok:
+                                    signal_type = "BUY"
+                                    reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
+                                    current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
+                                    
+                                    log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+                                    log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                else:
+                                    if not buy_dk4_ok:
+                                        if pd.notna(atr_val):
+                                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                        else:
+                                            buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                    elif not buy_dk6_ok:
+                                        buy_fail_reason = f"ĐK6: {bearish_div_msg}"
         else:
             log_details.append(f"   ⏭️ [BUY] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -753,20 +862,33 @@ def m1_scalp_logic(config, error_count=0):
                                 sell_dk5_ok = True
                                 log_details.append(f"   ✅ {break_msg}")
                                 
-                                # Tất cả điều kiện đã thỏa (bao gồm ATR)
-                                if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok:
-                                    signal_type = "SELL"
-                                    reason = "M1_Scalp_SwingLow_Pullback_TrendlineBreak"
-                                    current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
-                                    
-                                    log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
-                                    log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                # Điều kiện 6: Không có Bullish Divergence
+                                log_details.append(f"\n🔍 [SELL] ĐK6: Kiểm tra Bullish Divergence")
+                                has_bullish_div, bullish_div_msg = check_bullish_divergence(df_m1, lookback=50)
+                                
+                                if has_bullish_div:
+                                    log_details.append(f"   ❌ {bullish_div_msg}")
+                                    sell_fail_reason = f"ĐK6: {bullish_div_msg}"
                                 else:
-                                    if not sell_dk4_ok:
-                                        if pd.notna(atr_val):
-                                            sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
-                                        else:
-                                            sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                    sell_dk6_ok = True
+                                    log_details.append(f"   ✅ {bullish_div_msg}")
+                                    
+                                    # Tất cả điều kiện đã thỏa (bao gồm ATR và không có Bullish Divergence)
+                                    if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok and sell_dk6_ok:
+                                        signal_type = "SELL"
+                                        reason = "M1_Scalp_SwingLow_Pullback_TrendlineBreak"
+                                        current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
+                                        
+                                        log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
+                                        log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                    else:
+                                        if not sell_dk4_ok:
+                                            if pd.notna(atr_val):
+                                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                            else:
+                                                sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                        elif not sell_dk6_ok:
+                                            sell_fail_reason = f"ĐK6: {bullish_div_msg}"
             else:
                 log_details.append(f"   ⏭️ [SELL] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -806,6 +928,8 @@ def m1_scalp_logic(config, error_count=0):
                             print(f"      {'✅' if buy_dk4_ok else '❌'} ĐK4: ATR >= 0.00011")
                             if buy_dk4_ok:
                                 print(f"      {'✅' if buy_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
+                                if buy_dk5_ok:
+                                    print(f"      {'✅' if buy_dk6_ok else '❌'} ĐK6: Không có Bearish Divergence")
             if buy_fail_reason:
                 print(f"      💡 Lý do chính: {buy_fail_reason}")
             
@@ -822,6 +946,8 @@ def m1_scalp_logic(config, error_count=0):
                             print(f"      {'✅' if sell_dk4_ok else '❌'} ĐK4: ATR >= 0.00011")
                             if sell_dk4_ok:
                                 print(f"      {'✅' if sell_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
+                                if sell_dk5_ok:
+                                    print(f"      {'✅' if sell_dk6_ok else '❌'} ĐK6: Không có Bullish Divergence")
             if sell_fail_reason:
                 print(f"      💡 Lý do chính: {sell_fail_reason}")
             
@@ -1059,6 +1185,8 @@ def log_initial_conditions(config):
     print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
     print("      - Giá đóng cửa ≥ EMA 50")
     print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
+    print("   ✅ Điều kiện 6: Không có Bearish Divergence")
+    print("      - Giá không tạo Higher High với RSI Lower High")
     print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
     
     # SELL Strategy Conditions
@@ -1077,6 +1205,8 @@ def log_initial_conditions(config):
     print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
     print("      - Giá đóng cửa ≤ EMA 50")
     print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
+    print("   ✅ Điều kiện 6: Không có Bullish Divergence")
+    print("      - Giá không tạo Lower Low với RSI Higher Low")
     print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
     
     # SL/TP Calculation
