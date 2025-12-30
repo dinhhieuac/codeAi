@@ -142,12 +142,15 @@ def get_last_swing_range(df_m1, signal_type, lookback=30):
     
     return None
 
+skip_session = True
 def check_asian_session(symbol, allow_xau=False):
     """
     Check if current time is Asian session
     Asian Session: 00:00 - 08:00 GMT
     Ngoại lệ: XAU có thể trade (tuỳ cấu hình)
     """
+    if skip_session:
+        return False, "Session skipped"
     try:
         import pytz
     except ImportError:

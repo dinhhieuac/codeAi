@@ -81,7 +81,12 @@ logging.basicConfig(
 class BTCUSD_Bot:
     def __init__(self):
         self.symbol = SYMBOL
-        self.timeframe = TIMEFRAME_MT5[TIMEFRAME]
+        # Multi-timeframe support: Chạy tất cả timeframes đồng thời
+        self.timeframes = TIMEFRAME_MT5  # Dict {name: mt5_code}
+        self.active_timeframes = list(self.timeframes.keys())  # ['M15', 'M30', 'H1', 'H4']
+        # Legacy support: Giữ self.timeframe cho backward compatibility
+        self.timeframe = TIMEFRAME_MT5.get(TIMEFRAME, TIMEFRAME_MT5['M15'])
+        
         self.risk_manager = BTCUSD_RiskManager()
         self.technical_analyzer = TechnicalAnalyzer()
         self.setup_directories()
@@ -91,9 +96,9 @@ class BTCUSD_Bot:
         self.telegram_bot_token = TELEGRAM_BOT_TOKEN if 'TELEGRAM_BOT_TOKEN' in globals() else ""
         self.telegram_chat_id = TELEGRAM_CHAT_ID if 'TELEGRAM_CHAT_ID' in globals() else ""
         
-        # Theo dõi tín hiệu đã gửi để tránh spam
-        self.last_signal_sent = None  # Lưu tín hiệu cuối cùng đã gửi Telegram
-        self.last_signal_time = None  # Thời gian gửi tín hiệu cuối cùng
+        # Theo dõi tín hiệu đã gửi để tránh spam (theo timeframe)
+        self.last_signal_sent = {}  # Dict {timeframe: signal_signature}
+        self.last_signal_time = {}  # Dict {timeframe: datetime}
         self.telegram_signal_cooldown = 300  # Cooldown 5 phút giữa các lần gửi tín hiệu (giây)
         
         # Trailing stop tracking
@@ -104,7 +109,12 @@ class BTCUSD_Bot:
         self.atr_trailing_first_activation = set()  # Set các ticket đã gửi thông báo ATR Trailing lần đầu
         self.hard_lock_notified = set()  # Set các ticket đã gửi thông báo Hard Lock
         
+        # Track positions theo timeframe
+        self.timeframe_positions = {}  # Dict {timeframe: [ticket1, ticket2, ...]}
+        self.position_timeframes = {}  # Dict {ticket: timeframe} để map ticket -> timeframe
+        
         logging.info(f"📱 Telegram Config: use_telegram={self.use_telegram}, token={'✅' if self.telegram_bot_token else '❌'}, chat_id={'✅' if self.telegram_chat_id else '❌'}")
+        logging.info(f"📊 Multi-Timeframe Mode: Chạy đồng thời {len(self.active_timeframes)} timeframes: {', '.join(self.active_timeframes)}")
         
     def setup_directories(self):
         os.makedirs('logs', exist_ok=True)
@@ -112,12 +122,12 @@ class BTCUSD_Bot:
         
     def setup_mt5(self):
         logging.info("=" * 60)
-        logging.info("🚀 KHỞI TẠO BOT BTCUSD")
+        logging.info("🚀 KHỞI TẠO BOT BTCUSD - MULTI-TIMEFRAME MODE")
         logging.info("=" * 60)
         logging.info(f"📊 Symbol: {self.symbol}")
-        logging.info(f"⏱️  Timeframe: {TIMEFRAME}")
+        logging.info(f"⏱️  Timeframes: {', '.join(self.active_timeframes)} (chạy đồng thời)")
         logging.info(f"💰 Risk per trade: {RISK_PER_TRADE}%")
-        logging.info(f"📈 Max positions: {MAX_POSITIONS}")
+        logging.info(f"📈 Max positions: {MAX_POSITIONS} (tổng cho tất cả timeframes)")
         logging.info(f"📅 Max daily trades: {MAX_DAILY_TRADES}")
         logging.info(f"⏰ Check interval: {CHECK_INTERVAL} giây")
         
@@ -346,10 +356,28 @@ class BTCUSD_Bot:
         logging.info(f"📊 Lot size: {position_size} (SL: {stop_loss_pips}pips, Risk: ${risk_amount:.2f})")
         return position_size
         
-    def get_price_data(self, count=100):
-        rates = mt5.copy_rates_from_pos(self.symbol, self.timeframe, 0, count)
+    def get_price_data(self, count=100, timeframe_name=None):
+        """
+        Lấy dữ liệu giá cho một timeframe cụ thể
+        
+        Args:
+            count: Số lượng nến cần lấy
+            timeframe_name: Tên timeframe (M15, M30, H1, H4). Nếu None, dùng timeframe mặc định
+        
+        Returns:
+            DataFrame với dữ liệu giá hoặc None nếu lỗi
+        """
+        if timeframe_name is None:
+            timeframe_code = self.timeframe
+        else:
+            timeframe_code = self.timeframes.get(timeframe_name)
+            if timeframe_code is None:
+                logging.error(f"❌ Timeframe không hợp lệ: {timeframe_name}")
+                return None
+        
+        rates = mt5.copy_rates_from_pos(self.symbol, timeframe_code, 0, count)
         if rates is None:
-            logging.error(f"❌ Không thể lấy dữ liệu giá cho {self.symbol}")
+            logging.error(f"❌ Không thể lấy dữ liệu giá cho {self.symbol} trên {timeframe_name or 'default'} timeframe")
             return None
             
         df = pd.DataFrame(rates)
@@ -357,7 +385,7 @@ class BTCUSD_Bot:
         
         if len(df) > 0:
             latest = df.iloc[-1]
-            logging.debug(f"📊 Dữ liệu giá: {len(df)} nến, Giá mới nhất: {latest['close']:.2f} (Time: {latest['time']})")
+            logging.debug(f"📊 [{timeframe_name or 'default'}] Dữ liệu giá: {len(df)} nến, Giá mới nhất: {latest['close']:.2f} (Time: {latest['time']})")
         
         return df
         
@@ -391,8 +419,17 @@ class BTCUSD_Bot:
         logging.debug("✅ Điều kiện thị trường: OK")
         return True, "OK"
         
-    def execute_trade(self, signal_type, sl_pips, tp_pips, signal_strength=0):
-        """Thực hiện giao dịch"""
+    def execute_trade(self, signal_type, sl_pips, tp_pips, signal_strength=0, timeframe_name=None):
+        """
+        Thực hiện giao dịch
+        
+        Args:
+            signal_type: BUY hoặc SELL
+            sl_pips: Stop Loss (pips)
+            tp_pips: Take Profit (pips)
+            signal_strength: Độ mạnh của tín hiệu
+            timeframe_name: Tên timeframe (M15, M30, H1, H4) để lưu vào comment
+        """
         
         # Kiểm tra điều kiện thị trường
         market_ok, message = self.check_market_conditions()
@@ -408,7 +445,7 @@ class BTCUSD_Bot:
         
         # Chỉ log "CHUẨN BỊ MỞ LỆNH" khi đã pass tất cả các kiểm tra
         logging.info("=" * 60)
-        logging.info(f"📈 CHUẨN BỊ MỞ LỆNH {signal_type}")
+        logging.info(f"📈 CHUẨN BỊ MỞ LỆNH {signal_type} [{timeframe_name or 'default'}]")
         logging.info("=" * 60)
             
         symbol_info = mt5.symbol_info(self.symbol)
@@ -707,7 +744,7 @@ class BTCUSD_Bot:
             "tp": tp_price,
             "deviation": DEVIATION if 'DEVIATION' in globals() else 100,
             "magic": 202411,
-            "comment": f"BTCUSD_Bot_{signal_type}",
+            "comment": f"BTCUSD_{timeframe_name or 'M15'}_{signal_type}",  # Lưu timeframe vào comment
             "type_time": mt5.ORDER_TIME_GTC,
         }
         
@@ -858,271 +895,233 @@ class BTCUSD_Bot:
                 self._manage_trailing_stops()
                 self._manage_smart_exit()
                 
-                # Lấy dữ liệu giá
-                df = self.get_price_data(100)
-                if df is None:
-                    logging.error("❌ Không lấy được dữ liệu giá, chờ 30s...")
-                    time.sleep(30)
-                    continue
+                # Cập nhật tracking positions theo timeframe
+                self._update_timeframe_positions()
                 
-                # Log giá hiện tại (chỉ khi thay đổi đáng kể hoặc mỗi 10 cycles)
-                if len(df) > 0:
-                    latest_price = df.iloc[-1]['close']
-                    tick = mt5.symbol_info_tick(self.symbol)
+                # Lấy giá hiện tại (dùng M15 làm reference)
+                tick = mt5.symbol_info_tick(self.symbol)
+                if tick:
+                    current_price = (tick.bid + tick.ask) / 2
+                    if should_log_summary:
+                        logging.info(f"📈 Giá hiện tại: {current_price:.2f} (Bid/Ask: {tick.bid:.2f}/{tick.ask:.2f})")
+                    last_logged_price = current_price
+                
+                # ========================================================================
+                # MULTI-TIMEFRAME ANALYSIS: Check tất cả timeframes đồng thời
+                # ========================================================================
+                signals_by_timeframe = {}  # Dict {timeframe: signal_dict}
+                
+                for tf_name in self.active_timeframes:
+                    # Lấy dữ liệu giá cho timeframe này
+                    df = self.get_price_data(100, timeframe_name=tf_name)
+                    if df is None:
+                        logging.debug(f"⚠️ [{tf_name}] Không lấy được dữ liệu giá, bỏ qua timeframe này")
+                        continue
                     
-                    # Chỉ log khi giá thay đổi > 0.1% hoặc mỗi 10 cycles
-                    price_changed = False
-                    if last_logged_price is None:
-                        price_changed = True
-                    else:
-                        price_change_pct = abs(latest_price - last_logged_price) / last_logged_price if last_logged_price > 0 else 0
-                        if price_change_pct > 0.001:  # Thay đổi > 0.1%
-                            price_changed = True
+                    # Phân tích kỹ thuật cho timeframe này
+                    logging.debug(f"🔍 [{tf_name}] Đang phân tích kỹ thuật...")
+                    signal = self.technical_analyzer.analyze(df)
                     
-                    if should_log_summary or price_changed:
-                        if tick:
-                            logging.info(f"📈 Giá hiện tại: {latest_price:.2f} (Bid/Ask: {tick.bid:.2f}/{tick.ask:.2f})")
-                        else:
-                            logging.info(f"📈 Giá hiện tại: {latest_price:.2f}")
-                        last_logged_price = latest_price
-                    else:
-                        logging.debug(f"📈 Giá hiện tại: {latest_price:.2f}")
+                    if signal:
+                        signals_by_timeframe[tf_name] = signal
+                        action = signal.get('action', 'HOLD')
+                        strength = signal.get('strength', 0)
+                        if action != 'HOLD':
+                            logging.debug(f"📊 [{tf_name}] Tín hiệu: {action} (Strength: {strength})")
                 
-                # Phân tích kỹ thuật (chuyển sang debug để giảm log)
-                logging.debug("🔍 Đang phân tích kỹ thuật...")
-                signal = self.technical_analyzer.analyze(df)
-                
-                if signal:
+                # Xử lý tín hiệu từ từng timeframe
+                for tf_name, signal in signals_by_timeframe.items():
                     action = signal.get('action', 'HOLD')
                     strength = signal.get('strength', 0)
                     
-                    # Reset delay info khi có tín hiệu mới (không phải HOLD)
-                    if action != 'HOLD':
-                        # Nếu có tín hiệu mới khác với tín hiệu đang delay, reset delay info
-                        if pending_delay_info and pending_delay_info['action'] != action:
-                            pending_delay_info = None
-                        # Tạo signature của tín hiệu để so sánh (làm tròn SL/TP để tránh thay đổi nhỏ do giá)
-                        # Làm tròn SL/TP về 10 pips gần nhất để so sánh chính xác hơn
-                        sl_pips_rounded = round(signal.get('sl_pips', 0) / 10) * 10
-                        tp_pips_rounded = round(signal.get('tp_pips', 0) / 10) * 10
-                        signal_signature = (action, strength, sl_pips_rounded, tp_pips_rounded)
-                        now_time = datetime.now()
+                    # Bỏ qua nếu tín hiệu là HOLD
+                    if action == 'HOLD':
+                        continue
+                    
+                    # Tạo signature của tín hiệu để so sánh (theo timeframe)
+                    sl_pips_rounded = round(signal.get('sl_pips', 0) / 10) * 10
+                    tp_pips_rounded = round(signal.get('tp_pips', 0) / 10) * 10
+                    signal_signature = (action, strength, sl_pips_rounded, tp_pips_rounded)
+                    now_time = datetime.now()
+                    
+                    # Kiểm tra xem tín hiệu có mới/khác không (theo timeframe)
+                    signal_changed = (self.last_signal_sent.get(tf_name) != signal_signature)
+                    cooldown_passed = (tf_name not in self.last_signal_time or 
+                                      (now_time - self.last_signal_time[tf_name]).total_seconds() >= self.telegram_signal_cooldown)
+                    
+                    should_send_signal = signal_changed and cooldown_passed
+                    
+                    # Log tín hiệu
+                    if should_send_signal:
+                        logging.info("=" * 60)
+                        logging.info(f"🎯 TÍN HIỆU GIAO DỊCH PHÁT HIỆN - [{tf_name}]")
+                        logging.info("=" * 60)
+                        logging.info(f"   - Timeframe: {tf_name}")
+                        logging.info(f"   - Action: {action}")
+                        logging.info(f"   - Strength: {strength}")
+                        logging.info(f"   - SL: {signal.get('sl_pips', 0)} pips")
+                        logging.info(f"   - TP: {signal.get('tp_pips', 0)} pips")
+                        logging.info("=" * 60)
+                    
+                    # Cập nhật tracking
+                    if should_send_signal:
+                        self.last_signal_sent[tf_name] = signal_signature
+                        self.last_signal_time[tf_name] = now_time
+                    
+                    # ⚠️ QUAN TRỌNG: Check lại lệnh đang mở trên MT5 trước khi mở lệnh mới
+                    # Đảm bảo lấy số positions mới nhất từ MT5 để tránh vượt quá MAX_POSITIONS
+                    current_positions = mt5.positions_get(symbol=self.symbol)
+                    if current_positions is None:
+                        current_positions = []
+                    current_position_count = len(current_positions)
+                    
+                    if current_position_count >= MAX_POSITIONS:
+                        logging.warning(f"❌ [{tf_name}] Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở (tổng)")
+                        continue  # Bỏ qua timeframe này, check timeframe tiếp theo
+                    
+                    # ⚠️ QUAN TRỌNG: Kiểm tra xem đã có lệnh cùng chiều ở CÙNG TIMEFRAME chưa
+                    # Lấy positions của timeframe này
+                    tf_positions = self.timeframe_positions.get(tf_name, [])
+                    if len(tf_positions) > 0:
+                        # Kiểm tra xem có lệnh cùng chiều ở timeframe này không
+                        check_order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+                        same_direction_exists = False
+                        for ticket in tf_positions:
+                            pos = mt5.positions_get(ticket=ticket)
+                            if pos and len(pos) > 0:
+                                if pos[0].type == check_order_type:
+                                    same_direction_exists = True
+                                    break
                         
-                        # Kiểm tra xem tín hiệu có mới/khác không
-                        signal_changed = (self.last_signal_sent != signal_signature)
-                        cooldown_passed = (self.last_signal_time is None or 
-                                          (now_time - self.last_signal_time).total_seconds() >= self.telegram_signal_cooldown)
+                        if same_direction_exists:
+                            direction_name = "BUY" if check_order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                            logging.warning(f"❌ [{tf_name}] Không thể mở lệnh {action}: Đang có lệnh {direction_name} cùng chiều ở timeframe {tf_name}")
+                            continue  # Bỏ qua timeframe này, check timeframe tiếp theo
+                    
+                    # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều ở CÙNG TIMEFRAME
+                    if len(tf_positions) > 0:
+                        check_order_type = 0 if action == "BUY" else 1  # 0 = BUY, 1 = SELL
                         
-                        should_send_signal = signal_changed and cooldown_passed
+                        # Lọc các lệnh cùng chiều ở timeframe này
+                        same_direction_positions = []
+                        for ticket in tf_positions:
+                            pos = mt5.positions_get(ticket=ticket)
+                            if pos and len(pos) > 0:
+                                if pos[0].type == check_order_type:
+                                    same_direction_positions.append(pos[0])
                         
-                        # Chỉ log "TÍN HIỆU GIAO DỊCH PHÁT HIỆN" khi tín hiệu mới hoặc thay đổi (tránh spam log)
-                        if should_send_signal:
-                            logging.info("=" * 60)
-                            logging.info(f"🎯 TÍN HIỆU GIAO DỊCH PHÁT HIỆN!")
-                            logging.info("=" * 60)
-                            logging.info(f"   - Action: {action}")
-                            logging.info(f"   - Strength: {strength}")
-                            logging.info(f"   - SL: {signal.get('sl_pips', 0)} pips")
-                            logging.info(f"   - TP: {signal.get('tp_pips', 0)} pips")
-                            logging.info("=" * 60)
-                        else:
-                            # Log ngắn gọn khi tín hiệu giống (không spam)
-                            if not signal_changed:
-                                logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - giống tín hiệu trước (đã log)")
-                            else:
-                                remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
-                                logging.debug(f"📊 Tín hiệu {action} (Strength: {strength}) - cooldown còn {remaining}s")
-                        
-                        # Không gửi Telegram khi có tín hiệu (chỉ gửi khi có kết quả lệnh)
-                        # Cập nhật tracking để tránh spam log
-                        if should_send_signal:
-                            self.last_signal_sent = signal_signature
-                            self.last_signal_time = now_time
-                            logging.debug(f"📊 Tín hiệu {action} mới - đang xử lý...")
-                        else:
-                            if not signal_changed:
-                                logging.debug(f"📊 Tín hiệu {action} giống tín hiệu trước (đã log)")
-                            elif not cooldown_passed:
-                                remaining = int(self.telegram_signal_cooldown - (now_time - self.last_signal_time).total_seconds())
-                                logging.debug(f"📊 Tín hiệu {action} - cooldown còn {remaining}s")
-                        
-                        # ⚠️ QUAN TRỌNG: Check lại lệnh đang mở trên MT5 trước khi mở lệnh mới
-                        # Đảm bảo lấy số positions mới nhất từ MT5 để tránh vượt quá MAX_POSITIONS
-                        current_positions = mt5.positions_get(symbol=self.symbol)
-                        if current_positions is None:
-                            current_positions = []
-                        current_position_count = len(current_positions)
-                        
-                        if current_position_count >= MAX_POSITIONS:
-                            logging.warning(f"❌ Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở")
-                            log_delay_and_sleep()
-                            continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
-                        
-                        # ⚠️ QUAN TRỌNG: Không được mở thêm lệnh cùng chiều khi MT5 đang có lệnh cùng chiều
-                        # Kiểm tra xem đã có lệnh cùng chiều đang mở chưa
-                        if current_position_count > 0:
-                            # Xác định loại lệnh cần check (BUY = 0, SELL = 1 trong MT5)
-                            check_order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+                        if same_direction_positions:
+                            # Lấy lệnh mới nhất cùng chiều ở timeframe này
+                            latest_same_direction = max(same_direction_positions, key=lambda x: x.time)
+                            latest_open_time = datetime.fromtimestamp(latest_same_direction.time)
+                            now_time = datetime.now()
+                            time_elapsed = now_time - latest_open_time
+                            time_elapsed_minutes = time_elapsed.total_seconds() / 60
                             
-                            # Kiểm tra xem có lệnh cùng chiều nào đang mở không
-                            same_direction_exists = any(
-                                pos.type == check_order_type 
-                                for pos in current_positions
+                            if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
+                                remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
+                                remaining_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60) % 60
+                                
+                                logging.info(f"⏸️ [{tf_name}] Tín hiệu {action} - Chờ thêm {remaining_minutes}m {remaining_seconds}s (Rule: {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều)")
+                                continue  # Bỏ qua timeframe này, check timeframe tiếp theo
+                    
+                    # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
+                    if not self.risk_manager.can_open_trade(action):
+                        logging.warning(f"❌ [{tf_name}] Risk Manager chặn: Không thể mở lệnh {action}")
+                        continue  # Bỏ qua timeframe này, check timeframe tiếp theo
+                    
+                    # Thực hiện giao dịch với timeframe này
+                    result = self.execute_trade(
+                            action, 
+                            signal.get('sl_pips', 0), 
+                            signal.get('tp_pips', 0),
+                            strength,
+                            timeframe_name=tf_name  # Pass timeframe name
+                    )
+                    
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        ticket = result.order
+                        logging.info("=" * 60)
+                        logging.info(f"✅ LỆNH {action} BTCUSD THÀNH CÔNG - [{tf_name}]")
+                        logging.info("=" * 60)
+                        logging.info(f"   - Ticket: {ticket}")
+                        logging.info(f"   - Timeframe: {tf_name}")
+                        logging.info(f"   - Volume: {result.volume} lots")
+                        logging.info(f"   - Price: {result.price:.2f}")
+                        logging.info(f"   - SL: {result.request.sl:.2f}")
+                        logging.info(f"   - TP: {result.request.tp:.2f}")
+                        logging.info("=" * 60)
+                        
+                        # Cập nhật tracking positions theo timeframe
+                        if tf_name not in self.timeframe_positions:
+                            self.timeframe_positions[tf_name] = []
+                        self.timeframe_positions[tf_name].append(ticket)
+                        self.position_timeframes[ticket] = tf_name
+                        
+                        # Gửi thông báo Telegram về lệnh thành công
+                        if self.use_telegram:
+                            success_message = (
+                                f"✅ <b>LỆNH {action} BTCUSD THÀNH CÔNG - [{tf_name}]</b>\n\n"
+                                f"📊 <b>Thông tin lệnh:</b>\n"
+                                f"   • Ticket: <code>{ticket}</code>\n"
+                                f"   • Timeframe: <b>{tf_name}</b>\n"
+                                f"   • Volume: <b>{result.volume}</b> lots\n"
+                                f"   • Giá vào: <b>{result.price:.2f}</b>\n"
+                                f"   • SL: <b>{result.request.sl:.2f}</b> ({signal.get('sl_pips', 0)} pips)\n"
+                                f"   • TP: <b>{result.request.tp:.2f}</b> ({signal.get('tp_pips', 0)} pips)\n"
+                                f"   • Risk: <b>${account_info['balance'] * (RISK_PER_TRADE / 100):.2f}</b> ({RISK_PER_TRADE}%)\n\n"
+                                f"💰 <b>Tài khoản:</b>\n"
+                                f"   • Equity: <b>${account_info['equity']:.2f}</b>\n"
+                                f"   • Balance: <b>${account_info['balance']:.2f}</b>\n"
+                                f"   • Positions: <b>{num_positions + 1}/{MAX_POSITIONS}</b> (Tổng)\n\n"
+                                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
-                            
-                            if same_direction_exists:
-                                # Đếm số lệnh cùng chiều
-                                same_direction_count = sum(
-                                    1 for pos in current_positions 
-                                    if pos.type == check_order_type
-                                )
-                                direction_name = "BUY" if check_order_type == mt5.ORDER_TYPE_BUY else "SELL"
-                                logging.warning(f"❌ Không thể mở lệnh {action}: Đang có {same_direction_count} lệnh {direction_name} cùng chiều đang mở trên MT5")
-                                log_delay_and_sleep()
-                                continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                            self.send_telegram_message(success_message)
                         
-                        # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều
-                        # Lấy lệnh cùng chiều mới nhất từ MT5 và check xem đã đủ 60 phút chưa
-                        if current_position_count > 0:
-                            # Xác định loại lệnh cần check (BUY = 0, SELL = 1 trong MT5)
-                            check_order_type = 0 if action == "BUY" else 1  # 0 = BUY, 1 = SELL
-                            
-                            # Lọc các lệnh cùng chiều
-                            same_direction_positions = [
-                                pos for pos in current_positions 
-                                if pos.type == check_order_type
-                            ]
-                            
-                            if same_direction_positions:
-                                # Lấy lệnh mới nhất cùng chiều (time lớn nhất)
-                                latest_same_direction = max(same_direction_positions, key=lambda x: x.time)
-                                
-                                # Chuyển đổi time từ timestamp (seconds) sang datetime
-                                latest_open_time = datetime.fromtimestamp(latest_same_direction.time)
-                                now_time = datetime.now()
-                                
-                                # Tính thời gian đã trôi qua (timedelta)
-                                time_elapsed = now_time - latest_open_time
-                                time_elapsed_minutes = time_elapsed.total_seconds() / 60
-                                
-                                # Kiểm tra xem đã đủ MIN_TIME_BETWEEN_SAME_DIRECTION phút chưa
-                                if time_elapsed_minutes < MIN_TIME_BETWEEN_SAME_DIRECTION:
-                                    remaining_minutes = int(MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes)
-                                    remaining_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60) % 60
-                                    remaining_total_seconds = int((MIN_TIME_BETWEEN_SAME_DIRECTION - time_elapsed_minutes) * 60)
-                                    
-                                    # Lưu thông tin delay để log sau
-                                    pending_delay_info = {
-                                        'action': action,
-                                        'strength': strength,
-                                        'remaining_minutes': remaining_minutes,
-                                        'remaining_seconds': remaining_seconds,
-                                        'remaining_total_seconds': remaining_total_seconds,
-                                        'next_check_time': datetime.now() + timedelta(seconds=remaining_total_seconds)
-                                    }
-                                    
-                                    # Log rõ ràng với format đẹp
-                                    logging.info("=" * 60)
-                                    logging.info(f"⏸️ TÍN HIỆU {action} {self.symbol} - KHÔNG ĐỦ ĐIỀU KIỆN THỜI GIAN")
-                                    logging.info("=" * 60)
-                                    logging.info(f"   📊 Tín hiệu: {action} (Strength: {strength})")
-                                    logging.info(f"   ⏰ Lệnh {action} cuối cùng mở lúc: {latest_open_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                                    logging.info(f"   ⏱️ Thời gian đã trôi qua: {int(time_elapsed_minutes)} phút {int(time_elapsed.total_seconds() % 60)} giây")
-                                    logging.info(f"   ⚠️ Cần đợi thêm: {remaining_minutes} phút {remaining_seconds} giây")
-                                    logging.info(f"   📋 Rule: Tối thiểu {MIN_TIME_BETWEEN_SAME_DIRECTION} phút giữa 2 lệnh cùng chiều")
-                                    logging.info("=" * 60)
-                                    logging.info(f"   🔄 Bỏ qua tín hiệu này, chờ cycle tiếp theo...")
-                                    logging.info("=" * 60)
-                                    
-                                    log_delay_and_sleep()
-                                    continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        self.risk_manager.record_trade(success=True)
                         
-                        # Kiểm tra risk manager TRƯỚC KHI gọi execute_trade
-                        if not self.risk_manager.can_open_trade(action):
-                            logging.warning(f"❌ Risk Manager chặn: Không thể mở lệnh {action}")
-                            log_delay_and_sleep()
-                            continue  # Bỏ qua lệnh này, chờ cycle tiếp theo
+                        # Reset signal tracking cho timeframe này khi mở lệnh thành công
+                        if tf_name in self.last_signal_sent:
+                            del self.last_signal_sent[tf_name]
+                        if tf_name in self.last_signal_time:
+                            del self.last_signal_time[tf_name]
                         
-                        # Thực hiện giao dịch
-                        result = self.execute_trade(
-                                action, 
-                                signal.get('sl_pips', 0), 
-                                signal.get('tp_pips', 0),
-                                strength
-                        )
-                        
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            ticket = result.order
-                            logging.info("=" * 60)
-                            logging.info(f"✅ LỆNH  {action} BTCUSD THÀNH CÔNG!")
-                            logging.info("=" * 60)
-                            logging.info(f"   - Ticket: {ticket}")
-                            logging.info(f"   - Volume: {result.volume} lots")
-                            logging.info(f"   - Price: {result.price:.2f}")
-                            logging.info(f"   - SL: {result.request.sl:.2f}")
-                            logging.info(f"   - TP: {result.request.tp:.2f}")
-                            logging.info("=" * 60)
-                            
-                            # Gửi thông báo Telegram về lệnh thành công
-                            if self.use_telegram:
-                                success_message = (
-                                    f"✅ <b>LỆNH {action} BTCUSD THÀNH CÔNG</b>\n\n"
-                                    f"📊 <b>Thông tin lệnh:</b>\n"
-                                    f"   • Ticket: <code>{ticket}</code>\n"
-                                    f"   • Volume: <b>{result.volume}</b> lots\n"
-                                    f"   • Giá vào: <b>{result.price:.2f}</b>\n"
-                                    f"   • SL: <b>{result.request.sl:.2f}</b> ({signal.get('sl_pips', 0)} pips)\n"
-                                    f"   • TP: <b>{result.request.tp:.2f}</b> ({signal.get('tp_pips', 0)} pips)\n"
-                                    f"   • Risk: <b>${account_info['balance'] * (RISK_PER_TRADE / 100):.2f}</b> ({RISK_PER_TRADE}%)\n\n"
-                                    f"💰 <b>Tài khoản:</b>\n"
-                                    f"   • Equity: <b>${account_info['equity']:.2f}</b>\n"
-                                    f"   • Balance: <b>${account_info['balance']:.2f}</b>\n"
-                                    f"   • Positions: <b>{num_positions + 1}/{MAX_POSITIONS}</b>\n\n"
-                                    f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                                )
-                                self.send_telegram_message(success_message)
-                            
-                            self.risk_manager.record_trade(success=True)
-                            
-                            # Reset signal tracking khi mở lệnh thành công (để có thể gửi tín hiệu mới sau đó)
-                            self.last_signal_sent = None
-                            self.last_signal_time = None
-                        elif result is None:
-                            # result = None nghĩa là execute_trade() return None (do risk manager chặn hoặc lỗi khác)
-                            # Đã log warning trong execute_trade(), không cần log lại lỗi ở đây
-                            logging.debug(f"⚠️ execute_trade() trả về None - đã được xử lý trong execute_trade()")
-                        else:
-                            # result có giá trị nhưng retcode != DONE → Lỗi thực sự từ MT5
-                            error_msg = result.comment if hasattr(result, 'comment') else str(mt5.last_error())
-                            logging.error("=" * 60)
-                            logging.error(f"❌ LỆNH {action} THẤT BẠI")
-                            logging.error("=" * 60)
-                            logging.error(f"   - Lỗi: {error_msg}")
-                            logging.error(f"   - Retcode: {result.retcode if hasattr(result, 'retcode') else 'None'}")
-                            logging.error("=" * 60)
-                            
-                            # Gửi thông báo Telegram về lỗi
-                            if self.use_telegram:
-                                error_message = (
-                                    f"❌ <b>LỆNH {action} THẤT BẠI</b>\n\n"
-                                    f"⚠️ <b>Lỗi:</b> {error_msg}\n\n"
-                                    f"📊 Tín hiệu: Strength={strength}, SL={signal.get('sl_pips', 0)}pips, TP={signal.get('tp_pips', 0)}pips\n\n"
-                                    f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                                )
-                                self.send_telegram_message(error_message)
-                            
-                            self.risk_manager.record_trade(success=False)
+                        # Break để chỉ xử lý 1 lệnh mỗi cycle (tránh mở nhiều lệnh cùng lúc)
+                        break
+                    elif result is None:
+                        logging.debug(f"⚠️ [{tf_name}] execute_trade() trả về None - đã được xử lý trong execute_trade()")
                     else:
-                        # action == 'HOLD'
-                        logging.debug(f"📊 Tín hiệu: HOLD (Strength: {strength})")
-                        # Reset delay info khi tín hiệu là HOLD
-                        pending_delay_info = None
-                else:
-                    logging.debug("📊 Không có tín hiệu từ Technical Analyzer")
+                        # result có giá trị nhưng retcode != DONE → Lỗi thực sự từ MT5
+                        error_msg = result.comment if hasattr(result, 'comment') else str(mt5.last_error())
+                        logging.error("=" * 60)
+                        logging.error(f"❌ LỆNH {action} THẤT BẠI - [{tf_name}]")
+                        logging.error("=" * 60)
+                        logging.error(f"   - Lỗi: {error_msg}")
+                        logging.error(f"   - Retcode: {result.retcode if hasattr(result, 'retcode') else 'None'}")
+                        logging.error("=" * 60)
+                        
+                        # Gửi thông báo Telegram về lỗi
+                        if self.use_telegram:
+                            error_message = (
+                                f"❌ <b>LỆNH {action} THẤT BẠI - [{tf_name}]</b>\n\n"
+                                f"⚠️ <b>Lỗi:</b> {error_msg}\n\n"
+                                f"📊 Tín hiệu: Strength={strength}, SL={signal.get('sl_pips', 0)}pips, TP={signal.get('tp_pips', 0)}pips\n\n"
+                                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            self.send_telegram_message(error_message)
+                        
+                        self.risk_manager.record_trade(success=False)
+                
+                # Nếu không có tín hiệu từ bất kỳ timeframe nào
+                if not signals_by_timeframe:
+                    logging.debug("📊 Không có tín hiệu từ bất kỳ timeframe nào")
                     # Reset delay info khi không có tín hiệu
                     pending_delay_info = None
+                else:
+                    # Có tín hiệu nhưng tất cả đều là HOLD hoặc bị chặn
+                    logging.debug(f"📊 Đã check {len(signals_by_timeframe)} timeframes, không có lệnh nào được thực hiện")
                 
-                # Chờ trước khi kiểm tra tiếp (chỉ khi không có continue nào được gọi)
+                # Chờ trước khi kiểm tra tiếp
                 log_delay_and_sleep()
                 
                 # Reset delay info sau khi đã log (nếu có)
@@ -1155,6 +1154,41 @@ class BTCUSD_Bot:
         logging.info("=" * 60)
         logging.info("👋 Bot đã dừng hoàn toàn")
         logging.info("=" * 60)
+    
+    def _update_timeframe_positions(self):
+        """
+        Cập nhật tracking positions theo timeframe từ MT5
+        Parse comment để xác định timeframe của mỗi position
+        """
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions is None:
+            positions = []
+        
+        # Reset tracking
+        self.timeframe_positions = {tf: [] for tf in self.active_timeframes}
+        self.position_timeframes = {}
+        
+        # Parse positions và group theo timeframe
+        for pos in positions:
+            ticket = pos.ticket
+            comment = pos.comment if hasattr(pos, 'comment') else ""
+            
+            # Parse timeframe từ comment (format: "BTCUSD_{TIMEFRAME}_{BUY/SELL}")
+            # Ví dụ: "BTCUSD_M15_BUY" -> timeframe = "M15"
+            timeframe = None
+            for tf_name in self.active_timeframes:
+                if f"_{tf_name}_" in comment or comment.endswith(f"_{tf_name}"):
+                    timeframe = tf_name
+                    break
+            
+            # Nếu không parse được, dùng M15 làm default (backward compatibility)
+            if timeframe is None:
+                timeframe = "M15"
+            
+            # Update tracking
+            if timeframe in self.timeframe_positions:
+                self.timeframe_positions[timeframe].append(ticket)
+            self.position_timeframes[ticket] = timeframe
     
     def _manage_trailing_stops(self):
         """
