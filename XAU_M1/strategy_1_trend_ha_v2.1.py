@@ -374,8 +374,9 @@ def check_sl_size_limit(df_m1, entry_price, sl_price, atr_val, signal_type):
 def check_soft_confirm(df_m1, ha_df, signal_type, config):
     """
     Soft Confirm:
-    - RSI: BUY > 55, SELL < 45, RSI slope đúng hướng
-    - HA candle đúng màu
+    - RSI: BUY > 60, SELL < 40, RSI slope đúng hướng (V2.1 improved)
+    - HA candle đúng màu + sequence (ít nhất 2 nến liên tiếp cùng màu)
+    - HA body size >= 40% range
     - Không doji / indecision
     """
     last_ha = ha_df.iloc[-1]
@@ -406,13 +407,41 @@ def check_soft_confirm(df_m1, ha_df, signal_type, config):
             if pd.notna(prev_rsi) and current_rsi >= prev_rsi:
                 return False, f"RSI not declining: {current_rsi:.1f} >= {prev_rsi:.1f}"
     
-    # Check HA candle đúng màu
+    # Check HA candle đúng màu + sequence (ít nhất 2 nến liên tiếp)
     if signal_type == "BUY":
-        if last_ha['ha_close'] <= last_ha['ha_open']:
+        is_green = last_ha['ha_close'] > last_ha['ha_open']
+        is_green_prev = prev_ha['ha_close'] > prev_ha['ha_open'] if prev_ha is not None else False
+        
+        if not is_green:
             return False, "HA candle not green"
+        
+        # Check sequence: ít nhất 2 nến xanh liên tiếp
+        if not is_green_prev:
+            return False, "HA candle sequence: need at least 2 green candles"
+        
+        # Check body size >= 40% range
+        candle_range = last_ha['ha_high'] - last_ha['ha_low']
+        body_size = abs(last_ha['ha_close'] - last_ha['ha_open'])
+        body_ratio = body_size / candle_range if candle_range > 0 else 0
+        if body_ratio < 0.4:
+            return False, f"HA body too small: {body_ratio:.2%} < 40%"
     else:  # SELL
-        if last_ha['ha_close'] >= last_ha['ha_open']:
+        is_red = last_ha['ha_close'] < last_ha['ha_open']
+        is_red_prev = prev_ha['ha_close'] < prev_ha['ha_open'] if prev_ha is not None else False
+        
+        if not is_red:
             return False, "HA candle not red"
+        
+        # Check sequence: ít nhất 2 nến đỏ liên tiếp
+        if not is_red_prev:
+            return False, "HA candle sequence: need at least 2 red candles"
+        
+        # Check body size >= 40% range
+        candle_range = last_ha['ha_high'] - last_ha['ha_low']
+        body_size = abs(last_ha['ha_close'] - last_ha['ha_open'])
+        body_ratio = body_size / candle_range if candle_range > 0 else 0
+        if body_ratio < 0.4:
+            return False, f"HA body too small: {body_ratio:.2%} < 40%"
     
     # Check không doji
     if is_doji(last_ha, threshold=0.2):
