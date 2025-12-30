@@ -127,7 +127,7 @@ class BTCUSD_Bot:
         logging.info(f"📊 Symbol: {self.symbol}")
         logging.info(f"⏱️  Timeframes: {', '.join(self.active_timeframes)} (chạy đồng thời)")
         logging.info(f"💰 Risk per trade: {RISK_PER_TRADE}%")
-        logging.info(f"📈 Max positions: {MAX_POSITIONS} (tổng cho tất cả timeframes)")
+        logging.info(f"📈 Max positions per timeframe: {MAX_POSITIONS} (mỗi timeframe có thể mở tối đa {MAX_POSITIONS} lệnh)")
         logging.info(f"📅 Max daily trades: {MAX_DAILY_TRADES}")
         logging.info(f"⏰ Check interval: {CHECK_INTERVAL} giây")
         
@@ -872,19 +872,31 @@ class BTCUSD_Bot:
                     
                     if should_log_summary or account_changed or positions_changed:
                         logging.info(f"💵 Tài khoản: Equity=${account_info['equity']:.2f} | Balance=${account_info['balance']:.2f} | Free Margin=${account_info['free_margin']:.2f}")
-                        logging.info(f"📊 Vị thế đang mở: {num_positions}/{MAX_POSITIONS}")
+                        logging.info(f"📊 Vị thế đang mở (Tổng): {num_positions} (Mỗi timeframe: tối đa {MAX_POSITIONS})")
                         last_logged_account_info = account_info.copy()
                         last_logged_positions = num_positions
                     else:
                         logging.debug(f"💵 Tài khoản: Equity=${account_info['equity']:.2f} | Balance=${account_info['balance']:.2f} | Free Margin=${account_info['free_margin']:.2f}")
-                        logging.debug(f"📊 Vị thế đang mở: {num_positions}/{MAX_POSITIONS}")
+                        logging.debug(f"📊 Vị thế đang mở (Tổng): {num_positions} (Mỗi timeframe: tối đa {MAX_POSITIONS})")
                     
                     if num_positions > 0 and (should_log_summary or positions_changed):
+                        # Cập nhật tracking positions theo timeframe để hiển thị đúng
+                        self._update_timeframe_positions()
+                        
                         total_profit = sum(pos.profit for pos in positions)
                         logging.info(f"   - Tổng P&L: ${total_profit:.2f}")
-                        for pos in positions:
-                            order_type = "BUY" if pos.type == 0 else "SELL"
-                            logging.info(f"   - {order_type} {pos.volume} lots @ {pos.price_open:.2f}, P&L: ${pos.profit:.2f}")
+                        
+                        # Hiển thị positions theo timeframe
+                        for tf_name in self.active_timeframes:
+                            tf_positions = self.timeframe_positions.get(tf_name, [])
+                            if len(tf_positions) > 0:
+                                logging.info(f"   - [{tf_name}]: {len(tf_positions)} lệnh")
+                                for ticket in tf_positions:
+                                    pos_list = mt5.positions_get(ticket=ticket)
+                                    if pos_list and len(pos_list) > 0:
+                                        pos = pos_list[0]
+                                        order_type = "BUY" if pos.type == 0 else "SELL"
+                                        logging.info(f"     • {order_type} {pos.volume} lots @ {pos.price_open:.2f}, P&L: ${pos.profit:.2f}")
                     elif num_positions > 0:
                         total_profit = sum(pos.profit for pos in positions)
                         logging.debug(f"   - Tổng P&L: ${total_profit:.2f}")
@@ -969,20 +981,21 @@ class BTCUSD_Bot:
                         self.last_signal_time[tf_name] = now_time
                     
                     # ⚠️ QUAN TRỌNG: Check lại lệnh đang mở trên MT5 trước khi mở lệnh mới
-                    # Đảm bảo lấy số positions mới nhất từ MT5 để tránh vượt quá MAX_POSITIONS
-                    current_positions = mt5.positions_get(symbol=self.symbol)
-                    if current_positions is None:
-                        current_positions = []
-                    current_position_count = len(current_positions)
+                    # Đảm bảo lấy số positions mới nhất từ MT5 của ĐÚNG TIMEFRAME để tránh vượt quá MAX_POSITIONS
+                    # Cập nhật tracking positions theo timeframe trước khi check
+                    self._update_timeframe_positions()
                     
-                    if current_position_count >= MAX_POSITIONS:
-                        logging.warning(f"❌ [{tf_name}] Không thể mở lệnh {action}: Đã có {current_position_count}/{MAX_POSITIONS} vị thế đang mở (tổng)")
+                    # Lấy positions của timeframe này (không phải tổng)
+                    tf_positions = self.timeframe_positions.get(tf_name, [])
+                    tf_position_count = len(tf_positions)
+                    
+                    if tf_position_count >= MAX_POSITIONS:
+                        logging.warning(f"❌ [{tf_name}] Không thể mở lệnh {action}: Đã có {tf_position_count}/{MAX_POSITIONS} vị thế đang mở ở timeframe {tf_name}")
                         continue  # Bỏ qua timeframe này, check timeframe tiếp theo
                     
                     # ⚠️ QUAN TRỌNG: Kiểm tra xem đã có lệnh cùng chiều ở CÙNG TIMEFRAME chưa
-                    # Lấy positions của timeframe này
-                    tf_positions = self.timeframe_positions.get(tf_name, [])
-                    if len(tf_positions) > 0:
+                    # tf_positions đã được lấy ở trên (sau khi _update_timeframe_positions())
+                    if tf_position_count > 0:
                         # Kiểm tra xem có lệnh cùng chiều ở timeframe này không
                         check_order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
                         same_direction_exists = False
@@ -999,7 +1012,7 @@ class BTCUSD_Bot:
                             continue  # Bỏ qua timeframe này, check timeframe tiếp theo
                     
                     # ⚠️ QUAN TRỌNG: Check thời gian giữa 2 lệnh cùng chiều ở CÙNG TIMEFRAME
-                    if len(tf_positions) > 0:
+                    if tf_position_count > 0:
                         check_order_type = 0 if action == "BUY" else 1  # 0 = BUY, 1 = SELL
                         
                         # Lọc các lệnh cùng chiều ở timeframe này
@@ -1073,7 +1086,8 @@ class BTCUSD_Bot:
                                 f"💰 <b>Tài khoản:</b>\n"
                                 f"   • Equity: <b>${account_info['equity']:.2f}</b>\n"
                                 f"   • Balance: <b>${account_info['balance']:.2f}</b>\n"
-                                f"   • Positions: <b>{num_positions + 1}/{MAX_POSITIONS}</b> (Tổng)\n\n"
+                                f"   • Positions [{tf_name}]: <b>{tf_position_count + 1}/{MAX_POSITIONS}</b> (Timeframe {tf_name})\n"
+                                f"   • Positions (Tổng): <b>{num_positions + 1}</b>\n\n"
                                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
                             self.send_telegram_message(success_message)
