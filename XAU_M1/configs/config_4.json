@@ -15,6 +15,13 @@
         "sensitivity": 2,
         "period": 10,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "adx_threshold": 20,
+        "h1_adx_threshold": 20,
+        "volume_threshold": 1.3,
+        "ut_confirmation": true,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
     }
 }

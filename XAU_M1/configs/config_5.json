@@ -12,8 +12,16 @@
     "parameters": {
         "sl_mode": "auto_m5",
         "reward_ratio": 1.5,
-        "donchian_period": 20,
+        "donchian_period": 50,
+        "buffer_multiplier": 100,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "adx_threshold": 20,
+        "m5_adx_threshold": 20,
+        "volume_threshold": 1.5,
+        "breakout_confirmation": true,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
     }
 }
