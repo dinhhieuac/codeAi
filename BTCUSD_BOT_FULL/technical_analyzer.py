@@ -387,6 +387,12 @@ class TechnicalAnalyzer:
         # ATR (Average True Range) - để tính SL/TP dựa trên độ biến động
         df['atr'] = self.calculate_atr(high, low, close)
         
+        # Volume MA để xác nhận tín hiệu
+        if 'tick_volume' in df.columns:
+            df['volume_ma'] = df['tick_volume'].rolling(window=20).mean()
+        else:
+            df['volume_ma'] = pd.Series([0] * len(df), index=df.index)
+        
         # ====================================================================
         # BƯỚC 2: LẤY GIÁ TRỊ HIỆN TẠI VÀ TRƯỚC ĐÓ
         # ====================================================================
@@ -409,6 +415,15 @@ class TechnicalAnalyzer:
         # Vậy ATR đã là pips rồi (ATR = 385.51 USD → 385.51 pips)
         atr_value = current['atr']  # ATR tính bằng pips (1 USD = 1 pip cho BTCUSD)
         logging.info(f"   📏 ATR: {current['atr']:.2f} USD ({atr_value:.1f} pips)")
+        # Log volume nếu có
+        if 'tick_volume' in df.columns and 'volume_ma' in df.columns:
+            current_volume = current.get('tick_volume', 0)
+            volume_ma_value = current.get('volume_ma', 0)
+            if volume_ma_value > 0:
+                volume_ratio = current_volume / volume_ma_value
+                logging.info(f"   📊 Volume: {current_volume:.0f} (MA: {volume_ma_value:.0f}, Ratio: {volume_ratio:.2f}x)")
+            else:
+                logging.info(f"   📊 Volume: {current_volume:.0f} (MA: N/A)")
         logging.info("=" * 60)
         
         # ====================================================================
@@ -500,6 +515,79 @@ class TechnicalAnalyzer:
             sell_reasons.append(f"Giá chạm Upper BB (Quá mua) - Giá: {current['close']:.2f} > Upper BB: {current['upper_bb']:.2f} [1 điểm]")
         else:
             logging.debug(f"   ❌ BB không có tín hiệu: Giá={current['close']:.2f} nằm giữa Lower={current['lower_bb']:.2f} và Upper={current['upper_bb']:.2f}")
+        
+        # --- Price Action Patterns (trọng số x1 = 1 điểm) ---
+        # Bullish Engulfing: Nến trước bearish, nến hiện tại bullish và engulf nến trước
+        if len(df) >= 2:
+            prev_candle = df.iloc[-2]
+            is_bullish_engulfing = (
+                prev_candle['close'] < prev_candle['open'] and  # Nến trước bearish
+                current['close'] > current['open'] and  # Nến hiện tại bullish
+                current['open'] < prev_candle['close'] and  # Open thấp hơn close trước
+                current['close'] > prev_candle['open']  # Close cao hơn open trước
+            )
+            if is_bullish_engulfing:
+                buy_signals += 1
+                buy_reasons.append(f"Bullish Engulfing Pattern [1 điểm]")
+                logging.info(f"   ✅ Phát hiện Bullish Engulfing Pattern")
+            
+            # Bearish Engulfing: Nến trước bullish, nến hiện tại bearish và engulf nến trước
+            is_bearish_engulfing = (
+                prev_candle['close'] > prev_candle['open'] and  # Nến trước bullish
+                current['close'] < current['open'] and  # Nến hiện tại bearish
+                current['open'] > prev_candle['close'] and  # Open cao hơn close trước
+                current['close'] < prev_candle['open']  # Close thấp hơn open trước
+            )
+            if is_bearish_engulfing:
+                sell_signals += 1
+                sell_reasons.append(f"Bearish Engulfing Pattern [1 điểm]")
+                logging.info(f"   ✅ Phát hiện Bearish Engulfing Pattern")
+            
+            # Bullish Pinbar: Body nhỏ, bóng dưới dài (> 60% range)
+            if len(df) >= 1:
+                body = abs(current['close'] - current['open'])
+                total_range = current['high'] - current['low']
+                lower_shadow = min(current['open'], current['close']) - current['low']
+                if total_range > 0:
+                    body_ratio = body / total_range
+                    lower_shadow_ratio = lower_shadow / total_range
+                    if body_ratio < 0.3 and lower_shadow_ratio > 0.6:
+                        buy_signals += 1
+                        buy_reasons.append(f"Bullish Pinbar (Body: {body_ratio:.1%}, Lower Shadow: {lower_shadow_ratio:.1%}) [1 điểm]")
+                        logging.info(f"   ✅ Phát hiện Bullish Pinbar")
+            
+            # Bearish Pinbar: Body nhỏ, bóng trên dài (> 60% range)
+            if len(df) >= 1:
+                body = abs(current['close'] - current['open'])
+                total_range = current['high'] - current['low']
+                upper_shadow = current['high'] - max(current['open'], current['close'])
+                if total_range > 0:
+                    body_ratio = body / total_range
+                    upper_shadow_ratio = upper_shadow / total_range
+                    if body_ratio < 0.3 and upper_shadow_ratio > 0.6:
+                        sell_signals += 1
+                        sell_reasons.append(f"Bearish Pinbar (Body: {body_ratio:.1%}, Upper Shadow: {upper_shadow_ratio:.1%}) [1 điểm]")
+                        logging.info(f"   ✅ Phát hiện Bearish Pinbar")
+        
+        # --- Volume Confirmation (giảm điểm nếu volume thấp) ---
+        volume_confirmation_factor = 1.0  # Mặc định không giảm điểm
+        if 'tick_volume' in df.columns and 'volume_ma' in df.columns:
+            current_volume = current.get('tick_volume', 0)
+            volume_ma_value = current.get('volume_ma', 0)
+            if volume_ma_value > 0:
+                volume_ratio = current_volume / volume_ma_value
+                # Nếu volume < 80% MA → Giảm 20% điểm tín hiệu
+                if volume_ratio < 0.8:
+                    volume_confirmation_factor = 0.8
+                    logging.warning(f"   ⚠️ Volume thấp: {current_volume:.0f} < 80% MA({volume_ma_value:.0f}) → Giảm 20% điểm tín hiệu")
+                elif volume_ratio > 1.2:
+                    # Volume cao → Tăng 10% điểm (bonus)
+                    volume_confirmation_factor = 1.1
+                    logging.info(f"   ✅ Volume cao: {current_volume:.0f} > 120% MA({volume_ma_value:.0f}) → Tăng 10% điểm tín hiệu")
+        
+        # Áp dụng volume confirmation factor
+        buy_signals = int(buy_signals * volume_confirmation_factor)
+        sell_signals = int(sell_signals * volume_confirmation_factor)
         
         # ====================================================================
         # LOG KẾT QUẢ ĐẾM TÍN HIỆU
