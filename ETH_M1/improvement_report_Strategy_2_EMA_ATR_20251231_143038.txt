@@ -1,0 +1,78 @@
+====================================================================================================
+📊 BÁO CÁO TỔNG KẾT PHÂN TÍCH LỆNH THUA
+Strategy: Strategy_2_EMA_ATR
+Ngày tạo: 2025-12-31 14:30:38
+====================================================================================================
+
+## 1. TỔNG QUAN
+----------------------------------------------------------------------------------------------------
+Tổng số lệnh thua phân tích: 13
+Tổng lỗ: $-61.15
+Lỗ trung bình: $-4.70
+Khoảng cách SL trung bình: 4695.2 pips
+
+## 2. PHÂN TÍCH LÝ DO THOÁT LỆNH
+----------------------------------------------------------------------------------------------------
+  🔴 Hit Stop Loss: 13 lệnh (100.0%)
+
+## 3. PHÂN TÍCH ĐIỀU KIỆN KHÔNG ĐẠT
+----------------------------------------------------------------------------------------------------
+  ❌ EMA Crossover không đúng: 13 lệnh (100.0%)
+  ❌ RSI không đạt ngưỡng (BUY > 50, SELL < 50): 7 lệnh (53.8%)
+  ❌ H1 Trend không đúng: 4 lệnh (30.8%)
+  ❌ Price Extension (giá quá xa EMA14): 2 lệnh (15.4%)
+
+## 4. ĐỀ XUẤT CẢI THIỆN
+----------------------------------------------------------------------------------------------------
+
+### 1. [HIGH] EMA Crossover không đúng (13 lệnh - 100.0%)
+
+  • Kiểm tra lại logic crossover (có thể vào lệnh quá sớm)
+  • Thêm confirmation: chờ 1-2 nến sau crossover
+  • Thêm volume confirmation cho crossover
+
+
+### 2. [HIGH] H1 Trend không đúng (4 lệnh - 30.8%)
+
+  • Thêm ADX filter trên H1 để xác nhận trend strength
+  • Kiểm tra trend trên timeframe cao hơn (H4/D1)
+
+
+### 3. [MEDIUM] RSI không đạt ngưỡng (7 lệnh - 53.8%)
+
+  • Tăng RSI threshold: BUY > 55, SELL < 45
+  • Thêm RSI momentum check (RSI đang tăng/giảm)
+
+
+### 4. [HIGH] Quá nhiều lệnh hit SL (13 lệnh - 100.0%)
+
+  • SL trung bình hiện tại: 4695.2 pips - có thể quá chặt
+  • Tăng SL buffer (từ 20 points lên 1.5x ATR)
+  • Thêm volume confirmation để tránh false signals
+  • Thêm filter để tránh trade trong news events
+
+
+### 5. [MEDIUM] Cải thiện chung
+
+  • Thêm volume confirmation (volume > 1.3x average)
+  • Thêm consecutive loss management
+  • Thêm session filter (tránh Asian session)
+
+## 5. KẾT LUẬN
+----------------------------------------------------------------------------------------------------
+
+Dựa trên phân tích, các cải thiện ưu tiên:
+
+🔴 ƯU TIÊN CAO:
+  - EMA Crossover không đúng: 13 lệnh (100.0%)
+  - H1 Trend không đúng: 4 lệnh (30.8%)
+  - Quá nhiều lệnh hit SL: 13 lệnh (100.0%)
+
+💡 Khuyến nghị:
+  1. Kiểm tra lại logic EMA crossover
+  2. Tăng H1 trend filter strength
+  3. Thêm volume confirmation
+  4. Test trên demo account trước khi áp dụng
+  5. Monitor kết quả và điều chỉnh thêm
+
+====================================================================================================
