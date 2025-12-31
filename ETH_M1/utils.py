@@ -244,3 +244,61 @@ def get_mt5_error_message(error_code):
     }
     msg = error_map.get(error_code, "Unknown Error")
     return f"{error_code} ({msg})"
+
+def check_consecutive_losses(symbol, magic, config):
+    """
+    Check consecutive losses and apply cooldown
+    loss_streak >= 2 → cooldown 45 phút
+    """
+    from datetime import datetime, timedelta
+    
+    loss_streak_threshold = config['parameters'].get('loss_streak_threshold', 2)
+    cooldown_minutes = config['parameters'].get('loss_cooldown_minutes', 45)  # Default 45 minutes
+    
+    try:
+        # Get deals from last 24 hours
+        from_timestamp = int((datetime.now() - timedelta(days=1)).timestamp())
+        to_timestamp = int(datetime.now().timestamp())
+        deals = mt5.history_deals_get(from_timestamp, to_timestamp)
+        
+        if deals is None or len(deals) == 0:
+            return True, "No deals found"
+        
+        # Filter closed deals with this magic number
+        closed_deals = []
+        for deal in deals:
+            if (deal.entry == mt5.DEAL_ENTRY_OUT and 
+                deal.magic == magic and 
+                deal.profit != 0):
+                closed_deals.append(deal)
+        
+        if len(closed_deals) == 0:
+            return True, "No closed deals"
+        
+        # Sort by time (newest first)
+        closed_deals.sort(key=lambda x: x.time, reverse=True)
+        
+        # Check for consecutive losses
+        consecutive_losses = 0
+        for deal in closed_deals[:loss_streak_threshold]:
+            if deal.profit < 0:  # Loss
+                consecutive_losses += 1
+            else:
+                break  # Stop if we hit a win
+        
+        if consecutive_losses >= loss_streak_threshold:
+            # Check if cooldown period has passed
+            last_deal_time = closed_deals[0].time
+            if isinstance(last_deal_time, datetime):
+                time_since_last = (datetime.now() - last_deal_time).total_seconds() / 60
+            else:
+                time_since_last = (datetime.now().timestamp() - last_deal_time) / 60
+            
+            if time_since_last < cooldown_minutes:
+                remaining = cooldown_minutes - int(time_since_last)
+                return False, f"{consecutive_losses} consecutive losses. Cooldown: {remaining} min remaining"
+        
+        return True, "OK"
+    except Exception as e:
+        print(f"⚠️ Error checking consecutive losses: {e}")
+        return True, "OK"  # Fail open - allow trading if check fails

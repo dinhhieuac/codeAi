@@ -14,6 +14,11 @@
         "reward_ratio": 1.5,
         "sma_period": 9,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "m5_adx_threshold": 20,
+        "volume_threshold": 1.8,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
     }
 }

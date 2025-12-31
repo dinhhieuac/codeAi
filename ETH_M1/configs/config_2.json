@@ -16,6 +16,11 @@
         "ema_fast": 14,
         "ema_slow": 28,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "h1_adx_threshold": 20,
+        "crossover_confirmation": true,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
     }
 }

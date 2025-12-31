@@ -2,12 +2,13 @@ import MetaTrader5 as mt5
 import time
 import sys
 import numpy as np
+import pandas as pd
 
 # Import local modules
 sys.path.append('..')
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, check_consecutive_losses
 
 # Initialize Database
 # Initialize Database
@@ -38,7 +39,17 @@ def strategy_2_logic(config, error_count=0):
 
     # H1 Trend
     df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
+    # H1 ADX for trend strength confirmation
+    df_h1 = calculate_adx(df_h1, period=14)
+    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 20)
+    h1_adx = df_h1.iloc[-1].get('adx', 0)
+    
     h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
+    
+    # H1 ADX filter: Only trade if trend is strong
+    if pd.isna(h1_adx) or h1_adx < h1_adx_threshold:
+        print(f"   ❌ Filtered: H1 ADX {h1_adx:.1f} < {h1_adx_threshold} (Weak Trend)")
+        return error_count, 0
 
     # 2. Indicators (M1)
     # EMA 14 and 28
@@ -58,43 +69,115 @@ def strategy_2_logic(config, error_count=0):
     # RSI 14 (Added Filter)
     df['rsi'] = calculate_rsi(df['close'], period=14)
     
+    # Volume MA for confirmation
+    df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
+    
+    # RSI thresholds (configurable, default 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+    
+    # EMA crossover confirmation flag
+    crossover_confirmation = config['parameters'].get('crossover_confirmation', True)
+    
     last = df.iloc[-1]
     prev = df.iloc[-2]
+    prev_prev = df.iloc[-3] if len(df) >= 3 else prev
     
     # 3. Logic: Crossover + RSI Filter + H1 Trend
     signal = None
     
-    print(f"📊 [Strat 2 Analysis] H1 Trend: {h1_trend} | EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | RSI: {last['rsi']:.1f}")
+    print(f"📊 [Strat 2 Analysis] H1 Trend: {h1_trend} (ADX: {h1_adx:.1f}) | EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | RSI: {last['rsi']:.1f}")
+    print(f"   Volume: {last['tick_volume']:.0f} / MA: {last['vol_ma']:.0f} = {last['tick_volume']/last['vol_ma']:.2f}x")
     
-    # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50 AND H1 Bullish
-    if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
+    # EMA Crossover Detection with Confirmation
+    has_crossover = False
+    crossover_direction = None
+    
+    if crossover_confirmation:
+        # Confirmed Crossover: Crossover happened 1-2 candles ago, confirm continues
+        # BUY: prev_prev was below, prev crossed, last still above
+        if (prev_prev['ema14'] <= prev_prev['ema28'] and
+            prev['ema14'] > prev['ema28'] and
+            last['ema14'] > last['ema28']):
+            has_crossover = True
+            crossover_direction = "BUY"
+            print("   ✅ Crossover Confirmed: EMA 14 > EMA 28 (2 candles ago, continues)")
+        # SELL: prev_prev was above, prev crossed, last still below
+        elif (prev_prev['ema14'] >= prev_prev['ema28'] and
+              prev['ema14'] < prev['ema28'] and
+              last['ema14'] < last['ema28']):
+            has_crossover = True
+            crossover_direction = "SELL"
+            print("   ✅ Crossover Confirmed: EMA 14 < EMA 28 (2 candles ago, continues)")
+        # Also check immediate crossover if strong
+        elif prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
+            # Immediate BUY crossover, check if it's strong
+            if last['close'] > prev['close']:  # Price rising
+                has_crossover = True
+                crossover_direction = "BUY"
+                print("   ✅ Crossover: EMA 14 > EMA 28 (Immediate, price rising)")
+        elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
+            # Immediate SELL crossover, check if it's strong
+            if last['close'] < prev['close']:  # Price falling
+                has_crossover = True
+                crossover_direction = "SELL"
+                print("   ✅ Crossover: EMA 14 < EMA 28 (Immediate, price falling)")
+    else:
+        # Original logic (no confirmation)
+        if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
+            has_crossover = True
+            crossover_direction = "BUY"
+        elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
+            has_crossover = True
+            crossover_direction = "SELL"
+    
+    # BUY Signal
+    if has_crossover and crossover_direction == "BUY":
         if h1_trend == "BULLISH":
             # Extension Check
             if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
                 print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-            elif last['rsi'] > 50:
-                signal = "BUY"
-                print("   ✅ Crossover: EMA 14 > EMA 28 (Bullish)")
             else:
-                print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= 50")
+                # Volume confirmation
+                is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.3)
+                if not is_high_volume:
+                    print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < 1.3x MA ({last['vol_ma']:.0f})")
+                elif last['rsi'] > rsi_buy_threshold:
+                    # RSI momentum check
+                    if last['rsi'] > prev['rsi']:
+                        signal = "BUY"
+                        print(f"   ✅ All conditions met: Crossover + Volume + RSI {last['rsi']:.1f} > {rsi_buy_threshold} (rising)")
+                    else:
+                        print(f"   ❌ Filtered: RSI not rising ({prev['rsi']:.1f} → {last['rsi']:.1f})")
+                else:
+                    print(f"   ❌ Filtered: Crossover BUY but RSI {last['rsi']:.1f} <= {rsi_buy_threshold}")
         else:
              print(f"   ❌ Filtered: Crossover BUY but H1 Trend is BEARISH")
         
-    # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50 AND H1 Bearish
-    elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
+    # SELL Signal
+    elif has_crossover and crossover_direction == "SELL":
         if h1_trend == "BEARISH":
             # Extension Check
             if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
                 print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
-            elif last['rsi'] < 50:
-                signal = "SELL"
-                print("   ✅ Crossover: EMA 14 < EMA 28 (Bearish)")
             else:
-                print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= 50")
+                # Volume confirmation
+                is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.3)
+                if not is_high_volume:
+                    print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < 1.3x MA ({last['vol_ma']:.0f})")
+                elif last['rsi'] < rsi_sell_threshold:
+                    # RSI momentum check
+                    if last['rsi'] < prev['rsi']:
+                        signal = "SELL"
+                        print(f"   ✅ All conditions met: Crossover + Volume + RSI {last['rsi']:.1f} < {rsi_sell_threshold} (declining)")
+                    else:
+                        print(f"   ❌ Filtered: RSI not declining ({prev['rsi']:.1f} → {last['rsi']:.1f})")
+                else:
+                    print(f"   ❌ Filtered: Crossover SELL but RSI {last['rsi']:.1f} >= {rsi_sell_threshold}")
         else:
              print(f"   ❌ Filtered: Crossover SELL but H1 Trend is BULLISH")
 
-    else:
+    if not has_crossover:
         diff = last['ema14'] - last['ema28']
         if diff > 0:
             print(f"   ❌ No Cross (Already Bullish, Gap: {diff:.3f})")
@@ -103,6 +186,12 @@ def strategy_2_logic(config, error_count=0):
         
     # 4. Execute
     if signal:
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_guard_ok, loss_guard_msg = check_consecutive_losses(symbol, magic, config)
+        if not loss_guard_ok:
+            print(f"   ⏳ Consecutive Loss Guard: {loss_guard_msg}")
+            return error_count, 0
+        
         # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
         # Get all deals from history to check Cooldown
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
@@ -155,7 +244,7 @@ def strategy_2_logic(config, error_count=0):
         print(f"🚀 Strat 2 SIGNAL: {signal} @ {price}")
 
         db.log_signal("Strategy_2_EMA_ATR", symbol, signal, price, sl, tp, 
-                      {"ema14": float(last['ema14']), "ema28": float(last['ema28']), "atr": float(atr_val), "rsi": float(last['rsi'])},
+                      {"h1_adx": float(h1_adx), "ema14": float(last['ema14']), "ema28": float(last['ema28']), "atr": float(atr_val), "rsi": float(last['rsi']), "volume_ratio": float(last['tick_volume']/last['vol_ma'])},
                       account_id=config['account'])
         
         request = {
@@ -185,9 +274,11 @@ def strategy_2_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
+                f"• H1 Trend: {h1_trend} (ADX: {h1_adx:.1f})\n"
                 f"• EMA14: {last['ema14']:.2f}\n"
                 f"• EMA28: {last['ema28']:.2f}\n"
-                f"• RSI: {last['rsi']:.1f}"
+                f"• RSI: {last['rsi']:.1f}\n"
+                f"• Volume: {int(last['tick_volume'])} ({last['tick_volume']/last['vol_ma']:.2f}x avg)"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0

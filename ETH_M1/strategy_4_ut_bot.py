@@ -8,7 +8,7 @@ import pandas as pd
 sys.path.append('..')
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, calculate_adx, manage_position, get_mt5_error_message, calculate_rsi, check_consecutive_losses
 
 # Initialize Database
 db = Database()
@@ -71,50 +71,138 @@ def strategy_4_logic(config, error_count=0):
     if df_m1 is None or df_h1 is None: return error_count, 0
 
     # 2. Indicators
-    # Trend Filter (H1 MACD or just simple MA)
-    df_h1['ema50'] = df_h1['close'].ewm(span=50).mean()
+    # Trend Filter (H1 EMA50)
+    df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
+    # H1 ADX for trend strength confirmation
+    df_h1 = calculate_adx(df_h1, period=14)
+    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 20)
+    h1_adx = df_h1.iloc[-1].get('adx', 0)
+    
     trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
+    
+    # H1 ADX filter: Only trade if trend is strong
+    if pd.isna(h1_adx) or h1_adx < h1_adx_threshold:
+        print(f"   ❌ Filtered: H1 ADX {h1_adx:.1f} < {h1_adx_threshold} (Weak Trend)")
+        return error_count, 0
     
     # RSI Calculation (M1)
     df_m1['rsi'] = calculate_rsi(df_m1['close'], period=14)
     
+    # Volume MA for confirmation
+    df_m1['vol_ma'] = df_m1['tick_volume'].rolling(window=20).mean()
+    
     # ADX Calculation (M1)
     df_m1 = calculate_adx(df_m1)
+    
+    # RSI thresholds (configurable, default 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+    
+    # UT confirmation flag
+    ut_confirmation = config['parameters'].get('ut_confirmation', True)
 
     # UT Bot on M1
     df_ut = calculate_ut_bot(df_m1, sensitivity=2, period=10)
+    
+    if len(df_ut) < 3:
+        return error_count, 0
+    
     last = df_ut.iloc[-1]
     prev = df_ut.iloc[-2]
+    prev_prev = df_ut.iloc[-3]
     
     # 3. Signals
     ut_signal = None
-    # Check for crossover (Flip from -1 to 1 or 1 to -1)
-    if prev['pos'] == -1 and last['pos'] == 1:
-        ut_signal = "BUY"
-    elif prev['pos'] == 1 and last['pos'] == -1:
-        ut_signal = "SELL"
+    has_ut_signal = False
+    
+    # UT Signal with confirmation
+    if ut_confirmation:
+        # Confirmed UT Signal: Flip happened 1-2 candles ago, confirm position continues
+        # BUY: prev_prev was SELL, prev flipped to BUY, last still BUY
+        if (prev_prev['pos'] == -1 and 
+            prev['pos'] == 1 and 
+            last['pos'] == 1):  # Still in BUY
+            has_ut_signal = True
+            ut_signal = "BUY"
+            print("   ✅ UT Signal Confirmed: BUY (2 candles ago, position continues)")
+        # SELL: prev_prev was BUY, prev flipped to SELL, last still SELL
+        elif (prev_prev['pos'] == 1 and 
+              prev['pos'] == -1 and 
+              last['pos'] == -1):  # Still in SELL
+            has_ut_signal = True
+            ut_signal = "SELL"
+            print("   ✅ UT Signal Confirmed: SELL (2 candles ago, position continues)")
+        # Also check immediate flip if strong
+        elif (prev['pos'] == -1 and last['pos'] == 1):
+            # Immediate BUY flip, check if it's strong
+            if last['close'] > prev['close']:  # Price rising
+                has_ut_signal = True
+                ut_signal = "BUY"
+                print("   ✅ UT Signal: BUY (Immediate flip, price rising)")
+        elif (prev['pos'] == 1 and last['pos'] == -1):
+            # Immediate SELL flip, check if it's strong
+            if last['close'] < prev['close']:  # Price falling
+                has_ut_signal = True
+                ut_signal = "SELL"
+                print("   ✅ UT Signal: SELL (Immediate flip, price falling)")
+    else:
+        # Original logic (no confirmation)
+        if prev['pos'] == -1 and last['pos'] == 1:
+            has_ut_signal = True
+            ut_signal = "BUY"
+            print("   ✅ UT Signal: BUY")
+        elif prev['pos'] == 1 and last['pos'] == -1:
+            has_ut_signal = True
+            ut_signal = "SELL"
+            print("   ✅ UT Signal: SELL")
     
     signal = None
     
-    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}")
+    print(f"📊 [Strat 4 Analysis] Trend H1: {trend} (ADX: {h1_adx:.1f}) | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | M1 ADX: {last['adx']:.1f}")
+    print(f"   Volume: {df_m1.iloc[-1]['tick_volume']:.0f} / MA: {df_m1.iloc[-1]['vol_ma']:.0f} = {df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x")
     
     # Filter: Only trade valid breakouts if ADX > 20 (Trend Strength)
     if last['adx'] < 20: 
-        print(f"   ❌ Filtered: Low ADX ({last['adx']:.1f} < 20) - Choppy Market")
-    elif ut_signal == "BUY" and trend == "BULLISH":
-        if last['rsi'] > 50:
-            signal = "BUY"
+        print(f"   ❌ Filtered: Low M1 ADX ({last['adx']:.1f} < 20) - Choppy Market")
+    elif has_ut_signal and ut_signal == "BUY" and trend == "BULLISH":
+        # Volume confirmation
+        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.2):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.2x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        elif last['rsi'] > rsi_buy_threshold:
+            # RSI momentum check
+            if last['rsi'] > prev['rsi']:
+                signal = "BUY"
+                print(f"   ✅ All conditions met: UT Signal + Volume + RSI {last['rsi']:.1f} > {rsi_buy_threshold} (rising)")
+            else:
+                print(f"   ❌ Filtered: RSI not rising ({prev['rsi']:.1f} → {last['rsi']:.1f})")
         else:
-            print(f"   ❌ Filtered: Buy Signal but RSI {last['rsi']:.1f} <= 50")
+            print(f"   ❌ Filtered: Buy Signal but RSI {last['rsi']:.1f} <= {rsi_buy_threshold}")
             
-    elif ut_signal == "SELL" and trend == "BEARISH":
-         if last['rsi'] < 50:
-             signal = "SELL"
-         else:
-            print(f"   ❌ Filtered: Sell Signal but RSI {last['rsi']:.1f} >= 50")
+    elif has_ut_signal and ut_signal == "SELL" and trend == "BEARISH":
+        # Volume confirmation
+        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.2):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.2x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        elif last['rsi'] < rsi_sell_threshold:
+            # RSI momentum check
+            if last['rsi'] < prev['rsi']:
+                signal = "SELL"
+                print(f"   ✅ All conditions met: UT Signal + Volume + RSI {last['rsi']:.1f} < {rsi_sell_threshold} (declining)")
+            else:
+                print(f"   ❌ Filtered: RSI not declining ({prev['rsi']:.1f} → {last['rsi']:.1f})")
+        else:
+            print(f"   ❌ Filtered: Sell Signal but RSI {last['rsi']:.1f} >= {rsi_sell_threshold}")
+    
+    if not has_ut_signal:
+        print(f"   ❌ No UT Signal: Prev Pos: {prev['pos']}, Last Pos: {last['pos']}")
             
     # 4. Execute
     if signal:
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_guard_ok, loss_guard_msg = check_consecutive_losses(symbol, magic, config)
+        if not loss_guard_ok:
+            print(f"   ⏳ Consecutive Loss Guard: {loss_guard_msg}")
+            return error_count, 0
+        
         # --- SPAM FILTER: Check Cooldown (5 Mins) ---
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
         if deals:
@@ -167,7 +255,7 @@ def strategy_4_logic(config, error_count=0):
 
         print(f"🚀 Strat 4 SIGNAL: {signal} @ {price}")
         db.log_signal("Strategy_4_UT_Bot", symbol, signal, price, sl, tp, 
-                      {"trend": trend, "ut_pos": int(last['pos']), "rsi": float(last['rsi'])},
+                      {"trend": trend, "h1_adx": float(h1_adx), "ut_pos": int(last['pos']), "rsi": float(last['rsi']), "volume_ratio": float(df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma'])},
                       account_id=config['account'])
 
         request = {
@@ -197,9 +285,10 @@ def strategy_4_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• Trend: {trend}\n"
-                f"• ADX: {last.get('adx', 0):.1f}\n"
-                f"• RSI: {last['rsi']:.1f}"
+                f"• H1 Trend: {trend} (ADX: {h1_adx:.1f})\n"
+                f"• M1 ADX: {last.get('adx', 0):.1f}\n"
+                f"• RSI: {last['rsi']:.1f}\n"
+                f"• Volume: {df_m1.iloc[-1]['tick_volume']:.0f} ({df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x avg)"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0

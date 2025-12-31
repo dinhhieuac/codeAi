@@ -7,7 +7,7 @@ import pandas as pd
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, check_consecutive_losses
 
 # Initialize Database
 db = Database()
@@ -40,10 +40,20 @@ def strategy_5_logic(config, error_count=0):
 
     # Trend Filter (M5 EMA 200)
     df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()  # Sửa thành EMA thực sự
+    # M5 ADX for trend strength confirmation
+    df_m5 = calculate_adx(df_m5, period=14)
+    m5_adx_threshold = config['parameters'].get('m5_adx_threshold', 20)
+    m5_adx = df_m5.iloc[-1].get('adx', 0)
+    
     m5_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    
+    # M5 ADX filter: Only trade if trend is strong
+    if pd.isna(m5_adx) or m5_adx < m5_adx_threshold:
+        print(f"   ❌ Filtered: M5 ADX {m5_adx:.1f} < {m5_adx_threshold} (Weak Trend)")
+        return error_count, 0
 
-    # Donchian Channel 40 (Breakout) - Tăng từ 20 để giảm false signal
-    donchian_period = 40
+    # Donchian Channel (configurable, default 50)
+    donchian_period = config['parameters'].get('donchian_period', 50)
     df['upper'] = df['high'].rolling(window=donchian_period).max().shift(1)  # Previous 40 highs
     df['lower'] = df['low'].rolling(window=donchian_period).min().shift(1)   # Previous 40 lows
     
@@ -65,17 +75,30 @@ def strategy_5_logic(config, error_count=0):
     
     # Volume MA (for volume confirmation)
     df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
+    
+    # RSI thresholds (configurable, default 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+    
+    # Volume threshold (configurable, default 1.5x)
+    volume_threshold = config['parameters'].get('volume_threshold', 1.5)
+    
+    # Breakout confirmation flag
+    breakout_confirmation = config['parameters'].get('breakout_confirmation', True)
+    
+    # Buffer multiplier (configurable, default 100 = 1000 points for ETH)
+    buffer_multiplier = config['parameters'].get('buffer_multiplier', 100)
+    buffer = buffer_multiplier * mt5.symbol_info(symbol).point
 
+    if len(df) < 3:
+        return error_count, 0
+    
     last = df.iloc[-1]
     prev = df.iloc[-2]
+    prev_prev = df.iloc[-3]
     
     # 3. Logic: Donchian Breakout
     signal = None
-    
-    # BUY: Close > Upper Band + Buffer
-    # SELL: Close < Lower Band - Buffer
-    
-    buffer = 200 * mt5.symbol_info(symbol).point  # $2 buffer
     
     # ATR Volatility Filter
     atr_value = last['atr'] if not pd.isna(last['atr']) else 0
@@ -89,7 +112,8 @@ def strategy_5_logic(config, error_count=0):
     atr_min = 50   # Minimum ATR (pips) - ~ $5 movement
     atr_max = 5000  # Maximum ATR (pips) - ~ $500 movement
     
-    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | RSI: {last['rsi']:.1f} | ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
+    print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} (ADX: {m5_adx:.1f}) | RSI: {last['rsi']:.1f} | M1 ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
+    print(f"   Donchian: {donchian_period} periods | Buffer: {buffer_multiplier} points | Volume: {last['tick_volume']:.0f} / MA: {last['vol_ma']:.0f} = {last['tick_volume']/last['vol_ma']:.2f}x")
     
     # ATR Volatility Filter
     if atr_pips < atr_min or atr_pips > atr_max:
@@ -103,16 +127,54 @@ def strategy_5_logic(config, error_count=0):
         return error_count, 0
     
     # Volume Confirmation
-    is_high_volume = last['tick_volume'] > (last['vol_ma'] * 1.3)  # Volume > 1.3x average
+    is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
+    
+    # Breakout Detection with Confirmation
+    has_breakout = False
+    breakout_direction = None
+    
+    if breakout_confirmation:
+        # Confirmed Breakout: Breakout happened 1-2 candles ago, confirm continues
+        # BUY: prev_prev broke upper, prev still above, last still above
+        if (prev_prev['close'] > (last['upper'] + buffer) and
+            prev['close'] > (last['upper'] + buffer) and
+            last['close'] > (last['upper'] + buffer)):
+            has_breakout = True
+            breakout_direction = "BUY"
+            print("   ✅ Breakout Confirmed: BUY (2 candles above upper, continues)")
+        # SELL: prev_prev broke lower, prev still below, last still below
+        elif (prev_prev['close'] < (last['lower'] - buffer) and
+              prev['close'] < (last['lower'] - buffer) and
+              last['close'] < (last['lower'] - buffer)):
+            has_breakout = True
+            breakout_direction = "SELL"
+            print("   ✅ Breakout Confirmed: SELL (2 candles below lower, continues)")
+        # Strong immediate breakout (1.5x buffer)
+        elif last['close'] > (last['upper'] + buffer * 1.5):
+            has_breakout = True
+            breakout_direction = "BUY"
+            print("   ✅ Strong Breakout: BUY (1.5x buffer)")
+        elif last['close'] < (last['lower'] - buffer * 1.5):
+            has_breakout = True
+            breakout_direction = "SELL"
+            print("   ✅ Strong Breakout: SELL (1.5x buffer)")
+    else:
+        # Original logic (no confirmation)
+        if last['close'] > (last['upper'] + buffer):
+            has_breakout = True
+            breakout_direction = "BUY"
+        elif last['close'] < (last['lower'] - buffer):
+            has_breakout = True
+            breakout_direction = "SELL"
     
     # False Breakout Check
     false_breakout = False
-    if last['close'] > (last['upper'] + buffer):
+    if has_breakout and breakout_direction == "BUY":
         # BUY: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
         if prev['high'] > last['upper'] and prev['close'] < last['upper']:
             false_breakout = True
             print(f"   ❌ Filtered: False Breakout BUY (Nến trước phá vỡ nhưng đóng ngược lại)")
-    elif last['close'] < (last['lower'] - buffer):
+    elif has_breakout and breakout_direction == "SELL":
         # SELL: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
         if prev['low'] < last['lower'] and prev['close'] > last['lower']:
             false_breakout = True
@@ -122,34 +184,51 @@ def strategy_5_logic(config, error_count=0):
         return error_count, 0
     
     # BUY Signal
-    if last['close'] > (last['upper'] + buffer):
+    if has_breakout and breakout_direction == "BUY":
         if m5_trend == "BULLISH":
-            if last['rsi'] > 50:
-                if is_high_volume:
-                    signal = "BUY"
-                    print("   ✅ Valid Breakout BUY (Volume confirmed)")
+            if last['rsi'] > rsi_buy_threshold:
+                # RSI momentum check
+                if last['rsi'] > prev['rsi']:
+                    if is_high_volume:
+                        signal = "BUY"
+                        print(f"   ✅ All conditions met: Breakout + Volume + RSI {last['rsi']:.1f} > {rsi_buy_threshold} (rising)")
+                    else:
+                        print(f"   ❌ Filtered: Breakout BUY but Volume {last['tick_volume']} < {int(last['vol_ma']*volume_threshold)} ({volume_threshold}x average)")
                 else:
-                    print(f"   ❌ Filtered: Breakout BUY but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
+                    print(f"   ❌ Filtered: RSI not rising ({prev['rsi']:.1f} → {last['rsi']:.1f})")
             else:
-                print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= 50")
+                print(f"   ❌ Filtered: Breakout BUY but RSI {last['rsi']:.1f} <= {rsi_buy_threshold}")
         else:
             print(f"   ❌ Filtered: Breakout BUY but M5 Trend is BEARISH")
              
     # SELL Signal
-    elif last['close'] < (last['lower'] - buffer):
+    elif has_breakout and breakout_direction == "SELL":
         if m5_trend == "BEARISH":
-            if last['rsi'] < 50:
-                if is_high_volume:
-                    signal = "SELL"
-                    print("   ✅ Valid Breakout SELL (Volume confirmed)")
+            if last['rsi'] < rsi_sell_threshold:
+                # RSI momentum check
+                if last['rsi'] < prev['rsi']:
+                    if is_high_volume:
+                        signal = "SELL"
+                        print(f"   ✅ All conditions met: Breakout + Volume + RSI {last['rsi']:.1f} < {rsi_sell_threshold} (declining)")
+                    else:
+                        print(f"   ❌ Filtered: Breakout SELL but Volume {last['tick_volume']} < {int(last['vol_ma']*volume_threshold)} ({volume_threshold}x average)")
                 else:
-                    print(f"   ❌ Filtered: Breakout SELL but Volume {last['tick_volume']} < {int(last['vol_ma']*1.3)} (1.3x average)")
+                    print(f"   ❌ Filtered: RSI not declining ({prev['rsi']:.1f} → {last['rsi']:.1f})")
             else:
-                print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= 50")
+                print(f"   ❌ Filtered: Breakout SELL but RSI {last['rsi']:.1f} >= {rsi_sell_threshold}")
         else:
             print(f"   ❌ Filtered: Breakout SELL but M5 Trend is BULLISH")
+    
+    if not has_breakout:
+        print(f"   ❌ No Breakout: Close {last['close']:.2f} (Upper: {last['upper']:.2f}, Lower: {last['lower']:.2f}, Buffer: {buffer:.2f})")
         
     if signal:
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_guard_ok, loss_guard_msg = check_consecutive_losses(symbol, magic, config)
+        if not loss_guard_ok:
+            print(f"   ⏳ Consecutive Loss Guard: {loss_guard_msg}")
+            return error_count, 0
+        
         # --- SPAM FILTER & COOLDOWN ---
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
         if deals:
@@ -228,7 +307,8 @@ def strategy_5_logic(config, error_count=0):
         db.log_signal("Strategy_5_Filter_First", symbol, signal, price, sl, tp, {
             "setup": "Donchian Breakout",
             "rsi": float(last['rsi']),
-            "adx": float(adx_value),
+            "m5_adx": float(m5_adx),
+            "m1_adx": float(adx_value),
             "atr": float(atr_value),
             "atr_pips": float(atr_pips),
             "volume": int(last['tick_volume']),
@@ -265,8 +345,9 @@ def strategy_5_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Donchian Breakout ({donchian_period} periods)\n"
+                f"• M5 Trend: {m5_trend} (ADX: {m5_adx:.1f})\n"
                 f"• RSI: {last['rsi']:.1f}\n"
-                f"• ADX: {adx_value:.1f}\n"
+                f"• M1 ADX: {adx_value:.1f}\n"
                 f"• ATR: {atr_pips:.1f} pips\n"
                 f"• Volume: {int(last['tick_volume'])} ({last['tick_volume']/last['vol_ma']:.1f}x avg)"
             )

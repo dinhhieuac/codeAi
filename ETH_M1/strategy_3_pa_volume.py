@@ -7,7 +7,7 @@ import pandas as pd
 # Import local modules
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, check_consecutive_losses
 
 # Initialize Database
 db = Database()
@@ -35,7 +35,17 @@ def strategy_3_logic(config, error_count=0):
     # 2. Indicators
     # Trend Filter (M5 EMA 200)
     df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()
+    # M5 ADX for trend strength confirmation
+    df_m5 = calculate_adx(df_m5, period=14)
+    m5_adx_threshold = config['parameters'].get('m5_adx_threshold', 20)
+    m5_adx = df_m5.iloc[-1].get('adx', 0)
+    
     m5_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    
+    # M5 ADX filter: Only trade if trend is strong
+    if pd.isna(m5_adx) or m5_adx < m5_adx_threshold:
+        print(f"   ❌ Filtered: M5 ADX {m5_adx:.1f} < {m5_adx_threshold} (Weak Trend)")
+        return error_count, 0
     
     # SMA 9
     df['sma9'] = df['close'].rolling(window=9).mean()
@@ -92,9 +102,13 @@ def strategy_3_logic(config, error_count=0):
     if dist_to_sma <= 5000 * point: 
         is_near_sma = True
         
-    # Volume > 1.5x Average (Tăng từ 1.1x)
-    volume_threshold = 1.5
+    # Volume threshold (configurable, default 1.8x)
+    volume_threshold = config['parameters'].get('volume_threshold', 1.8)
     is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
+    
+    # RSI thresholds (configurable, default 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
     
     # Pinbar Detection (Tightened: Nose < 1.5x body thay vì 2x)
     body_size = abs(last['close'] - last['open'])
@@ -110,7 +124,7 @@ def strategy_3_logic(config, error_count=0):
     is_bearish_pinbar = (upper_shadow > 1.5 * body_size) and (lower_shadow < body_size * 1.5)
     
     # Logging Analysis
-    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} | SMA9: {last['sma9']:.2f} | Dist: {dist_to_sma:.1f}")
+    print(f"📊 [Strat 3 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} (ADX: {m5_adx:.1f}) | SMA9: {last['sma9']:.2f} | Dist: {dist_to_sma:.1f}")
     print(f"   Vol: {last['tick_volume']} (Req > {int(last['vol_ma']*volume_threshold)}) | ATR: {atr_pips:.1f}p | Spread: {spread_pips:.1f}p")
     print(f"   Pinbar? {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
     
@@ -119,20 +133,28 @@ def strategy_3_logic(config, error_count=0):
         if is_high_volume:
             if is_bullish_pinbar and last['close'] > last['sma9']:
                 if m5_trend == "BULLISH":
-                    if last['rsi'] > 50:
-                        signal = "BUY"
-                        print("   ✅ Valid Setup: Bullish Pinbar + Vol + RSI > 50 + M5 Bullish")
+                    if last['rsi'] > rsi_buy_threshold:
+                        # RSI momentum check
+                        if last['rsi'] > df.iloc[-2]['rsi']:
+                            signal = "BUY"
+                            print(f"   ✅ Valid Setup: Bullish Pinbar + Vol + RSI {last['rsi']:.1f} > {rsi_buy_threshold} (rising) + M5 Bullish")
+                        else:
+                            print(f"   ❌ Filtered: RSI not rising ({df.iloc[-2]['rsi']:.1f} → {last['rsi']:.1f})")
                     else:
-                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} <= 50")
+                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} <= {rsi_buy_threshold}")
                 else:
                     print(f"   ❌ Filtered: Valid Pinbar but M5 Trend is BEARISH")
             elif is_bearish_pinbar and last['close'] < last['sma9']:
                 if m5_trend == "BEARISH":
-                    if last['rsi'] < 50:
-                        signal = "SELL"
-                        print("   ✅ Valid Setup: Bearish Pinbar + Vol + RSI < 50 + M5 Bearish")
+                    if last['rsi'] < rsi_sell_threshold:
+                        # RSI momentum check
+                        if last['rsi'] < df.iloc[-2]['rsi']:
+                            signal = "SELL"
+                            print(f"   ✅ Valid Setup: Bearish Pinbar + Vol + RSI {last['rsi']:.1f} < {rsi_sell_threshold} (declining) + M5 Bearish")
+                        else:
+                            print(f"   ❌ Filtered: RSI not declining ({df.iloc[-2]['rsi']:.1f} → {last['rsi']:.1f})")
                     else:
-                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} >= 50")
+                        print(f"   ❌ Filtered: Valid Pinbar but RSI {last['rsi']:.1f} >= {rsi_sell_threshold}")
                 else:
                     print(f"   ❌ Filtered: Valid Pinbar but M5 Trend is BULLISH")
             else:
@@ -147,6 +169,12 @@ def strategy_3_logic(config, error_count=0):
     
     # 4. Execute
     if signal:
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_guard_ok, loss_guard_msg = check_consecutive_losses(symbol, magic, config)
+        if not loss_guard_ok:
+            print(f"   ⏳ Consecutive Loss Guard: {loss_guard_msg}")
+            return error_count, 0
+        
         # --- SPAM FILTER & COOLDOWN ---
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
         if deals:
@@ -263,7 +291,7 @@ def strategy_3_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• M5 Trend: {m5_trend}\n"
+                f"• M5 Trend: {m5_trend} (ADX: {m5_adx:.1f})\n"
                 f"• Vol: {int(last['tick_volume'])} ({last['tick_volume']/last['vol_ma']:.1f}x avg)\n"
                 f"• ATR: {atr_pips:.1f} pips\n"
                 f"• Spread: {spread_pips:.1f} pips\n"
