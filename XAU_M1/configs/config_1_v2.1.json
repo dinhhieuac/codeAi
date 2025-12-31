@@ -18,7 +18,7 @@
         "rsi_buy_threshold": 60,
         "rsi_sell_threshold": 40,
         "adx_period": 14,
-        "adx_min_threshold": 25,
+        "adx_min_threshold": 20,
         "atr_period": 14,
         "atr_buffer_multiplier": 2.0,
         "chop_lookback": 10,

@@ -230,9 +230,9 @@ def check_fresh_breakout_candle(df_m1, signal_type, state_data):
     """
     Hard Gate 2.2: Fresh Breakout Candle (C0)
     - Phá high/low gần nhất (chưa bị test)
-    - Body ≥ 60% range
+    - Body ≥ 60% range (có thể giảm xuống 50% nếu quá strict)
     - Wick ngược ≤ 30%
-    - Volume ≥ 1.3 × MA(volume, 20)
+    - Volume ≥ 1.3 × MA(volume, 20) (có thể giảm xuống 1.2x nếu quá strict)
     """
     if len(df_m1) < 21:
         return False, None, "Not enough data"
@@ -265,13 +265,13 @@ def check_fresh_breakout_candle(df_m1, signal_type, state_data):
         if not breakout_ok:
             return False, None, f"Low {c0['low']:.5f} not < recent swing low {recent_low:.5f}"
     
-    # Check body >= 60% range
+    # Check body >= 50% range (giảm từ 60% để linh hoạt hơn)
     candle_range = c0['high'] - c0['low']
     body_size = abs(c0['close'] - c0['open'])
     body_ratio = body_size / candle_range if candle_range > 0 else 0
     
-    if body_ratio < 0.6:
-        return False, None, f"Body ratio {body_ratio:.2%} < 60%"
+    if body_ratio < 0.5:  # Giảm từ 0.6 xuống 0.5
+        return False, None, f"Body ratio {body_ratio:.2%} < 50%"
     
     # Check wick ngược <= 30%
     if signal_type == "BUY":
@@ -284,13 +284,13 @@ def check_fresh_breakout_candle(df_m1, signal_type, state_data):
     if wick_ratio > 0.3:
         return False, None, f"Reverse wick ratio {wick_ratio:.2%} > 30%"
     
-    # Check volume >= 1.3 × MA(volume, 20)
+    # Check volume >= 1.2 × MA(volume, 20) (giảm từ 1.3x xuống 1.2x)
     vol_ma = df_m1.iloc[-2]['vol_ma']
     if pd.isna(vol_ma) or vol_ma <= 0:
         return False, None, "Volume MA not available"
     
-    if c0['tick_volume'] < 1.3 * vol_ma:
-        return False, None, f"Volume {c0['tick_volume']:.0f} < 1.3 × MA({vol_ma:.0f})"
+    if c0['tick_volume'] < 1.2 * vol_ma:  # Giảm từ 1.3 xuống 1.2
+        return False, None, f"Volume {c0['tick_volume']:.0f} < 1.2 × MA({vol_ma:.0f})"
     
     # Valid breakout candle
     breakout_idx = len(df_m1) - 2
@@ -332,12 +332,12 @@ def check_confirm_candle(df_m1, signal_type, breakout_idx):
         if c1['high'] > old_range_high * 1.001:  # 0.1% buffer
             return False, f"High {c1['high']:.5f} breaks old range {old_range_high:.5f}"
     
-    # Check volume >= 1.2 × MA(volume, 20)
+    # Check volume >= 1.1 × MA(volume, 20) (giảm từ 1.2x xuống 1.1x để linh hoạt hơn)
     if pd.isna(vol_ma) or vol_ma <= 0:
         return False, "Volume MA not available"
     
-    if c1['tick_volume'] < 1.2 * vol_ma:
-        return False, f"Volume {c1['tick_volume']:.0f} < 1.2 × MA({vol_ma:.0f})"
+    if c1['tick_volume'] < 1.1 * vol_ma:  # Giảm từ 1.2 xuống 1.1
+        return False, f"Volume {c1['tick_volume']:.0f} < 1.1 × MA({vol_ma:.0f})"
     
     return True, "Confirm candle valid"
 
@@ -607,6 +607,21 @@ def strategy_1_logic_v21(config, error_count=0):
     strong_trend_ok, trend_msg = check_strong_trend_m5(df_m5, signal_type, config)
     log_data["strong_trend"] = strong_trend_ok
     
+    # Debug logging
+    last_m5 = df_m5.iloc[-1]
+    print(f"\n{'='*80}")
+    print(f"🔍 [HARD GATE 2] Strong Trend M5 Check")
+    print(f"{'='*80}")
+    print(f"   Signal Type: {signal_type}")
+    print(f"   EMA50: {last_m5['ema50']:.2f}")
+    print(f"   EMA200: {last_m5['ema200']:.2f}")
+    print(f"   EMA Relationship: {'✅' if (signal_type == 'BUY' and last_m5['ema50'] > last_m5['ema200']) or (signal_type == 'SELL' and last_m5['ema50'] < last_m5['ema200']) else '❌'}")
+    if 'adx' in last_m5:
+        print(f"   ADX: {last_m5['adx']:.1f} (threshold: {config['parameters'].get('adx_min_threshold', 25)})")
+    print(f"   Result: {'✅ PASS' if strong_trend_ok else '❌ FAIL'}")
+    print(f"   Message: {trend_msg}")
+    print(f"{'='*80}\n")
+    
     if not strong_trend_ok:
         log_data["skip_reason"] = f"trend: {trend_msg}"
         print(f"❌ [HARD GATE] Strong Trend M5: {trend_msg}")
@@ -625,6 +640,16 @@ def strategy_1_logic_v21(config, error_count=0):
         breakout_ok, breakout_idx, breakout_msg = check_fresh_breakout_candle(df_m1, signal_type, state_data)
         log_data["fresh_breakout"] = breakout_ok
         
+        # Debug logging
+        print(f"\n{'='*80}")
+        print(f"🔍 [STATE WAIT] Checking Fresh Breakout Candle")
+        print(f"{'='*80}")
+        print(f"   Signal Type: {signal_type}")
+        print(f"   Last Candle: High={df_m1.iloc[-2]['high']:.2f}, Low={df_m1.iloc[-2]['low']:.2f}, Close={df_m1.iloc[-2]['close']:.2f}")
+        print(f"   Breakout Check: {breakout_ok}")
+        print(f"   Message: {breakout_msg}")
+        print(f"{'='*80}\n")
+        
         if breakout_ok:
             # Transition to CONFIRM state
             state_data["state"] = "CONFIRM"
@@ -632,6 +657,7 @@ def strategy_1_logic_v21(config, error_count=0):
             save_state(symbol, state_data)
             log_data["state"] = "CONFIRM"
             print(f"✅ [STATE] WAIT → CONFIRM: {breakout_msg}")
+            print(f"   Breakout Candle Index: {breakout_idx}")
             print(f"📊 [LOG] {json.dumps(log_data, indent=2)}")
             return error_count, 0
         else:
@@ -650,6 +676,18 @@ def strategy_1_logic_v21(config, error_count=0):
             print(f"⚠️ [STATE CONFIRM] Missing breakout_idx, reset to WAIT")
             print(f"📊 [LOG] {json.dumps(log_data, indent=2)}")
             return error_count, 0
+        
+        # Debug logging
+        print(f"\n{'='*80}")
+        print(f"🔍 [STATE CONFIRM] Checking Confirm Candle")
+        print(f"{'='*80}")
+        print(f"   Breakout Candle Index: {breakout_idx}")
+        if breakout_idx < len(df_m1):
+            c0 = df_m1.iloc[breakout_idx]
+            print(f"   C0 (Breakout): High={c0['high']:.2f}, Low={c0['low']:.2f}, Close={c0['close']:.2f}")
+        c1 = df_m1.iloc[-2]  # Last completed candle
+        print(f"   C1 (Confirm): High={c1['high']:.2f}, Low={c1['low']:.2f}, Close={c1['close']:.2f}")
+        print(f"{'='*80}\n")
         
         # Check confirm candle (C1) - must be completed candle
         confirm_ok, confirm_msg = check_confirm_candle(df_m1, signal_type, breakout_idx)
