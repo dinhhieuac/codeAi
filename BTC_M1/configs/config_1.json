@@ -15,6 +15,11 @@
         "sl_pips": 20,
         "tp_pips": 30,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "adx_min_threshold": 20,
+        "spam_filter_seconds": 300,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
     }
 }

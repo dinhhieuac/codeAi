@@ -2,13 +2,14 @@ import MetaTrader5 as mt5
 import time
 import sys
 import numpy as np
+import pandas as pd
 from datetime import datetime
 
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, check_consecutive_losses
 
 # Initialize Database
 db = Database()
@@ -38,19 +39,36 @@ def strategy_1_logic(config, error_count=0):
         return error_count, 0
 
     # 2. Calculate Indicators
-    # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
-    df_m5['ema200'] = df_m5['close'].rolling(window=200).mean() # Using SMA for simplicity or implement EMA
+    # Trend Filter: EMA 200 on M5 (using EMA for better trend following)
+    df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()
+    # ADX for trend strength confirmation
+    df_m5 = calculate_adx(df_m5, period=14)
+    adx_threshold = config['parameters'].get('adx_min_threshold', 20)
+    m5_adx = df_m5.iloc[-1].get('adx', 0)
+    
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    
+    # ADX filter: Only trade if trend is strong (ADX >= threshold)
+    if pd.isna(m5_adx) or m5_adx < adx_threshold:
+        print(f"   ❌ Filtered: M5 ADX {m5_adx:.1f} < {adx_threshold} (Weak Trend)")
+        return error_count, 0
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
     df_m1['sma55_low'] = df_m1['low'].rolling(window=55).mean()
+    
+    # Volume MA for confirmation
+    df_m1['vol_ma'] = df_m1['tick_volume'].rolling(window=20).mean()
     
     # Heiken Ashi
     ha_df = calculate_heiken_ashi(df_m1)
     
     # RSI 14 (Added Filter)
     ha_df['rsi'] = calculate_rsi(df_m1['close'], period=14)
+    
+    # RSI thresholds (configurable, default 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
@@ -60,9 +78,10 @@ def strategy_1_logic(config, error_count=0):
     price = mt5.symbol_info_tick(symbol).ask if current_trend == "BULLISH" else mt5.symbol_info_tick(symbol).bid
     
     # Detailed Logging
-    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend} | RSI: {last_ha['rsi']:.1f}")
+    print(f"📊 [Strat 1 Analysis] Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {m5_adx:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
+    print(f"   Volume: {df_m1.iloc[-1]['tick_volume']:.0f} / MA: {df_m1.iloc[-1]['vol_ma']:.0f} = {df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x")
     
     # BUY SETUP
     if current_trend == "BULLISH":
@@ -74,10 +93,14 @@ def strategy_1_logic(config, error_count=0):
         if is_green and is_above_channel:
             if is_fresh_breakout:
                 if is_solid_candle:
-                    if last_ha['rsi'] > 50:
+                    # Volume confirmation
+                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.3)
+                    if not is_high_volume:
+                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+                    elif last_ha['rsi'] > rsi_buy_threshold:
                         signal = "BUY"
                     else:
-                        print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= 50")
+                        print(f"   ❌ Filtered: Valid Buy Setup but RSI {last_ha['rsi']:.1f} <= {rsi_buy_threshold}")
                 else: 
                      print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
             else:
@@ -95,10 +118,14 @@ def strategy_1_logic(config, error_count=0):
         if is_red and is_below_channel:
             if is_fresh_breakout:
                 if is_solid_candle:
-                    if last_ha['rsi'] < 50:
+                    # Volume confirmation
+                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.3)
+                    if not is_high_volume:
+                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+                    elif last_ha['rsi'] < rsi_sell_threshold:
                         signal = "SELL"
                     else:
-                        print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= 50")
+                        print(f"   ❌ Filtered: Valid Sell Setup but RSI {last_ha['rsi']:.1f} >= {rsi_sell_threshold}")
                 else:
                     print(f"   ❌ Filtered: Doji Candle detected (Indecision)")
             else:
@@ -109,14 +136,32 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_guard_ok, loss_guard_msg = check_consecutive_losses(symbol, magic, config)
+        if not loss_guard_ok:
+            print(f"   ⏳ Consecutive Loss Guard: {loss_guard_msg}")
+            return error_count, 0
+        
+        # --- SPAM FILTER: Check if we traded in the last 300 seconds (5 minutes) ---
+        spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 300)
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
             last_trade_time = strat_positions[0].time
             current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+            
+            if isinstance(last_trade_time, datetime):
+                last_trade_timestamp = last_trade_time.timestamp()
+            else:
+                last_trade_timestamp = last_trade_time
+            if isinstance(current_server_time, datetime):
+                current_timestamp = current_server_time.timestamp()
+            else:
+                current_timestamp = current_server_time
+            
+            time_since_last = current_timestamp - last_trade_timestamp
+            if time_since_last < spam_filter_seconds:
+                print(f"   ⏳ Skipping: Trade already taken {time_since_last:.0f}s ago (Wait {spam_filter_seconds}s)")
                 return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
@@ -169,7 +214,7 @@ def strategy_1_logic(config, error_count=0):
             
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi'])}, 
+                      {"trend": current_trend, "adx": float(m5_adx), "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi']), "volume_ratio": float(df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma'])}, 
                       account_id=config['account'])
 
         # Send Order
@@ -201,8 +246,9 @@ def strategy_1_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• Trend: {current_trend}\n"
-                f"• RSI: {last_ha['rsi']:.1f}"
+                f"• Trend: {current_trend} (ADX: {m5_adx:.1f})\n"
+                f"• RSI: {last_ha['rsi']:.1f}\n"
+                f"• Volume: {df_m1.iloc[-1]['tick_volume']:.0f} ({df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x avg)"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0 # Reset error count
