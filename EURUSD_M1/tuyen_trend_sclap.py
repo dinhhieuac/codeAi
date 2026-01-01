@@ -138,6 +138,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     - Số nến hồi tối đa: ≤ max_candles (default 30)
     - RSI hồi về vùng rsi_target_min - rsi_target_max (default 40-50)
     - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
+    - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng tăng chính
     
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
@@ -172,6 +173,36 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
         if min_rsi_during_pullback <= rsi_min_during_pullback:
             return False, None, None, f"RSI trong quá trình hồi ({min_rsi_during_pullback:.1f}) <= {rsi_min_during_pullback}"
     
+    # 3b. Kiểm tra: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
+    # Lấy ATR từ swing high (hoặc nến gần nhất có ATR)
+    atr_val = None
+    for i in range(swing_high_idx, max(0, swing_high_idx - 20), -1):
+        atr_val = df_m1.iloc[i].get('atr', None)
+        if pd.notna(atr_val):
+            break
+    
+    if atr_val is None or pd.isna(atr_val):
+        # Nếu không tìm thấy ATR, tính ATR từ df_m1
+        atr_series = calculate_atr(df_m1.iloc[max(0, swing_high_idx - 14):swing_high_idx + 1], period=14)
+        if len(atr_series) > 0:
+            atr_val = atr_series.iloc[-1]
+    
+    # ATR là bắt buộc để kiểm tra điều kiện này
+    if atr_val is None or pd.isna(atr_val):
+        return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến giảm"
+    
+    min_body_threshold = 1.2 * atr_val
+    # Kiểm tra từng nến trong pullback (từ swing high đến trước nến phá trendline)
+    # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
+    candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
+    
+    for idx, candle in candles_to_check.iterrows():
+        # Kiểm tra nến giảm (bearish: close < open)
+        if candle['close'] < candle['open']:
+            body_size = abs(candle['close'] - candle['open'])
+            if body_size >= min_body_threshold:
+                return False, None, None, f"Có nến giảm với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
+    
     # 4. Kiểm tra RSI hồi về vùng target (40-50) - kiểm tra nến cuối hoặc gần cuối
     last_rsi = pullback_candles.iloc[-1].get('rsi', None)
     if pd.notna(last_rsi):
@@ -202,6 +233,7 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     - Số nến hồi tối đa: ≤ max_candles (default 30)
     - RSI hồi về vùng rsi_target_min - rsi_target_max (default 50-60)
     - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
+    - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng giảm chính
     
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
@@ -235,6 +267,36 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
         max_rsi_during_pullback = pullback_rsi.max()
         if max_rsi_during_pullback >= rsi_max_during_pullback:
             return False, None, None, f"RSI trong quá trình hồi ({max_rsi_during_pullback:.1f}) >= {rsi_max_during_pullback}"
+    
+    # 3b. Kiểm tra: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
+    # Lấy ATR từ swing low (hoặc nến gần nhất có ATR)
+    atr_val = None
+    for i in range(swing_low_idx, max(0, swing_low_idx - 20), -1):
+        atr_val = df_m1.iloc[i].get('atr', None)
+        if pd.notna(atr_val):
+            break
+    
+    if atr_val is None or pd.isna(atr_val):
+        # Nếu không tìm thấy ATR, tính ATR từ df_m1
+        atr_series = calculate_atr(df_m1.iloc[max(0, swing_low_idx - 14):swing_low_idx + 1], period=14)
+        if len(atr_series) > 0:
+            atr_val = atr_series.iloc[-1]
+    
+    # ATR là bắt buộc để kiểm tra điều kiện này
+    if atr_val is None or pd.isna(atr_val):
+        return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến tăng"
+    
+    min_body_threshold = 1.2 * atr_val
+    # Kiểm tra từng nến trong pullback (từ swing low đến trước nến phá trendline)
+    # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
+    candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
+    
+    for idx, candle in candles_to_check.iterrows():
+        # Kiểm tra nến tăng (bullish: close > open)
+        if candle['close'] > candle['open']:
+            body_size = abs(candle['close'] - candle['open'])
+            if body_size >= min_body_threshold:
+                return False, None, None, f"Có nến tăng với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
     
     # 4. Kiểm tra RSI hồi về vùng target (50-60) - kiểm tra nến cuối hoặc gần cuối
     last_rsi = pullback_candles.iloc[-1].get('rsi', None)
@@ -607,11 +669,20 @@ def m1_scalp_logic(config, error_count=0):
             print(f"⚠️ Không thể lấy dữ liệu M1 cho {symbol}")
             return error_count, 0
 
+        # Fetch M5 data for RSI condition
+        df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 100)
+        if df_m5 is None:
+            print(f"⚠️ Không thể lấy dữ liệu M5 cho {symbol}")
+            return error_count, 0
+
         # --- 3. Calculate Indicators ---
         df_m1['ema50'] = calculate_ema(df_m1['close'], 50)
         df_m1['ema200'] = calculate_ema(df_m1['close'], 200)
         df_m1['atr'] = calculate_atr(df_m1, 14)
         df_m1['rsi'] = calculate_rsi(df_m1['close'], 14)
+        
+        # Calculate RSI(14) on M5
+        df_m5['rsi'] = calculate_rsi(df_m5['close'], 14)
         
         # Volume MA (10 candles)
         df_m1['vol_ma'] = df_m1['tick_volume'].rolling(window=10).mean()
@@ -673,6 +744,7 @@ def m1_scalp_logic(config, error_count=0):
         buy_dk4_ok = False
         buy_dk5_ok = False
         buy_dk6_ok = False  # Điều kiện 6: Không có Bearish Divergence
+        buy_dk7_ok = False  # Điều kiện 7: RSI(14)_M5 >= 55 và <= 65
         buy_fail_reason = ""
         
         # Track SELL conditions status
@@ -683,6 +755,7 @@ def m1_scalp_logic(config, error_count=0):
         sell_dk4_ok = False
         sell_dk5_ok = False
         sell_dk6_ok = False  # Điều kiện 6: Không có Bullish Divergence
+        sell_dk7_ok = False  # Điều kiện 7: RSI(14)_M5 >= 35 và <= 45
         sell_fail_reason = ""
         
         ema50_val = curr_candle['ema50']
@@ -771,8 +844,27 @@ def m1_scalp_logic(config, error_count=0):
                                 buy_dk6_ok = True
                                 log_details.append(f"   ✅ {bearish_div_msg}")
                                 
-                                # Tất cả điều kiện đã thỏa (bao gồm ATR và không có Bearish Divergence)
-                                if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok and buy_dk6_ok:
+                                # Điều kiện 7: RSI(14)_M5 >= 55 và <= 65
+                                log_details.append(f"\n🔍 [BUY] ĐK7: Kiểm tra RSI(14)_M5 >= 55 và <= 65")
+                                if len(df_m5) < 2:
+                                    log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
+                                    buy_fail_reason = "ĐK7: Không đủ dữ liệu M5"
+                                else:
+                                    rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
+                                    if pd.notna(rsi_m5):
+                                        rsi_m5_ok = 55 <= rsi_m5 <= 65
+                                        buy_dk7_ok = rsi_m5_ok
+                                        if rsi_m5_ok:
+                                            log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (55 ≤ {rsi_m5:.1f} ≤ 65)")
+                                        else:
+                                            log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 55-65)")
+                                            buy_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 55-65"
+                                    else:
+                                        log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
+                                        buy_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                
+                                # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bearish Divergence và RSI M5)
+                                if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok and buy_dk6_ok and buy_dk7_ok:
                                     signal_type = "BUY"
                                     reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
                                     current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
@@ -787,6 +879,9 @@ def m1_scalp_logic(config, error_count=0):
                                             buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                     elif not buy_dk6_ok:
                                         buy_fail_reason = f"ĐK6: {bearish_div_msg}"
+                                    elif not buy_dk7_ok:
+                                        # buy_fail_reason already set above
+                                        pass
         else:
             log_details.append(f"   ⏭️ [BUY] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -873,8 +968,27 @@ def m1_scalp_logic(config, error_count=0):
                                     sell_dk6_ok = True
                                     log_details.append(f"   ✅ {bullish_div_msg}")
                                     
-                                    # Tất cả điều kiện đã thỏa (bao gồm ATR và không có Bullish Divergence)
-                                    if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok and sell_dk6_ok:
+                                    # Điều kiện 7: RSI(14)_M5 >= 35 và <= 45
+                                    log_details.append(f"\n🔍 [SELL] ĐK7: Kiểm tra RSI(14)_M5 >= 35 và <= 45")
+                                    if len(df_m5) < 2:
+                                        log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
+                                        sell_fail_reason = "ĐK7: Không đủ dữ liệu M5"
+                                    else:
+                                        rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
+                                        if pd.notna(rsi_m5):
+                                            rsi_m5_ok = 35 <= rsi_m5 <= 45
+                                            sell_dk7_ok = rsi_m5_ok
+                                            if rsi_m5_ok:
+                                                log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (35 ≤ {rsi_m5:.1f} ≤ 45)")
+                                            else:
+                                                log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 35-45)")
+                                                sell_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 35-45"
+                                        else:
+                                            log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
+                                            sell_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                    
+                                    # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bullish Divergence và RSI M5)
+                                    if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok and sell_dk6_ok and sell_dk7_ok:
                                         signal_type = "SELL"
                                         reason = "M1_Scalp_SwingLow_Pullback_TrendlineBreak"
                                         current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
@@ -889,6 +1003,9 @@ def m1_scalp_logic(config, error_count=0):
                                                 sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                         elif not sell_dk6_ok:
                                             sell_fail_reason = f"ĐK6: {bullish_div_msg}"
+                                        elif not sell_dk7_ok:
+                                            # sell_fail_reason already set above
+                                            pass
             else:
                 log_details.append(f"   ⏭️ [SELL] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -930,6 +1047,8 @@ def m1_scalp_logic(config, error_count=0):
                                 print(f"      {'✅' if buy_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
                                 if buy_dk5_ok:
                                     print(f"      {'✅' if buy_dk6_ok else '❌'} ĐK6: Không có Bearish Divergence")
+                                    if buy_dk6_ok:
+                                        print(f"      {'✅' if buy_dk7_ok else '❌'} ĐK7: RSI(14)_M5 >= 55 và <= 65")
             if buy_fail_reason:
                 print(f"      💡 Lý do chính: {buy_fail_reason}")
             
@@ -948,19 +1067,26 @@ def m1_scalp_logic(config, error_count=0):
                                 print(f"      {'✅' if sell_dk5_ok else '❌'} ĐK5: Nến phá vỡ trendline")
                                 if sell_dk5_ok:
                                     print(f"      {'✅' if sell_dk6_ok else '❌'} ĐK6: Không có Bullish Divergence")
+                                    if sell_dk6_ok:
+                                        print(f"      {'✅' if sell_dk7_ok else '❌'} ĐK7: RSI(14)_M5 >= 35 và <= 45")
             if sell_fail_reason:
                 print(f"      💡 Lý do chính: {sell_fail_reason}")
             
             # Current indicators
             current_rsi_display = curr_candle.get('rsi', 0)
+            rsi_m5_display = df_m5['rsi'].iloc[-2] if len(df_m5) >= 2 else None
             print(f"\n📈 [Indicators Hiện Tại]")
             print(f"   💱 Price: {curr_candle['close']:.5f}")
             print(f"   📊 EMA50: {ema50_val:.5f}")
             print(f"   📊 EMA200: {ema200_val:.5f}")
             if pd.notna(current_rsi_display):
-                print(f"   📊 RSI: {current_rsi_display:.1f}")
+                print(f"   📊 RSI(M1): {current_rsi_display:.1f}")
             else:
-                print(f"   📊 RSI: N/A")
+                print(f"   📊 RSI(M1): N/A")
+            if pd.notna(rsi_m5_display):
+                print(f"   📊 RSI(14)_M5: {rsi_m5_display:.1f}")
+            else:
+                print(f"   📊 RSI(14)_M5: N/A")
             if pd.notna(atr_val):
                 print(f"   📊 ATR: {atr_val:.5f}")
             else:
@@ -1117,7 +1243,10 @@ def m1_scalp_logic(config, error_count=0):
             msg_parts.append(f"   • EMA200: {ema200_val:.5f}\n")
             current_rsi_val = curr_candle.get('rsi', 0)
             if pd.notna(current_rsi_val):
-                msg_parts.append(f"   • RSI: {current_rsi_val:.1f}\n")
+                msg_parts.append(f"   • RSI(M1): {current_rsi_val:.1f}\n")
+            rsi_m5_val = df_m5['rsi'].iloc[-2] if len(df_m5) >= 2 else None
+            if pd.notna(rsi_m5_val):
+                msg_parts.append(f"   • RSI(14)_M5: {rsi_m5_val:.1f}\n")
             msg_parts.append(f"   • ATR: {atr_val:.5f}\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"{'='*50}\n")
@@ -1178,6 +1307,7 @@ def log_initial_conditions(config):
     print("      - Số nến hồi tối đa: ≤ 30 nến")
     print("      - RSI hồi về vùng 40 – 50")
     print("      - Trong quá trình hồi: RSI > 32")
+    print("      - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1")
     print("      - Giá không phá cấu trúc xu hướng tăng chính")
     print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
     print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
@@ -1187,6 +1317,8 @@ def log_initial_conditions(config):
     print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
     print("   ✅ Điều kiện 6: Không có Bearish Divergence")
     print("      - Giá không tạo Higher High với RSI Lower High")
+    print("   ✅ Điều kiện 7: RSI(14)_M5 >= 55 và <= 65")
+    print("      - RSI trên khung thời gian M5 phải nằm trong khoảng 55-65")
     print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
     
     # SELL Strategy Conditions
@@ -1198,6 +1330,7 @@ def log_initial_conditions(config):
     print("      - Số nến hồi tối đa: ≤ 30 nến")
     print("      - RSI hồi về vùng 50 – 60")
     print("      - Trong quá trình hồi: RSI < 68")
+    print("      - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1")
     print("      - Giá không phá cấu trúc xu hướng giảm chính")
     print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
     print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
@@ -1207,6 +1340,8 @@ def log_initial_conditions(config):
     print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
     print("   ✅ Điều kiện 6: Không có Bullish Divergence")
     print("      - Giá không tạo Lower Low với RSI Higher Low")
+    print("   ✅ Điều kiện 7: RSI(14)_M5 >= 35 và <= 45")
+    print("      - RSI trên khung thời gian M5 phải nằm trong khoảng 35-45")
     print("   🎯 Entry: Giá đóng cửa của nến phá vỡ trendline")
     
     # SL/TP Calculation
