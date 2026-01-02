@@ -1393,11 +1393,13 @@ def m1_scalp_logic(config, error_count=0):
         if not mt5.terminal_info():
             error_msg = "MT5 Terminal không kết nối"
             print(f"❌ {error_msg}")
-            send_telegram(
+            telegram_sent = send_telegram(
                 f"❌ <b>M1 Scalp Bot - Lỗi</b>\n{error_msg}",
                 config.get('telegram_token'),
                 config.get('telegram_chat_id')
             )
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
             return error_count + 1, 0
         
         if symbol_info.visible == False:
@@ -1430,7 +1432,7 @@ def m1_scalp_logic(config, error_count=0):
             error_msg = f"order_check() không hợp lệ"
             error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
             print(f"   ❌ {error_msg}: {error_detail}")
-            send_telegram(
+            telegram_sent = send_telegram(
                 f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 Symbol: {symbol} ({signal_type})\n"
                 f"❌ Lỗi: {error_msg}\n"
@@ -1438,6 +1440,8 @@ def m1_scalp_logic(config, error_count=0):
                 config.get('telegram_token'),
                 config.get('telegram_chat_id')
             )
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
             return error_count + 1, check_result.retcode
         else:
             print(f"   ✅ Request hợp lệ")
@@ -1485,13 +1489,15 @@ def m1_scalp_logic(config, error_count=0):
             msg_parts.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             
             msg = "".join(msg_parts)
-            send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+            telegram_sent = send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram. Kiểm tra token và chat_id trong config.")
             return 0, 0
         else:
             error_msg = f"Order Failed: Retcode {result.retcode}"
             error_detail = f"{result.comment if hasattr(result, 'comment') else 'Unknown error'}"
             print(f"❌ {error_msg} - {error_detail}")
-            send_telegram(
+            telegram_sent = send_telegram(
                 f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 Symbol: {symbol} ({signal_type})\n"
                 f"💵 Entry: {current_price:.5f}\n"
@@ -1501,6 +1507,8 @@ def m1_scalp_logic(config, error_count=0):
                 config.get('telegram_token'),
                 config.get('telegram_chat_id')
             )
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
             return error_count + 1, result.retcode
         
     except Exception as e:
@@ -1657,6 +1665,15 @@ if __name__ == "__main__":
             if not mt5.terminal_info():
                 print("❌ MT5 Terminal không còn kết nối sau khi khởi động")
                 sys.exit(1)
+            
+            # Test Telegram connection
+            print("\n📤 [Telegram] Đang kiểm tra kết nối Telegram...")
+            test_msg = f"✅ <b>M1 Scalp Bot - XAUUSD</b>\n\nBot đã khởi động thành công!\n💱 Symbol: {config.get('symbol', 'N/A')}\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            telegram_ok = send_telegram(test_msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+            if telegram_ok:
+                print("✅ [Telegram] Kết nối Telegram thành công!")
+            else:
+                print("⚠️ [Telegram] Không thể gửi thông báo test. Kiểm tra lại token và chat_id trong config.")
             
             # Log tất cả điều kiện trước khi bắt đầu
             log_initial_conditions(config)

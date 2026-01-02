@@ -45,20 +45,42 @@ def connect_mt5(config):
         return False
 
 def send_telegram(message, token, chat_id):
-    """Send message to Telegram"""
+    """Send message to Telegram with detailed logging"""
     if not token or not chat_id:
-        return
+        print(f"⚠️ Telegram: Missing token or chat_id (token={'✅' if token else '❌'}, chat_id={'✅' if chat_id else '❌'})")
+        return False
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
-        "chat_id": chat_id,
+        "chat_id": str(chat_id).strip(),
         "text": message,
         "parse_mode": "HTML"
     }
+    
     try:
-        requests.post(url, data=payload, timeout=5)
+        print(f"📤 [Telegram] Đang gửi thông báo...")
+        response = requests.post(url, json=payload, timeout=10)
+        result = response.json()
+        
+        if result.get('ok'):
+            print(f"✅ [Telegram] Đã gửi thông báo thành công")
+            return True
+        else:
+            error_code = result.get('error_code', 'Unknown')
+            error_desc = result.get('description', 'Unknown error')
+            print(f"❌ [Telegram] Gửi thất bại: {error_code} - {error_desc}")
+            return False
+    except requests.exceptions.Timeout:
+        print(f"❌ [Telegram] Timeout khi gửi thông báo")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"❌ [Telegram] Lỗi kết nối: {e}")
+        return False
     except Exception as e:
-        print(f"⚠️ Telegram error: {e}")
+        print(f"❌ [Telegram] Lỗi không xác định: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def get_data(symbol, timeframe, n=100):
     """Fetch recent candles from MT5"""
