@@ -163,12 +163,50 @@ def is_doji(row, threshold=0.1):
     rng = row['high'] - row['low']
     return body <= (rng * threshold) if rng > 0 else True
 
+def get_pip_size(symbol, symbol_info=None):
+    """
+    Get pip size for a symbol (for calculating pips from points)
+    EURUSD: 1 pip = 0.0001 (10 points)
+    XAUUSD: 1 pip = 0.1 (10 points if point=0.01, or 1 point if point=0.1)
+    BTCUSD: 1 pip = varies (usually 0.1 or 1.0)
+    """
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
+    
+    if symbol_info:
+        point = getattr(symbol_info, 'point', 0.0001)
+        symbol_upper = symbol.upper()
+        
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            # XAUUSD: pip thường là 0.1 (10 points nếu point=0.01)
+            pip_size = 0.1 if point < 0.01 else point
+        elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+            # BTCUSD: pip thường là 1.0 hoặc 0.1 tùy broker
+            pip_size = 1.0 if point >= 0.1 else 0.1
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001  # Standard forex
+        
+        return pip_size
+    
+    # Fallback
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 0.1
+    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        return 1.0
+    elif 'JPY' in symbol_upper:
+        return 0.01
+    else:
+        return 0.0001
+
 def manage_position(order_ticket, symbol, magic, config):
     """
     Manage an open position: Breakeven & Trailing SL
-    Defaults:
-    - Breakeven Trigger: 10 pips (100 points) -> Move SL to Open Price
-    - Trailing Trigger: 30 pips (300 points) -> Trail by 20 pips (200 points)
+    - Breakeven Trigger: 10 pips -> Move SL to Open Price
+    - Trailing Trigger: 30 pips -> Trail by 20 pips
+    Tính toán dựa trên pip size của từng symbol (EURUSD, XAUUSD, BTCUSD)
     """
     try:
         positions = mt5.positions_get(ticket=int(order_ticket))
@@ -176,20 +214,28 @@ def manage_position(order_ticket, symbol, magic, config):
             return
 
         pos = positions[0]
-        current_price = mt5.symbol_info_tick(symbol).bid if pos.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
-        point = mt5.symbol_info(symbol).point
-        
-        # Calculate Profit in Points
-        if pos.type == mt5.ORDER_TYPE_BUY:
-            profit_points = (current_price - pos.price_open) / point
-        else:
-            profit_points = (pos.price_open - current_price) / point
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            return
             
+        current_price = mt5.symbol_info_tick(symbol).bid if pos.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
+        point = symbol_info.point
+        pip_size = get_pip_size(symbol, symbol_info)
+        
+        # Calculate Profit in Pips (not points)
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            profit_price = current_price - pos.price_open
+        else:
+            profit_price = pos.price_open - current_price
+        
+        profit_pips = profit_price / pip_size
+        
         request = None
         
-        # 1. Quick Breakeven (100 points / 10 pips)
+        # 1. Quick Breakeven (10 pips)
         # Move SL to Entry if not already there
-        if profit_points > 100:
+        breakeven_trigger_pips = 10.0
+        if profit_pips > breakeven_trigger_pips:
             # Check if SL is already at or better than breakeven
             is_breakeven = False
             if pos.type == mt5.ORDER_TYPE_BUY:
@@ -198,19 +244,21 @@ def manage_position(order_ticket, symbol, magic, config):
                 if pos.sl > 0 and pos.sl <= pos.price_open: is_breakeven = True
             
             if not is_breakeven:
-                 request = {
+                request = {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "position": pos.ticket,
                     "symbol": symbol,
                     "sl": pos.price_open,
                     "tp": pos.tp
                 }
-                 print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket}")
+                print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({pos.price_open:.5f}) | Profit: {profit_pips:.1f} pips")
 
-        # 2. Trailing Stop (Trigger > 300 points)
-        # Trail distance: 200 points
-        if request is None and profit_points > 300:
-            trail_dist = 200 * point
+        # 2. Trailing Stop (Trigger > 30 pips, Trail by 20 pips)
+        trailing_trigger_pips = 30.0
+        trailing_distance_pips = 20.0
+        
+        if request is None and profit_pips > trailing_trigger_pips:
+            trail_dist = trailing_distance_pips * pip_size
             new_sl = 0.0
             
             if pos.type == mt5.ORDER_TYPE_BUY:
@@ -237,15 +285,25 @@ def manage_position(order_ticket, symbol, magic, config):
                     }
             
             if request:
-                print(f"🏃 Trailing SL for {pos.ticket}: {pos.sl:.2f} -> {new_sl:.2f}")
+                symbol_upper = symbol.upper()
+                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                    print(f"🏃 [Trailing] Ticket {pos.ticket}: SL {pos.sl:.2f} -> {new_sl:.2f} | Profit: {profit_pips:.1f} pips")
+                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                    print(f"🏃 [Trailing] Ticket {pos.ticket}: SL {pos.sl:.2f} -> {new_sl:.2f} | Profit: {profit_pips:.1f} pips")
+                else:
+                    print(f"🏃 [Trailing] Ticket {pos.ticket}: SL {pos.sl:.5f} -> {new_sl:.5f} | Profit: {profit_pips:.1f} pips")
 
         if request:
-             res = mt5.order_send(request)
-             if res.retcode != mt5.TRADE_RETCODE_DONE:
-                 print(f"⚠️ Failed to update SL/TP: {res.comment}")
+            res = mt5.order_send(request)
+            if res.retcode != mt5.TRADE_RETCODE_DONE:
+                print(f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}")
+            else:
+                print(f"✅ Successfully updated SL/TP for {pos.ticket}")
 
     except Exception as e:
         print(f"⚠️ Error managing position {order_ticket}: {e}")
+        import traceback
+        traceback.print_exc()
 
 def get_mt5_error_message(error_code):
     """
