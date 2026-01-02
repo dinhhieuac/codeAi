@@ -23,6 +23,9 @@
     "_comment_use_risk_based_lot": "true = Tính lot size tự động theo risk management. false = Dùng volume cố định từ config",
     "use_risk_based_lot": true,
     
+    "_comment_min_atr": "ATR threshold tối thiểu (tự động theo symbol nếu không set). XAUUSD: 0.1 USD, BTCUSD: 50.0 USD, EURUSD: 0.00011. Có thể override bằng cách set giá trị này",
+    "min_atr": null,
+    
     "_comment_magic": "Magic number để phân biệt lệnh của bot này với bot khác",
     "magic": 400007,
     

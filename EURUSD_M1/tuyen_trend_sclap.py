@@ -27,6 +27,45 @@ def calculate_atr(df, period=14):
     df['atr'] = df['tr'].rolling(window=period).mean()
     return df['atr']
 
+def get_min_atr_threshold(symbol, config=None):
+    """
+    Get minimum ATR threshold based on symbol type
+    Returns appropriate ATR threshold for different symbols
+    
+    Args:
+        symbol: Trading symbol (EURUSD, XAUUSD, BTCUSD, etc.)
+        config: Config dict (optional, to override with custom value)
+    
+    Returns:
+        min_atr: Minimum ATR threshold value
+    """
+    # Check if custom threshold is provided in config
+    if config is not None:
+        custom_min_atr = config.get('min_atr', None)
+        if custom_min_atr is not None:
+            return custom_min_atr
+    
+    symbol_upper = symbol.upper()
+    
+    # EURUSD and similar forex pairs: 0.00011 (1.1 pips)
+    if 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper or 'USDJPY' in symbol_upper:
+        return 0.00011
+    
+    # XAUUSD (Gold): Typically ATR is 0.1-2.0 USD, threshold ~0.1 (equivalent to ~1 pip for gold)
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 0.1
+    
+    # BTCUSD: Typically ATR is 50-500 USD, threshold ~50 (equivalent to ~0.5% of typical BTC price ~10000)
+    if 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        return 50.0
+    
+    # ETHUSD: Similar to BTC but smaller scale
+    if 'ETHUSD' in symbol_upper or 'ETH' in symbol_upper:
+        return 5.0
+    
+    # Default: Use EURUSD threshold
+    return 0.00011
+
 def get_pip_value_per_lot(symbol, symbol_info=None):
     """
     Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
@@ -795,7 +834,7 @@ def m1_scalp_logic(config, error_count=0):
         
         # --- 4. Check ATR Condition (Điều kiện 4) ---
         atr_val = curr_candle['atr']
-        min_atr = 0.00011  # ATR 14 ≥ 0.00011
+        min_atr = get_min_atr_threshold(symbol, config)  # Dynamic ATR threshold based on symbol
         atr_ok = pd.notna(atr_val) and atr_val >= min_atr
         
         signal_type = None
@@ -807,14 +846,28 @@ def m1_scalp_logic(config, error_count=0):
         log_details.append(f"🔍 [ĐIỀU KIỆN CHUNG] Kiểm tra ATR...")
         log_details.append(f"{'='*80}")
         if atr_ok:
-            atr_pips = atr_val / 0.0001
-            log_details.append(f"✅ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= {min_atr:.5f}")
+            # Format ATR display based on symbol type
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                log_details.append(f"✅ ĐK4 (Chung): ATR ({atr_val:.2f} USD) >= {min_atr:.2f} USD")
+            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                log_details.append(f"✅ ĐK4 (Chung): ATR ({atr_val:.2f} USD) >= {min_atr:.2f} USD")
+            else:
+                atr_pips = atr_val / 0.0001
+                log_details.append(f"✅ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) >= {min_atr:.5f}")
         else:
             if pd.isna(atr_val):
                 log_details.append(f"❌ ĐK4 (Chung): ATR không có giá trị (NaN)")
             else:
-                atr_pips = atr_val / 0.0001
-                log_details.append(f"❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) < {min_atr:.5f}")
+                # Format ATR display based on symbol type
+                symbol_upper = symbol.upper()
+                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                    log_details.append(f"❌ ĐK4 (Chung): ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD")
+                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                    log_details.append(f"❌ ĐK4 (Chung): ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD")
+                else:
+                    atr_pips = atr_val / 0.0001
+                    log_details.append(f"❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) < {min_atr:.5f}")
         
         # Nếu ATR không đạt, vẫn tiếp tục kiểm tra các điều kiện khác để log đầy đủ
         # nhưng sẽ không có signal
@@ -903,7 +956,13 @@ def m1_scalp_logic(config, error_count=0):
                         buy_dk4_ok = atr_ok
                         if not buy_dk4_ok:
                             if pd.notna(atr_val):
-                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                symbol_upper = symbol.upper()
+                                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                else:
+                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                             else:
                                 buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                         
@@ -959,7 +1018,13 @@ def m1_scalp_logic(config, error_count=0):
                                 else:
                                     if not buy_dk4_ok:
                                         if pd.notna(atr_val):
-                                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                            symbol_upper = symbol.upper()
+                                            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                            else:
+                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                         else:
                                             buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                     elif not buy_dk6_ok:
@@ -1027,7 +1092,13 @@ def m1_scalp_logic(config, error_count=0):
                             sell_dk4_ok = atr_ok
                             if not sell_dk4_ok:
                                 if pd.notna(atr_val):
-                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                    symbol_upper = symbol.upper()
+                                    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                    else:
+                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                 else:
                                     sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                             
@@ -1083,7 +1154,13 @@ def m1_scalp_logic(config, error_count=0):
                                     else:
                                         if not sell_dk4_ok:
                                             if pd.notna(atr_val):
-                                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < 0.00011"
+                                                symbol_upper = symbol.upper()
+                                                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                else:
+                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                             else:
                                                 sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                         elif not sell_dk6_ok:
@@ -1112,10 +1189,16 @@ def m1_scalp_logic(config, error_count=0):
             # Check ATR first (common condition)
             if not atr_ok:
                 if pd.notna(atr_val):
-                    atr_pips = atr_val / 0.0001
-                    print(f"   ❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) < {min_atr:.5f}")
+                    symbol_upper = symbol.upper()
+                    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                        print(f"   ❌ ĐK4 (Chung): ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD")
+                    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                        print(f"   ❌ ĐK4 (Chung): ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD")
+                    else:
+                        atr_pips = atr_val / 0.0001
+                        print(f"   ❌ ĐK4 (Chung): ATR ({atr_pips:.1f} pips = {atr_val:.5f}) < {min_atr:.5f}")
                 else:
-                    print(f"   ❌ ĐK4 (Chung): ATR (N/A pips = N/A) < {min_atr:.5f}")
+                    print(f"   ❌ ĐK4 (Chung): ATR (N/A) < {min_atr}")
             
             # BUY Summary
             print(f"\n   🔴 [BUY] Trạng thái điều kiện:")
@@ -1433,8 +1516,15 @@ def log_initial_conditions(config):
     
     # ATR Condition
     print("\n📊 [ĐIỀU KIỆN ATR]")
-    min_atr = 0.00011
-    print(f"   ✅ ATR 14 >= {min_atr} (1.1 pips)")
+    symbol = config.get('symbol', 'EURUSD')
+    min_atr = get_min_atr_threshold(symbol, config)
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        print(f"   ✅ ATR 14 >= {min_atr} USD (cho XAUUSD)")
+    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        print(f"   ✅ ATR 14 >= {min_atr} USD (cho BTCUSD)")
+    else:
+        print(f"   ✅ ATR 14 >= {min_atr} (1.1 pips cho Forex)")
     print(f"   ⚠️ Nếu ATR < {min_atr}, bot sẽ không có signal")
     
     # BUY Strategy Conditions
@@ -1449,7 +1539,15 @@ def log_initial_conditions(config):
     print("      - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1")
     print("      - Giá không phá cấu trúc xu hướng tăng chính")
     print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
-    print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
+    symbol = config.get('symbol', 'EURUSD')
+    min_atr = get_min_atr_threshold(symbol, config)
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho XAUUSD)")
+    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho BTCUSD)")
+    else:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
     print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
     print("      - Giá đóng cửa ≥ EMA 50")
@@ -1472,7 +1570,15 @@ def log_initial_conditions(config):
     print("      - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1")
     print("      - Giá không phá cấu trúc xu hướng giảm chính")
     print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
-    print("   ✅ Điều kiện 4: ATR 14 >= 0.00011")
+    symbol = config.get('symbol', 'EURUSD')
+    min_atr = get_min_atr_threshold(symbol, config)
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho XAUUSD)")
+    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho BTCUSD)")
+    else:
+        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
     print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
     print("      - Giá đóng cửa ≤ EMA 50")
