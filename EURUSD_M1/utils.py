@@ -4,6 +4,7 @@ import json
 import requests
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 def load_config(config_path):
     """Load configuration from JSON file"""
@@ -252,6 +253,25 @@ def manage_position(order_ticket, symbol, magic, config):
                     "tp": pos.tp
                 }
                 print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({pos.price_open:.5f}) | Profit: {profit_pips:.1f} pips")
+                
+                # Send Telegram notification for Breakeven
+                telegram_token = config.get('telegram_token')
+                telegram_chat_id = config.get('telegram_chat_id')
+                if telegram_token and telegram_chat_id:
+                    signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                    breakeven_msg = (
+                        f"🛡️ <b>Breakeven Activated</b>\n"
+                        f"{'='*50}\n"
+                        f"🆔 <b>Ticket:</b> {pos.ticket}\n"
+                        f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
+                        f"💵 <b>Entry:</b> {pos.price_open:.5f}\n"
+                        f"🛑 <b>New SL:</b> {pos.price_open:.5f} (Entry Price)\n"
+                        f"📊 <b>Profit:</b> {profit_pips:.1f} pips\n"
+                        f"📈 <b>Volume:</b> {pos.volume:.2f} lot\n"
+                        f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"{'='*50}"
+                    )
+                    send_telegram(breakeven_msg, telegram_token, telegram_chat_id)
 
         # 2. Trailing Stop (Trigger > 30 pips, Trail by 20 pips)
         trailing_trigger_pips = 30.0
@@ -296,14 +316,68 @@ def manage_position(order_ticket, symbol, magic, config):
         if request:
             res = mt5.order_send(request)
             if res.retcode != mt5.TRADE_RETCODE_DONE:
-                print(f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}")
+                error_msg = f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}"
+                print(error_msg)
+                
+                # Send Telegram notification for error
+                telegram_token = config.get('telegram_token')
+                telegram_chat_id = config.get('telegram_chat_id')
+                if telegram_token and telegram_chat_id:
+                    error_telegram_msg = (
+                        f"❌ <b>SL/TP Update Failed</b>\n"
+                        f"{'='*50}\n"
+                        f"🆔 <b>Ticket:</b> {pos.ticket}\n"
+                        f"💱 <b>Symbol:</b> {symbol}\n"
+                        f"❌ <b>Error:</b> {res.comment}\n"
+                        f"📝 <b>Retcode:</b> {res.retcode}\n"
+                        f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"{'='*50}"
+                    )
+                    send_telegram(error_telegram_msg, telegram_token, telegram_chat_id)
             else:
                 print(f"✅ Successfully updated SL/TP for {pos.ticket}")
 
     except Exception as e:
-        print(f"⚠️ Error managing position {order_ticket}: {e}")
+        error_msg = f"⚠️ Error managing position {order_ticket}: {e}"
+        print(error_msg)
         import traceback
         traceback.print_exc()
+        
+        # Send Telegram notification for exception
+        try:
+            telegram_token = config.get('telegram_token')
+            telegram_chat_id = config.get('telegram_chat_id')
+            if telegram_token and telegram_chat_id:
+                error_telegram_msg = (
+                    f"❌ <b>Position Management Error</b>\n"
+                    f"{'='*50}\n"
+                    f"🆔 <b>Ticket:</b> {order_ticket}\n"
+                    f"💱 <b>Symbol:</b> {symbol}\n"
+                    f"❌ <b>Error:</b> {str(e)}\n"
+                    f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"{'='*50}"
+                )
+                send_telegram(error_telegram_msg, telegram_token, telegram_chat_id)
+        except Exception as telegram_error:
+            print(f"⚠️ Failed to send Telegram error notification: {telegram_error}")
+        
+        # Send Telegram notification for exception
+        try:
+            telegram_token = config.get('telegram_token')
+            telegram_chat_id = config.get('telegram_chat_id')
+            if telegram_token and telegram_chat_id:
+                error_telegram_msg = (
+                    f"❌ <b>Position Management Error</b>\n"
+                    f"{'='*50}\n"
+                    f"🆔 <b>Ticket:</b> {order_ticket}\n"
+                    f"💱 <b>Symbol:</b> {symbol}\n"
+                    f"❌ <b>Error:</b> {str(e)}\n"
+                    f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"{'='*50}"
+                )
+                send_telegram(error_telegram_msg, telegram_token, telegram_chat_id)
+        except Exception as telegram_error:
+            print(f"⚠️ Failed to send Telegram error notification: {telegram_error}")
 
 def get_mt5_error_message(error_code):
     """
