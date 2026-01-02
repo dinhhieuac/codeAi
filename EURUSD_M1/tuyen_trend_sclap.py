@@ -27,6 +27,91 @@ def calculate_atr(df, period=14):
     df['atr'] = df['tr'].rolling(window=period).mean()
     return df['atr']
 
+def get_pip_value_per_lot(symbol, symbol_info=None):
+    """
+    Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
+    EURUSD: 1 pip = $10 per lot (standard)
+    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
+    """
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
+    
+    if symbol_info:
+        # Lấy từ MT5 symbol_info (chính xác nhất)
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        point = getattr(symbol_info, 'point', 0.0001)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            pip_size = 0.1 if point < 0.01 else point
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001
+        
+        # Tính pip value từ tick_value và tick_size
+        if tick_value is not None and tick_size is not None and tick_size > 0:
+            pip_value = tick_value * (pip_size / tick_size)
+            if pip_value > 0:
+                return pip_value
+        
+        # Fallback: tính từ contract_size
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            if contract_size == 100:
+                return 1.0
+            else:
+                return contract_size / 100
+        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+            return 10.0
+        else:
+            return 10.0
+    
+    # Default fallback nếu không lấy được từ MT5
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    else:
+        return 10.0
+
+def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info=None):
+    """
+    Calculate lot size based on risk management formula:
+    Lot size = RiskMoney / (SL pips × Pip Value per Lot)
+    
+    Args:
+        account_balance: Account balance in USD
+        risk_percent: Risk percentage (e.g., 1.0 for 1%)
+        sl_pips: Stop Loss in pips
+        symbol: Trading symbol (EURUSD, XAUUSD, etc.)
+        symbol_info: MT5 symbol info (optional)
+    
+    Returns:
+        lot_size: Calculated lot size
+    """
+    # Calculate risk money
+    risk_money = account_balance * (risk_percent / 100.0)
+    
+    # Get pip value per lot (từ MT5 nếu có)
+    pip_value_per_lot = get_pip_value_per_lot(symbol, symbol_info)
+    
+    # Calculate lot size
+    if sl_pips > 0 and pip_value_per_lot > 0:
+        lot_size = risk_money / (sl_pips * pip_value_per_lot)
+    else:
+        lot_size = 0.01  # Default minimum
+    
+    # Round to 2 decimal places (standard lot step is 0.01)
+    lot_size = round(lot_size, 2)
+    
+    # Ensure minimum lot size
+    if lot_size < 0.01:
+        lot_size = 0.01
+    
+    return lot_size
+
 def is_bullish_engulfing(prev_candle, curr_candle):
     """
     Bullish Engulfing Pattern:
@@ -1118,6 +1203,50 @@ def m1_scalp_logic(config, error_count=0):
         sl = round(sl, digits)
         tp = round(tp, digits)
         
+        # --- 8b. Calculate lot size based on risk management (if enabled) ---
+        use_risk_based_lot = config.get('use_risk_based_lot', False)  # Default: OFF
+        if use_risk_based_lot:
+            # Get account balance
+            account_info = mt5.account_info()
+            if account_info is None:
+                print("   ⚠️ Không thể lấy account balance, sử dụng volume từ config")
+            else:
+                account_balance = account_info.balance
+                risk_percent = config.get('risk_percent', 1.0)  # Default 1%
+                
+                # Calculate SL in pips
+                # Determine pip size
+                symbol_upper = symbol.upper()
+                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                    pip_size = 0.1 if point < 0.01 else point
+                elif 'JPY' in symbol_upper:
+                    pip_size = 0.01
+                else:
+                    pip_size = 0.0001
+                
+                sl_pips = abs(sl_distance / pip_size)
+                
+                # Calculate lot size
+                calculated_volume = calculate_lot_size(
+                    account_balance, 
+                    risk_percent, 
+                    sl_pips, 
+                    symbol, 
+                    symbol_info
+                )
+                
+                # Use calculated volume if valid
+                if calculated_volume > 0:
+                    volume = calculated_volume
+                    log_details.append(f"\n💰 [Risk-Based Lot Calculation]")
+                    log_details.append(f"   Account Balance: ${account_balance:.2f}")
+                    log_details.append(f"   Risk Percent: {risk_percent}%")
+                    log_details.append(f"   Risk Money: ${account_balance * (risk_percent / 100.0):.2f}")
+                    log_details.append(f"   SL Distance: {sl_distance:.5f} ({sl_pips:.1f} pips)")
+                    log_details.append(f"   Calculated Lot: {volume:.2f}")
+                else:
+                    print("   ⚠️ Calculated lot size invalid, sử dụng volume từ config")
+        
         # Get current market price for order execution
         tick = mt5.symbol_info_tick(symbol)
         if signal_type == "BUY":
@@ -1230,7 +1359,12 @@ def m1_scalp_logic(config, error_count=0):
             msg_parts.append(f"💵 <b>Entry Price:</b> {current_price:.5f} (Close của nến phá vỡ)\n")
             msg_parts.append(f"🛑 <b>SL:</b> {sl:.5f} (2ATR + 6pt = {sl_distance:.5f})\n")
             msg_parts.append(f"🎯 <b>TP:</b> {tp:.5f} (2SL = {tp_distance:.5f})\n")
-            msg_parts.append(f"📊 <b>Volume:</b> {volume:.2f} lot\n")
+            msg_parts.append(f"📊 <b>Volume:</b> {volume:.2f} lot")
+            use_risk_based_lot = config.get('use_risk_based_lot', False)
+            if use_risk_based_lot:
+                msg_parts.append(f" (Risk-Based)\n")
+            else:
+                msg_parts.append(f"\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"📈 <b>Điều Kiện Đã Thỏa:</b>\n")
             for detail in log_details:
@@ -1289,6 +1423,11 @@ def log_initial_conditions(config):
     print("\n🔧 [CẤU HÌNH CƠ BẢN]")
     print(f"   💱 Symbol: {config.get('symbol', 'N/A')}")
     print(f"   📊 Volume: {config.get('volume', 'N/A')} lot")
+    use_risk_based_lot = config.get('use_risk_based_lot', False)
+    print(f"   💰 Use Risk-Based Lot: {use_risk_based_lot} (Default: OFF)")
+    if use_risk_based_lot:
+        risk_percent = config.get('risk_percent', 1.0)
+        print(f"   📊 Risk Percent: {risk_percent}%")
     print(f"   🆔 Magic Number: {config.get('magic', 'N/A')}")
     print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
     
