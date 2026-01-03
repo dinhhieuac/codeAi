@@ -57,7 +57,7 @@ def get_min_atr_threshold(symbol, config=None):
     
     # BTCUSD: Typically ATR is 50-500 USD, threshold ~50 (equivalent to ~0.5% of typical BTC price ~10000)
     if 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-        return 50.0
+        return 25.0
     
     # ETHUSD: Similar to BTC but smaller scale
     if 'ETHUSD' in symbol_upper or 'ETH' in symbol_upper:
