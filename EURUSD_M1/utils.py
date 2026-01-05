@@ -290,22 +290,34 @@ def manage_position(order_ticket, symbol, magic, config):
         # Move SL to Entry if not already there
         breakeven_trigger_pips = 10.0
         if profit_pips > breakeven_trigger_pips:
-            # Check if SL is already at or better than breakeven
+            # Normalize values to symbol digits for comparison
+            digits = symbol_info.digits
+            normalized_entry = round(pos.price_open, digits)
+            normalized_current_sl = round(pos.sl, digits) if pos.sl > 0 else 0
+            
+            # Check if SL is already at or better than breakeven (with tolerance for floating point)
             is_breakeven = False
+            tolerance = point * 0.5  # Half a point tolerance for comparison
             if pos.type == mt5.ORDER_TYPE_BUY:
-                if pos.sl >= pos.price_open: is_breakeven = True
+                if pos.sl > 0 and (pos.sl >= pos.price_open - tolerance):
+                    is_breakeven = True
             else:
-                if pos.sl > 0 and pos.sl <= pos.price_open: is_breakeven = True
+                if pos.sl > 0 and (pos.sl <= pos.price_open + tolerance):
+                    is_breakeven = True
             
             if not is_breakeven:
+                # Normalize SL and TP to symbol digits before sending
+                new_sl = round(pos.price_open, digits)
+                new_tp = round(pos.tp, digits) if pos.tp > 0 else 0
+                
                 request = {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "position": pos.ticket,
                     "symbol": symbol,
-                    "sl": pos.price_open,
-                    "tp": pos.tp
+                    "sl": new_sl,
+                    "tp": new_tp
                 }
-                print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({pos.price_open:.5f}) | Profit: {profit_pips:.1f} pips")
+                print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({new_sl:.5f}) | Profit: {profit_pips:.1f} pips")
                 
                 # Log to file: BREAKEVEN
                 signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
@@ -342,28 +354,33 @@ def manage_position(order_ticket, symbol, magic, config):
         if request is None and profit_pips > trailing_trigger_pips:
             trail_dist = trailing_distance_pips * pip_size
             new_sl = 0.0
+            digits = symbol_info.digits
             
             if pos.type == mt5.ORDER_TYPE_BUY:
                 new_sl = current_price - trail_dist
-                # Only update if new_sl is higher than current SL
-                if new_sl > pos.sl:
+                new_sl = round(new_sl, digits)
+                # Only update if new_sl is higher than current SL (with tolerance)
+                tolerance = point * 0.5
+                if pos.sl == 0 or new_sl > pos.sl + tolerance:
                     request = {
                         "action": mt5.TRADE_ACTION_SLTP,
                         "position": pos.ticket,
                         "symbol": symbol,
                         "sl": new_sl,
-                        "tp": pos.tp
+                        "tp": round(pos.tp, digits) if pos.tp > 0 else 0
                     }
             else:
                 new_sl = current_price + trail_dist
-                # Only update if new_sl is lower than current SL (or SL is 0)
-                if pos.sl == 0 or new_sl < pos.sl:
+                new_sl = round(new_sl, digits)
+                # Only update if new_sl is lower than current SL (or SL is 0) (with tolerance)
+                tolerance = point * 0.5
+                if pos.sl == 0 or new_sl < pos.sl - tolerance:
                     request = {
                         "action": mt5.TRADE_ACTION_SLTP,
                         "position": pos.ticket,
                         "symbol": symbol,
                         "sl": new_sl,
-                        "tp": pos.tp
+                        "tp": round(pos.tp, digits) if pos.tp > 0 else 0
                     }
             
             if request:
@@ -386,33 +403,49 @@ def manage_position(order_ticket, symbol, magic, config):
                 log_to_file(symbol, "TRAILING", trailing_log_content)
 
         if request:
+            # Double-check: Only send if there's an actual change
+            digits = symbol_info.digits
+            new_sl_normalized = round(request['sl'], digits)
+            new_tp_normalized = round(request['tp'], digits) if request['tp'] > 0 else 0
+            current_sl_normalized = round(pos.sl, digits) if pos.sl > 0 else 0
+            current_tp_normalized = round(pos.tp, digits) if pos.tp > 0 else 0
+            
+            # Skip if no actual change (avoid retcode 10025 "No changes")
+            if new_sl_normalized == current_sl_normalized and new_tp_normalized == current_tp_normalized:
+                print(f"⏭️ [Breakeven/Trailing] Ticket {pos.ticket}: No change needed (SL already at {current_sl_normalized:.5f})")
+                return
+            
             res = mt5.order_send(request)
             if res.retcode != mt5.TRADE_RETCODE_DONE:
-                error_msg = f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}"
-                print(error_msg)
-                
-                # Log to file: ERROR
-                error_log_content = (
-                    f"❌ SL/TP UPDATE ERROR - Ticket: {pos.ticket} | "
-                    f"Symbol: {symbol} | Error: {res.comment} | Retcode: {res.retcode}"
-                )
-                log_to_file(symbol, "ERROR", error_log_content)
-                
-                # Send Telegram notification for error
-                telegram_token = config.get('telegram_token')
-                telegram_chat_id = config.get('telegram_chat_id')
-                if telegram_token and telegram_chat_id:
-                    error_telegram_msg = (
-                        f"❌ <b>SL/TP Update Failed</b>\n"
-                        f"{'='*50}\n"
-                        f"🆔 <b>Ticket:</b> {pos.ticket}\n"
-                        f"💱 <b>Symbol:</b> {symbol}\n"
-                        f"❌ <b>Error:</b> {res.comment}\n"
-                        f"📝 <b>Retcode:</b> {res.retcode}\n"
-                        f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"{'='*50}"
+                # Don't log as error if it's "No changes" (retcode 10025) - this is expected sometimes
+                if res.retcode == 10025:
+                    print(f"⏭️ [Breakeven/Trailing] Ticket {pos.ticket}: No changes needed (SL/TP already at target)")
+                else:
+                    error_msg = f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}"
+                    print(error_msg)
+                    
+                    # Log to file: ERROR
+                    error_log_content = (
+                        f"❌ SL/TP UPDATE ERROR - Ticket: {pos.ticket} | "
+                        f"Symbol: {symbol} | Error: {res.comment} | Retcode: {res.retcode}"
                     )
-                    send_telegram(error_telegram_msg, telegram_token, telegram_chat_id, symbol=symbol)
+                    log_to_file(symbol, "ERROR", error_log_content)
+                    
+                    # Send Telegram notification for error (only if not "No changes")
+                    telegram_token = config.get('telegram_token')
+                    telegram_chat_id = config.get('telegram_chat_id')
+                    if telegram_token and telegram_chat_id:
+                        error_telegram_msg = (
+                            f"❌ <b>SL/TP Update Failed</b>\n"
+                            f"{'='*50}\n"
+                            f"🆔 <b>Ticket:</b> {pos.ticket}\n"
+                            f"💱 <b>Symbol:</b> {symbol}\n"
+                            f"❌ <b>Error:</b> {res.comment}\n"
+                            f"📝 <b>Retcode:</b> {res.retcode}\n"
+                            f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"{'='*50}"
+                        )
+                        send_telegram(error_telegram_msg, telegram_token, telegram_chat_id, symbol=symbol)
             else:
                 print(f"✅ Successfully updated SL/TP for {pos.ticket}")
 
