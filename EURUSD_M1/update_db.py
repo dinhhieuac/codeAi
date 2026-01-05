@@ -89,18 +89,35 @@ def main():
         "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
         "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
         "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),
-        "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
+        "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json"),
+        # M1 Scalp bots (all use "M1_Scalp" as strategy_name, but different configs)
+        "M1_Scalp": [
+            os.path.join(script_dir, "configs", "config_tuyen.json"),  # EURUSD
+            os.path.join(script_dir, "configs", "config_tuyen_xau.json"),  # XAUUSD
+            os.path.join(script_dir, "configs", "config_tuyen_btc.json")  # BTCUSD
+        ]
     }
     
     from datetime import datetime
     
-    for strat_name, config_file in strategies.items():
-        if os.path.exists(config_file):
-            print(f"\n--- Processing {strat_name} ---")
-            config = load_config(config_file)
-            update_trades_for_strategy(db, config, strat_name)
+    for strat_name, config_files in strategies.items():
+        # Handle M1_Scalp which has multiple config files
+        if isinstance(config_files, list):
+            for config_file in config_files:
+                if os.path.exists(config_file):
+                    print(f"\n--- Processing {strat_name} ({config_file}) ---")
+                    config = load_config(config_file)
+                    update_trades_for_strategy(db, config, strat_name)
+                else:
+                    print(f"⚠️ Config not found: {config_file}")
         else:
-            print(f"⚠️ Config not found: {config_file}")
+            # Single config file (other strategies)
+            if os.path.exists(config_files):
+                print(f"\n--- Processing {strat_name} ---")
+                config = load_config(config_files)
+                update_trades_for_strategy(db, config, strat_name)
+            else:
+                print(f"⚠️ Config not found: {config_files}")
 
     print("\n✅ Update Complete!")
     mt5.shutdown()

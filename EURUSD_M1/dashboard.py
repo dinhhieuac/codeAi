@@ -83,9 +83,15 @@ def index():
         pf = (s_gross_profit / s_gross_loss) if s_gross_loss > 0 else 99.9
         win_rate = (len(s_wins) / s_total) * 100
         
+        # Format strategy name for display
+        if strat == "M1_Scalp":
+            display_name = "M1 Scalp (All Symbols)"
+        else:
+            display_name = strat.replace("Strategy_", "").replace("_", " ")
+        
         bot_stats.append({
             "raw_name": strat, # Added for template filtering
-            "name": strat.replace("Strategy_", "").replace("_", " "),
+            "name": display_name,
             "trades": s_total,
             "win_rate": win_rate,
             "pf": pf,
@@ -111,12 +117,13 @@ def index():
         bot_stats[-1]['chart_data'] = points
         
     # Sort by Net Profit
-    # Sort by User Defined Order (1, 4, 2, 5)
+    # Sort by User Defined Order (1, 4, 2, 5, M1 Scalp)
     desired_order = [
         "Strategy_1_Trend_HA",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR", 
-        "Strategy_5_Filter_First"
+        "Strategy_5_Filter_First",
+        "M1_Scalp"
     ]
     
     # Filter only requested bots and sort
