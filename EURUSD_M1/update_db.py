@@ -7,7 +7,7 @@ from db import Database
 from utils import connect_mt5
 
 def load_config(filepath):
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def update_trades_for_strategy(db, config, strategy_name):
