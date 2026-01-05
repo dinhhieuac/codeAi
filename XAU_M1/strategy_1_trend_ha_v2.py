@@ -14,6 +14,139 @@ from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, sen
 # Initialize Database
 db = Database()
 
+def find_previous_swing_low(df_m1, lookback=20):
+    """
+    Tìm previous swing low trong lookback period (không bao gồm nến cuối)
+    """
+    if len(df_m1) < lookback + 1:
+        return None
+    
+    recent_df = df_m1.iloc[-lookback-1:-1]  # Không bao gồm nến cuối
+    if len(recent_df) == 0:
+        return None
+    
+    return recent_df['low'].min()
+
+def find_previous_swing_high(df_m1, lookback=20):
+    """
+    Tìm previous swing high trong lookback period (không bao gồm nến cuối)
+    """
+    if len(df_m1) < lookback + 1:
+        return None
+    
+    recent_df = df_m1.iloc[-lookback-1:-1]  # Không bao gồm nến cuối
+    if len(recent_df) == 0:
+        return None
+    
+    return recent_df['high'].max()
+
+def check_liquidity_sweep_buy(df_m1, atr_val, symbol="XAUUSD", buffer_pips=2):
+    """
+    BUY - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_low < previous_swing_low - buffer
+    AND lower_wick >= 1.5 × ATR
+    AND close > open
+    → BUY_SWEEP_CONFIRMED = TRUE
+    """
+    if len(df_m1) < 20:
+        return False, "Không đủ dữ liệu"
+    
+    prev_swing_low = find_previous_swing_low(df_m1, lookback=20)
+    if prev_swing_low is None:
+        return False, "Không tìm thấy previous swing low"
+    
+    current_candle = df_m1.iloc[-1]
+    current_low = current_candle['low']
+    
+    # Buffer: 2 pips cho XAUUSD (0.2 USD)
+    symbol_info = mt5.symbol_info(symbol)
+    point = symbol_info.point if symbol_info else 0.01
+    buffer = buffer_pips * point * 10  # 2 pips = 0.2 USD cho XAUUSD
+    
+    lower_wick = min(current_candle['open'], current_candle['close']) - current_low
+    
+    # Check if swept below previous swing low
+    if current_low < (prev_swing_low - buffer):
+        # Check lower wick >= 1.5 × ATR
+        if lower_wick >= 1.5 * atr_val:
+            # Check close > open (bullish candle)
+            if current_candle['close'] > current_candle['open']:
+                return True, f"Sweep confirmed: Low {current_low:.2f} < {prev_swing_low:.2f}, wick={lower_wick:.2f} >= {1.5 * atr_val:.2f}"
+            else:
+                return False, f"Sweep low OK nhưng nến không bullish (close <= open)"
+        else:
+            return False, f"Sweep low OK nhưng wick {lower_wick:.2f} < {1.5 * atr_val:.2f}"
+    else:
+        return False, f"Chưa sweep: Low {current_low:.2f} >= {prev_swing_low - buffer:.2f}"
+
+def check_liquidity_sweep_sell(df_m1, atr_val, symbol="XAUUSD", buffer_pips=2):
+    """
+    SELL - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_high > previous_swing_high + buffer
+    AND upper_wick >= 1.5 × ATR
+    AND close < open
+    → SELL_SWEEP_CONFIRMED = TRUE
+    """
+    if len(df_m1) < 20:
+        return False, "Không đủ dữ liệu"
+    
+    prev_swing_high = find_previous_swing_high(df_m1, lookback=20)
+    if prev_swing_high is None:
+        return False, "Không tìm thấy previous swing high"
+    
+    current_candle = df_m1.iloc[-1]
+    current_high = current_candle['high']
+    
+    # Buffer: 2 pips cho XAUUSD (0.2 USD)
+    symbol_info = mt5.symbol_info(symbol)
+    point = symbol_info.point if symbol_info else 0.01
+    buffer = buffer_pips * point * 10  # 2 pips = 0.2 USD cho XAUUSD
+    
+    upper_wick = current_high - max(current_candle['open'], current_candle['close'])
+    
+    # Check if swept above previous swing high
+    if current_high > (prev_swing_high + buffer):
+        # Check upper wick >= 1.5 × ATR
+        if upper_wick >= 1.5 * atr_val:
+            # Check close < open (bearish candle)
+            if current_candle['close'] < current_candle['open']:
+                return True, f"Sweep confirmed: High {current_high:.2f} > {prev_swing_high:.2f}, wick={upper_wick:.2f} >= {1.5 * atr_val:.2f}"
+            else:
+                return False, f"Sweep high OK nhưng nến không bearish (close >= open)"
+        else:
+            return False, f"Sweep high OK nhưng wick {upper_wick:.2f} < {1.5 * atr_val:.2f}"
+    else:
+        return False, f"Chưa sweep: High {current_high:.2f} <= {prev_swing_high + buffer:.2f}"
+
+def check_displacement_candle(df_m1, atr_val, signal_type):
+    """
+    DISPLACEMENT CANDLE CHECK
+    BUY: breakout_body >= 1.2 × ATR AND close > previous_range_high
+    SELL: breakout_body >= 1.2 × ATR AND close < previous_range_low
+    """
+    if len(df_m1) < 10:
+        return False, "Không đủ dữ liệu"
+    
+    breakout_candle = df_m1.iloc[-1]
+    body = abs(breakout_candle['close'] - breakout_candle['open'])
+    
+    # Get previous range (last 10 candles before current)
+    prev_range = df_m1.iloc[-10:-1]
+    prev_range_high = prev_range['high'].max()
+    prev_range_low = prev_range['low'].min()
+    
+    if signal_type == "BUY":
+        if body >= 1.2 * atr_val and breakout_candle['close'] > prev_range_high:
+            return True, f"Displacement confirmed: Body={body:.2f} >= {1.2 * atr_val:.2f}, Close={breakout_candle['close']:.2f} > {prev_range_high:.2f}"
+        else:
+            return False, f"No displacement: Body={body:.2f} < {1.2 * atr_val:.2f} hoặc Close={breakout_candle['close']:.2f} <= {prev_range_high:.2f}"
+    elif signal_type == "SELL":
+        if body >= 1.2 * atr_val and breakout_candle['close'] < prev_range_low:
+            return True, f"Displacement confirmed: Body={body:.2f} >= {1.2 * atr_val:.2f}, Close={breakout_candle['close']:.2f} < {prev_range_low:.2f}"
+        else:
+            return False, f"No displacement: Body={body:.2f} < {1.2 * atr_val:.2f} hoặc Close={breakout_candle['close']:.2f} >= {prev_range_low:.2f}"
+    return False, "Signal type không hợp lệ"
+
 def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_threshold=0.7):
     """
     CHOP / RANGE FILTER
@@ -86,21 +219,44 @@ def strategy_1_logic(config, error_count=0):
             # Silent return to avoid spam
             return error_count, 0
 
-    # 1. Get Data (M1 and M5 for trend)
+    # 1. Get Data (M1, M5, and H1 for trend)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200)
+    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # V3: Thêm H1 cho trend confirmation
     
-    if df_m1 is None or df_m5 is None: 
+    if df_m1 is None or df_m5 is None or df_h1 is None: 
         return error_count, 0
 
     # 2. Calculate Indicators
     # Trend Filter: EMA 200 on M5 (V2: Fixed - dùng EMA thực sự)
     df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()  # V2: EMA thực sự
+    df_m5['ema50'] = df_m5['close'].ewm(span=50, adjust=False).mean()  # V3: Thêm EMA50 cho trend confirmation
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
     
-    # V2: ADX Filter (BẮT BUỘC - chỉ trade khi có trend)
+    # V3: EMA50 > EMA200 trên M5 (trend confirmation mạnh hơn)
+    ema50_m5 = df_m5.iloc[-1]['ema50']
+    ema200_m5 = df_m5.iloc[-1]['ema200']
+    if current_trend == "BULLISH":
+        if ema50_m5 <= ema200_m5:
+            print(f"❌ M5 Trend Filter: EMA50 ({ema50_m5:.2f}) <= EMA200 ({ema200_m5:.2f}) - Trend không đủ mạnh")
+            return error_count, 0
+    else:  # BEARISH
+        if ema50_m5 >= ema200_m5:
+            print(f"❌ M5 Trend Filter: EMA50 ({ema50_m5:.2f}) >= EMA200 ({ema200_m5:.2f}) - Trend không đủ mạnh")
+            return error_count, 0
+    print(f"✅ M5 Trend Filter: EMA50 ({ema50_m5:.2f}) {'>' if current_trend == 'BULLISH' else '<'} EMA200 ({ema200_m5:.2f}) - Trend mạnh")
+    
+    # V3: H1 Trend Confirmation
+    df_h1['ema200'] = df_h1['close'].ewm(span=200, adjust=False).mean()
+    h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema200'] else "BEARISH"
+    if h1_trend != current_trend:
+        print(f"❌ H1 Trend Confirmation: H1 Trend ({h1_trend}) != M5 Trend ({current_trend}) - Không đồng nhất")
+        return error_count, 0
+    print(f"✅ H1 Trend Confirmation: H1 Trend ({h1_trend}) == M5 Trend ({current_trend}) - Đồng nhất")
+    
+    # V3: ADX Filter - Tăng threshold từ 20 lên 25 (default)
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 20)
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 25)  # V3: Tăng từ 20 lên 25
     df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
     if pd.isna(adx_value) or adx_value < adx_min_threshold:
@@ -111,6 +267,9 @@ def strategy_1_logic(config, error_count=0):
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
     df_m1['sma55_low'] = df_m1['low'].rolling(window=55).mean()
+    
+    # Volume MA for confirmation
+    df_m1['vol_ma'] = df_m1['tick_volume'].rolling(window=10).mean()
     
     # Heiken Ashi
     ha_df = calculate_heiken_ashi(df_m1)
@@ -174,23 +333,58 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: Improved RSI filter (configurable)
-                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
-                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V2: stricter)")
+                    # V3: Improved RSI filter - Tăng threshold từ 55 lên 60 (default)
+                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 60)  # V3: Tăng từ 55 lên 60
+                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
                     if last_ha['rsi'] > rsi_buy_threshold:
-                        # V2: Confirmation check - đợi 1 nến sau breakout
-                        confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
-                        if confirmation_enabled and len(ha_df) >= 2:
-                            confirmation_candle = ha_df.iloc[-1]
-                            breakout_level = last_ha['sma55_high']
-                            if confirmation_candle['ha_close'] > breakout_level:
-                                signal = "BUY"
-                                print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt (V2: với confirmation)!")
+                        # V3: Liquidity Sweep Check (BẮT BUỘC)
+                        has_sweep, sweep_msg = check_liquidity_sweep_buy(df_m1, atr_val, symbol=symbol, buffer_pips=2)
+                        filter_status.append(f"{'✅' if has_sweep else '❌'} Liquidity Sweep: {sweep_msg}")
+                        if has_sweep:
+                            # V3: Displacement Candle Check
+                            has_displacement, displacement_msg = check_displacement_candle(df_m1, atr_val, "BUY")
+                            filter_status.append(f"{'✅' if has_displacement else '❌'} Displacement Candle: {displacement_msg}")
+                            if has_displacement:
+                                # V3: Volume Confirmation
+                                current_volume = df_m1.iloc[-1]['tick_volume']
+                                vol_ma = df_m1.iloc[-1]['vol_ma']
+                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.3)
+                                has_volume_confirmation = current_volume > (vol_ma * volume_multiplier)
+                                filter_status.append(f"{'✅' if has_volume_confirmation else '❌'} Volume Confirmation: {current_volume:.0f} > {vol_ma * volume_multiplier:.0f} ({volume_multiplier}x avg)")
+                                if has_volume_confirmation:
+                                    # V3: Confirmation check - đợi 2-3 nến sau breakout (tăng từ 1 nến)
+                                    confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
+                                    confirmation_candles = config['parameters'].get('confirmation_candles', 2)  # V3: Tăng từ 1 lên 2
+                                    if confirmation_enabled and len(ha_df) >= confirmation_candles + 1:
+                                        breakout_level = last_ha['sma55_high']
+                                        # Kiểm tra các nến confirmation (từ nến -1 đến -confirmation_candles)
+                                        all_confirmed = True
+                                        for i in range(1, confirmation_candles + 1):
+                                            if len(ha_df) >= i + 1:
+                                                conf_candle = ha_df.iloc[-i]
+                                                if conf_candle['ha_close'] <= breakout_level:
+                                                    all_confirmed = False
+                                                    break
+                                        
+                                        # V3: Kiểm tra false breakout - nến cuối cùng không đóng ngược lại channel
+                                        if all_confirmed:
+                                            latest_candle = ha_df.iloc[-1]
+                                            if latest_candle['ha_close'] > breakout_level:
+                                                signal = "BUY"
+                                                print(f"\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt (V3: với {confirmation_candles} nến confirmation + Liquidity Sweep + Displacement)!")
+                                            else:
+                                                print(f"\n❌ [FALSE BREAKOUT] - Nến cuối đóng ngược lại channel ({latest_candle['ha_close']:.2f} <= {breakout_level:.2f})")
+                                        else:
+                                            print(f"\n⏳ [CHỜ CONFIRMATION] - Cần {confirmation_candles} nến confirmation, hiện tại chưa đủ")
+                                    else:
+                                        signal = "BUY"
+                                        print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                                else:
+                                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đạt (cần > {volume_multiplier}x average)")
                             else:
-                                print(f"\n⏳ [CHỜ CONFIRMATION] - HA Close {confirmation_candle['ha_close']:.2f} chưa > Breakout Level {breakout_level:.2f}")
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {displacement_msg}")
                         else:
-                            signal = "BUY"
-                            print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {sweep_msg}")
                     else:
                         print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else: 
@@ -216,23 +410,58 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: Improved RSI filter (configurable)
-                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
-                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V2: stricter)")
+                    # V3: Improved RSI filter - Giảm threshold từ 45 xuống 40 (default)
+                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 40)  # V3: Giảm từ 45 xuống 40
+                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
                     if last_ha['rsi'] < rsi_sell_threshold:
-                        # V2: Confirmation check - đợi 1 nến sau breakout
-                        confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
-                        if confirmation_enabled and len(ha_df) >= 2:
-                            confirmation_candle = ha_df.iloc[-1]
-                            breakout_level = last_ha['sma55_low']
-                            if confirmation_candle['ha_close'] < breakout_level:
-                                signal = "SELL"
-                                print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt (V2: với confirmation)!")
+                        # V3: Liquidity Sweep Check (BẮT BUỘC)
+                        has_sweep, sweep_msg = check_liquidity_sweep_sell(df_m1, atr_val, symbol=symbol, buffer_pips=2)
+                        filter_status.append(f"{'✅' if has_sweep else '❌'} Liquidity Sweep: {sweep_msg}")
+                        if has_sweep:
+                            # V3: Displacement Candle Check
+                            has_displacement, displacement_msg = check_displacement_candle(df_m1, atr_val, "SELL")
+                            filter_status.append(f"{'✅' if has_displacement else '❌'} Displacement Candle: {displacement_msg}")
+                            if has_displacement:
+                                # V3: Volume Confirmation
+                                current_volume = df_m1.iloc[-1]['tick_volume']
+                                vol_ma = df_m1.iloc[-1]['vol_ma']
+                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.3)
+                                has_volume_confirmation = current_volume > (vol_ma * volume_multiplier)
+                                filter_status.append(f"{'✅' if has_volume_confirmation else '❌'} Volume Confirmation: {current_volume:.0f} > {vol_ma * volume_multiplier:.0f} ({volume_multiplier}x avg)")
+                                if has_volume_confirmation:
+                                    # V3: Confirmation check - đợi 2-3 nến sau breakout (tăng từ 1 nến)
+                                    confirmation_enabled = config['parameters'].get('confirmation_enabled', True)
+                                    confirmation_candles = config['parameters'].get('confirmation_candles', 2)  # V3: Tăng từ 1 lên 2
+                                    if confirmation_enabled and len(ha_df) >= confirmation_candles + 1:
+                                        breakout_level = last_ha['sma55_low']
+                                        # Kiểm tra các nến confirmation (từ nến -1 đến -confirmation_candles)
+                                        all_confirmed = True
+                                        for i in range(1, confirmation_candles + 1):
+                                            if len(ha_df) >= i + 1:
+                                                conf_candle = ha_df.iloc[-i]
+                                                if conf_candle['ha_close'] >= breakout_level:
+                                                    all_confirmed = False
+                                                    break
+                                        
+                                        # V3: Kiểm tra false breakout - nến cuối cùng không đóng ngược lại channel
+                                        if all_confirmed:
+                                            latest_candle = ha_df.iloc[-1]
+                                            if latest_candle['ha_close'] < breakout_level:
+                                                signal = "SELL"
+                                                print(f"\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt (V3: với {confirmation_candles} nến confirmation + Liquidity Sweep + Displacement)!")
+                                            else:
+                                                print(f"\n❌ [FALSE BREAKOUT] - Nến cuối đóng ngược lại channel ({latest_candle['ha_close']:.2f} >= {breakout_level:.2f})")
+                                        else:
+                                            print(f"\n⏳ [CHỜ CONFIRMATION] - Cần {confirmation_candles} nến confirmation, hiện tại chưa đủ")
+                                    else:
+                                        signal = "SELL"
+                                        print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                                else:
+                                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đạt (cần > {volume_multiplier}x average)")
                             else:
-                                print(f"\n⏳ [CHỜ CONFIRMATION] - HA Close {confirmation_candle['ha_close']:.2f} chưa < Breakout Level {breakout_level:.2f}")
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {displacement_msg}")
                         else:
-                            signal = "SELL"
-                            print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {sweep_msg}")
                     else:
                         print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else:
@@ -258,8 +487,10 @@ def strategy_1_logic(config, error_count=0):
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
         rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
         rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
-        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V2: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
-        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold})")
+        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V3: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold}) [V3: Tăng từ 20 lên 25]")
+        print(f"   📊 H1 Trend: {h1_trend} (phải == M5 Trend: {current_trend})")
+        print(f"   📊 EMA50 M5: {ema50_m5:.2f} | EMA200 M5: {ema200_m5:.2f}")
         print(f"   📊 ATR: {atr_val:.2f}")
         if current_trend == "BULLISH":
             print(f"   📊 Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f} = {is_above_channel}")
@@ -316,9 +547,9 @@ def strategy_1_logic(config, error_count=0):
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
             
-            # V2: Calculate ATR on M5 for better buffer
+            # V3: Calculate ATR on M5 for better buffer - Tăng multiplier từ 1.5x lên 2.0x (default)
             atr_period_m5 = config['parameters'].get('atr_period', 14)
-            atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 1.5)
+            atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 2.0)  # V3: Tăng từ 1.5 lên 2.0
             df_m5['atr'] = calculate_atr(df_m5, period=atr_period_m5)
             atr_m5 = df_m5.iloc[-2]['atr']
             if pd.isna(atr_m5) or atr_m5 <= 0:
@@ -326,9 +557,9 @@ def strategy_1_logic(config, error_count=0):
                 m5_range = prev_m5_high - prev_m5_low
                 atr_m5 = m5_range / atr_period_m5 if m5_range > 0 else 0.1
             
-            # V2: Buffer dựa trên ATR (configurable multiplier) thay vì fixed 20 points
+            # V3: Buffer dựa trên ATR - Tăng từ 1.5x lên 2.0x (có thể config lên 2.5x)
             buffer = atr_buffer_multiplier * atr_m5
-            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR)")
+            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR) [V3: Tăng từ 1.5x]")
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer
@@ -395,8 +626,12 @@ def strategy_1_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
-                f"• ADX: {adx_value:.1f} (>= 20 ✅)\n"
-                f"• RSI: {last_ha['rsi']:.1f} (V2: {'> 55' if signal == 'BUY' else '< 45'} ✅)\n"
+                f"• ADX: {adx_value:.1f} (>= 25 ✅) [V3: Tăng từ 20]\n"
+                f"• RSI: {last_ha['rsi']:.1f} (V3: {'> 60' if signal == 'BUY' else '< 40'} ✅)\n"
+                f"• H1 Trend: {h1_trend} (== M5: {current_trend} ✅)\n"
+                f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
+                f"• Liquidity Sweep: PASS ✅\n"
+                f"• Displacement Candle: PASS ✅\n"
                 f"• ATR: {atr_val:.2f}\n"
                 f"• CHOP Filter: PASS ✅"
             )
@@ -418,14 +653,20 @@ if __name__ == "__main__":
     consecutive_errors = 0
     
     if config and connect_mt5(config):
-        print("✅ Strategy 1: Trend HA V2 - Started")
-        print("📋 V2 Improvements:")
+        print("✅ Strategy 1: Trend HA V3 - Started")
+        print("📋 V3 Improvements (dựa trên phân tích lệnh thua):")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
-        print("   ✅ ADX filter added (>= 20)")
-        print("   ✅ RSI filter improved (> 55 / < 45)")
+        print("   ✅ ADX filter increased (>= 25, từ 20)")
+        print("   ✅ RSI filter stricter (> 60 / < 40, từ > 55 / < 45)")
         print("   ✅ CHOP/RANGE filter added")
-        print("   ✅ SL buffer improved (1.5x ATR)")
-        print("   ✅ Confirmation check added")
+        print("   ✅ SL buffer increased (2.0x ATR, từ 1.5x)")
+        print("   ✅ Confirmation check improved (2-3 nến, từ 1 nến)")
+        print("   ✅ H1 Trend confirmation added")
+        print("   ✅ EMA50 > EMA200 trên M5 added")
+        print("   ✅ Liquidity Sweep check added")
+        print("   ✅ Displacement Candle check added")
+        print("   ✅ Volume confirmation added (1.3x average)")
+        print("   ✅ False breakout detection added")
         print("   ✅ Spam filter increased (5 minutes)")
         try:
             while True:
