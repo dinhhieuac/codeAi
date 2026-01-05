@@ -45,10 +45,44 @@ def connect_mt5(config):
         print(f"❌ Connection error: {e}")
         return False
 
-def send_telegram(message, token, chat_id):
+def log_to_file(symbol, message_type, content, log_dir="logs"):
+    """
+    Log message to file
+    
+    Args:
+        symbol: Trading symbol (e.g., BTCUSD, XAUUSD)
+        message_type: Type of message (SIGNAL, ERROR, TELEGRAM_SUCCESS, TELEGRAM_ERROR, BREAKEVEN, TRAILING)
+        content: Message content
+        log_dir: Directory to store log files
+    """
+    try:
+        # Create logs directory if it doesn't exist
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create log filename based on symbol and date
+        log_filename = f"{symbol.lower()}_m1_scalp_{datetime.now().strftime('%Y%m%d')}.txt"
+        log_path = os.path.join(log_dir, log_filename)
+        
+        # Format log entry
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"[{timestamp}] [{message_type}] {content}\n"
+        
+        # Append to file
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+        
+        return True
+    except Exception as e:
+        print(f"⚠️ [Log File] Lỗi khi ghi log: {e}")
+        return False
+
+def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True):
     """Send message to Telegram with detailed logging"""
     if not token or not chat_id:
-        print(f"⚠️ Telegram: Missing token or chat_id (token={'✅' if token else '❌'}, chat_id={'✅' if chat_id else '❌'})")
+        error_msg = f"⚠️ Telegram: Missing token or chat_id (token={'✅' if token else '❌'}, chat_id={'✅' if chat_id else '❌'})"
+        print(error_msg)
+        if symbol and log_to_file_enabled:
+            log_to_file(symbol, "TELEGRAM_ERROR", error_msg)
         return False
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -60,27 +94,46 @@ def send_telegram(message, token, chat_id):
     
     try:
         print(f"📤 [Telegram] Đang gửi thông báo...")
+        if symbol and log_to_file_enabled:
+            log_to_file(symbol, "TELEGRAM_ATTEMPT", f"Đang gửi thông báo Telegram...")
+        
         response = requests.post(url, json=payload, timeout=10)
         result = response.json()
         
         if result.get('ok'):
-            print(f"✅ [Telegram] Đã gửi thông báo thành công")
+            success_msg = f"✅ [Telegram] Đã gửi thông báo thành công"
+            print(success_msg)
+            if symbol and log_to_file_enabled:
+                # Log success with message preview (first 200 chars)
+                msg_preview = message.replace('\n', ' ')[:200]
+                log_to_file(symbol, "TELEGRAM_SUCCESS", f"Đã gửi thành công: {msg_preview}...")
             return True
         else:
             error_code = result.get('error_code', 'Unknown')
             error_desc = result.get('description', 'Unknown error')
-            print(f"❌ [Telegram] Gửi thất bại: {error_code} - {error_desc}")
+            error_msg = f"❌ [Telegram] Gửi thất bại: {error_code} - {error_desc}"
+            print(error_msg)
+            if symbol and log_to_file_enabled:
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Gửi thất bại: {error_code} - {error_desc}")
             return False
     except requests.exceptions.Timeout:
-        print(f"❌ [Telegram] Timeout khi gửi thông báo")
+        error_msg = f"❌ [Telegram] Timeout khi gửi thông báo"
+        print(error_msg)
+        if symbol and log_to_file_enabled:
+            log_to_file(symbol, "TELEGRAM_ERROR", "Timeout khi gửi thông báo")
         return False
     except requests.exceptions.RequestException as e:
-        print(f"❌ [Telegram] Lỗi kết nối: {e}")
+        error_msg = f"❌ [Telegram] Lỗi kết nối: {e}"
+        print(error_msg)
+        if symbol and log_to_file_enabled:
+            log_to_file(symbol, "TELEGRAM_ERROR", f"Lỗi kết nối: {str(e)}")
         return False
     except Exception as e:
-        print(f"❌ [Telegram] Lỗi không xác định: {e}")
-        import traceback
+        error_msg = f"❌ [Telegram] Lỗi không xác định: {e}"
+        print(error_msg)
         traceback.print_exc()
+        if symbol and log_to_file_enabled:
+            log_to_file(symbol, "TELEGRAM_ERROR", f"Lỗi không xác định: {str(e)}")
         return False
 
 def get_data(symbol, timeframe, n=100):
@@ -254,11 +307,20 @@ def manage_position(order_ticket, symbol, magic, config):
                 }
                 print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({pos.price_open:.5f}) | Profit: {profit_pips:.1f} pips")
                 
+                # Log to file: BREAKEVEN
+                signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                breakeven_log_content = (
+                    f"🛡️ BREAKEVEN - Ticket: {pos.ticket} | "
+                    f"Symbol: {symbol} ({signal_type}) | "
+                    f"Entry: {pos.price_open:.5f} | New SL: {pos.price_open:.5f} | "
+                    f"Profit: {profit_pips:.1f} pips | Volume: {pos.volume:.2f} lot"
+                )
+                log_to_file(symbol, "BREAKEVEN", breakeven_log_content)
+                
                 # Send Telegram notification for Breakeven
                 telegram_token = config.get('telegram_token')
                 telegram_chat_id = config.get('telegram_chat_id')
                 if telegram_token and telegram_chat_id:
-                    signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
                     breakeven_msg = (
                         f"🛡️ <b>Breakeven Activated</b>\n"
                         f"{'='*50}\n"
@@ -271,7 +333,7 @@ def manage_position(order_ticket, symbol, magic, config):
                         f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"{'='*50}"
                     )
-                    send_telegram(breakeven_msg, telegram_token, telegram_chat_id)
+                    send_telegram(breakeven_msg, telegram_token, telegram_chat_id, symbol=symbol)
 
         # 2. Trailing Stop (Trigger > 30 pips, Trail by 20 pips)
         trailing_trigger_pips = 30.0
@@ -312,12 +374,29 @@ def manage_position(order_ticket, symbol, magic, config):
                     print(f"🏃 [Trailing] Ticket {pos.ticket}: SL {pos.sl:.2f} -> {new_sl:.2f} | Profit: {profit_pips:.1f} pips")
                 else:
                     print(f"🏃 [Trailing] Ticket {pos.ticket}: SL {pos.sl:.5f} -> {new_sl:.5f} | Profit: {profit_pips:.1f} pips")
+                
+                # Log to file: TRAILING
+                signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                trailing_log_content = (
+                    f"🏃 TRAILING - Ticket: {pos.ticket} | "
+                    f"Symbol: {symbol} ({signal_type}) | "
+                    f"SL: {pos.sl:.5f} -> {new_sl:.5f} | "
+                    f"Profit: {profit_pips:.1f} pips"
+                )
+                log_to_file(symbol, "TRAILING", trailing_log_content)
 
         if request:
             res = mt5.order_send(request)
             if res.retcode != mt5.TRADE_RETCODE_DONE:
                 error_msg = f"⚠️ Failed to update SL/TP for {pos.ticket}: {res.comment}"
                 print(error_msg)
+                
+                # Log to file: ERROR
+                error_log_content = (
+                    f"❌ SL/TP UPDATE ERROR - Ticket: {pos.ticket} | "
+                    f"Symbol: {symbol} | Error: {res.comment} | Retcode: {res.retcode}"
+                )
+                log_to_file(symbol, "ERROR", error_log_content)
                 
                 # Send Telegram notification for error
                 telegram_token = config.get('telegram_token')
@@ -333,7 +412,7 @@ def manage_position(order_ticket, symbol, magic, config):
                         f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"{'='*50}"
                     )
-                    send_telegram(error_telegram_msg, telegram_token, telegram_chat_id)
+                    send_telegram(error_telegram_msg, telegram_token, telegram_chat_id, symbol=symbol)
             else:
                 print(f"✅ Successfully updated SL/TP for {pos.ticket}")
 
@@ -342,6 +421,9 @@ def manage_position(order_ticket, symbol, magic, config):
         print(error_msg)
         import traceback
         traceback.print_exc()
+        
+        # Log to file: ERROR
+        log_to_file(symbol, "ERROR", f"Position Management Exception - Ticket: {order_ticket} | Error: {str(e)}")
         
         # Send Telegram notification for exception
         try:
@@ -357,7 +439,7 @@ def manage_position(order_ticket, symbol, magic, config):
                     f"⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                     f"{'='*50}"
                 )
-                send_telegram(error_telegram_msg, telegram_token, telegram_chat_id)
+                send_telegram(error_telegram_msg, telegram_token, telegram_chat_id, symbol=symbol)
         except Exception as telegram_error:
             print(f"⚠️ Failed to send Telegram error notification: {telegram_error}")
         

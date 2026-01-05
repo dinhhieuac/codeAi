@@ -9,8 +9,10 @@ def main():
     
     # List of strategy scripts to run
     scripts = [
-        os.path.join(base_dir, "tuyen_trend.py"),
-        os.path.join(base_dir, "tuyen_trend_XAU.py"),
+        
+        os.path.join(base_dir, "tuyen_trend_sclap_btc.py"),
+        os.path.join(base_dir, "tuyen_trend_sclap_xau.py"),
+        os.path.join(base_dir, "tuyen_trend_sclap.py"),
      
     ]
 
