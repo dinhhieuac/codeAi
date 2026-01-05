@@ -142,6 +142,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {% if bot_stats|length > 0 %}
                                     {% for bot in bot_stats %}
                                     <tr>
                                         <td class="fw-bold text-primary">{{ bot.name }}</td>
@@ -172,6 +173,14 @@
                                         </td>
                                     </tr>
                                     {% endfor %}
+                                    {% else %}
+                                    <tr>
+                                        <td colspan="7" class="text-center text-muted py-4">
+                                            <i class="fas fa-info-circle"></i> No strategy data available for the selected time period.
+                                            <br><small>Make sure trades have been closed (profit is not NULL) and match the selected filter.</small>
+                                        </td>
+                                    </tr>
+                                    {% endif %}
                                 </tbody>
                             </table>
                         </div>

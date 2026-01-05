@@ -58,13 +58,19 @@ def index():
     signals = cur.fetchall()
 
     # --- ADVANCED STATS PER STRATEGY ---
-    cur.execute("SELECT DISTINCT strategy_name FROM orders")
+    cur.execute("SELECT DISTINCT strategy_name FROM orders WHERE strategy_name IS NOT NULL")
     strategies = [row['strategy_name'] for row in cur.fetchall()]
+    
+    # Debug: Print available strategies
+    if not strategies:
+        print(f"⚠️ [Dashboard] No strategies found in database")
+    else:
+        print(f"📊 [Dashboard] Found {len(strategies)} strategies: {strategies}")
     
     bot_stats = []
     
     for strat in strategies:
-        # Get trades for this strategy
+        # Get trades for this strategy (filtered by time AND with profit)
         s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
         
         s_total = len(s_orders)
@@ -130,8 +136,23 @@ def index():
     ]
     
     # Filter only requested bots and sort
-    bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
-    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']))
+    # If a strategy is in desired_order, use that order; otherwise append at the end
+    bot_stats_filtered = []
+    bot_stats_other = []
+    
+    for bot in bot_stats:
+        if bot['raw_name'] in desired_order:
+            bot_stats_filtered.append(bot)
+        else:
+            bot_stats_other.append(bot)
+    
+    # Sort filtered bots by desired_order
+    bot_stats_filtered.sort(key=lambda x: desired_order.index(x['raw_name']))
+    # Sort other bots by net profit (descending)
+    bot_stats_other.sort(key=lambda x: x['net_profit'], reverse=True)
+    
+    # Combine: desired_order first, then others
+    bot_stats = bot_stats_filtered + bot_stats_other
 
     return render_template('index.html', 
                            orders=orders, 
