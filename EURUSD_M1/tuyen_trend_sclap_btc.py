@@ -199,17 +199,28 @@ def check_rsi_reversal_down(rsi_series, lookback=10):
     prev_rsi = rsi_series.iloc[-2]
     return current_rsi < prev_rsi
 
-def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
+def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70, max_idx=None):
     """
     Tìm swing high với RSI > min_rsi (default 70)
+    Args:
+        df_m1: DataFrame với dữ liệu M1
+        lookback: Số nến lookback để xác định swing high
+        min_rsi: RSI tối thiểu tại swing high
+        max_idx: Index tối đa để tìm swing high (None = tìm trong toàn bộ df_m1)
     Returns: list of dicts với {'index': i, 'price': high, 'time': time, 'rsi': rsi_value}
     """
     swing_highs = []
     
-    for i in range(lookback, len(df_m1) - lookback):
+    # Giới hạn phạm vi tìm kiếm
+    if max_idx is None:
+        max_idx = len(df_m1) - lookback
+    else:
+        max_idx = min(max_idx, len(df_m1) - lookback)
+    
+    for i in range(lookback, max_idx):
         # Check if it's a swing high
         is_swing_high = True
-        for j in range(i - lookback, i + lookback + 1):
+        for j in range(i - lookback, min(i + lookback + 1, len(df_m1))):
             if j != i and df_m1.iloc[j]['high'] >= df_m1.iloc[i]['high']:
                 is_swing_high = False
                 break
@@ -227,17 +238,28 @@ def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
     
     return swing_highs
 
-def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
+def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30, max_idx=None):
     """
     Tìm swing low với RSI < min_rsi (default 30)
+    Args:
+        df_m1: DataFrame với dữ liệu M1
+        lookback: Số nến lookback để xác định swing low
+        min_rsi: RSI tối đa tại swing low
+        max_idx: Index tối đa để tìm swing low (None = tìm trong toàn bộ df_m1)
     Returns: list of dicts với {'index': i, 'price': low, 'time': time, 'rsi': rsi_value}
     """
     swing_lows = []
     
-    for i in range(lookback, len(df_m1) - lookback):
+    # Giới hạn phạm vi tìm kiếm
+    if max_idx is None:
+        max_idx = len(df_m1) - lookback
+    else:
+        max_idx = min(max_idx, len(df_m1) - lookback)
+    
+    for i in range(lookback, max_idx):
         # Check if it's a swing low
         is_swing_low = True
-        for j in range(i - lookback, i + lookback + 1):
+        for j in range(i - lookback, min(i + lookback + 1, len(df_m1))):
             if j != i and df_m1.iloc[j]['low'] <= df_m1.iloc[i]['low']:
                 is_swing_low = False
                 break
@@ -255,7 +277,7 @@ def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
     
     return swing_lows
 
-def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32, max_end_idx=None):
     """
     Kiểm tra sóng hồi hợp lệ cho BUY:
     - Giá không tạo đỉnh cao hơn swing high
@@ -265,16 +287,25 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng tăng chính
     
+    Args:
+        max_end_idx: Index tối đa của pullback (None = len(df_m1) - 1, thường là current_candle_idx)
+    
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
     """
-    if swing_high_idx >= len(df_m1) - 1:
-        return False, None, None, "Swing high quá gần cuối"
+    # Xác định max_end_idx (nến đã đóng gần nhất)
+    if max_end_idx is None:
+        max_end_idx = len(df_m1) - 1
+    else:
+        max_end_idx = min(max_end_idx, len(df_m1) - 1)
+    
+    if swing_high_idx >= max_end_idx:
+        return False, None, None, f"Swing high quá gần cuối (swing_high_idx={swing_high_idx} >= max_end_idx={max_end_idx})"
     
     swing_high_price = df_m1.iloc[swing_high_idx]['high']
     
-    # Tìm điểm kết thúc sóng hồi (từ swing high đến hiện tại hoặc max_candles)
+    # Tìm điểm kết thúc sóng hồi (từ swing high đến max_end_idx hoặc max_candles)
     pullback_start = swing_high_idx + 1
-    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    pullback_end = min(pullback_start + max_candles, max_end_idx)
     
     pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
     
@@ -350,7 +381,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     
     return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
 
-def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
+def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68, max_end_idx=None):
     """
     Kiểm tra sóng hồi hợp lệ cho SELL:
     - Giá không tạo đáy thấp hơn swing low
@@ -360,16 +391,25 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng giảm chính
     
+    Args:
+        max_end_idx: Index tối đa của pullback (None = len(df_m1) - 1, thường là current_candle_idx)
+    
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
     """
-    if swing_low_idx >= len(df_m1) - 1:
-        return False, None, None, "Swing low quá gần cuối"
+    # Xác định max_end_idx (nến đã đóng gần nhất)
+    if max_end_idx is None:
+        max_end_idx = len(df_m1) - 1
+    else:
+        max_end_idx = min(max_end_idx, len(df_m1) - 1)
+    
+    if swing_low_idx >= max_end_idx:
+        return False, None, None, f"Swing low quá gần cuối (swing_low_idx={swing_low_idx} >= max_end_idx={max_end_idx})"
     
     swing_low_price = df_m1.iloc[swing_low_idx]['low']
     
-    # Tìm điểm kết thúc sóng hồi (từ swing low đến hiện tại hoặc max_candles)
+    # Tìm điểm kết thúc sóng hồi (từ swing low đến max_end_idx hoặc max_candles)
     pullback_start = swing_low_idx + 1
-    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    pullback_end = min(pullback_start + max_candles, max_end_idx)
     
     pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
     
@@ -621,17 +661,29 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     
     return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
 
-def check_bearish_divergence(df_m1, lookback=50):
+def check_bearish_divergence(df_m1, lookback=50, max_idx=None):
     """
     Kiểm tra Bearish Divergence:
     - Giá tạo Higher High (HH) nhưng RSI tạo Lower High (LH) hoặc không tạo Higher High
     
+    Args:
+        df_m1: DataFrame với dữ liệu M1
+        lookback: Số nến lookback để kiểm tra divergence
+        max_idx: Index tối đa để kiểm tra (None = len(df_m1), thường là current_candle_idx + 1)
+    
     Returns: (has_divergence, message)
     """
-    if len(df_m1) < lookback:
+    # Xác định max_idx (chỉ dùng nến đã đóng)
+    if max_idx is None:
+        max_idx = len(df_m1)
+    else:
+        max_idx = min(max_idx + 1, len(df_m1))  # +1 để bao gồm nến tại max_idx
+    
+    if max_idx < lookback:
         return False, "Không đủ dữ liệu để kiểm tra divergence"
     
-    recent_df = df_m1.iloc[-lookback:]
+    # Chỉ lấy dữ liệu đến max_idx (nến đã đóng)
+    recent_df = df_m1.iloc[max(0, max_idx - lookback):max_idx]
     recent_rsi = recent_df['rsi']
     
     # Tìm các đỉnh (peaks) trong giá và RSI
@@ -668,17 +720,29 @@ def check_bearish_divergence(df_m1, lookback=50):
     
     return False, "Không có Bearish Divergence"
 
-def check_bullish_divergence(df_m1, lookback=50):
+def check_bullish_divergence(df_m1, lookback=50, max_idx=None):
     """
     Kiểm tra Bullish Divergence:
     - Giá tạo Lower Low (LL) nhưng RSI tạo Higher Low (HL) hoặc không tạo Lower Low
     
+    Args:
+        df_m1: DataFrame với dữ liệu M1
+        lookback: Số nến lookback để kiểm tra divergence
+        max_idx: Index tối đa để kiểm tra (None = len(df_m1), thường là current_candle_idx + 1)
+    
     Returns: (has_divergence, message)
     """
-    if len(df_m1) < lookback:
+    # Xác định max_idx (chỉ dùng nến đã đóng)
+    if max_idx is None:
+        max_idx = len(df_m1)
+    else:
+        max_idx = min(max_idx + 1, len(df_m1))  # +1 để bao gồm nến tại max_idx
+    
+    if max_idx < lookback:
         return False, "Không đủ dữ liệu để kiểm tra divergence"
     
-    recent_df = df_m1.iloc[-lookback:]
+    # Chỉ lấy dữ liệu đến max_idx (nến đã đóng)
+    recent_df = df_m1.iloc[max(0, max_idx - lookback):max_idx]
     recent_rsi = recent_df['rsi']
     
     # Tìm các đáy (troughs) trong giá và RSI
@@ -913,125 +977,139 @@ def m1_scalp_logic(config, error_count=0):
         if buy_condition1:
             # Điều kiện 2: Tìm Swing High với RSI > 70
             log_details.append(f"\n🔍 [BUY] ĐK2: Tìm Swing High với RSI > 70")
-            swing_highs_with_rsi = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70)
+            # Chỉ tìm swing high trước current_candle_idx (nến đã đóng)
+            swing_highs_with_rsi = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70, max_idx=current_candle_idx)
             
             if len(swing_highs_with_rsi) == 0:
-                log_details.append(f"   ❌ Không tìm thấy swing high với RSI > 70")
+                log_details.append(f"   ❌ Không tìm thấy swing high với RSI > 70 (trước nến index {current_candle_idx})")
                 buy_fail_reason = "Không tìm thấy Swing High với RSI > 70"
             else:
-                buy_dk2_ok = True
-                # Lấy swing high gần nhất
+                # Lấy swing high gần nhất nhưng phải < current_candle_idx
                 latest_swing_high = swing_highs_with_rsi[-1]
                 swing_high_idx = latest_swing_high['index']
-                swing_high_price = latest_swing_high['price']
-                swing_high_rsi = latest_swing_high['rsi']
                 
-                log_details.append(f"   ✅ Tìm thấy swing high: Index={swing_high_idx}, Price={swing_high_price:.5f}, RSI={swing_high_rsi:.1f}")
-                
-                # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
-                log_details.append(f"\n🔍 [BUY] ĐK3: Kiểm tra sóng hồi hợp lệ")
-                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
-                    df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32
-                )
-                
-                if not pullback_valid:
-                    log_details.append(f"   ❌ {pullback_msg}")
-                    buy_fail_reason = f"ĐK3: {pullback_msg}"
+                # Validation: Đảm bảo swing_high_idx < current_candle_idx
+                if swing_high_idx >= current_candle_idx:
+                    log_details.append(f"   ❌ Swing high index ({swing_high_idx}) >= current_candle_idx ({current_candle_idx})")
+                    buy_fail_reason = f"Swing high index ({swing_high_idx}) >= current_candle_idx ({current_candle_idx})"
                 else:
-                    buy_dk3_ok = True
-                    log_details.append(f"   ✅ {pullback_msg}")
+                    buy_dk2_ok = True
+                    swing_high_price = latest_swing_high['price']
+                    swing_high_rsi = latest_swing_high['rsi']
                     
-                    # Vẽ trendline sóng hồi
-                    log_details.append(f"\n🔍 [BUY] ĐK3b: Vẽ trendline sóng hồi")
-                    trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx)
+                    log_details.append(f"   ✅ Tìm thấy swing high: Index={swing_high_idx}, Price={swing_high_price:.5f}, RSI={swing_high_rsi:.1f}")
                     
-                    if trendline_info is None:
-                        log_details.append(f"   ❌ Không thể vẽ trendline")
-                        buy_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đỉnh thấp dần)"
+                    # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
+                    log_details.append(f"\n🔍 [BUY] ĐK3: Kiểm tra sóng hồi hợp lệ")
+                    # Giới hạn pullback_end_idx <= current_candle_idx (chỉ dùng nến đã đóng)
+                    pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
+                        df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32, max_end_idx=current_candle_idx
+                    )
+                    
+                    if not pullback_valid:
+                        log_details.append(f"   ❌ {pullback_msg}")
+                        buy_fail_reason = f"ĐK3: {pullback_msg}"
                     else:
-                        buy_dk3b_ok = True
-                        log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                        buy_dk3_ok = True
+                        log_details.append(f"   ✅ {pullback_msg}")
                         
-                        # Điều kiện 4: ATR (đã check ở trên)
-                        buy_dk4_ok = atr_ok
-                        if not buy_dk4_ok:
-                            if pd.notna(atr_val):
-                                symbol_upper = symbol.upper()
-                                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                else:
-                                    buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
-                            else:
-                                buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
-                        
-                        # Điều kiện 5: Nến xác nhận phá vỡ trendline
-                        log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
-                        break_ok, break_msg = check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val)
-                        
-                        if not break_ok:
-                            log_details.append(f"   ❌ {break_msg}")
-                            buy_fail_reason = f"ĐK5: {break_msg}"
+                        # Validation: Đảm bảo pullback_end_idx <= current_candle_idx
+                        if pullback_end_idx is not None and pullback_end_idx > current_candle_idx:
+                            log_details.append(f"   ❌ Pullback end index ({pullback_end_idx}) > current_candle_idx ({current_candle_idx})")
+                            buy_fail_reason = f"ĐK3: Pullback end index ({pullback_end_idx}) > current_candle_idx ({current_candle_idx})"
                         else:
-                            buy_dk5_ok = True
-                            log_details.append(f"   ✅ {break_msg}")
-                            
-                            # Điều kiện 6: Không có Bearish Divergence
-                            log_details.append(f"\n🔍 [BUY] ĐK6: Kiểm tra Bearish Divergence")
-                            has_bearish_div, bearish_div_msg = check_bearish_divergence(df_m1, lookback=50)
-                            
-                            if has_bearish_div:
-                                log_details.append(f"   ❌ {bearish_div_msg}")
-                                buy_fail_reason = f"ĐK6: {bearish_div_msg}"
+                            # Vẽ trendline sóng hồi
+                            log_details.append(f"\n🔍 [BUY] ĐK3b: Vẽ trendline sóng hồi")
+                            trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx)
+                    
+                            if trendline_info is None:
+                                log_details.append(f"   ❌ Không thể vẽ trendline")
+                                buy_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đỉnh thấp dần)"
                             else:
-                                buy_dk6_ok = True
-                                log_details.append(f"   ✅ {bearish_div_msg}")
+                                buy_dk3b_ok = True
+                                log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                                 
-                                # Điều kiện 7: RSI(14)_M5 >= 55 và <= 65
-                                log_details.append(f"\n🔍 [BUY] ĐK7: Kiểm tra RSI(14)_M5 >= 55 và <= 65")
-                                if len(df_m5) < 2:
-                                    log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
-                                    buy_fail_reason = "ĐK7: Không đủ dữ liệu M5"
-                                else:
-                                    rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
-                                    if pd.notna(rsi_m5):
-                                        rsi_m5_ok = 55 <= rsi_m5 <= 65
-                                        buy_dk7_ok = rsi_m5_ok
-                                        if rsi_m5_ok:
-                                            log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (55 ≤ {rsi_m5:.1f} ≤ 65)")
+                                # Điều kiện 4: ATR (đã check ở trên)
+                                buy_dk4_ok = atr_ok
+                                if not buy_dk4_ok:
+                                    if pd.notna(atr_val):
+                                        symbol_upper = symbol.upper()
+                                        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                        elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
                                         else:
-                                            log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 55-65)")
-                                            buy_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 55-65"
+                                            buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                     else:
-                                        log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
-                                        buy_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                        buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                 
-                                # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bearish Divergence và RSI M5)
-                                if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok and buy_dk6_ok and buy_dk7_ok:
-                                    signal_type = "BUY"
-                                    reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
-                                    current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
-                                    
-                                    log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
-                                    log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                # Điều kiện 5: Nến xác nhận phá vỡ trendline
+                                log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
+                                break_ok, break_msg = check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val)
+                        
+                                if not break_ok:
+                                    log_details.append(f"   ❌ {break_msg}")
+                                    buy_fail_reason = f"ĐK5: {break_msg}"
                                 else:
-                                    if not buy_dk4_ok:
-                                        if pd.notna(atr_val):
-                                            symbol_upper = symbol.upper()
-                                            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                            else:
-                                                buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
-                                        else:
-                                            buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
-                                    elif not buy_dk6_ok:
+                                    buy_dk5_ok = True
+                                    log_details.append(f"   ✅ {break_msg}")
+                                    
+                                    # Điều kiện 6: Không có Bearish Divergence
+                                    log_details.append(f"\n🔍 [BUY] ĐK6: Kiểm tra Bearish Divergence")
+                                    # Chỉ kiểm tra divergence với dữ liệu đến current_candle_idx (nến đã đóng)
+                                    has_bearish_div, bearish_div_msg = check_bearish_divergence(df_m1, lookback=50, max_idx=current_candle_idx)
+                                    
+                                    if has_bearish_div:
+                                        log_details.append(f"   ❌ {bearish_div_msg}")
                                         buy_fail_reason = f"ĐK6: {bearish_div_msg}"
-                                    elif not buy_dk7_ok:
-                                        # buy_fail_reason already set above
-                                        pass
+                                    else:
+                                        buy_dk6_ok = True
+                                        log_details.append(f"   ✅ {bearish_div_msg}")
+                                        
+                                        # Điều kiện 7: RSI(14)_M5 >= 55 và <= 65
+                                        log_details.append(f"\n🔍 [BUY] ĐK7: Kiểm tra RSI(14)_M5 >= 55 và <= 65")
+                                        if len(df_m5) < 2:
+                                            log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
+                                            buy_fail_reason = "ĐK7: Không đủ dữ liệu M5"
+                                        else:
+                                            rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
+                                            if pd.notna(rsi_m5):
+                                                rsi_m5_ok = 55 <= rsi_m5 <= 65
+                                                buy_dk7_ok = rsi_m5_ok
+                                                if rsi_m5_ok:
+                                                    log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (55 ≤ {rsi_m5:.1f} ≤ 65)")
+                                                else:
+                                                    log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 55-65)")
+                                                    buy_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 55-65"
+                                            else:
+                                                log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
+                                                buy_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                        
+                                        # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bearish Divergence và RSI M5)
+                                        if buy_dk1_ok and buy_dk2_ok and buy_dk3_ok and buy_dk3b_ok and buy_dk4_ok and buy_dk5_ok and buy_dk6_ok and buy_dk7_ok:
+                                            signal_type = "BUY"
+                                            reason = "M1_Scalp_SwingHigh_Pullback_TrendlineBreak"
+                                            current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
+                                            
+                                            log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+                                            log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                        else:
+                                            if not buy_dk4_ok:
+                                                if pd.notna(atr_val):
+                                                    symbol_upper = symbol.upper()
+                                                    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                                        buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                                        buy_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                    else:
+                                                        buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
+                                                else:
+                                                    buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                            elif not buy_dk6_ok:
+                                                buy_fail_reason = f"ĐK6: {bearish_div_msg}"
+                                            elif not buy_dk7_ok:
+                                                # buy_fail_reason already set above
+                                                pass
         else:
             log_details.append(f"   ⏭️ [BUY] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
@@ -1049,125 +1127,139 @@ def m1_scalp_logic(config, error_count=0):
             if sell_condition1:
                 # Điều kiện 2: Tìm Swing Low với RSI < 30
                 log_details.append(f"\n🔍 [SELL] ĐK2: Tìm Swing Low với RSI < 30")
-                swing_lows_with_rsi = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30)
+                # Chỉ tìm swing low trước current_candle_idx (nến đã đóng)
+                swing_lows_with_rsi = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30, max_idx=current_candle_idx)
                 
                 if len(swing_lows_with_rsi) == 0:
-                    log_details.append(f"   ❌ Không tìm thấy swing low với RSI < 30")
+                    log_details.append(f"   ❌ Không tìm thấy swing low với RSI < 30 (trước nến index {current_candle_idx})")
                     sell_fail_reason = "Không tìm thấy Swing Low với RSI < 30"
                 else:
-                    sell_dk2_ok = True
-                    # Lấy swing low gần nhất
+                    # Lấy swing low gần nhất nhưng phải < current_candle_idx
                     latest_swing_low = swing_lows_with_rsi[-1]
                     swing_low_idx = latest_swing_low['index']
-                    swing_low_price = latest_swing_low['price']
-                    swing_low_rsi = latest_swing_low['rsi']
                     
-                    log_details.append(f"   ✅ Tìm thấy swing low: Index={swing_low_idx}, Price={swing_low_price:.5f}, RSI={swing_low_rsi:.1f}")
-                    
-                    # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
-                    log_details.append(f"\n🔍 [SELL] ĐK3: Kiểm tra sóng hồi hợp lệ")
-                    pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
-                        df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
-                    )
-                    
-                    if not pullback_valid:
-                        log_details.append(f"   ❌ {pullback_msg}")
-                        sell_fail_reason = f"ĐK3: {pullback_msg}"
+                    # Validation: Đảm bảo swing_low_idx < current_candle_idx
+                    if swing_low_idx >= current_candle_idx:
+                        log_details.append(f"   ❌ Swing low index ({swing_low_idx}) >= current_candle_idx ({current_candle_idx})")
+                        sell_fail_reason = f"Swing low index ({swing_low_idx}) >= current_candle_idx ({current_candle_idx})"
                     else:
-                        sell_dk3_ok = True
-                        log_details.append(f"   ✅ {pullback_msg}")
+                        sell_dk2_ok = True
+                        swing_low_price = latest_swing_low['price']
+                        swing_low_rsi = latest_swing_low['rsi']
                         
-                        # Vẽ trendline sóng hồi
-                        log_details.append(f"\n🔍 [SELL] ĐK3b: Vẽ trendline sóng hồi")
-                        trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx)
+                        log_details.append(f"   ✅ Tìm thấy swing low: Index={swing_low_idx}, Price={swing_low_price:.5f}, RSI={swing_low_rsi:.1f}")
                         
-                        if trendline_info is None:
-                            log_details.append(f"   ❌ Không thể vẽ trendline")
-                            sell_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đáy cao dần)"
+                        # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
+                        log_details.append(f"\n🔍 [SELL] ĐK3: Kiểm tra sóng hồi hợp lệ")
+                        # Giới hạn pullback_end_idx <= current_candle_idx (chỉ dùng nến đã đóng)
+                        pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
+                            df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68, max_end_idx=current_candle_idx
+                        )
+                        
+                        if not pullback_valid:
+                            log_details.append(f"   ❌ {pullback_msg}")
+                            sell_fail_reason = f"ĐK3: {pullback_msg}"
                         else:
-                            sell_dk3b_ok = True
-                            log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                            sell_dk3_ok = True
+                            log_details.append(f"   ✅ {pullback_msg}")
                             
-                            # Điều kiện 4: ATR (đã check ở trên)
-                            sell_dk4_ok = atr_ok
-                            if not sell_dk4_ok:
-                                if pd.notna(atr_val):
-                                    symbol_upper = symbol.upper()
-                                    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                    else:
-                                        sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
-                                else:
-                                    sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
-                            
-                            # Điều kiện 5: Nến xác nhận phá vỡ trendline
-                            log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
-                            break_ok, break_msg = check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val)
-                            
-                            if not break_ok:
-                                log_details.append(f"   ❌ {break_msg}")
-                                sell_fail_reason = f"ĐK5: {break_msg}"
+                            # Validation: Đảm bảo pullback_end_idx <= current_candle_idx
+                            if pullback_end_idx is not None and pullback_end_idx > current_candle_idx:
+                                log_details.append(f"   ❌ Pullback end index ({pullback_end_idx}) > current_candle_idx ({current_candle_idx})")
+                                sell_fail_reason = f"ĐK3: Pullback end index ({pullback_end_idx}) > current_candle_idx ({current_candle_idx})"
                             else:
-                                sell_dk5_ok = True
-                                log_details.append(f"   ✅ {break_msg}")
-                                
-                                # Điều kiện 6: Không có Bullish Divergence
-                                log_details.append(f"\n🔍 [SELL] ĐK6: Kiểm tra Bullish Divergence")
-                                has_bullish_div, bullish_div_msg = check_bullish_divergence(df_m1, lookback=50)
-                                
-                                if has_bullish_div:
-                                    log_details.append(f"   ❌ {bullish_div_msg}")
-                                    sell_fail_reason = f"ĐK6: {bullish_div_msg}"
+                                # Vẽ trendline sóng hồi
+                                log_details.append(f"\n🔍 [SELL] ĐK3b: Vẽ trendline sóng hồi")
+                                trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx)
+                        
+                                if trendline_info is None:
+                                    log_details.append(f"   ❌ Không thể vẽ trendline")
+                                    sell_fail_reason = "ĐK3b: Không thể vẽ trendline (không đủ đáy cao dần)"
                                 else:
-                                    sell_dk6_ok = True
-                                    log_details.append(f"   ✅ {bullish_div_msg}")
+                                    sell_dk3b_ok = True
+                                    log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                                     
-                                    # Điều kiện 7: RSI(14)_M5 >= 35 và <= 45
-                                    log_details.append(f"\n🔍 [SELL] ĐK7: Kiểm tra RSI(14)_M5 >= 35 và <= 45")
-                                    if len(df_m5) < 2:
-                                        log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
-                                        sell_fail_reason = "ĐK7: Không đủ dữ liệu M5"
-                                    else:
-                                        rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
-                                        if pd.notna(rsi_m5):
-                                            rsi_m5_ok = 35 <= rsi_m5 <= 45
-                                            sell_dk7_ok = rsi_m5_ok
-                                            if rsi_m5_ok:
-                                                log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (35 ≤ {rsi_m5:.1f} ≤ 45)")
+                                    # Điều kiện 4: ATR (đã check ở trên)
+                                    sell_dk4_ok = atr_ok
+                                    if not sell_dk4_ok:
+                                        if pd.notna(atr_val):
+                                            symbol_upper = symbol.upper()
+                                            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
                                             else:
-                                                log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 35-45)")
-                                                sell_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 35-45"
+                                                sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                         else:
-                                            log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
-                                            sell_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                            sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                                     
-                                    # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bullish Divergence và RSI M5)
-                                    if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok and sell_dk6_ok and sell_dk7_ok:
-                                        signal_type = "SELL"
-                                        reason = "M1_Scalp_SwingLow_Pullback_TrendlineBreak"
-                                        current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
-                                        
-                                        log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
-                                        log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                    # Điều kiện 5: Nến xác nhận phá vỡ trendline
+                                    log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
+                                    break_ok, break_msg = check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val)
+                            
+                                    if not break_ok:
+                                        log_details.append(f"   ❌ {break_msg}")
+                                        sell_fail_reason = f"ĐK5: {break_msg}"
                                     else:
-                                        if not sell_dk4_ok:
-                                            if pd.notna(atr_val):
-                                                symbol_upper = symbol.upper()
-                                                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                                elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
-                                                else:
-                                                    sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
-                                            else:
-                                                sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
-                                        elif not sell_dk6_ok:
+                                        sell_dk5_ok = True
+                                        log_details.append(f"   ✅ {break_msg}")
+                                        
+                                        # Điều kiện 6: Không có Bullish Divergence
+                                        log_details.append(f"\n🔍 [SELL] ĐK6: Kiểm tra Bullish Divergence")
+                                        # Chỉ kiểm tra divergence với dữ liệu đến current_candle_idx (nến đã đóng)
+                                        has_bullish_div, bullish_div_msg = check_bullish_divergence(df_m1, lookback=50, max_idx=current_candle_idx)
+                                        
+                                        if has_bullish_div:
+                                            log_details.append(f"   ❌ {bullish_div_msg}")
                                             sell_fail_reason = f"ĐK6: {bullish_div_msg}"
-                                        elif not sell_dk7_ok:
-                                            # sell_fail_reason already set above
-                                            pass
+                                        else:
+                                            sell_dk6_ok = True
+                                            log_details.append(f"   ✅ {bullish_div_msg}")
+                                            
+                                            # Điều kiện 7: RSI(14)_M5 >= 35 và <= 45
+                                            log_details.append(f"\n🔍 [SELL] ĐK7: Kiểm tra RSI(14)_M5 >= 35 và <= 45")
+                                            if len(df_m5) < 2:
+                                                log_details.append(f"   ❌ Không đủ dữ liệu M5 để tính RSI")
+                                                sell_fail_reason = "ĐK7: Không đủ dữ liệu M5"
+                                            else:
+                                                rsi_m5 = df_m5['rsi'].iloc[-2]  # RSI của nến M5 đã đóng gần nhất
+                                                if pd.notna(rsi_m5):
+                                                    rsi_m5_ok = 35 <= rsi_m5 <= 45
+                                                    sell_dk7_ok = rsi_m5_ok
+                                                    if rsi_m5_ok:
+                                                        log_details.append(f"   ✅ RSI(14)_M5 = {rsi_m5:.1f} (35 ≤ {rsi_m5:.1f} ≤ 45)")
+                                                    else:
+                                                        log_details.append(f"   ❌ RSI(14)_M5 = {rsi_m5:.1f} (không trong khoảng 35-45)")
+                                                        sell_fail_reason = f"ĐK7: RSI(14)_M5 ({rsi_m5:.1f}) không trong khoảng 35-45"
+                                                else:
+                                                    log_details.append(f"   ❌ RSI(14)_M5 không có giá trị (NaN)")
+                                                    sell_fail_reason = "ĐK7: RSI(14)_M5 không có giá trị"
+                                            
+                                            # Tất cả điều kiện đã thỏa (bao gồm ATR, không có Bullish Divergence và RSI M5)
+                                            if sell_dk1_ok and sell_dk2_ok and sell_dk3_ok and sell_dk3b_ok and sell_dk4_ok and sell_dk5_ok and sell_dk6_ok and sell_dk7_ok:
+                                                signal_type = "SELL"
+                                                reason = "M1_Scalp_SwingLow_Pullback_TrendlineBreak"
+                                                current_price = curr_candle['close']  # Entry tại close của nến phá vỡ
+                                                
+                                                log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
+                                                log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                            else:
+                                                if not sell_dk4_ok:
+                                                    if pd.notna(atr_val):
+                                                        symbol_upper = symbol.upper()
+                                                        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                                                            sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                        elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                                                            sell_fail_reason = f"ĐK4: ATR ({atr_val:.2f} USD) < {min_atr:.2f} USD"
+                                                        else:
+                                                            sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
+                                                    else:
+                                                        sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                                                elif not sell_dk6_ok:
+                                                    sell_fail_reason = f"ĐK6: {bullish_div_msg}"
+                                                elif not sell_dk7_ok:
+                                                    # sell_fail_reason already set above
+                                                    pass
             else:
                 log_details.append(f"   ⏭️ [SELL] ĐK1 không thỏa → Bỏ qua các điều kiện còn lại")
         
