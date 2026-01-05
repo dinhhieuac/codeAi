@@ -45,7 +45,7 @@ def connect_mt5(config):
         print(f"❌ Connection error: {e}")
         return False
 
-def log_to_file(symbol, message_type, content, log_dir="logs"):
+def log_to_file(symbol, message_type, content, log_dir=None):
     """
     Log message to file
     
@@ -53,9 +53,19 @@ def log_to_file(symbol, message_type, content, log_dir="logs"):
         symbol: Trading symbol (e.g., BTCUSD, XAUUSD)
         message_type: Type of message (SIGNAL, ERROR, TELEGRAM_SUCCESS, TELEGRAM_ERROR, BREAKEVEN, TRAILING)
         content: Message content
-        log_dir: Directory to store log files
+        log_dir: Directory to store log files (default: "logs" in script directory)
     """
     try:
+        # Get script directory (where utils.py is located)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Use provided log_dir or default to "logs" in script directory
+        if log_dir is None:
+            log_dir = os.path.join(script_dir, "logs")
+        elif not os.path.isabs(log_dir):
+            # If relative path, make it relative to script directory
+            log_dir = os.path.join(script_dir, log_dir)
+        
         # Create logs directory if it doesn't exist
         os.makedirs(log_dir, exist_ok=True)
         
@@ -71,9 +81,15 @@ def log_to_file(symbol, message_type, content, log_dir="logs"):
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(log_entry)
         
+        # Debug: Print log path (only for first few logs to avoid spam)
+        if message_type in ["SIGNAL", "ERROR", "TELEGRAM_ERROR"]:
+            print(f"📝 [Log File] Đã ghi log vào: {log_path}")
+        
         return True
     except Exception as e:
         print(f"⚠️ [Log File] Lỗi khi ghi log: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True):

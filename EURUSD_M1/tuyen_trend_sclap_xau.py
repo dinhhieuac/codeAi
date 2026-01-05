@@ -1402,6 +1402,8 @@ def m1_scalp_logic(config, error_count=0):
             )
             if not telegram_sent:
                 print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram lỗi: {error_msg}")
             return error_count + 1, 0
         
         if symbol_info.visible == False:
@@ -1446,6 +1448,8 @@ def m1_scalp_logic(config, error_count=0):
             )
             if not telegram_sent:
                 print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram lỗi: {error_msg} - {error_detail}")
             return error_count + 1, check_result.retcode
         else:
             print(f"   ✅ Request hợp lệ")
@@ -1504,6 +1508,8 @@ def m1_scalp_logic(config, error_count=0):
             telegram_sent = send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'), symbol=symbol)
             if not telegram_sent:
                 print(f"⚠️ Không thể gửi thông báo Telegram. Kiểm tra token và chat_id trong config.")
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram cho signal {signal_type} - Ticket: {result.order}")
             return 0, 0
         else:
             error_msg = f"Order Failed: Retcode {result.retcode}"
