@@ -153,6 +153,11 @@ def index():
     
     # Combine: desired_order first, then others
     bot_stats = bot_stats_filtered + bot_stats_other
+    
+    # Debug: Print bot_stats summary
+    print(f"📊 [Dashboard] Generated {len(bot_stats)} bot stats entries")
+    for bot in bot_stats:
+        print(f"   - {bot['raw_name']}: {bot['trades']} trades, Net Profit: ${bot['net_profit']:.2f}")
 
     return render_template('index.html', 
                            orders=orders, 
