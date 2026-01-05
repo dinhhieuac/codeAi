@@ -21,7 +21,7 @@ from tuyen_trend_sclap_btc import (
     check_bearish_divergence, check_bullish_divergence
 )
 
-STRATEGY_NAME = "M1_Scalp"
+STRATEGY_NAME = "M1_Scalp_BTCUSD"
 CONFIG_FILE = "config_tuyen_btc.json"
 SYMBOL_DISPLAY = "BTCUSD"
 

@@ -21,7 +21,7 @@ from tuyen_trend_sclap import (
     check_bearish_divergence, check_bullish_divergence
 )
 
-STRATEGY_NAME = "M1_Scalp"
+STRATEGY_NAME = "M1_Scalp_EURUSD"
 CONFIG_FILE = "config_tuyen.json"
 SYMBOL_DISPLAY = "EURUSD"
 

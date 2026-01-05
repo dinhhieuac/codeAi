@@ -1435,7 +1435,7 @@ def m1_scalp_logic(config, error_count=0):
         
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "M1_Scalp", symbol, signal_type, volume, current_price, sl, tp, reason, account_id=config.get('account'))
+            db.log_order(result.order, "M1_Scalp_EURUSD", symbol, signal_type, volume, current_price, sl, tp, reason, account_id=config.get('account'))
             
             # Log to file: SIGNAL
             signal_log_content = (

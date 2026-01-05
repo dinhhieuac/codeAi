@@ -21,7 +21,7 @@ from tuyen_trend_sclap_xau import (
     check_bearish_divergence, check_bullish_divergence
 )
 
-STRATEGY_NAME = "M1_Scalp"
+STRATEGY_NAME = "M1_Scalp_XAUUSD"
 CONFIG_FILE = "config_tuyen_xau.json"
 SYMBOL_DISPLAY = "XAUUSD"
 

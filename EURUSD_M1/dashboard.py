@@ -84,8 +84,9 @@ def index():
         win_rate = (len(s_wins) / s_total) * 100
         
         # Format strategy name for display
-        if strat == "M1_Scalp":
-            display_name = "M1 Scalp (All Symbols)"
+        if strat.startswith("M1_Scalp_"):
+            # Extract symbol from strategy name (e.g., "M1_Scalp_EURUSD" -> "M1 Scalp EURUSD")
+            display_name = strat.replace("M1_Scalp_", "M1 Scalp ").replace("_", " ")
         else:
             display_name = strat.replace("Strategy_", "").replace("_", " ")
         
@@ -123,7 +124,9 @@ def index():
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR", 
         "Strategy_5_Filter_First",
-        "M1_Scalp"
+        "M1_Scalp_EURUSD",
+        "M1_Scalp_XAUUSD",
+        "M1_Scalp_BTCUSD"
     ]
     
     # Filter only requested bots and sort
