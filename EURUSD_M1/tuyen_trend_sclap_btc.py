@@ -560,12 +560,20 @@ def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
     
     pullback_candles = df_m1.iloc[swing_low_idx:pullback_end_idx + 1]
     
-    # Tìm các đáy (local minima) trong pullback
+    # Tìm các đáy (local minima) trong pullback - Cải thiện: Tìm với lookback lớn hơn
     lows = pullback_candles['low'].values
     
     local_mins = []
-    for i in range(1, len(lows) - 1):
-        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+    lookback = 2  # So sánh với 2 nến trước và sau (thay vì 1)
+    for i in range(lookback, len(lows) - lookback):
+        # Kiểm tra xem đây có phải là local minimum không (thấp hơn lookback nến trước và sau)
+        is_local_min = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and lows[j] <= lows[i]:
+                is_local_min = False
+                break
+        
+        if is_local_min:
             idx_in_df = pullback_candles.index[i]
             pos_in_df = df_m1.index.get_loc(idx_in_df) if hasattr(df_m1.index, 'get_loc') else i + swing_low_idx
             local_mins.append({'pos': pos_in_df, 'price': lows[i], 'idx': idx_in_df})
@@ -577,11 +585,39 @@ def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
     
     local_mins = sorted(local_mins, key=lambda x: x['pos'])
     
-    # Lọc các đáy cao dần
-    filtered_mins = [local_mins[0]]
+    # Lọc các đáy cao dần - Logic cải thiện: Cho phép đáy thấp hơn một chút nhưng vẫn cao hơn swing low
+    # và đảm bảo xu hướng tổng thể vẫn là tăng (higher lows)
+    filtered_mins = [local_mins[0]]  # Swing low (điểm đầu)
+    swing_low_price = local_mins[0]['price']
+    
     for i in range(1, len(local_mins)):
-        if local_mins[i]['price'] >= filtered_mins[-1]['price']:
+        current_price = local_mins[i]['price']
+        last_price = filtered_mins[-1]['price']
+        
+        # Chấp nhận đáy nếu:
+        # 1. Cao hơn đáy trước (higher low), HOẶC
+        # 2. Thấp hơn đáy trước một chút (cho phép pullback nhẹ) nhưng:
+        #    - Vẫn cao hơn swing low (đảm bảo không phá swing low)
+        #    - Và đáy tiếp theo (nếu có) sẽ cao hơn đáy hiện tại (đảm bảo xu hướng tăng)
+        
+        # Điều kiện 1: Cao hơn đáy trước (higher low)
+        if current_price >= last_price:
             filtered_mins.append(local_mins[i])
+        # Điều kiện 2: Thấp hơn đáy trước nhưng vẫn cao hơn swing low và có xu hướng tăng
+        elif current_price >= swing_low_price:
+            # Kiểm tra xem có đáy nào sau đáy này cao hơn không (đảm bảo xu hướng tăng)
+            has_higher_low_after = False
+            for j in range(i + 1, len(local_mins)):
+                if local_mins[j]['price'] > current_price:
+                    has_higher_low_after = True
+                    break
+            
+            # Nếu có đáy cao hơn sau đó, hoặc đây là đáy cuối cùng, chấp nhận
+            if has_higher_low_after or i == len(local_mins) - 1:
+                # Chỉ chấp nhận nếu không quá thấp so với đáy trước (tối đa 0.1% pullback)
+                max_pullback = last_price * 0.999  # Cho phép pullback tối đa 0.1%
+                if current_price >= max_pullback:
+                    filtered_mins.append(local_mins[i])
     
     if len(filtered_mins) < 2:
         return None
