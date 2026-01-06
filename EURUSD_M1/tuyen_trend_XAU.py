@@ -9,7 +9,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
 
 # Initialize Database
 db = Database()
@@ -380,56 +380,6 @@ def calculate_atr(df, period=14):
     atr_series = df['tr'].rolling(window=period).mean()
     return atr_series
 
-def get_pip_value_per_lot(symbol, symbol_info=None):
-    """
-    Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
-    EURUSD: 1 pip = $10 per lot (standard)
-    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
-    """
-    if symbol_info is None:
-        symbol_info = mt5.symbol_info(symbol)
-    
-    if symbol_info:
-        # Lấy từ MT5 symbol_info (chính xác nhất)
-        tick_value = getattr(symbol_info, 'trade_tick_value', None)
-        tick_size = getattr(symbol_info, 'trade_tick_size', None)
-        point = getattr(symbol_info, 'point', 0.0001)
-        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
-        
-        # Tính pip size
-        symbol_upper = symbol.upper()
-        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-            pip_size = 0.1 if point < 0.01 else point
-        elif 'JPY' in symbol_upper:
-            pip_size = 0.01
-        else:
-            pip_size = 0.0001
-        
-        # Tính pip value từ tick_value và tick_size
-        if tick_value is not None and tick_size is not None and tick_size > 0:
-            pip_value = tick_value * (pip_size / tick_size)
-            if pip_value > 0:
-                return pip_value
-        
-        # Fallback: tính từ contract_size
-        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-            if contract_size == 100:
-                return 1.0
-            else:
-                return contract_size / 100
-        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
-            return 10.0
-        else:
-            return 10.0
-    
-    # Default fallback
-    symbol_upper = symbol.upper()
-    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        return 1.0
-    elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
-        return 10.0
-    return 10.0
-
 def calculate_sl_pips(entry_price, sl_price, symbol, symbol_info=None):
     """
     Calculate SL distance in pips - lấy pip size từ MT5 nếu có
@@ -490,7 +440,6 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_in
         risk_percent: Risk percentage (e.g., 1.0 for 1%)
         sl_pips: Stop Loss in pips
         symbol: Trading symbol (EURUSD, XAUUSD, etc.)
-        symbol_info: MT5 symbol_info object (optional, để tính pip value chính xác)
     
     Returns:
         lot_size: Calculated lot size
@@ -515,6 +464,56 @@ def calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_in
         lot_size = 0.01
     
     return lot_size
+
+def get_pip_value_per_lot(symbol, symbol_info=None):
+    """
+    Get pip value per lot for a symbol - lấy từ MT5 nếu có (chính xác hơn)
+    EURUSD: 1 pip = $10 per lot (standard)
+    XAUUSD: 1 pip = $1 per lot (standard, but may vary by broker)
+    """
+    if symbol_info is None:
+        symbol_info = mt5.symbol_info(symbol)
+    
+    if symbol_info:
+        # Lấy từ MT5 symbol_info (chính xác nhất)
+        tick_value = getattr(symbol_info, 'trade_tick_value', None)
+        tick_size = getattr(symbol_info, 'trade_tick_size', None)
+        point = getattr(symbol_info, 'point', 0.0001)
+        contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
+        
+        # Tính pip size
+        symbol_upper = symbol.upper()
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            pip_size = 0.1 if point < 0.01 else point
+        elif 'JPY' in symbol_upper:
+            pip_size = 0.01
+        else:
+            pip_size = 0.0001
+        
+        # Tính pip value từ tick_value và tick_size
+        if tick_value is not None and tick_size is not None and tick_size > 0:
+            pip_value = tick_value * (pip_size / tick_size)
+            if pip_value > 0:
+                return pip_value
+        
+        # Fallback: tính từ contract_size
+        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+            if contract_size == 100:
+                return 1.0
+            else:
+                return contract_size / 100
+        elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+            return 10.0
+        else:
+            return 10.0
+    
+    # Default fallback nếu không lấy được từ MT5
+    symbol_upper = symbol.upper()
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
+        return 10.0
+    return 10.0
 
 def is_doji(row, body_percent=0.1):
     """Body is less than 10% of total range"""
@@ -709,6 +708,118 @@ def check_signal_candle_in_compression(df_slice, trend, ema50_val=None, ema200_v
     # Configurable: require at least min_criteria out of total_criteria
     return criteria_met >= min_criteria
 
+def check_external_bos(df_m1, signal_type, lookback=50):
+    """
+    EXTERNAL BOS FILTER
+    BUY: close > last_external_swing_high (cấu trúc lớn)
+    SELL: close < last_external_swing_low (cấu trúc lớn)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    # External structure: look at candles before recent 10 (avoid recent noise)
+    external_range = df_m1.iloc[-lookback:-10]
+    if len(external_range) < 5:
+        return False, "Không đủ dữ liệu external"
+    
+    external_swing_high = external_range['high'].max()
+    external_swing_low = external_range['low'].min()
+    current_close = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        if current_close > external_swing_high:
+            return True, f"External BOS confirmed: Close {current_close:.5f} > External High {external_swing_high:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} <= External High {external_swing_high:.5f}"
+    elif signal_type == "SELL":
+        if current_close < external_swing_low:
+            return True, f"External BOS confirmed: Close {current_close:.5f} < External Low {external_swing_low:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} >= External Low {external_swing_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_liquidity_filter(df_m1, entry_price, signal_type, min_distance_pips=2.5):
+    """
+    LIQUIDITY FILTER
+    BUY: distance(entry, nearest_low) >= 2.5 pips
+    SELL: distance(entry, nearest_high) >= 2.5 pips
+    """
+    if len(df_m1) < 20:
+        return True, "Không đủ dữ liệu, bỏ qua filter"
+    
+    # Get pip size (estimate from price)
+    current_price = df_m1.iloc[-1]['close']
+    if current_price > 100:  # JPY pairs
+        pip_size = 0.01
+    elif current_price > 10:  # XAUUSD
+        pip_size = 0.1
+    else:  # EURUSD, etc.
+        pip_size = 0.0001
+    
+    min_distance = min_distance_pips * pip_size
+    
+    if signal_type == "BUY":
+        # Find nearest swing low below entry
+        recent_lows = df_m1.iloc[-20:]['low']
+        nearest_low = recent_lows[recent_lows < entry_price].max() if (recent_lows < entry_price).any() else None
+        
+        if nearest_low is not None:
+            distance = entry_price - nearest_low
+            if distance < min_distance:
+                return False, f"Too close to liquidity: Entry {entry_price:.5f} - Low {nearest_low:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    elif signal_type == "SELL":
+        # Find nearest swing high above entry
+        recent_highs = df_m1.iloc[-20:]['high']
+        nearest_high = recent_highs[recent_highs > entry_price].min() if (recent_highs > entry_price).any() else None
+        
+        if nearest_high is not None:
+            distance = nearest_high - entry_price
+            if distance < min_distance:
+                return False, f"Too close to liquidity: High {nearest_high:.5f} - Entry {entry_price:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    return True, "Signal type không hợp lệ, bỏ qua filter"
+
+def find_nearest_structure_level(df_m1, signal_type, lookback=30):
+    """
+    Find nearest structure level for SL calculation
+    BUY: Find nearest swing low below current price
+    SELL: Find nearest swing high above current price
+    """
+    if len(df_m1) < lookback:
+        return None
+    
+    recent = df_m1.iloc[-lookback:]
+    current_price = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        # Find swing lows
+        lows = recent['low'].values
+        swing_lows = []
+        for i in range(1, len(lows) - 1):
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                swing_lows.append(lows[i])
+        
+        if swing_lows:
+            valid_lows = [low for low in swing_lows if low < current_price]
+            if valid_lows:
+                return max(valid_lows)  # Nearest swing low below entry
+        return None
+    elif signal_type == "SELL":
+        # Find swing highs
+        highs = recent['high'].values
+        swing_highs = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                swing_highs.append(highs[i])
+        
+        if swing_highs:
+            valid_highs = [high for high in swing_highs if high > current_price]
+            if valid_highs:
+                return min(valid_highs)  # Nearest swing high above entry
+        return None
+    return None
+
 def check_compression_block(df_slice):
     """
     Check for Price Action Compression (Block of 3+ candles)
@@ -769,6 +880,260 @@ def check_compression_block(df_slice):
         return False
     
     return criteria_met >= 3  # At least 3 compression criteria met
+
+def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_threshold=0.7):
+    """
+    CHOP / RANGE FILTER (CHUNG)
+    IF last 10 candles:
+    - body_avg < 0.5 × ATR
+    - overlap > 70%
+    → MARKET = CHOP → NO TRADE
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    recent_candles = df_m1.iloc[-lookback:]
+    
+    # Tính body trung bình
+    bodies = abs(recent_candles['close'] - recent_candles['open'])
+    body_avg = bodies.mean()
+    
+    # Tính overlap (tỷ lệ nến chồng lên nhau)
+    overlaps = 0
+    total_pairs = 0
+    for i in range(len(recent_candles) - 1):
+        candle1 = recent_candles.iloc[i]
+        candle2 = recent_candles.iloc[i + 1]
+        
+        # Tính overlap range
+        range1 = (candle1['low'], candle1['high'])
+        range2 = (candle2['low'], candle2['high'])
+        
+        overlap_low = max(range1[0], range2[0])
+        overlap_high = min(range1[1], range2[1])
+        
+        if overlap_low < overlap_high:
+            overlap_size = overlap_high - overlap_low
+            range1_size = range1[1] - range1[0]
+            range2_size = range2[1] - range2[0]
+            avg_range = (range1_size + range2_size) / 2
+            
+            if avg_range > 0:
+                overlap_ratio = overlap_size / avg_range
+                overlaps += overlap_ratio
+                total_pairs += 1
+    
+    avg_overlap = overlaps / total_pairs if total_pairs > 0 else 0
+    
+    # Kiểm tra điều kiện chop
+    body_condition = body_avg < (body_threshold * atr_val)
+    overlap_condition = avg_overlap > overlap_threshold
+    
+    if body_condition and overlap_condition:
+        return True, f"CHOP: body_avg={body_avg:.5f} < {body_threshold * atr_val:.5f}, overlap={avg_overlap:.1%} > {overlap_threshold:.1%}"
+    return False, f"Not CHOP: body_avg={body_avg:.5f}, overlap={avg_overlap:.1%}"
+
+def check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val, buffer_multiplier=0.00005):
+    """
+    BUY - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_low < previous_swing_low - buffer
+    AND lower_wick >= 1.5 × ATR
+    AND close > open
+    → BUY_SWEEP_CONFIRMED = TRUE
+    """
+    if prev_swing_low is None:
+        return False, "Không có previous swing low"
+    
+    current_candle = df_m1.iloc[-1]
+    current_low = current_candle['low']
+    lower_wick = min(current_candle['open'], current_candle['close']) - current_low
+    buffer = buffer_multiplier
+    
+    # Check if swept below previous swing low
+    if current_low < (prev_swing_low - buffer):
+        # Check lower wick >= 1.5 × ATR
+        if lower_wick >= 1.5 * atr_val:
+            # Check close > open (bullish candle)
+            if current_candle['close'] > current_candle['open']:
+                return True, f"Sweep confirmed: Low {current_low:.5f} < {prev_swing_low:.5f}, wick={lower_wick:.5f} >= {1.5 * atr_val:.5f}"
+            else:
+                return False, f"Sweep low OK nhưng nến không bullish (close <= open)"
+        else:
+            return False, f"Sweep low OK nhưng wick {lower_wick:.5f} < {1.5 * atr_val:.5f}"
+    else:
+        return False, f"Chưa sweep: Low {current_low:.5f} >= {prev_swing_low - buffer:.5f}"
+
+def check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val, buffer_multiplier=0.00005):
+    """
+    SELL - LIQUIDITY SWEEP CHECK (BẮT BUỘC)
+    IF current_high > previous_swing_high + buffer
+    AND upper_wick >= 1.5 × ATR
+    AND close < open
+    → SELL_SWEEP_CONFIRMED = TRUE
+    """
+    if prev_swing_high is None:
+        return False, "Không có previous swing high"
+    
+    current_candle = df_m1.iloc[-1]
+    current_high = current_candle['high']
+    upper_wick = current_high - max(current_candle['open'], current_candle['close'])
+    buffer = buffer_multiplier
+    
+    # Check if swept above previous swing high
+    if current_high > (prev_swing_high + buffer):
+        # Check upper wick >= 1.5 × ATR
+        if upper_wick >= 1.5 * atr_val:
+            # Check close < open (bearish candle)
+            if current_candle['close'] < current_candle['open']:
+                return True, f"Sweep confirmed: High {current_high:.5f} > {prev_swing_high:.5f}, wick={upper_wick:.5f} >= {1.5 * atr_val:.5f}"
+            else:
+                return False, f"Sweep high OK nhưng nến không bearish (close >= open)"
+        else:
+            return False, f"Sweep high OK nhưng wick {upper_wick:.5f} < {1.5 * atr_val:.5f}"
+    else:
+        return False, f"Chưa sweep: High {current_high:.5f} <= {prev_swing_high + buffer:.5f}"
+
+def check_displacement_candle(df_m1, atr_val, signal_type):
+    """
+    DISPLACEMENT CANDLE CHECK
+    BUY: breakout_body >= 1.2 × ATR AND close > previous_range_high
+    SELL: breakout_body >= 1.2 × ATR AND close < previous_range_low
+    """
+    if len(df_m1) < 10:
+        return False, "Không đủ dữ liệu"
+    
+    breakout_candle = df_m1.iloc[-1]
+    body = abs(breakout_candle['close'] - breakout_candle['open'])
+    
+    # Get previous range (last 10 candles before current)
+    prev_range = df_m1.iloc[-10:-1]
+    prev_range_high = prev_range['high'].max()
+    prev_range_low = prev_range['low'].min()
+    
+    if signal_type == "BUY":
+        if body >= 1.2 * atr_val and breakout_candle['close'] > prev_range_high:
+            return True, f"Displacement confirmed: Body={body:.5f} >= {1.2 * atr_val:.5f}, Close={breakout_candle['close']:.5f} > {prev_range_high:.5f}"
+        else:
+            return False, f"No displacement: Body={body:.5f} < {1.2 * atr_val:.5f} hoặc Close={breakout_candle['close']:.5f} <= {prev_range_high:.5f}"
+    elif signal_type == "SELL":
+        if body >= 1.2 * atr_val and breakout_candle['close'] < prev_range_low:
+            return True, f"Displacement confirmed: Body={body:.5f} >= {1.2 * atr_val:.5f}, Close={breakout_candle['close']:.5f} < {prev_range_low:.5f}"
+        else:
+            return False, f"No displacement: Body={body:.5f} < {1.2 * atr_val:.5f} hoặc Close={breakout_candle['close']:.5f} >= {prev_range_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_external_bos(df_m1, signal_type, lookback=50):
+    """
+    EXTERNAL BOS FILTER
+    BUY: close > last_external_swing_high (cấu trúc lớn)
+    SELL: close < last_external_swing_low (cấu trúc lớn)
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    # External structure: look at candles before recent 10 (avoid recent noise)
+    external_range = df_m1.iloc[-lookback:-10]
+    if len(external_range) < 5:
+        return False, "Không đủ dữ liệu external"
+    
+    external_swing_high = external_range['high'].max()
+    external_swing_low = external_range['low'].min()
+    current_close = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        if current_close > external_swing_high:
+            return True, f"External BOS confirmed: Close {current_close:.5f} > External High {external_swing_high:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} <= External High {external_swing_high:.5f}"
+    elif signal_type == "SELL":
+        if current_close < external_swing_low:
+            return True, f"External BOS confirmed: Close {current_close:.5f} < External Low {external_swing_low:.5f}"
+        else:
+            return False, f"Internal BOS only: Close {current_close:.5f} >= External Low {external_swing_low:.5f}"
+    return False, "Signal type không hợp lệ"
+
+def check_liquidity_filter(df_m1, entry_price, signal_type, min_distance_pips=2.5):
+    """
+    LIQUIDITY FILTER
+    BUY: distance(entry, nearest_low) >= 2.5 pips
+    SELL: distance(entry, nearest_high) >= 2.5 pips
+    """
+    if len(df_m1) < 20:
+        return True, "Không đủ dữ liệu, bỏ qua filter"
+    
+    # Get pip size
+    symbol = df_m1.attrs.get('symbol', 'EURUSD') if hasattr(df_m1, 'attrs') else 'EURUSD'
+    symbol_upper = symbol.upper()
+    if 'JPY' in symbol_upper:
+        pip_size = 0.01
+    elif 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        pip_size = 0.1
+    else:
+        pip_size = 0.0001
+    
+    min_distance = min_distance_pips * pip_size
+    
+    if signal_type == "BUY":
+        # Find nearest swing low below entry
+        recent_lows = df_m1.iloc[-20:]['low']
+        nearest_low = recent_lows[recent_lows < entry_price].max() if (recent_lows < entry_price).any() else None
+        
+        if nearest_low is not None:
+            distance = entry_price - nearest_low
+            if distance < min_distance:
+                return False, f"Too close to liquidity: Entry {entry_price:.5f} - Low {nearest_low:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    elif signal_type == "SELL":
+        # Find nearest swing high above entry
+        recent_highs = df_m1.iloc[-20:]['high']
+        nearest_high = recent_highs[recent_highs > entry_price].min() if (recent_highs > entry_price).any() else None
+        
+        if nearest_high is not None:
+            distance = nearest_high - entry_price
+            if distance < min_distance:
+                return False, f"Too close to liquidity: High {nearest_high:.5f} - Entry {entry_price:.5f} = {distance/pip_size:.1f} pips < {min_distance_pips} pips"
+        return True, f"Liquidity OK: Distance >= {min_distance_pips} pips"
+    return True, "Signal type không hợp lệ, bỏ qua filter"
+
+def find_nearest_structure_level(df_m1, signal_type, lookback=30):
+    """
+    Find nearest structure level for SL calculation
+    BUY: Find nearest swing low below current price
+    SELL: Find nearest swing high above current price
+    """
+    if len(df_m1) < lookback:
+        return None
+    
+    recent = df_m1.iloc[-lookback:]
+    current_price = df_m1.iloc[-1]['close']
+    
+    if signal_type == "BUY":
+        # Find swing lows
+        lows = recent['low'].values
+        swing_lows = []
+        for i in range(1, len(lows) - 1):
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                swing_lows.append(lows[i])
+        
+        if swing_lows:
+            valid_lows = [low for low in swing_lows if low < current_price]
+            if valid_lows:
+                return max(valid_lows)  # Nearest swing low below entry
+        return None
+    elif signal_type == "SELL":
+        # Find swing highs
+        highs = recent['high'].values
+        swing_highs = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                swing_highs.append(highs[i])
+        
+        if swing_highs:
+            valid_highs = [high for high in swing_highs if high > current_price]
+            if valid_highs:
+                return min(valid_highs)  # Nearest swing high above entry
+        return None
+    return None
 
 def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
     """
@@ -901,50 +1266,466 @@ def detect_pattern(df_slice, type='W', ema50_val=None, ema200_val=None):
                  
     return False
 
-def tuyen_trend_logic(config, error_count=0):
-    symbol = config['symbol']
-    volume = config.get('volume', 0.01)  # Default volume (will be overridden by risk-based calculation if enabled)
-    magic = config['magic']
-    max_positions = config.get('max_positions', 1)
+def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
+    """
+    Tìm swing high với RSI > min_rsi (default 70)
+    Returns: list of dicts với {'index': i, 'price': high, 'time': time, 'rsi': rsi_value}
+    """
+    swing_highs = []
     
-    # Risk management parameters
-    risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
-    use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
+    for i in range(lookback, len(df_m1) - lookback):
+        # Check if it's a swing high
+        is_swing_high = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df_m1.iloc[j]['high'] >= df_m1.iloc[i]['high']:
+                is_swing_high = False
+                break
+        
+        if is_swing_high:
+            # Check RSI at swing high
+            rsi_val = df_m1.iloc[i].get('rsi', None)
+            if pd.notna(rsi_val) and rsi_val > min_rsi:
+                swing_highs.append({
+                    'index': i,
+                    'price': df_m1.iloc[i]['high'],
+                    'time': df_m1.index[i],
+                    'rsi': rsi_val
+                })
     
-    # Load parameters config
-    parameters_config = config.get('parameters', {})
-    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)  # Default 2.0 for SL
-    reward_ratio = parameters_config.get('reward_ratio', 2.0)  # Default 2.0 for R:R (1:2)
-    
-    # Language setting (Vietnamese or English)
-    lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
-    
-    # Load filter configs with defaults
-    filters_config = config.get('filters', {})
-    m1_structure_require_both = filters_config.get('m1_structure_require_both', True)
-    signal_cluster_count = filters_config.get('signal_cluster_count', 2)
-    signal_cluster_window = filters_config.get('signal_cluster_window', 3)
-    min_zone_distance_pips = filters_config.get('min_zone_distance_pips', 10)
-    breakout_lookback_candles = filters_config.get('breakout_lookback_candles', 100)
-    signal_candle_min_criteria = filters_config.get('signal_candle_min_criteria', 6)
-    smooth_pullback_max_candle_multiplier = filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)
-    smooth_pullback_max_gap_multiplier = filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)
-    
-    # --- 1. Manage Existing Positions ---
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
-    if positions:
-        for pos in positions:
-            manage_position(pos.ticket, symbol, magic, config)
-        if len(positions) >= max_positions:
-            return error_count, 0
+    return swing_highs
 
-    # --- 2. Data Fetching ---
-    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # H1 for higher-timeframe bias
-    df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
-    df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
+    """
+    Tìm swing low với RSI < min_rsi (default 30)
+    Returns: list of dicts với {'index': i, 'price': low, 'time': time, 'rsi': rsi_value}
+    """
+    swing_lows = []
     
-    if df_m1 is None or df_m5 is None: return error_count, 0
-    if df_h1 is None: df_h1 = df_m5  # Fallback to M5 if H1 not available
+    for i in range(lookback, len(df_m1) - lookback):
+        # Check if it's a swing low
+        is_swing_low = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df_m1.iloc[j]['low'] <= df_m1.iloc[i]['low']:
+                is_swing_low = False
+                break
+        
+        if is_swing_low:
+            # Check RSI at swing low
+            rsi_val = df_m1.iloc[i].get('rsi', None)
+            if pd.notna(rsi_val) and rsi_val < min_rsi:
+                swing_lows.append({
+                    'index': i,
+                    'price': df_m1.iloc[i]['low'],
+                    'time': df_m1.index[i],
+                    'rsi': rsi_val
+                })
+    
+    return swing_lows
+
+def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+    """
+    Kiểm tra sóng hồi hợp lệ cho BUY:
+    - Giá không tạo đỉnh cao hơn swing high
+    - Số nến hồi tối đa: ≤ max_candles (default 30)
+    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 40-50)
+    - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
+    - Giá không phá cấu trúc xu hướng tăng chính
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    """
+    if swing_high_idx >= len(df_m1) - 1:
+        return False, None, None, "Swing high quá gần cuối"
+    
+    swing_high_price = df_m1.iloc[swing_high_idx]['high']
+    
+    # Tìm điểm kết thúc sóng hồi (từ swing high đến hiện tại hoặc max_candles)
+    pullback_start = swing_high_idx + 1
+    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
+    
+    if len(pullback_candles) == 0:
+        return False, None, None, "Không có nến sau swing high"
+    
+    # 1. Kiểm tra: Giá không tạo đỉnh cao hơn swing high
+    max_high_after_swing = pullback_candles['high'].max()
+    if max_high_after_swing > swing_high_price:
+        return False, None, None, f"Giá tạo đỉnh cao hơn swing high: {max_high_after_swing:.5f} > {swing_high_price:.5f}"
+    
+    # 2. Kiểm tra số nến hồi ≤ max_candles
+    if len(pullback_candles) > max_candles:
+        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
+    
+    # 3. Kiểm tra RSI trong quá trình hồi > rsi_min_during_pullback
+    pullback_rsi = pullback_candles.get('rsi', pd.Series())
+    if len(pullback_rsi) > 0:
+        min_rsi_during_pullback = pullback_rsi.min()
+        if min_rsi_during_pullback <= rsi_min_during_pullback:
+            return False, None, None, f"RSI trong quá trình hồi ({min_rsi_during_pullback:.1f}) <= {rsi_min_during_pullback}"
+    
+    # 4. Kiểm tra RSI hồi về vùng target (40-50) - kiểm tra nến cuối hoặc gần cuối
+    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
+    if pd.notna(last_rsi):
+        if not (rsi_target_min <= last_rsi <= rsi_target_max):
+            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
+            # Kiểm tra xem có nến nào trong vùng target không
+            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
+            if len(rsi_in_target) == 0:
+                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
+    
+    # 5. Kiểm tra giá không phá cấu trúc xu hướng tăng (kiểm tra Lower Lows)
+    if swing_high_idx > 10:
+        before_swing = df_m1.iloc[swing_high_idx - 20:swing_high_idx]
+        if len(before_swing) > 0:
+            prev_swing_low = before_swing['low'].min()
+            pullback_low = pullback_candles['low'].min()
+            if pullback_low < prev_swing_low * 0.9999:  # 0.1 pip buffer
+                return False, None, None, f"Giá phá cấu trúc: Pullback low {pullback_low:.5f} < Prev swing low {prev_swing_low:.5f}"
+    
+    pullback_end_idx = pullback_end
+    
+    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+
+def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
+    """
+    Kiểm tra sóng hồi hợp lệ cho SELL:
+    - Giá không tạo đáy thấp hơn swing low
+    - Số nến hồi tối đa: ≤ max_candles (default 30)
+    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 50-60)
+    - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
+    - Giá không phá cấu trúc xu hướng giảm chính
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    """
+    if swing_low_idx >= len(df_m1) - 1:
+        return False, None, None, "Swing low quá gần cuối"
+    
+    swing_low_price = df_m1.iloc[swing_low_idx]['low']
+    
+    # Tìm điểm kết thúc sóng hồi (từ swing low đến hiện tại hoặc max_candles)
+    pullback_start = swing_low_idx + 1
+    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
+    
+    if len(pullback_candles) == 0:
+        return False, None, None, "Không có nến sau swing low"
+    
+    # 1. Kiểm tra: Giá không tạo đáy thấp hơn swing low
+    min_low_after_swing = pullback_candles['low'].min()
+    if min_low_after_swing < swing_low_price:
+        return False, None, None, f"Giá tạo đáy thấp hơn swing low: {min_low_after_swing:.5f} < {swing_low_price:.5f}"
+    
+    # 2. Kiểm tra số nến hồi ≤ max_candles
+    if len(pullback_candles) > max_candles:
+        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
+    
+    # 3. Kiểm tra RSI trong quá trình hồi < rsi_max_during_pullback
+    pullback_rsi = pullback_candles.get('rsi', pd.Series())
+    if len(pullback_rsi) > 0:
+        max_rsi_during_pullback = pullback_rsi.max()
+        if max_rsi_during_pullback >= rsi_max_during_pullback:
+            return False, None, None, f"RSI trong quá trình hồi ({max_rsi_during_pullback:.1f}) >= {rsi_max_during_pullback}"
+    
+    # 4. Kiểm tra RSI hồi về vùng target (50-60) - kiểm tra nến cuối hoặc gần cuối
+    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
+    if pd.notna(last_rsi):
+        if not (rsi_target_min <= last_rsi <= rsi_target_max):
+            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
+            # Kiểm tra xem có nến nào trong vùng target không
+            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
+            if len(rsi_in_target) == 0:
+                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
+    
+    # 5. Kiểm tra giá không phá cấu trúc xu hướng giảm (kiểm tra Higher Highs)
+    if swing_low_idx > 10:
+        before_swing = df_m1.iloc[swing_low_idx - 20:swing_low_idx]
+        if len(before_swing) > 0:
+            prev_swing_high = before_swing['high'].max()
+            pullback_high = pullback_candles['high'].max()
+            if pullback_high > prev_swing_high * 1.0001:  # 0.1 pip buffer
+                return False, None, None, f"Giá phá cấu trúc: Pullback high {pullback_high:.5f} > Prev swing high {prev_swing_high:.5f}"
+    
+    pullback_end_idx = pullback_end
+    
+    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+
+def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
+    """
+    Vẽ trendline sóng hồi (giảm) nối từ swing high qua các đỉnh thấp dần
+    
+    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
+    """
+    if swing_high_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
+        return None
+    
+    pullback_candles = df_m1.iloc[swing_high_idx:pullback_end_idx + 1]
+    
+    # Tìm các đỉnh (local maxima) trong pullback
+    highs = pullback_candles['high'].values
+    
+    local_maxs = []
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            idx_in_df = pullback_candles.index[i]
+            pos_in_df = df_m1.index.get_loc(idx_in_df) if hasattr(df_m1.index, 'get_loc') else i + swing_high_idx
+            local_maxs.append({'pos': pos_in_df, 'price': highs[i], 'idx': idx_in_df})
+    
+    # Thêm swing high vào đầu
+    swing_high_pos = swing_high_idx
+    swing_high_price = df_m1.iloc[swing_high_idx]['high']
+    local_maxs.insert(0, {'pos': swing_high_pos, 'price': swing_high_price, 'idx': df_m1.index[swing_high_idx] if hasattr(df_m1.index[swing_high_idx], '__iter__') else swing_high_idx})
+    
+    local_maxs = sorted(local_maxs, key=lambda x: x['pos'])
+    
+    # Lọc các đỉnh thấp dần
+    filtered_maxs = [local_maxs[0]]
+    for i in range(1, len(local_maxs)):
+        if local_maxs[i]['price'] <= filtered_maxs[-1]['price']:
+            filtered_maxs.append(local_maxs[i])
+    
+    if len(filtered_maxs) < 2:
+        return None
+    
+    # Linear regression
+    x_values = np.array([m['pos'] for m in filtered_maxs])
+    y_values = np.array([m['price'] for m in filtered_maxs])
+    
+    n = len(x_values)
+    sum_x = x_values.sum()
+    sum_y = y_values.sum()
+    sum_xy = (x_values * y_values).sum()
+    sum_x2 = (x_values * x_values).sum()
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if abs(denominator) < 1e-10:
+        return None
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    
+    def trendline_func(pos):
+        return slope * pos + intercept
+    
+    return {
+        'slope': slope,
+        'intercept': intercept,
+        'func': trendline_func,
+        'points': filtered_maxs
+    }
+
+def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
+    """
+    Vẽ trendline sóng hồi (tăng) nối từ swing low qua các đáy cao dần
+    
+    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
+    """
+    if swing_low_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
+        return None
+    
+    pullback_candles = df_m1.iloc[swing_low_idx:pullback_end_idx + 1]
+    
+    # Tìm các đáy (local minima) trong pullback
+    lows = pullback_candles['low'].values
+    
+    local_mins = []
+    for i in range(1, len(lows) - 1):
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            idx_in_df = pullback_candles.index[i]
+            pos_in_df = df_m1.index.get_loc(idx_in_df)
+            local_mins.append({'pos': pos_in_df, 'price': lows[i], 'idx': idx_in_df})
+    
+    # Thêm swing low vào đầu
+    swing_low_pos = swing_low_idx
+    swing_low_price = df_m1.iloc[swing_low_idx]['low']
+    local_mins.insert(0, {'pos': swing_low_pos, 'price': swing_low_price, 'idx': df_m1.index[swing_low_idx]})
+    
+    local_mins = sorted(local_mins, key=lambda x: x['pos'])
+    
+    # Lọc các đáy cao dần
+    filtered_mins = [local_mins[0]]
+    for i in range(1, len(local_mins)):
+        if local_mins[i]['price'] >= filtered_mins[-1]['price']:
+            filtered_mins.append(local_mins[i])
+    
+    if len(filtered_mins) < 2:
+        return None
+    
+    # Linear regression
+    x_values = np.array([m['pos'] for m in filtered_mins])
+    y_values = np.array([m['price'] for m in filtered_mins])
+    
+    n = len(x_values)
+    sum_x = x_values.sum()
+    sum_y = y_values.sum()
+    sum_xy = (x_values * y_values).sum()
+    sum_x2 = (x_values * x_values).sum()
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if abs(denominator) < 1e-10:
+        return None
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    
+    def trendline_func(pos):
+        return slope * pos + intercept
+    
+    return {
+        'slope': slope,
+        'intercept': intercept,
+        'func': trendline_func,
+        'points': filtered_mins
+    }
+
+def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val):
+    """
+    Kiểm tra nến phá vỡ trendline sóng hồi cho BUY:
+    ✅ Giá đóng cửa vượt lên trên trendline sóng hồi
+    ✅ Giá đóng cửa ≥ EMA 50
+    ✅ RSI đang hướng lên (RSI hiện tại > RSI nến trước)
+    
+    Returns: (is_break, message)
+    """
+    if trendline_info is None:
+        return False, "Không có trendline"
+    
+    if current_candle_idx >= len(df_m1):
+        return False, "Index vượt quá"
+    
+    current_candle = df_m1.iloc[current_candle_idx]
+    prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
+    
+    trendline_value = trendline_info['func'](current_candle_idx)
+    
+    # 1. Giá đóng cửa vượt lên trên trendline
+    close_above_trendline = current_candle['close'] > trendline_value
+    if not close_above_trendline:
+        return False, f"Close ({current_candle['close']:.5f}) không vượt lên trên trendline ({trendline_value:.5f})"
+    
+    # 2. Giá đóng cửa ≥ EMA 50
+    if ema50_val is None or pd.isna(ema50_val):
+        return False, "EMA50 không có giá trị"
+    
+    close_above_ema50 = current_candle['close'] >= ema50_val
+    if not close_above_ema50:
+        return False, f"Close ({current_candle['close']:.5f}) < EMA50 ({ema50_val:.5f})"
+    
+    # 3. RSI đang hướng lên
+    current_rsi = current_candle.get('rsi', None)
+    if prev_candle is not None:
+        prev_rsi = prev_candle.get('rsi', None)
+        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+            rsi_rising = current_rsi > prev_rsi
+            if not rsi_rising:
+                return False, f"RSI không hướng lên: {current_rsi:.1f} <= {prev_rsi:.1f}"
+        else:
+            return False, "RSI không có giá trị"
+    else:
+        return False, "Không có nến trước để so sánh RSI"
+    
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
+
+def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val):
+    """
+    Kiểm tra nến phá vỡ trendline sóng hồi cho SELL:
+    ✅ Giá đóng cửa phá xuống dưới trendline sóng hồi
+    ✅ Giá đóng cửa ≤ EMA 50
+    ✅ RSI đang hướng xuống (RSI hiện tại < RSI nến trước)
+    
+    Returns: (is_break, message)
+    """
+    if trendline_info is None:
+        return False, "Không có trendline"
+    
+    if current_candle_idx >= len(df_m1):
+        return False, "Index vượt quá"
+    
+    current_candle = df_m1.iloc[current_candle_idx]
+    prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
+    
+    trendline_value = trendline_info['func'](current_candle_idx)
+    
+    # 1. Giá đóng cửa phá xuống dưới trendline
+    close_below_trendline = current_candle['close'] < trendline_value
+    if not close_below_trendline:
+        return False, f"Close ({current_candle['close']:.5f}) không phá xuống dưới trendline ({trendline_value:.5f})"
+    
+    # 2. Giá đóng cửa ≤ EMA 50
+    if ema50_val is None or pd.isna(ema50_val):
+        return False, "EMA50 không có giá trị"
+    
+    close_below_ema50 = current_candle['close'] <= ema50_val
+    if not close_below_ema50:
+        return False, f"Close ({current_candle['close']:.5f}) > EMA50 ({ema50_val:.5f})"
+    
+    # 3. RSI đang hướng xuống
+    current_rsi = current_candle.get('rsi', None)
+    if prev_candle is not None:
+        prev_rsi = prev_candle.get('rsi', None)
+        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+            rsi_declining = current_rsi < prev_rsi
+            if not rsi_declining:
+                return False, f"RSI không hướng xuống: {current_rsi:.1f} >= {prev_rsi:.1f}"
+        else:
+            return False, "RSI không có giá trị"
+    else:
+        return False, "Không có nến trước để so sánh RSI"
+    
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} < Trendline {trendline_value:.5f}, Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}"
+
+def tuyen_trend_logic(config, error_count=0):
+    try:
+        symbol = config['symbol']
+        volume = config.get('volume', 0.01)  # Default volume (will be overridden by risk-based calculation if enabled)
+        magic = config['magic']
+        max_positions = config.get('max_positions', 1)
+        
+        # Risk management parameters
+        risk_percent = config.get('risk_percent', 1.0)  # Default 1% risk
+        use_risk_based_lot = config.get('use_risk_based_lot', True)  # Enable risk-based lot calculation
+        
+        # Load parameters config
+        parameters_config = config.get('parameters', {})
+        atr_multiplier = parameters_config.get('atr_multiplier', 2.0)  # Default 2.0 for SL
+        reward_ratio = parameters_config.get('reward_ratio', 2.0)  # Default 2.0 for R:R (1:2)
+        
+        # Language setting (Vietnamese or English)
+        lang = config.get('language', 'en').lower()  # 'vi' for Vietnamese, 'en' for English
+        
+        # Load filter configs with defaults
+        filters_config = config.get('filters', {})
+        m1_structure_require_both = filters_config.get('m1_structure_require_both', True)
+        signal_cluster_count = filters_config.get('signal_cluster_count', 2)
+        signal_cluster_window = filters_config.get('signal_cluster_window', 3)
+        min_zone_distance_pips = filters_config.get('min_zone_distance_pips', 10)
+        breakout_lookback_candles = filters_config.get('breakout_lookback_candles', 100)
+        signal_candle_min_criteria = filters_config.get('signal_candle_min_criteria', 6)
+        smooth_pullback_max_candle_multiplier = filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)
+        smooth_pullback_max_gap_multiplier = filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)
+        
+        # --- 1. Manage Existing Positions ---
+        positions = mt5.positions_get(symbol=symbol, magic=magic)
+        if positions:
+            for pos in positions:
+                manage_position(pos.ticket, symbol, magic, config)
+            if len(positions) >= max_positions:
+                return error_count, 0
+
+        # --- 2. Data Fetching ---
+        df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)  # H1 for higher-timeframe bias
+        df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 300) 
+        df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+        
+        if df_m1 is None or df_m5 is None:
+            print(f"⚠️ Không thể lấy dữ liệu M1 hoặc M5 cho {symbol}")
+            return error_count, 0
+        if df_h1 is None: df_h1 = df_m5  # Fallback to M5 if H1 not available
+    except Exception as e:
+        print(f"❌ Lỗi trong tuyen_trend_logic (phần đầu): {e}")
+        import traceback
+        traceback.print_exc()
+        return error_count + 1, 0
 
     # --- 3. H1 Higher-timeframe Bias (Supply/Demand) ---
     h1_bias = None
@@ -1037,6 +1818,7 @@ def tuyen_trend_logic(config, error_count=0):
     df_m1['ema50'] = calculate_ema(df_m1['close'], 50)
     df_m1['ema200'] = calculate_ema(df_m1['close'], 200) 
     df_m1['atr'] = calculate_atr(df_m1, 14)
+    df_m1['rsi'] = calculate_rsi(df_m1['close'], period=14)  # Add RSI for new SELL strategy
     
     # M1 Structure Detection (Lower Highs/Lows for SELL, Higher Highs/Lows for BUY)
     m1_swing_highs, m1_swing_lows = find_swing_points(df_m1, lookback=5)
@@ -1205,6 +1987,7 @@ def tuyen_trend_logic(config, error_count=0):
     pass_fib_strat2 = False
     pattern_type = None
     fib_levels = None
+    fib_levels_strat2 = None  # Initialize for Strategy 2 Fibonacci
     
     # Higher-timeframe bias filter: Only trade in direction of H1 bias
     if h1_bias is not None:
@@ -1343,6 +2126,78 @@ def tuyen_trend_logic(config, error_count=0):
             reason = "Strat1_Pullback_Cluster_Fib"
             print(f"\n{t('strategy_1_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
             print(f"   {t('reason', lang)}: {reason}")
+            
+            # === V3 FILTERS - Tránh vào lệnh trong sóng ngắn/chop ===
+            print(f"\n{'='*80}")
+            print(f"🔍 [V3 FILTERS - Tránh sóng ngắn/chop]")
+            print(f"{'='*80}")
+            
+            # Calculate ATR for V3 checks
+            atr_val_v3 = c1['atr']
+            if pd.isna(atr_val_v3) or atr_val_v3 <= 0:
+                recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+                atr_val_v3 = recent_range / 14 if recent_range > 0 else 0.0001
+            
+            # 1. Check CHOP/RANGE (chung cho cả BUY và SELL)
+            is_chop, chop_msg = check_chop_range(df_m1, atr_val_v3)
+            if is_chop:
+                print(f"   ❌ CHOP detected: {chop_msg}")
+                signal_type = None
+                is_strat1 = False
+                log_details.append(f"V3 Filter: CHOP detected - {chop_msg}")
+            else:
+                print(f"   ✅ Không phải CHOP: {chop_msg}")
+            
+            # 2. Check Liquidity Sweep (BẮT BUỘC)
+            if signal_type:
+                if signal_type == "BUY":
+                    # Find previous swing low
+                    prev_swing_lows = [s['price'] for s in m1_swing_lows[-5:]] if m1_swing_lows else []
+                    prev_swing_low = min(prev_swing_lows) if prev_swing_lows else None
+                    
+                    sweep_ok, sweep_msg = check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val_v3)
+                    if not sweep_ok:
+                        print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                        signal_type = None
+                        is_strat1 = False
+                        log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                    else:
+                        print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                elif signal_type == "SELL":
+                    # Find previous swing high
+                    prev_swing_highs = [s['price'] for s in m1_swing_highs[-5:]] if m1_swing_highs else []
+                    prev_swing_high = max(prev_swing_highs) if prev_swing_highs else None
+                    
+                    sweep_ok, sweep_msg = check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val_v3)
+                    if not sweep_ok:
+                        print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                        signal_type = None
+                        is_strat1 = False
+                        log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                    else:
+                        print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+            
+            # 3. Check Displacement Candle (warning only)
+            if signal_type:
+                disp_ok, disp_msg = check_displacement_candle(df_m1, atr_val_v3, signal_type)
+                if not disp_ok:
+                    print(f"   ⚠️ Displacement: {disp_msg} (không bắt buộc cho Strat1)")
+                else:
+                    print(f"   ✅ Displacement: {disp_msg}")
+            
+            # 4. Check External BOS (warning only)
+            if signal_type:
+                bos_ok, bos_msg = check_external_bos(df_m1, signal_type)
+                if not bos_ok:
+                    print(f"   ⚠️ External BOS: {bos_msg} (không bắt buộc cho Strat1)")
+                else:
+                    print(f"   ✅ External BOS: {bos_msg}")
+            
+            if not signal_type:
+                print(f"\n   ❌ V3 Filters: Signal bị loại bỏ")
+                strat1_fail_reasons.append("V3 Filters failed")
+            else:
+                print(f"\n   ✅ V3 Filters: PASS")
         else:
             print(f"\n{t('strategy_1_fail', lang)} {t('missing_conditions', lang)}:")
             for reason in strat1_fail_reasons:
@@ -1350,21 +2205,22 @@ def tuyen_trend_logic(config, error_count=0):
             log_details.append(f"Strat 1 Fail: {', '.join(strat1_fail_reasons)}")
 
     # === STRATEGY 2: CONTINUATION + STRUCTURE (M/W + COMPRESSION) ===
-    if not skip_strategy_eval and not is_strat1:
-        print(f"\n{'='*80}")
-        print(f"{t('strategy_2', lang)}")
-        print(f"{'='*80}")
-        
-        is_strat2 = False
-        strat2_fail_reasons = []
-        # Initialize Strategy 2 variables (will be set if Strategy 2 is evaluated)
-        pass_ema200 = False
-        has_breakout_retest = False
-        is_compressed = False
-        has_signal_candle = False
-        is_pattern = False
-        pass_fib_strat2 = False
-        pattern_type = None
+    print(f"\n{'='*80}")
+    print(f"{t('strategy_2', lang)}")
+    print(f"{'='*80}")
+    
+    is_strat2 = False
+    strat2_fail_reasons = []
+    # Initialize Strategy 2 variables (will be set if Strategy 2 is evaluated)
+    pass_ema200 = False
+    has_breakout_retest = False
+    is_compressed = False
+    has_signal_candle = False
+    is_pattern = False
+    pass_fib_strat2 = False
+    pattern_type = None
+    
+    if not is_strat1:
         # Check EMA 200 Filter
         print(f"\n{t('ema200_filter', lang)}")
         pass_ema200 = False
@@ -1604,6 +2460,76 @@ def tuyen_trend_logic(config, error_count=0):
                  reason = f"Strat2_Continuation_{'Compression' if is_compressed else 'Pattern'}_BreakoutRetest"
                  print(f"\n{t('strategy_2_signal', lang)} {signal_type} - {t('all_conditions_met', lang)}!")
                  print(f"   {t('reason', lang)}: {reason}")
+                 
+                 # === V3 FILTERS - Tránh vào lệnh trong sóng ngắn/chop ===
+                 print(f"\n{'='*80}")
+                 print(f"🔍 [V3 FILTERS - Tránh sóng ngắn/chop]")
+                 print(f"{'='*80}")
+                 
+                 # Calculate ATR for V3 checks
+                 atr_val_v3 = c1['atr']
+                 if pd.isna(atr_val_v3) or atr_val_v3 <= 0:
+                     recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+                     atr_val_v3 = recent_range / 14 if recent_range > 0 else 0.0001
+                 
+                 # 1. Check CHOP/RANGE (chung cho cả BUY và SELL)
+                 is_chop, chop_msg = check_chop_range(df_m1, atr_val_v3)
+                 if is_chop:
+                     print(f"   ❌ CHOP detected: {chop_msg}")
+                     signal_type = None
+                     is_strat2 = False
+                     log_details.append(f"V3 Filter: CHOP detected - {chop_msg}")
+                 else:
+                     print(f"   ✅ Không phải CHOP: {chop_msg}")
+                 
+                 # 2. Check Liquidity Sweep (BẮT BUỘC)
+                 if signal_type:
+                     if signal_type == "BUY":
+                         prev_swing_lows = [s['price'] for s in m1_swing_lows[-5:]] if m1_swing_lows else []
+                         prev_swing_low = min(prev_swing_lows) if prev_swing_lows else None
+                         
+                         sweep_ok, sweep_msg = check_liquidity_sweep_buy(df_m1, prev_swing_low, atr_val_v3)
+                         if not sweep_ok:
+                             print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                             signal_type = None
+                             is_strat2 = False
+                             log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                         else:
+                             print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                     elif signal_type == "SELL":
+                         prev_swing_highs = [s['price'] for s in m1_swing_highs[-5:]] if m1_swing_highs else []
+                         prev_swing_high = max(prev_swing_highs) if prev_swing_highs else None
+                         
+                         sweep_ok, sweep_msg = check_liquidity_sweep_sell(df_m1, prev_swing_high, atr_val_v3)
+                         if not sweep_ok:
+                             print(f"   ❌ Liquidity Sweep FAIL: {sweep_msg}")
+                             signal_type = None
+                             is_strat2 = False
+                             log_details.append(f"V3 Filter: No liquidity sweep - {sweep_msg}")
+                         else:
+                             print(f"   ✅ Liquidity Sweep OK: {sweep_msg}")
+                 
+                 # 3. Check Displacement Candle (warning only)
+                 if signal_type:
+                     disp_ok, disp_msg = check_displacement_candle(df_m1, atr_val_v3, signal_type)
+                     if not disp_ok:
+                         print(f"   ⚠️ Displacement: {disp_msg}")
+                     else:
+                         print(f"   ✅ Displacement: {disp_msg}")
+                 
+                 # 4. Check External BOS (warning only)
+                 if signal_type:
+                     bos_ok, bos_msg = check_external_bos(df_m1, signal_type)
+                     if not bos_ok:
+                         print(f"   ⚠️ External BOS: {bos_msg}")
+                     else:
+                         print(f"   ✅ External BOS: {bos_msg}")
+                 
+                 if not signal_type:
+                     print(f"\n   ❌ V3 Filters: Signal bị loại bỏ")
+                     strat2_fail_reasons.append("V3 Filters failed")
+                 else:
+                     print(f"\n   ✅ V3 Filters: PASS")
             else:
                 print(f"\n{t('strategy_2_fail', lang)} {t('missing_conditions', lang)}:")
                 for reason in strat2_fail_reasons:
@@ -1614,6 +2540,224 @@ def tuyen_trend_logic(config, error_count=0):
 
         if not is_strat2:
              log_details.append(f"Strat 2 Fail: {', '.join(strat2_fail_reasons)}")
+
+    # === STRATEGY 3: SELL - SWING LOW + PULLBACK + TRENDLINE BREAK ===
+    is_strat3_sell = False
+    strat3_fail_reasons = []
+    
+    # Chỉ kiểm tra Strategy 3 nếu:
+    # - M5 Trend = BEARISH
+    # - Chưa có signal từ Strategy 1 hoặc 2
+    # - H1 Bias không xung đột (SELL hoặc None)
+    if m5_trend == "BEARISH" and not is_strat1 and not is_strat2:
+        if h1_bias is None or h1_bias == "SELL":
+            print(f"\n{'='*80}")
+            print(f"📉 [STRATEGY 3: SELL - Swing Low + Pullback + Trendline Break]")
+            print(f"{'='*80}")
+            
+            # 1. Tìm swing low với RSI < 30
+            print(f"\n🔍 [Tìm Swing Low với RSI < 30]")
+            swing_lows_with_rsi = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30)
+            
+            if len(swing_lows_with_rsi) == 0:
+                strat3_fail_reasons.append("Không tìm thấy swing low với RSI < 30")
+                print(f"   ❌ Không tìm thấy swing low với RSI < 30")
+            else:
+                # Lấy swing low gần nhất
+                latest_swing_low = swing_lows_with_rsi[-1]
+                swing_low_idx = latest_swing_low['index']
+                swing_low_price = latest_swing_low['price']
+                swing_low_rsi = latest_swing_low['rsi']
+                
+                print(f"   ✅ Tìm thấy swing low: Index={swing_low_idx}, Price={swing_low_price:.5f}, RSI={swing_low_rsi:.1f}")
+                
+                # 2. Kiểm tra sóng hồi hợp lệ
+                print(f"\n🔍 [Kiểm Tra Sóng Hồi Hợp Lệ]")
+                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
+                    df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
+                )
+                
+                if not pullback_valid:
+                    strat3_fail_reasons.append(f"Sóng hồi không hợp lệ: {pullback_msg}")
+                    print(f"   ❌ {pullback_msg}")
+                else:
+                    print(f"   ✅ {pullback_msg}")
+                    print(f"      Số nến hồi: {len(pullback_candles)}")
+                    if len(pullback_candles) > 0:
+                        last_pullback_rsi = pullback_candles.iloc[-1].get('rsi', None)
+                        if pd.notna(last_pullback_rsi):
+                            print(f"      RSI cuối: {last_pullback_rsi:.1f}")
+                    
+                    # 3. Vẽ trendline sóng hồi
+                    print(f"\n🔍 [Vẽ Trendline Sóng Hồi]")
+                    trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx)
+                    
+                    if trendline_info is None:
+                        strat3_fail_reasons.append("Không thể vẽ trendline (không đủ đáy cao dần)")
+                        print(f"   ❌ Không thể vẽ trendline")
+                    else:
+                        print(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                        for i, point in enumerate(trendline_info['points']):
+                            print(f"      Điểm {i+1}: Index={point['pos']}, Price={point['price']:.5f}")
+                        
+                        # 4. Kiểm tra nến phá vỡ trendline (nến hiện tại - nến cuối cùng đã hoàn thành)
+                        current_candle_idx = len(df_m1) - 2  # Nến cuối cùng đã hoàn thành
+                        ema50_val = df_m1.iloc[current_candle_idx]['ema50']
+                        
+                        print(f"\n🔍 [Kiểm Tra Nến Phá Vỡ Trendline]")
+                        print(f"   Nến hiện tại (Index {current_candle_idx}):")
+                        current_candle = df_m1.iloc[current_candle_idx]
+                        print(f"      Close: {current_candle['close']:.5f}")
+                        print(f"      EMA50: {ema50_val:.5f}")
+                        current_rsi = current_candle.get('rsi', None)
+                        prev_rsi = df_m1.iloc[current_candle_idx - 1].get('rsi', None) if current_candle_idx > 0 else None
+                        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                            print(f"      RSI: {current_rsi:.1f} (trước: {prev_rsi:.1f})")
+                        
+                        trendline_value = trendline_info['func'](current_candle_idx)
+                        print(f"      Trendline value: {trendline_value:.5f}")
+                        
+                        break_ok, break_msg = check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val)
+                        
+                        if not break_ok:
+                            strat3_fail_reasons.append(f"Nến chưa phá vỡ trendline: {break_msg}")
+                            print(f"   ❌ {break_msg}")
+                        else:
+                            print(f"   ✅ {break_msg}")
+                            
+                            # Tất cả điều kiện đã thỏa
+                            is_strat3_sell = True
+                            signal_type = "SELL"
+                            reason = "Strat3_SwingLow_Pullback_TrendlineBreak"
+                            
+                            print(f"\n✅ [TÍN HIỆU CHIẾN LƯỢC 3 - SELL]")
+                            print(f"   Entry: {current_candle['close']:.5f} (giá đóng cửa nến phá vỡ)")
+                            print(f"   Swing Low: {swing_low_price:.5f} (RSI: {swing_low_rsi:.1f})")
+                            print(f"   Trendline Break: {current_candle['close']:.5f} < {trendline_value:.5f}")
+                            print(f"   Close <= EMA50: {current_candle['close']:.5f} <= {ema50_val:.5f}")
+                            if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                                print(f"   RSI declining: {prev_rsi:.1f} -> {current_rsi:.1f}")
+        else:
+            if h1_bias == "BUY":
+                strat3_fail_reasons.append("H1 Bias = BUY (xung đột với SELL)")
+                print(f"\n⚠️ Strategy 3: Bỏ qua (H1 Bias = BUY, xung đột với SELL)")
+    else:
+        if m5_trend != "BEARISH":
+            strat3_fail_reasons.append(f"M5 Trend = {m5_trend} (cần BEARISH)")
+        if is_strat1 or is_strat2:
+            strat3_fail_reasons.append("Strategy 1 hoặc 2 đã pass")
+    
+    if not is_strat3_sell and len(strat3_fail_reasons) > 0:
+        log_details.append(f"Strat 3 Fail: {', '.join(strat3_fail_reasons)}")
+
+    # === STRATEGY 4: BUY - SWING HIGH + PULLBACK + TRENDLINE BREAK ===
+    is_strat4_buy = False
+    strat4_fail_reasons = []
+    
+    # Chỉ kiểm tra Strategy 4 (BUY) nếu:
+    # - M5 Trend = BULLISH
+    # - Chưa có signal từ Strategy 1, 2, hoặc 3
+    # - H1 Bias không xung đột (BUY hoặc None)
+    if m5_trend == "BULLISH" and not is_strat1 and not is_strat2 and not is_strat3_sell:
+        if h1_bias is None or h1_bias == "BUY":
+            print(f"\n{'='*80}")
+            print(f"📈 [STRATEGY 4: BUY - Swing High + Pullback + Trendline Break]")
+            print(f"{'='*80}")
+            
+            # 1. Tìm swing high với RSI > 70
+            print(f"\n🔍 [Tìm Swing High với RSI > 70]")
+            swing_highs_with_rsi = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70)
+            
+            if len(swing_highs_with_rsi) == 0:
+                strat4_fail_reasons.append("Không tìm thấy swing high với RSI > 70")
+                print(f"   ❌ Không tìm thấy swing high với RSI > 70")
+            else:
+                # Lấy swing high gần nhất
+                latest_swing_high = swing_highs_with_rsi[-1]
+                swing_high_idx = latest_swing_high['index']
+                swing_high_price = latest_swing_high['price']
+                swing_high_rsi = latest_swing_high['rsi']
+                
+                print(f"   ✅ Tìm thấy swing high: Index={swing_high_idx}, Price={swing_high_price:.5f}, RSI={swing_high_rsi:.1f}")
+                
+                # 2. Kiểm tra sóng hồi hợp lệ
+                print(f"\n🔍 [Kiểm Tra Sóng Hồi Hợp Lệ]")
+                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
+                    df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32
+                )
+                
+                if not pullback_valid:
+                    strat4_fail_reasons.append(f"Sóng hồi không hợp lệ: {pullback_msg}")
+                    print(f"   ❌ {pullback_msg}")
+                else:
+                    print(f"   ✅ {pullback_msg}")
+                    print(f"      Số nến hồi: {len(pullback_candles)}")
+                    if len(pullback_candles) > 0:
+                        last_pullback_rsi = pullback_candles.iloc[-1].get('rsi', None)
+                        if pd.notna(last_pullback_rsi):
+                            print(f"      RSI cuối: {last_pullback_rsi:.1f}")
+                    
+                    # 3. Vẽ trendline sóng hồi
+                    print(f"\n🔍 [Vẽ Trendline Sóng Hồi]")
+                    trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx)
+                    
+                    if trendline_info is None:
+                        strat4_fail_reasons.append("Không thể vẽ trendline (không đủ đỉnh thấp dần)")
+                        print(f"   ❌ Không thể vẽ trendline")
+                    else:
+                        print(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                        for i, point in enumerate(trendline_info['points']):
+                            print(f"      Điểm {i+1}: Index={point['pos']}, Price={point['price']:.5f}")
+                        
+                        # 4. Kiểm tra nến phá vỡ trendline (nến hiện tại - nến cuối cùng đã hoàn thành)
+                        current_candle_idx = len(df_m1) - 2  # Nến cuối cùng đã hoàn thành
+                        ema50_val = df_m1.iloc[current_candle_idx]['ema50']
+                        
+                        print(f"\n🔍 [Kiểm Tra Nến Phá Vỡ Trendline]")
+                        print(f"   Nến hiện tại (Index {current_candle_idx}):")
+                        current_candle = df_m1.iloc[current_candle_idx]
+                        print(f"      Close: {current_candle['close']:.5f}")
+                        print(f"      EMA50: {ema50_val:.5f}")
+                        current_rsi = current_candle.get('rsi', None)
+                        prev_rsi = df_m1.iloc[current_candle_idx - 1].get('rsi', None) if current_candle_idx > 0 else None
+                        if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                            print(f"      RSI: {current_rsi:.1f} (trước: {prev_rsi:.1f})")
+                        
+                        trendline_value = trendline_info['func'](current_candle_idx)
+                        print(f"      Trendline value: {trendline_value:.5f}")
+                        
+                        break_ok, break_msg = check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val)
+                        
+                        if not break_ok:
+                            strat4_fail_reasons.append(f"Nến chưa phá vỡ trendline: {break_msg}")
+                            print(f"   ❌ {break_msg}")
+                        else:
+                            print(f"   ✅ {break_msg}")
+                            
+                            # Tất cả điều kiện đã thỏa
+                            is_strat4_buy = True
+                            signal_type = "BUY"
+                            reason = "Strat4_SwingHigh_Pullback_TrendlineBreak"
+                            
+                            print(f"\n✅ [TÍN HIỆU CHIẾN LƯỢC 4 - BUY]")
+                            print(f"   Entry: {current_candle['close']:.5f} (giá đóng cửa nến phá vỡ)")
+                            print(f"   Swing High: {swing_high_price:.5f} (RSI: {swing_high_rsi:.1f})")
+                            print(f"   Trendline Break: {current_candle['close']:.5f} > {trendline_value:.5f}")
+                            print(f"   Close >= EMA50: {current_candle['close']:.5f} >= {ema50_val:.5f}")
+                            if pd.notna(current_rsi) and pd.notna(prev_rsi):
+                                print(f"   RSI rising: {prev_rsi:.1f} -> {current_rsi:.1f}")
+        else:
+            if h1_bias == "SELL":
+                strat4_fail_reasons.append("H1 Bias = SELL (xung đột với BUY)")
+                print(f"\n⚠️ Strategy 4: Bỏ qua (H1 Bias = SELL, xung đột với BUY)")
+    else:
+        if m5_trend != "BULLISH":
+            strat4_fail_reasons.append(f"M5 Trend = {m5_trend} (cần BULLISH)")
+        if is_strat1 or is_strat2 or is_strat3_sell:
+            strat4_fail_reasons.append("Strategy 1, 2 hoặc 3 đã pass")
+    
+    if not is_strat4_buy and len(strat4_fail_reasons) > 0:
+        log_details.append(f"Strat 4 Fail: {', '.join(strat4_fail_reasons)}")
 
     # --- Logging ---
     # Fix: Use signal_type only, not m5_trend (could be wrong if signal is SELL but trend is BULLISH)
@@ -1682,6 +2826,30 @@ def tuyen_trend_logic(config, error_count=0):
                     print(f"      {i}. {reason}")
             else:
                 print(f"      - Không đủ điều kiện cho Strategy 2")
+        
+        # Tier 4: Strategy 3 Filters (SELL only)
+        print(f"\n🔴 [TIER 4: STRATEGY 3 - SELL (Swing Low + Pullback + Trendline Break)]")
+        if is_strat3_sell:
+            print(f"   ✅ Strategy 3: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 3: FAIL")
+            if strat3_fail_reasons:
+                for i, reason in enumerate(strat3_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 3 (SELL)")
+        
+        # Tier 5: Strategy 4 Filters (BUY only)
+        print(f"\n🟢 [TIER 5: STRATEGY 4 - BUY (Swing High + Pullback + Trendline Break)]")
+        if is_strat4_buy:
+            print(f"   ✅ Strategy 4: PASS - Tất cả điều kiện đạt")
+        else:
+            print(f"   ❌ Strategy 4: FAIL")
+            if strat4_fail_reasons:
+                for i, reason in enumerate(strat4_fail_reasons, 1):
+                    print(f"      {i}. {reason}")
+            else:
+                print(f"      - Không đủ điều kiện cho Strategy 4 (BUY)")
         
         # Chi tiết các giá trị quan trọng
         print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
@@ -1779,16 +2947,40 @@ def tuyen_trend_logic(config, error_count=0):
     else:
         print(f"\n✅ [TÌM THẤY TÍN HIỆU] {signal_type} | Reason: {reason}")
         print(f"   💱 Price: {price:.5f}")
-        print(f"   📈 Strategy: {'Strategy 1 (Pullback)' if is_strat1 else 'Strategy 2 (Continuation)'}")
+        if is_strat1:
+            strategy_name = "Strategy 1 (Pullback)"
+        elif is_strat2:
+            strategy_name = "Strategy 2 (Continuation)"
+        elif is_strat3_sell:
+            strategy_name = "Strategy 3 (Swing Low + Pullback + Trendline Break)"
+        elif is_strat4_buy:
+            strategy_name = "Strategy 4 (Swing High + Pullback + Trendline Break)"
+        else:
+            strategy_name = "Unknown"
+        print(f"   📈 Strategy: {strategy_name}")
         
     # --- 5. Execution Trigger ---
     if is_strat1:
         trigger_high = max(c1['high'], c2['high'])
         trigger_low = min(c1['low'], c2['low'])
-    else: # Strat 2
+    elif is_strat2:
         recent_block = df_m1.iloc[-5:-1]
         trigger_high = recent_block['high'].max()
         trigger_low = recent_block['low'].min()
+    elif is_strat3_sell:
+        # Strategy 3: Entry tại giá đóng cửa của nến phá vỡ trendline (đã hoàn thành)
+        current_candle = df_m1.iloc[-2]  # Nến cuối cùng đã hoàn thành
+        trigger_high = current_candle['close']  # Không cần trigger, entry ngay tại close
+        trigger_low = current_candle['close']
+    elif is_strat4_buy:
+        # Strategy 4: Entry tại giá đóng cửa của nến phá vỡ trendline (đã hoàn thành)
+        current_candle = df_m1.iloc[-2]  # Nến cuối cùng đã hoàn thành
+        trigger_high = current_candle['close']  # Không cần trigger, entry ngay tại close
+        trigger_low = current_candle['close']
+    else:
+        # Fallback
+        trigger_high = c1['high']
+        trigger_low = c1['low']
         
     execute = False
     sl = 0.0
@@ -1802,22 +2994,140 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"   ⚠️ ATR is NaN, using fallback: {atr_val:.5f}")
     
     # Calculate SL and TP using config parameters
-    sl_distance = atr_multiplier * atr_val
-    tp_distance = atr_multiplier * atr_val * reward_ratio
+    # V3: Improved SL logic - based on structure + ATR
+    structure_level = find_nearest_structure_level(df_m1, signal_type, lookback=30)
     
     if signal_type == "BUY":
-        if price > trigger_high:
+        # Strategy 4: Entry ngay tại giá đóng cửa (không cần chờ breakout)
+        if is_strat4_buy:
+            # Entry tại giá đóng cửa của nến phá vỡ (đã hoàn thành)
+            current_candle = df_m1.iloc[-2]
+            price = current_candle['close']  # Entry tại close của nến phá vỡ
+            
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
             execute = True
-            sl = price - sl_distance
+            
+            # V3: Improved SL calculation for Strategy 4
+            # SL = min(structure_low - buffer, entry - 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level - buffer
+            sl_from_atr = price - (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = min(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure Low={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
             tp = price + tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = price - sl
+        elif price > trigger_high:
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
+            execute = True
+            
+            # V3: Improved SL calculation
+            # SL = min(structure_low - buffer, entry - 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level - buffer
+            sl_from_atr = price - (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = min(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure Low={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
+            tp = price + tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = price - sl
         else:
             distance = trigger_high - price
             print(f"   {t('waiting_breakout', lang)} > {trigger_high:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
     elif signal_type == "SELL":
-        if price < trigger_low:
+        # Strategy 3: Entry ngay tại giá đóng cửa (không cần chờ breakout)
+        if is_strat3_sell:
+            # Entry tại giá đóng cửa của nến phá vỡ (đã hoàn thành)
+            current_candle = df_m1.iloc[-2]
+            price = current_candle['close']  # Entry tại close của nến phá vỡ
+            
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
             execute = True
-            sl = price + sl_distance
+            
+            # V3: Improved SL calculation for Strategy 3
+            # SL = max(structure_high + buffer, entry + 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level + buffer
+            sl_from_atr = price + (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = max(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure High={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
             tp = price - tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = sl - price
+        elif price < trigger_low:
+            # V3: Check Liquidity Filter before execution
+            liquidity_ok, liquidity_msg = check_liquidity_filter(df_m1, price, signal_type, min_distance_pips=2.5)
+            if not liquidity_ok:
+                print(f"   ❌ Liquidity Filter FAIL: {liquidity_msg}")
+                print(f"   ⏳ Đang chờ entry tốt hơn...")
+                return error_count, 0
+            
+            execute = True
+            
+            # V3: Improved SL calculation
+            # SL = max(structure_high + buffer, entry + 3 × ATR)
+            buffer = 0.00005  # 0.5 pips buffer
+            sl_from_structure = None
+            if structure_level:
+                sl_from_structure = structure_level + buffer
+            sl_from_atr = price + (3 * atr_val)  # 3x ATR (an toàn hơn 2x)
+            
+            if sl_from_structure:
+                sl = max(sl_from_structure, sl_from_atr)
+                print(f"   📊 SL Calculation: Structure High={structure_level:.5f}, SL from structure={sl_from_structure:.5f}, SL from ATR={sl_from_atr:.5f} → Final SL={sl:.5f}")
+            else:
+                sl = sl_from_atr
+                print(f"   📊 SL Calculation: No structure level, using ATR-based SL={sl:.5f}")
+            
+            tp_distance = atr_multiplier * atr_val * reward_ratio
+            tp = price - tp_distance
+            # Calculate sl_distance for logging
+            sl_distance = sl - price
         else:
             distance = price - trigger_low
             print(f"   {t('waiting_breakout', lang)} < {trigger_low:.5f} ({t('current_price', lang)}: {price:.5f}, {t('need', lang)}: {distance:.5f})")
@@ -1861,7 +3171,7 @@ def tuyen_trend_logic(config, error_count=0):
         # Helper function để gửi error notification
         def send_error_telegram(error_msg, error_detail=""):
             msg = (
-                f"❌ <b>Tuyen Trend Bot (XAU) - Lỗi Gửi Lệnh</b>\n"
+                f"❌ <b>Tuyen Trend Bot - Lỗi Gửi Lệnh</b>\n"
                 f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
                 f"📋 <b>Reason:</b> {reason}\n"
                 f"💵 <b>Price:</b> {price:.5f}\n"
@@ -1947,6 +3257,12 @@ def tuyen_trend_logic(config, error_count=0):
         tp = round(tp, digits)
         
         # 5.5. Calculate lot size based on risk management (if enabled)
+        # Initialize variables for Telegram message
+        sl_pips = 0.0
+        account_balance = 0.0
+        pip_value = 0.0
+        risk_money = 0.0
+        
         if use_risk_based_lot:
             # Get account balance
             account_info = mt5.account_info()
@@ -1959,6 +3275,7 @@ def tuyen_trend_logic(config, error_count=0):
                 # Calculate lot size (truyền symbol_info để tính chính xác)
                 calculated_volume = calculate_lot_size(account_balance, risk_percent, sl_pips, symbol, symbol_info)
                 volume = calculated_volume
+                risk_money = account_balance * risk_percent / 100.0
                 
                 # Get pip size for display
                 point = symbol_info.point
@@ -1972,16 +3289,23 @@ def tuyen_trend_logic(config, error_count=0):
                 
                 print(f"   💰 Risk-Based Lot Calculation:")
                 print(f"      Account Balance: ${account_balance:.2f}")
-                print(f"      Risk: {risk_percent}% = ${account_balance * risk_percent / 100:.2f}")
+                print(f"      Risk: {risk_percent}% = ${risk_money:.2f}")
                 print(f"      SL Distance: {sl_pips:.1f} pips (pip_size: {pip_size:.5f})")
                 print(f"      Pip Value: ${pip_value:.2f} per lot")
                 print(f"      Point: {point:.5f} | Contract Size: {getattr(symbol_info, 'trade_contract_size', 'N/A')}")
-                print(f"      Formula: Lot = ${account_balance * risk_percent / 100:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
+                print(f"      Formula: Lot = ${risk_money:.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})")
                 print(f"      Calculated Lot: {volume:.2f}")
             else:
                 print(f"   ⚠️ Không thể lấy account balance, sử dụng volume mặc định: {volume}")
         else:
             print(f"   📊 Sử dụng volume cố định từ config: {volume}")
+            # Still calculate sl_pips for display
+            if symbol_info:
+                sl_pips = calculate_sl_pips(price, sl, symbol, symbol_info)
+                pip_value = get_pip_value_per_lot(symbol, symbol_info)
+                account_info = mt5.account_info()
+                if account_info:
+                    account_balance = account_info.balance
         
         # 6. Sanitize comment (MT5 only accepts ASCII alphanumeric, underscore, hyphen)
         # MT5 is very strict: comment must be pure ASCII, max 31 chars, no special chars
@@ -2103,20 +3427,150 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   - SL/TP có hợp lệ? (SL: {sl:.5f}, TP: {tp:.5f})")
             send_error_telegram(error_msg, error_detail)
             return error_count + 1, 0
-        
+
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
             
-             # Telegram
-            msg = (
-                f"✅ <b>Tuyen Trend Bot Triggered</b>\n"
-                f"🆔 <b>Ticket:</b> {result.order}\n"
-                f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n"
-                f"📋 <b>Reason:</b> {reason}\n"
-                f"💵 <b>Price:</b> {price}\n"
-                f"🛑 <b>SL:</b> {sl:.5f} | 🎯 <b>TP:</b> {tp:.5f}\n"
-            )
+            # === DETAILED TELEGRAM MESSAGE ===
+            # Build detailed message with all conditions met
+            msg_parts = []
+            msg_parts.append(f"✅ <b>Tuyen Trend Bot - Lệnh Đã Được Thực Hiện</b>\n")
+            msg_parts.append(f"{'='*50}\n")
+            
+            # Basic Order Info
+            msg_parts.append(f"🆔 <b>Ticket:</b> {result.order}\n")
+            msg_parts.append(f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n")
+            msg_parts.append(f"💵 <b>Entry Price:</b> {price:.5f}\n")
+            msg_parts.append(f"🛑 <b>SL:</b> {sl:.5f} ({atr_multiplier}x ATR = {sl_distance:.5f})\n")
+            msg_parts.append(f"🎯 <b>TP:</b> {tp:.5f} ({atr_multiplier * reward_ratio}x ATR = {tp_distance:.5f})\n")
+            msg_parts.append(f"📊 <b>R:R Ratio:</b> 1:{reward_ratio:.1f}\n")
+            msg_parts.append(f"📦 <b>Volume:</b> {volume:.2f} lot\n")
+            msg_parts.append(f"\n")
+            
+            # Strategy Info
+            if is_strat1:
+                strategy_name = "Strategy 1 (Pullback + Doji/Pinbar Cluster)"
+            elif is_strat2:
+                strategy_name = "Strategy 2 (Continuation + Structure)"
+            elif is_strat3_sell:
+                strategy_name = "Strategy 3 (Swing Low + Pullback + Trendline Break)"
+            else:
+                strategy_name = "Unknown Strategy"
+            msg_parts.append(f"📈 <b>Strategy:</b> {strategy_name}\n")
+            msg_parts.append(f"📋 <b>Reason:</b> {reason}\n")
+            msg_parts.append(f"\n")
+            
+            # Market Context
+            msg_parts.append(f"📊 <b>Market Context:</b>\n")
+            msg_parts.append(f"   📈 M5 Trend: {m5_trend}\n")
+            msg_parts.append(f"   🎯 H1 Bias: {h1_bias if h1_bias else 'None'}\n")
+            msg_parts.append(f"   📊 ATR: {atr_val:.5f}\n")
+            msg_parts.append(f"\n")
+            
+            # Strategy 1 Conditions (if applicable)
+            if is_strat1:
+                msg_parts.append(f"✅ <b>Strategy 1 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Fibonacci 38.2-62%: PASS\n")
+                if fib_levels:
+                    if m5_trend == "BULLISH":
+                        msg_parts.append(f"      Zone: {fib_levels['618']:.5f} - {fib_levels['382']:.5f}\n")
+                    else:
+                        msg_parts.append(f"      Zone: {fib_levels['382']:.5f} - {fib_levels['618']:.5f}\n")
+                msg_parts.append(f"   ✅ Signal Cluster: {signal_count}/{signal_cluster_count} candles (cần {signal_cluster_count})\n")
+                msg_parts.append(f"   ✅ EMA Touch: {'Có nến chạm EMA21/EMA50' if is_touch else 'N/A'}\n")
+                msg_parts.append(f"   ✅ Smooth Pullback: PASS\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 2 Conditions (if applicable)
+            if is_strat2:
+                msg_parts.append(f"✅ <b>Strategy 2 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ EMA200 Filter: PASS\n")
+                if has_breakout_retest:
+                    msg_parts.append(f"   ✅ Breakout+Retest: Tìm thấy\n")
+                if is_compressed:
+                    msg_parts.append(f"   ✅ Compression Block: Phát hiện\n")
+                    if has_signal_candle:
+                        msg_parts.append(f"      ✅ Signal Candle: Hợp lệ ({signal_candle_min_criteria}/8 điều kiện)\n")
+                if is_pattern:
+                    pattern_name = pattern_type if pattern_type else 'M/W'
+                    msg_parts.append(f"   ✅ Pattern ({pattern_name}): Phát hiện\n")
+                if pass_fib_strat2:
+                    msg_parts.append(f"   ✅ Fibonacci 38.2-79%: PASS\n")
+                    if fib_levels_strat2:
+                        if m5_trend == "BULLISH":
+                            msg_parts.append(f"      Zone: {fib_levels_strat2['786']:.5f} - {fib_levels_strat2['382']:.5f}\n")
+                        else:
+                            msg_parts.append(f"      Zone: {fib_levels_strat2['382']:.5f} - {fib_levels_strat2['786']:.5f}\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 3 Conditions (if applicable)
+            if is_strat3_sell:
+                msg_parts.append(f"✅ <b>Strategy 3 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Swing Low với RSI < 30: Tìm thấy\n")
+                msg_parts.append(f"   ✅ Sóng hồi hợp lệ: PASS\n")
+                msg_parts.append(f"   ✅ Trendline sóng hồi: Đã vẽ\n")
+                msg_parts.append(f"   ✅ Nến phá vỡ trendline: PASS\n")
+                msg_parts.append(f"      - Close phá xuống dưới trendline\n")
+                msg_parts.append(f"      - Close <= EMA50\n")
+                msg_parts.append(f"      - RSI đang hướng xuống\n")
+                msg_parts.append(f"\n")
+            
+            # Strategy 4 Conditions (if applicable)
+            if is_strat4_buy:
+                msg_parts.append(f"✅ <b>Strategy 4 - Điều Kiện Đã Thỏa:</b>\n")
+                msg_parts.append(f"   ✅ Swing High với RSI > 70: Tìm thấy\n")
+                msg_parts.append(f"   ✅ Sóng hồi hợp lệ: PASS\n")
+                msg_parts.append(f"   ✅ Trendline sóng hồi: Đã vẽ\n")
+                msg_parts.append(f"   ✅ Nến phá vỡ trendline: PASS\n")
+                msg_parts.append(f"      - Close vượt lên trên trendline\n")
+                msg_parts.append(f"      - Close >= EMA50\n")
+                msg_parts.append(f"      - RSI đang hướng lên\n")
+                msg_parts.append(f"\n")
+            
+            # Risk Management Details
+            if use_risk_based_lot and account_balance > 0:
+                msg_parts.append(f"💰 <b>Risk Management:</b>\n")
+                msg_parts.append(f"   💵 Account Balance: ${account_balance:,.2f}\n")
+                msg_parts.append(f"   ⚠️ Risk: {risk_percent}% = ${risk_money:,.2f}\n")
+                msg_parts.append(f"   📏 SL Distance: {sl_pips:.1f} pips\n")
+                msg_parts.append(f"   💲 Pip Value: ${pip_value:.2f} per lot\n")
+                msg_parts.append(f"   📐 Formula: Lot = ${risk_money:,.2f} / ({sl_pips:.1f} pips × ${pip_value:.2f})\n")
+                msg_parts.append(f"   📊 Calculated Lot: {volume:.2f}\n")
+                expected_risk = sl_pips * pip_value * volume
+                expected_reward = (tp_distance / sl_distance) * expected_risk if sl_distance > 0 else 0
+                msg_parts.append(f"   💰 Expected Risk: ${expected_risk:.2f}\n")
+                msg_parts.append(f"   💰 Expected Reward: ${expected_reward:.2f}\n")
+                msg_parts.append(f"\n")
+            else:
+                msg_parts.append(f"💰 <b>Risk Management:</b>\n")
+                msg_parts.append(f"   📊 Volume: {volume:.2f} lot (cố định từ config)\n")
+                if sl_pips > 0:
+                    msg_parts.append(f"   📏 SL Distance: {sl_pips:.1f} pips\n")
+                msg_parts.append(f"\n")
+            
+            # M1 Structure Info
+            if m1_swing_highs and m1_swing_lows:
+                last_high = m1_swing_highs[-1]['price']
+                last_low = m1_swing_lows[-1]['price']
+                msg_parts.append(f"📊 <b>M1 Structure:</b>\n")
+                msg_parts.append(f"   📈 Swing High: {last_high:.5f}\n")
+                msg_parts.append(f"   📉 Swing Low: {last_low:.5f}\n")
+                msg_parts.append(f"\n")
+            
+            # Execution Details
+            msg_parts.append(f"⚡ <b>Execution:</b>\n")
+            if is_strat1:
+                msg_parts.append(f"   🎯 Trigger: Breakout {signal_type} {'>' if signal_type == 'BUY' else '<'} {trigger_high if signal_type == 'BUY' else trigger_low:.5f}\n")
+            else:
+                msg_parts.append(f"   🎯 Trigger: Breakout {signal_type} {'>' if signal_type == 'BUY' else '<'} {trigger_high if signal_type == 'BUY' else trigger_low:.5f}\n")
+            msg_parts.append(f"   ✅ Executed at: {price:.5f}\n")
+            msg_parts.append(f"\n")
+            
+            msg_parts.append(f"{'='*50}\n")
+            msg_parts.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
+            msg = "".join(msg_parts)
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0
         else:
@@ -2128,6 +3582,112 @@ def tuyen_trend_logic(config, error_count=0):
 
     return error_count, 0
 
+def log_initial_conditions(config):
+    """
+    Log tất cả các điều kiện và parameters của bot trước khi bắt đầu chạy
+    """
+    print("\n" + "="*100)
+    print("📋 [CHI TIẾT ĐIỀU KIỆN VÀ THAM SỐ CỦA BOT]")
+    print("="*100)
+    
+    # Basic Config
+    print("\n🔧 [CẤU HÌNH CƠ BẢN]")
+    print(f"   💱 Symbol: {config.get('symbol', 'N/A')}")
+    print(f"   📊 Volume: {config.get('volume', 'N/A')} lot")
+    print(f"   🆔 Magic Number: {config.get('magic', 'N/A')}")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    print(f"   🌐 Language: {config.get('language', 'en')}")
+    
+    # Risk Management
+    print("\n💰 [QUẢN LÝ RỦI RO]")
+    risk_percent = config.get('risk_percent', 1.0)
+    use_risk_based_lot = config.get('use_risk_based_lot', True)
+    print(f"   ⚠️ Risk Percent: {risk_percent}%")
+    print(f"   📊 Use Risk-Based Lot: {use_risk_based_lot}")
+    
+    # Parameters Config
+    parameters_config = config.get('parameters', {})
+    atr_multiplier = parameters_config.get('atr_multiplier', 2.0)
+    reward_ratio = parameters_config.get('reward_ratio', 2.0)
+    print("\n📐 [THAM SỐ TÍNH TOÁN]")
+    print(f"   📊 ATR Multiplier (SL): {atr_multiplier}x")
+    print(f"   🎯 Reward Ratio (R:R): 1:{reward_ratio:.1f}")
+    
+    # Filters Config
+    filters_config = config.get('filters', {})
+    print("\n🔍 [BỘ LỌC (FILTERS)]")
+    print(f"   📊 M1 Structure Require Both: {filters_config.get('m1_structure_require_both', True)}")
+    print(f"   📊 Signal Cluster Count: {filters_config.get('signal_cluster_count', 2)}")
+    print(f"   📊 Signal Cluster Window: {filters_config.get('signal_cluster_window', 3)} candles")
+    print(f"   📊 Min Zone Distance: {filters_config.get('min_zone_distance_pips', 10)} pips")
+    print(f"   📊 Breakout Lookback: {filters_config.get('breakout_lookback_candles', 100)} candles")
+    print(f"   📊 Signal Candle Min Criteria: {filters_config.get('signal_candle_min_criteria', 6)}/10")
+    print(f"   📊 Smooth Pullback Max Candle Multiplier: {filters_config.get('smooth_pullback_max_candle_multiplier', 2.0)}x")
+    print(f"   📊 Smooth Pullback Max Gap Multiplier: {filters_config.get('smooth_pullback_max_gap_multiplier', 0.5)}x")
+    
+    # Strategies
+    print("\n📈 [CHIẾN LƯỢC (STRATEGIES)]")
+    print("   ✅ Strategy 1: Pullback + Doji/Pinbar Cluster")
+    print("      - M5 Trend phù hợp")
+    print("      - M1 Structure hợp lệ")
+    print("      - Fibonacci Retracement (0.382-0.786)")
+    print("      - Signal Candle (Doji/Pinbar)")
+    print("      - EMA Touch (EMA21 hoặc EMA50)")
+    print("      - Smooth Pullback")
+    print("      - EMA200 Filter (BUY: price > EMA200, SELL: price < EMA200)")
+    
+    print("\n   ✅ Strategy 2: Continuation + Structure (M/W + Compression)")
+    print("      - M5 Trend phù hợp")
+    print("      - M1 Structure hợp lệ")
+    print("      - Pattern Detection (M/W)")
+    print("      - Compression Block")
+    print("      - Signal Candle trong Compression")
+    print("      - Breakout + Retest")
+    print("      - Block chạm EMA hoặc Breakout Level")
+    
+    print("\n   ✅ Strategy 3: SELL - Swing Low + Pullback + Trendline Break")
+    print("      - M5 Trend: BEARISH")
+    print("      - Swing Low với RSI < 30")
+    print("      - Sóng hồi hợp lệ (≤ 30 nến, RSI 50-60, RSI < 68 trong quá trình hồi)")
+    print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
+    print("      - Nến phá vỡ: Close < trendline, Close ≤ EMA50, RSI hướng xuống")
+    print("      - Entry: Close của nến phá vỡ trendline")
+    
+    print("\n   ✅ Strategy 4: BUY - Swing High + Pullback + Trendline Break")
+    print("      - M5 Trend: BULLISH")
+    print("      - Swing High với RSI > 70")
+    print("      - Sóng hồi hợp lệ (≤ 30 nến, RSI 40-50, RSI > 32 trong quá trình hồi)")
+    print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
+    print("      - Nến phá vỡ: Close > trendline, Close ≥ EMA50, RSI hướng lên")
+    print("      - Entry: Close của nến phá vỡ trendline")
+    
+    # V3 Filters (if applicable)
+    print("\n🛡️ [BỘ LỌC V3 (Nếu có)]")
+    print("   ✅ CHOP/RANGE Filter: Tránh trade trong market sideways")
+    print("   ✅ Liquidity Sweep: Kiểm tra sweep liquidity trước khi vào lệnh")
+    print("   ✅ Displacement Candle: Kiểm tra nến displacement")
+    print("   ✅ External BOS: Kiểm tra break of structure lớn")
+    print("   ✅ Liquidity Filter: Kiểm tra khoảng cách đến opposing liquidity")
+    
+    # SL/TP Calculation
+    print("\n🎯 [TÍNH TOÁN SL/TP]")
+    print(f"   🛑 SL = Structure Level + Buffer HOẶC Entry ± ({atr_multiplier}x ATR)")
+    print(f"   🎯 TP = Entry ± ({atr_multiplier * reward_ratio}x ATR)")
+    print(f"   📊 R:R Ratio = 1:{reward_ratio:.1f}")
+    
+    # Spam Filter
+    print("\n⏱️ [SPAM FILTER]")
+    print("   ⏳ Cooldown: 60 giây giữa các lệnh")
+    
+    # Position Management
+    print("\n📊 [QUẢN LÝ VỊ THẾ]")
+    print(f"   📈 Max Positions: {config.get('max_positions', 1)}")
+    print("   🔄 Auto Trailing SL: Enabled (nếu có)")
+    
+    print("\n" + "="*100)
+    print("⏳ Đang chờ 20 giây trước khi bắt đầu...")
+    print("="*100 + "\n")
+
 if __name__ == "__main__":
     import os
     
@@ -2135,7 +3695,7 @@ if __name__ == "__main__":
     
     # Interactive menu để chọn chế độ
     print("="*80)
-    print("🚀 TUYEN TREND BOT (V2) - XAUUSD - CHỌN CHẾ ĐỘ FILTER")
+    print("🚀 TUYEN TREND BOT (V2) - CHỌN CHẾ ĐỘ FILTER")
     print("="*80)
     print("\n📋 Vui lòng chọn chế độ filter:")
     print("   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)")
@@ -2143,7 +3703,7 @@ if __name__ == "__main__":
     print("   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)")
     print("   4️⃣  Loose (Lỏng) - Nới lỏng điều kiện, nhiều signals (5-12 signals/ngày)")
     print("   5️⃣  Very Loose (Rất lỏng) - Nới lỏng tối đa, rất nhiều signals (10-20+ signals/ngày)")
-    print("   0️⃣  Sử dụng config mặc định (config_tuyen_xau.json)")
+    print("   0️⃣  Sử dụng config mặc định (config_tuyen.json)")
     print("="*80)
     
     while True:
@@ -2151,28 +3711,28 @@ if __name__ == "__main__":
             choice = input("\n👉 Nhập lựa chọn (1/2/3/4/5/0): ").strip()
             
             if choice == "1":
-                config_filename = "config_tuyen_xau_default.json"
+                config_filename = "config_tuyen_default.json"
                 mode_name = "Mặc Định (Default)"
                 break
             elif choice == "2":
-                config_filename = "config_tuyen_xau_balanced.json"
+                config_filename = "config_tuyen_balanced.json"
                 mode_name = "Cân Bằng (Balanced - Linh Hoạt)"
                 break
             elif choice == "3":
-                config_filename = "config_tuyen_xau_strict.json"
+                config_filename = "config_tuyen_strict.json"
                 mode_name = "Khắt Khe (Strict)"
                 break
             elif choice == "4":
-                config_filename = "config_tuyen_xau_loose.json"
+                config_filename = "config_tuyen_loose.json"
                 mode_name = "Lỏng (Loose - Nhiều Signals)"
                 break
             elif choice == "5":
-                config_filename = "config_tuyen_xau_very_loose.json"
+                config_filename = "config_tuyen_very_loose.json"
                 mode_name = "Rất Lỏng (Very Loose - Rất Nhiều Signals)"
                 break
             elif choice == "0":
-                config_filename = "config_tuyen_xau.json"
-                mode_name = "Config Mặc Định (config_tuyen_xau.json)"
+                config_filename = "config_tuyen.json"
+                mode_name = "Config Mặc Định (config_tuyen.json)"
                 break
             else:
                 print("❌ Lựa chọn không hợp lệ! Vui lòng nhập 1, 2, 3, 4, 5 hoặc 0")
@@ -2187,13 +3747,13 @@ if __name__ == "__main__":
     # Check if config file exists
     if not os.path.exists(config_path):
         print(f"\n❌ Không tìm thấy file config: {config_filename}")
-        print(f"   Đang thử dùng config mặc định: config_tuyen_xau.json")
-        config_path = os.path.join(script_dir, "configs", "config_tuyen_xau.json")
+        print(f"   Đang thử dùng config mặc định: config_tuyen.json")
+        config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
         if not os.path.exists(config_path):
             print(f"❌ Không tìm thấy file config mặc định!")
             sys.exit(1)
-        config_filename = "config_tuyen_xau.json"
-        mode_name = "Config Mặc Định (config_tuyen_xau.json)"
+        config_filename = "config_tuyen.json"
+        mode_name = "Config Mặc Định (config_tuyen.json)"
     
     config = load_config(config_path)
     
@@ -2203,24 +3763,63 @@ if __name__ == "__main__":
     
     consecutive_errors = 0
     if connect_mt5(config):
-        print("\n" + "="*80)
-        print(f"✅ Tuyen Trend Bot (V2) - Started")
-        print(f"📋 Chế độ: {mode_name}")
-        print(f"📁 Config: {config_filename}")
-        print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
-        print(f"📊 Volume: {config.get('volume', 'N/A')}")
-        print("="*80 + "\n")
         try:
-            while True:
-                consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
-                if consecutive_errors >= 5:
-                    print("⚠️ Too many errors. Pausing...")
-                    time.sleep(120)
-                    consecutive_errors = 0
+            print("\n" + "="*80)
+            print(f"✅ Tuyen Trend Bot (V2) - Started")
+            print(f"📋 Chế độ: {mode_name}")
+            print(f"📁 Config: {config_filename}")
+            print(f"💱 Symbol: {config.get('symbol', 'N/A')}")
+            print(f"📊 Volume: {config.get('volume', 'N/A')}")
+            print("="*80 + "\n")
+            
+            # Verify MT5 connection is still active
+            if not mt5.terminal_info():
+                print("❌ MT5 Terminal không còn kết nối sau khi khởi động")
+                sys.exit(1)
+            
+            # Log tất cả điều kiện trước khi bắt đầu
+            log_initial_conditions(config)
+            
+            # Sleep 20 giây
+            for i in range(20, 0, -1):
+                print(f"   ⏳ Còn {i} giây...", end='\r')
                 time.sleep(1)
+            print("\n")
+            
+            print("🔄 Bắt đầu vòng lặp chính...\n")
+            
+            loop_count = 0
+            while True:
+                try:
+                    loop_count += 1
+                    if loop_count % 60 == 0:  # Print every 60 iterations (~1 minute)
+                        print(f"⏳ Bot đang chạy... (vòng lặp #{loop_count})")
+                    
+                    consecutive_errors, last_error = tuyen_trend_logic(config, consecutive_errors)
+                    if consecutive_errors >= 5:
+                        print("⚠️ Too many errors. Pausing...")
+                        time.sleep(120)
+                        consecutive_errors = 0
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"❌ Lỗi trong tuyen_trend_logic: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    consecutive_errors += 1
+                    if consecutive_errors >= 5:
+                        print("⚠️ Too many errors. Pausing...")
+                        time.sleep(120)
+                        consecutive_errors = 0
+                    time.sleep(5)  # Wait longer on error
         except KeyboardInterrupt:
             print("\n\n⚠️ Bot stopped by user")
             mt5.shutdown()
+        except Exception as e:
+            print(f"\n❌ Lỗi nghiêm trọng trong bot: {e}")
+            import traceback
+            traceback.print_exc()
+            mt5.shutdown()
+            sys.exit(1)
     else:
         print("❌ Không thể kết nối MT5. Vui lòng kiểm tra lại.")
         sys.exit(1)
