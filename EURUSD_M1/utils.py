@@ -108,37 +108,35 @@ def escape_html_message(message):
     if not isinstance(message, str):
         message = str(message)
     
-    # First, escape all & that are not part of HTML entities
-    # We need to be careful: &amp; &lt; &gt; should not be double-escaped
-    # Strategy: Find all HTML tags first, then escape everything outside tags
+    # Strategy: Find and protect valid HTML tags first, then escape everything, then restore tags
+    # This ensures no special characters in text content cause parsing errors
     
     import re
-    parts = []
-    last_pos = 0
     
-    # Find all HTML tags (including self-closing tags)
-    # Pattern matches: <tag>, </tag>, <tag attr="value">, <br/>, etc.
-    tag_pattern = r'<[^>]+>'
+    # Step 1: Find all valid HTML tags and replace with placeholders
+    valid_tags = []
+    tag_placeholder_pattern = r'</?(?:b|i|u|s|code|pre)>'
+    tag_counter = 0
     
-    for match in re.finditer(tag_pattern, message):
-        # Add text before tag (escaped)
-        if match.start() > last_pos:
-            text_before = message[last_pos:match.start()]
-            parts.append(escape_html(text_before))
-        
-        # Add tag (keep as is - Telegram handles HTML tags correctly)
-        # Don't escape & in tags as it might already be an entity
-        tag_content = match.group(0)
-        parts.append(tag_content)
-        
-        last_pos = match.end()
+    def replace_tag(match):
+        nonlocal tag_counter
+        tag = match.group(0)
+        placeholder = f"__TAG_PLACEHOLDER_{tag_counter}__"
+        valid_tags.append((placeholder, tag))
+        tag_counter += 1
+        return placeholder
     
-    # Add remaining text (escaped)
-    if last_pos < len(message):
-        remaining = message[last_pos:]
-        parts.append(escape_html(remaining))
+    # Replace valid tags with placeholders
+    message_with_placeholders = re.sub(tag_placeholder_pattern, replace_tag, message)
     
-    return ''.join(parts) if parts else escape_html(message)
+    # Step 2: Escape the entire message (now all < and > are safe to escape)
+    escaped = escape_html(message_with_placeholders)
+    
+    # Step 3: Restore valid tags
+    for placeholder, original_tag in valid_tags:
+        escaped = escaped.replace(placeholder, original_tag)
+    
+    return escaped
 
 def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True):
     """Send message to Telegram with detailed logging"""

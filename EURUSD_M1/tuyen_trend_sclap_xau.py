@@ -576,6 +576,7 @@ def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
 def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val):
     """
     Kiểm tra nến phá vỡ trendline sóng hồi cho BUY:
+    ✅ Nến trước đó chưa phá trendline (close <= trendline)
     ✅ Giá đóng cửa vượt lên trên trendline sóng hồi
     ✅ Giá đóng cửa ≥ EMA 50
     ✅ RSI đang hướng lên (RSI hiện tại > RSI nến trước)
@@ -591,12 +592,21 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     current_candle = df_m1.iloc[current_candle_idx]
     prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
     
-    trendline_value = trendline_info['func'](current_candle_idx)
+    if prev_candle is None:
+        return False, "Không có nến trước để so sánh"
+    
+    trendline_value_current = trendline_info['func'](current_candle_idx)
+    trendline_value_prev = trendline_info['func'](current_candle_idx - 1)
+    
+    # 0. QUAN TRỌNG: Nến trước đó phải chưa phá trendline (close <= trendline)
+    prev_close_below_trendline = prev_candle['close'] <= trendline_value_prev
+    if not prev_close_below_trendline:
+        return False, f"Nến trước đã phá trendline: Prev Close ({prev_candle['close']:.5f}) > Prev Trendline ({trendline_value_prev:.5f})"
     
     # 1. Giá đóng cửa vượt lên trên trendline
-    close_above_trendline = current_candle['close'] > trendline_value
+    close_above_trendline = current_candle['close'] > trendline_value_current
     if not close_above_trendline:
-        return False, f"Close ({current_candle['close']:.5f}) không vượt lên trên trendline ({trendline_value:.5f})"
+        return False, f"Close ({current_candle['close']:.5f}) không vượt lên trên trendline ({trendline_value_current:.5f})"
     
     # 2. Giá đóng cửa ≥ EMA 50
     if ema50_val is None or pd.isna(ema50_val):
@@ -608,18 +618,15 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     
     # 3. RSI đang hướng lên
     current_rsi = current_candle.get('rsi', None)
-    if prev_candle is not None:
-        prev_rsi = prev_candle.get('rsi', None)
-        if pd.notna(current_rsi) and pd.notna(prev_rsi):
-            rsi_rising = current_rsi > prev_rsi
-            if not rsi_rising:
-                return False, f"RSI không hướng lên: {current_rsi:.1f} <= {prev_rsi:.1f}"
-        else:
-            return False, "RSI không có giá trị"
+    prev_rsi = prev_candle.get('rsi', None)
+    if pd.notna(current_rsi) and pd.notna(prev_rsi):
+        rsi_rising = current_rsi > prev_rsi
+        if not rsi_rising:
+            return False, f"RSI không hướng lên: {current_rsi:.1f} <= {prev_rsi:.1f}"
     else:
-        return False, "Không có nến trước để so sánh RSI"
+        return False, "RSI không có giá trị"
     
-    return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
+    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) <= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) > Current Trendline ({trendline_value_current:.5f}), Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
 
 def check_bearish_divergence(df_m1, lookback=50):
     """
@@ -718,6 +725,7 @@ def check_bullish_divergence(df_m1, lookback=50):
 def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val):
     """
     Kiểm tra nến phá vỡ trendline sóng hồi cho SELL:
+    ✅ Nến trước đó chưa phá trendline (close >= trendline)
     ✅ Giá đóng cửa phá xuống dưới trendline sóng hồi
     ✅ Giá đóng cửa ≤ EMA 50
     ✅ RSI đang hướng xuống (RSI hiện tại < RSI nến trước)
@@ -733,12 +741,21 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     current_candle = df_m1.iloc[current_candle_idx]
     prev_candle = df_m1.iloc[current_candle_idx - 1] if current_candle_idx > 0 else None
     
-    trendline_value = trendline_info['func'](current_candle_idx)
+    if prev_candle is None:
+        return False, "Không có nến trước để so sánh"
+    
+    trendline_value_current = trendline_info['func'](current_candle_idx)
+    trendline_value_prev = trendline_info['func'](current_candle_idx - 1)
+    
+    # 0. QUAN TRỌNG: Nến trước đó phải chưa phá trendline (close >= trendline)
+    prev_close_above_trendline = prev_candle['close'] >= trendline_value_prev
+    if not prev_close_above_trendline:
+        return False, f"Nến trước đã phá trendline: Prev Close ({prev_candle['close']:.5f}) < Prev Trendline ({trendline_value_prev:.5f})"
     
     # 1. Giá đóng cửa phá xuống dưới trendline
-    close_below_trendline = current_candle['close'] < trendline_value
+    close_below_trendline = current_candle['close'] < trendline_value_current
     if not close_below_trendline:
-        return False, f"Close ({current_candle['close']:.5f}) không phá xuống dưới trendline ({trendline_value:.5f})"
+        return False, f"Close ({current_candle['close']:.5f}) không phá xuống dưới trendline ({trendline_value_current:.5f})"
     
     # 2. Giá đóng cửa ≤ EMA 50
     if ema50_val is None or pd.isna(ema50_val):
@@ -750,18 +767,15 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     
     # 3. RSI đang hướng xuống
     current_rsi = current_candle.get('rsi', None)
-    if prev_candle is not None:
-        prev_rsi = prev_candle.get('rsi', None)
-        if pd.notna(current_rsi) and pd.notna(prev_rsi):
-            rsi_declining = current_rsi < prev_rsi
-            if not rsi_declining:
-                return False, f"RSI không hướng xuống: {current_rsi:.1f} >= {prev_rsi:.1f}"
-        else:
-            return False, "RSI không có giá trị"
+    prev_rsi = prev_candle.get('rsi', None)
+    if pd.notna(current_rsi) and pd.notna(prev_rsi):
+        rsi_declining = current_rsi < prev_rsi
+        if not rsi_declining:
+            return False, f"RSI không hướng xuống: {current_rsi:.1f} >= {prev_rsi:.1f}"
     else:
-        return False, "Không có nến trước để so sánh RSI"
+        return False, "RSI không có giá trị"
     
-    return True, f"Break confirmed: Close {current_candle['close']:.5f} < Trendline {trendline_value:.5f}, Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}"
+    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) >= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) < Current Trendline ({trendline_value_current:.5f}), Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}"
 
 def m1_scalp_logic(config, error_count=0):
     """
@@ -1606,6 +1620,7 @@ def log_initial_conditions(config):
     else:
         print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
+    print("      - Nến trước đó chưa phá trendline (Close <= Trendline)")
     print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
     print("      - Giá đóng cửa ≥ EMA 50")
     print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
@@ -1637,6 +1652,7 @@ def log_initial_conditions(config):
     else:
         print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
+    print("      - Nến trước đó chưa phá trendline (Close >= Trendline)")
     print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
     print("      - Giá đóng cửa ≤ EMA 50")
     print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
