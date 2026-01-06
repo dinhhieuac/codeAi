@@ -32,6 +32,9 @@
     "_comment_max_positions": "Số lượng lệnh tối đa cùng lúc. 1 = chỉ 1 lệnh, 2 = tối đa 2 lệnh",
     "max_positions": 1,
     
+    "_comment_enable_breakeven": "true = Bật Breakeven (di chuyển SL về entry khi profit > 10 pips). false = Tắt Breakeven",
+    "enable_breakeven": false,
+    
     "_comment_language": "Ngôn ngữ log: 'vi' = Tiếng Việt, 'en' = Tiếng Anh",
     "language": "vi",
     

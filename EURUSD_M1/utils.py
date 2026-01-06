@@ -360,8 +360,10 @@ def manage_position(order_ticket, symbol, magic, config):
         
         # 1. Quick Breakeven (10 pips)
         # Move SL to Entry if not already there
+        # Check if breakeven is enabled in config (default: true for backward compatibility)
+        enable_breakeven = config.get('enable_breakeven', True)
         breakeven_trigger_pips = 10.0
-        if profit_pips > breakeven_trigger_pips:
+        if enable_breakeven and profit_pips > breakeven_trigger_pips:
             # Normalize values to symbol digits for comparison
             digits = symbol_info.digits
             normalized_entry = round(pos.price_open, digits)
@@ -420,10 +422,12 @@ def manage_position(order_ticket, symbol, magic, config):
                     send_telegram(breakeven_msg, telegram_token, telegram_chat_id, symbol=symbol)
 
         # 2. Trailing Stop (Trigger > 30 pips, Trail by 20 pips)
+        # Check if trailing stop is enabled in config (default: true for backward compatibility)
+        enable_trailing_stop = config.get('enable_trailing_stop', True)
         trailing_trigger_pips = 30.0
         trailing_distance_pips = 20.0
         
-        if request is None and profit_pips > trailing_trigger_pips:
+        if enable_trailing_stop and request is None and profit_pips > trailing_trigger_pips:
             trail_dist = trailing_distance_pips * pip_size
             new_sl = 0.0
             digits = symbol_info.digits
