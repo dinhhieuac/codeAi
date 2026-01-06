@@ -92,6 +92,54 @@ def log_to_file(symbol, message_type, content, log_dir=None):
         traceback.print_exc()
         return False
 
+def escape_html(text):
+    """Escape HTML special characters for Telegram HTML parse mode"""
+    if not isinstance(text, str):
+        text = str(text)
+    # Escape HTML entities - MUST escape & first to avoid double escaping
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    # Note: We don't escape quotes because Telegram HTML mode doesn't require it
+    return text
+
+def escape_html_message(message):
+    """Escape HTML entities in message while preserving HTML tags"""
+    if not isinstance(message, str):
+        message = str(message)
+    
+    # First, escape all & that are not part of HTML entities
+    # We need to be careful: &amp; &lt; &gt; should not be double-escaped
+    # Strategy: Find all HTML tags first, then escape everything outside tags
+    
+    import re
+    parts = []
+    last_pos = 0
+    
+    # Find all HTML tags (including self-closing tags)
+    # Pattern matches: <tag>, </tag>, <tag attr="value">, <br/>, etc.
+    tag_pattern = r'<[^>]+>'
+    
+    for match in re.finditer(tag_pattern, message):
+        # Add text before tag (escaped)
+        if match.start() > last_pos:
+            text_before = message[last_pos:match.start()]
+            parts.append(escape_html(text_before))
+        
+        # Add tag (keep as is - Telegram handles HTML tags correctly)
+        # Don't escape & in tags as it might already be an entity
+        tag_content = match.group(0)
+        parts.append(tag_content)
+        
+        last_pos = match.end()
+    
+    # Add remaining text (escaped)
+    if last_pos < len(message):
+        remaining = message[last_pos:]
+        parts.append(escape_html(remaining))
+    
+    return ''.join(parts) if parts else escape_html(message)
+
 def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True):
     """Send message to Telegram with detailed logging"""
     if not token or not chat_id:
@@ -101,10 +149,18 @@ def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True
             log_to_file(symbol, "TELEGRAM_ERROR", error_msg)
         return False
     
+    # Escape HTML entities in message (preserve HTML tags)
+    try:
+        escaped_message = escape_html_message(message)
+    except Exception as e:
+        print(f"⚠️ [Telegram] Lỗi khi escape HTML: {e}")
+        # Fallback: simple escape
+        escaped_message = escape_html(message)
+    
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": str(chat_id).strip(),
-        "text": message,
+        "text": escaped_message,
         "parse_mode": "HTML"
     }
     
