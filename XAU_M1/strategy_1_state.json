@@ -1,7 +1,7 @@
 {
   "XAUUSD": {
-    "state": "WAIT",
-    "breakout_candle_idx": null,
-    "last_reset_time": "2026-01-07T15:53:06.425720"
+    "state": "CONFIRM",
+    "breakout_candle_idx": 298,
+    "last_reset_time": "2026-01-07T16:06:15.537098"
   }
 }

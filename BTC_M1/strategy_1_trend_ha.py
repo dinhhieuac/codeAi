@@ -42,7 +42,12 @@ def strategy_1_logic(config, error_count=0):
     # --- SESSION FILTER ---
     session_start = config['parameters'].get('session_start_hour', 0)
     session_end = config['parameters'].get('session_end_hour', 24)
-    current_hour = mt5.symbol_info_tick(symbol).time.hour
+    
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None: return error_count, 0
+    
+    current_hour = datetime.fromtimestamp(tick.time).hour
+    
     if not (session_start <= current_hour < session_end):
         # Handle wrap around if needed (e.g. 23 to 8) but simplified for now (0-24 usually)
         # If start > end (e.g. 22 to 8), then valid is >= 22 OR < 8
@@ -54,7 +59,7 @@ def strategy_1_logic(config, error_count=0):
         
         if not is_in_session:
              # Silent return or periodic log? Silent to avoid spam
-             if current_hour % 4 == 0 and mt5.symbol_info_tick(symbol).time.minute == 0:
+             if current_hour % 4 == 0 and datetime.fromtimestamp(tick.time).minute == 0:
                   print(f"   💤 Session Filter: Current hour {current_hour} not in {session_start}-{session_end}")
              return error_count, 0
 

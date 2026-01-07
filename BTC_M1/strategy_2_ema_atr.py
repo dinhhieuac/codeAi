@@ -3,6 +3,7 @@ import time
 import sys
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 # Import local modules
 sys.path.append('..')
@@ -40,7 +41,11 @@ def strategy_2_logic(config, error_count=0):
     # --- SESSION FILTER ---
     session_start = config['parameters'].get('session_start_hour', 0)
     session_end = config['parameters'].get('session_end_hour', 24)
-    current_hour = mt5.symbol_info_tick(symbol).time.hour
+    
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None: return error_count, 0
+    
+    current_hour = datetime.fromtimestamp(tick.time).hour
     
     # Check if current_hour is within start-end range
     is_in_session = False
@@ -50,7 +55,7 @@ def strategy_2_logic(config, error_count=0):
          is_in_session = current_hour >= session_start or current_hour < session_end
     
     if not is_in_session:
-         if current_hour % 4 == 0 and mt5.symbol_info_tick(symbol).time.minute == 0:
+         if current_hour % 4 == 0 and datetime.fromtimestamp(tick.time).minute == 0:
               print(f"   💤 Session Filter (Strat 2): Current hour {current_hour} not in {session_start}-{session_end}")
          return error_count, 0
 
