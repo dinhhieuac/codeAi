@@ -3,7 +3,7 @@ import time
 import sys
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
@@ -13,6 +13,98 @@ from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, sen
 
 # Initialize Database
 db = Database()
+
+def check_trading_session(config):
+    """
+    Check if current time is within allowed trading hours.
+    Default: Avoid Asian Session (approx 22:00 - 08:00 Server Time).
+    Allowed: 08:00 - 22:00.
+    """
+    allowed_sessions = config['parameters'].get('allowed_sessions', "08:00-22:00")
+    if allowed_sessions == "ALL":
+        return True, "All sessions allowed"
+    
+    try:
+        start_str, end_str = allowed_sessions.split('-')
+        start_time = datetime.strptime(start_str, "%H:%M").time()
+        end_time = datetime.strptime(end_str, "%H:%M").time()
+        
+        # Get current server time
+        symbol = config['symbol']
+        current_time = mt5.symbol_info_tick(symbol).time
+        # mt5 time is timestamp or datetime? symbol_info_tick.time is unix timestamp (int) usually, 
+        # but let's check. actually in python mt5 it is usually a unix timestamp. 
+        # But `datetime.fromtimestamp` is safer.
+        if isinstance(current_time, (int, float)):
+             current_dt = datetime.fromtimestamp(current_time)
+        else:
+             current_dt = current_time
+             
+        current_time_time = current_dt.time()
+        
+        # Simple range check
+        if start_time <= end_time:
+            if start_time <= current_time_time <= end_time:
+                return True, f"In session ({start_str}-{end_str})"
+            else:
+                return False, f"Out of session ({start_str}-{end_str}), Current: {current_time_time}"
+        else: # Over midnight check (e.g. 22:00 - 02:00)
+            if current_time_time >= start_time or current_time_time <= end_time:
+                 return True, f"In session ({start_str}-{end_str})"
+            else:
+                 return False, f"Out of session ({start_str}-{end_str}), Current: {current_time_time}"
+                 
+    except Exception as e:
+        print(f"⚠️ Session check error: {e}")
+        return True, "Session check skipped (error)"
+
+def check_consecutive_losses(symbol, magic, limit=3, lookback_hours=24):
+    """
+    Check if the last 'limit' closed trades were losses within the last 'lookback_hours'.
+    Returns True if we should STOP trading (too many losses).
+    """
+    # Disable by setting limit <= 0
+    if limit <= 0:
+        return False, "Disabled"
+        
+    try:
+        now = datetime.now()
+        # Ensure we look back far enough
+        from_time = now - timedelta(hours=lookback_hours)
+        
+        # Retrieve history deals
+        deals = mt5.history_deals_get(from_time, now, group=symbol)
+        
+        if deals is None or len(deals) == 0:
+            return False, "No recent history"
+            
+        # Filter by magic number and ENTRY_OUT (closed trades)
+        my_deals = [d for d in deals if d.magic == magic and d.entry == mt5.DEAL_ENTRY_OUT]
+        
+        # Sort by time, newest first
+        my_deals.sort(key=lambda x: x.time, reverse=True)
+        
+        if len(my_deals) < limit:
+            return False, f"Not enough trades ({len(my_deals)} < {limit})"
+            
+        # Check the last 'limit' trades
+        consecutive_losses = 0
+        loss_details = []
+        for deal in my_deals[:limit]:
+            if deal.profit < 0:
+                consecutive_losses += 1
+                loss_details.append(f"{deal.profit:.2f}")
+            else:
+                break # Streak broken
+                
+        if consecutive_losses >= limit:
+            return True, f"STOP: {consecutive_losses} consecutive losses ({', '.join(loss_details)})"
+            
+        return False, f"OK: {consecutive_losses} consecutive losses"
+        
+    except Exception as e:
+        print(f"⚠️ Consecutive loss check error: {e}")
+        return False, "Error checking history"
 
 def find_previous_swing_low(df_m1, lookback=20):
     """
@@ -205,6 +297,23 @@ def strategy_1_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
+    # 0. Check Consecutive Losses Limit (Strategy Protection)
+    max_losses = config['parameters'].get('max_consecutive_losses', 3)
+    pause_on_losses = config['parameters'].get('pause_on_losses', True)
+    
+    if pause_on_losses:
+        should_stop, stop_msg = check_consecutive_losses(symbol, magic, max_losses)
+        if should_stop:
+            print(f"🛑 [SAFETY STOP] {stop_msg}. Waiting user intervention or restart.")
+            # We can return here to skip checking signals
+            return error_count, 0
+
+    # 0.5 Check Trading Session
+    is_in_session, session_msg = check_trading_session(config)
+    if not is_in_session:
+        # print(f"💤 [SESSION] {session_msg}") # Reduce spam logging if needed
+        return error_count, 0
+
     # 2. Check Global Max Positions & Manage Existing
     # Lấy tất cả positions của symbol, sau đó filter theo magic để chỉ xử lý positions do bot này mở
     all_positions = mt5.positions_get(symbol=symbol)
@@ -228,7 +337,7 @@ def strategy_1_logic(config, error_count=0):
         return error_count, 0
 
     # 2. Calculate Indicators
-    # Trend Filter: EMA 200 on M5 (V2: Fixed - dùng EMA thực sự)
+    # Trend Filter: EMA 200 on M5 (V2: Fills EMA)
     df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()  # V2: EMA thực sự
     df_m5['ema50'] = df_m5['close'].ewm(span=50, adjust=False).mean()  # V3: Thêm EMA50 cho trend confirmation
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
@@ -312,7 +421,7 @@ def strategy_1_logic(config, error_count=0):
     print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-    print(f"   ATR: {atr_val:.2f}")
+    print(f"   ATR: {atr_val:.2f} | Session: {session_msg}")
     
     # Track all filter status
     filter_status = []
@@ -567,7 +676,7 @@ def strategy_1_logic(config, error_count=0):
                 min_dist = 100 * mt5.symbol_info(symbol).point
                 if (price - sl) < min_dist:
                     sl = price - min_dist
-                    
+                
                 risk_dist = price - sl
                 tp = price + (risk_dist * reward_ratio)
                 
@@ -577,10 +686,10 @@ def strategy_1_logic(config, error_count=0):
                 min_dist = 100 * mt5.symbol_info(symbol).point
                 if (sl - price) < min_dist:
                     sl = price + min_dist
-                    
+                
                 risk_dist = sl - price
                 tp = price - (risk_dist * reward_ratio)
-                
+            
             print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio})")
             
         else:
@@ -633,7 +742,8 @@ def strategy_1_logic(config, error_count=0):
                 f"• Liquidity Sweep: PASS ✅\n"
                 f"• Displacement Candle: PASS ✅\n"
                 f"• ATR: {atr_val:.2f}\n"
-                f"• CHOP Filter: PASS ✅"
+                f"• CHOP Filter: PASS ✅\n"
+                f"• Session: {session_msg}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
             return 0, 0 # Reset error count
@@ -653,21 +763,25 @@ if __name__ == "__main__":
     consecutive_errors = 0
     
     if config and connect_mt5(config):
-        print("✅ Strategy 1: Trend HA V3 - Started")
-        print("📋 V3 Improvements (dựa trên phân tích lệnh thua):")
+        print("✅ Strategy 1: Trend HA V4 - Started")
+        print("📋 V4 Improvements (Session & Losses):")
+        print("   ✅ Session Filter (08:00 - 22:00 default)")
+        print("   ✅ Consecutive Loss Stop (Max 3 losses default)")
+        print("📋 V3 Improvements (Already included):")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
-        print("   ✅ ADX filter increased (>= 25, từ 20)")
-        print("   ✅ RSI filter stricter (> 60 / < 40, từ > 55 / < 45)")
+        print("   ✅ ADX filter increased (>= 25)")
+        print("   ✅ RSI filter stricter (> 60 / < 40)")
         print("   ✅ CHOP/RANGE filter added")
-        print("   ✅ SL buffer increased (2.0x ATR, từ 1.5x)")
-        print("   ✅ Confirmation check improved (2-3 nến, từ 1 nến)")
-        print("   ✅ H1 Trend confirmation added")
-        print("   ✅ EMA50 > EMA200 trên M5 added")
-        print("   ✅ Liquidity Sweep check added")
-        print("   ✅ Displacement Candle check added")
-        print("   ✅ Volume confirmation added (1.3x average)")
-        print("   ✅ False breakout detection added")
-        print("   ✅ Spam filter increased (5 minutes)")
+        print("   ✅ SL buffer increased (2.0x ATR)")
+        print("   ✅ Confirmation check improved")
+        print("   ✅ H1 Trend confirmation")
+        print("   ✅ EMA50 > EMA200 trên M5")
+        print("   ✅ Liquidity Sweep check")
+        print("   ✅ Displacement Candle check")
+        print("   ✅ Volume confirmation (1.3x avg)")
+        print("   ✅ False breakout detection")
+        print("   ✅ Spam filter increased")
+        
         try:
             while True:
                 consecutive_errors, last_error_code = strategy_1_logic(config, consecutive_errors)
