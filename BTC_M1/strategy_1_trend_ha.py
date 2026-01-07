@@ -9,7 +9,7 @@ from datetime import datetime
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, check_consecutive_losses
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr, check_consecutive_losses
 
 # Initialize Database
 db = Database()
@@ -31,22 +31,63 @@ def strategy_1_logic(config, error_count=0):
             # Silent return to avoid spam
             return error_count, 0
 
-    # 1. Get Data (M1 and M5 for trend)
+    # 1. Get Data (M1, M5, H1)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200)
+    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 250) # Need 200 for EMA
     
-    if df_m1 is None or df_m5 is None: 
+    if df_m1 is None or df_m5 is None or df_h1 is None: 
         return error_count, 0
+
+    # --- SESSION FILTER ---
+    session_start = config['parameters'].get('session_start_hour', 0)
+    session_end = config['parameters'].get('session_end_hour', 24)
+    current_hour = mt5.symbol_info_tick(symbol).time.hour
+    if not (session_start <= current_hour < session_end):
+        # Handle wrap around if needed (e.g. 23 to 8) but simplified for now (0-24 usually)
+        # If start > end (e.g. 22 to 8), then valid is >= 22 OR < 8
+        is_in_session = False
+        if session_start < session_end:
+             is_in_session = session_start <= current_hour < session_end
+        else:
+             is_in_session = current_hour >= session_start or current_hour < session_end
+        
+        if not is_in_session:
+             # Silent return or periodic log? Silent to avoid spam
+             if current_hour % 4 == 0 and mt5.symbol_info_tick(symbol).time.minute == 0:
+                  print(f"   💤 Session Filter: Current hour {current_hour} not in {session_start}-{session_end}")
+             return error_count, 0
 
     # 2. Calculate Indicators
     # Trend Filter: EMA 200 on M5 (using EMA for better trend following)
     df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()
+    # Trend Filter: EMA 200 on H1 [NEW]
+    df_h1['ema200'] = df_h1['close'].ewm(span=200, adjust=False).mean()
+    
     # ADX for trend strength confirmation
     df_m5 = calculate_adx(df_m5, period=14)
+    # ATR for Volatility [NEW]
+    df_m5 = calculate_atr(df_m5, period=14)
+    
     adx_threshold = config['parameters'].get('adx_min_threshold', 20)
+    atr_threshold = config['parameters'].get('atr_min_threshold', 0.0)
+    
     m5_adx = df_m5.iloc[-1].get('adx', 0)
+    m5_atr = df_m5.iloc[-1].get('atr', 0)
     
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema200'] else "BEARISH"
+    
+    # Check H1 Trend Filter
+    use_h1_trend = config['parameters'].get('use_h1_trend', True)
+    if use_h1_trend and current_trend != h1_trend:
+         print(f"   ❌ Filtered: Trend Mismatch (M5: {current_trend} vs H1: {h1_trend})")
+         return error_count, 0
+
+    # ATR Filter
+    if m5_atr < atr_threshold:
+        print(f"   ❌ Filtered: Low Volatility (ATR {m5_atr:.5f} < {atr_threshold})")
+        return error_count, 0
     
     # ADX filter: Only trade if trend is strong (ADX >= threshold)
     if pd.isna(m5_adx) or m5_adx < adx_threshold:

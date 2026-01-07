@@ -108,9 +108,9 @@ def strategy_5_logic(config, error_count=0):
     # Ví dụ: ATR = 1.057 USD, point = 0.01 → ATR(pips) = 1.057 / 0.01 / 10 = 10.57 pips
     # Nếu ATR = 105.7 points → ATR(pips) = 105.7 / 10 = 10.57 pips
     atr_pips = (atr_value / point) / 10 if point > 0 else 0
-    # BTC: ATR Range check needs update too
-    atr_min = 100   # Minimum ATR (pips) - ~ $10 movement
-    atr_max = 20000  # Maximum ATR (pips) - ~ $2000 movement
+    # Dynamic ATR Range from Config
+    atr_min = config['parameters'].get('atr_min_pips', 100)
+    atr_max = config['parameters'].get('atr_max_pips', 20000)
     
     print(f"📊 [Strat 5 Analysis] Price: {last['close']:.2f} | M5 Trend: {m5_trend} (ADX: {m5_adx:.1f}) | RSI: {last['rsi']:.1f} | M1 ADX: {last.get('adx', 0):.1f} | ATR: {atr_pips:.1f}p")
     print(f"   Donchian: {donchian_period} periods | Buffer: {buffer_multiplier} points | Volume: {last['tick_volume']:.0f} / MA: {last['vol_ma']:.0f} = {last['tick_volume']/last['vol_ma']:.2f}x")
@@ -122,8 +122,8 @@ def strategy_5_logic(config, error_count=0):
     
     # ADX Filter (Trend Strength)
     adx_value = last.get('adx', 0)
-    if pd.isna(adx_value) or adx_value < 20:
-        print(f"   ❌ Filtered: ADX {adx_value:.1f} < 20 (Choppy Market)")
+    if pd.isna(adx_value) or adx_value < 25:
+        print(f"   ❌ Filtered: ADX {adx_value:.1f} < 25 (Choppy Market)")
         return error_count, 0
     
     # Volume Confirmation

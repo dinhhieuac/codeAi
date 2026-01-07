@@ -20,6 +20,10 @@
         "adx_min_threshold": 20,
         "spam_filter_seconds": 300,
         "loss_streak_threshold": 2,
-        "loss_cooldown_minutes": 45
+        "loss_cooldown_minutes": 45,
+        "use_h1_trend": true,
+        "atr_min_threshold": 0.0,
+        "session_start_hour": 0,
+        "session_end_hour": 24
     }
 }

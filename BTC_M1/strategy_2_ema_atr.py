@@ -37,6 +37,23 @@ def strategy_2_logic(config, error_count=0):
     
     if df is None or df_h1 is None or df_m5 is None: return error_count, 0
 
+    # --- SESSION FILTER ---
+    session_start = config['parameters'].get('session_start_hour', 0)
+    session_end = config['parameters'].get('session_end_hour', 24)
+    current_hour = mt5.symbol_info_tick(symbol).time.hour
+    
+    # Check if current_hour is within start-end range
+    is_in_session = False
+    if session_start < session_end:
+         is_in_session = session_start <= current_hour < session_end
+    else: # Wrap around (e.g. 22 to 8)
+         is_in_session = current_hour >= session_start or current_hour < session_end
+    
+    if not is_in_session:
+         if current_hour % 4 == 0 and mt5.symbol_info_tick(symbol).time.minute == 0:
+              print(f"   💤 Session Filter (Strat 2): Current hour {current_hour} not in {session_start}-{session_end}")
+         return error_count, 0
+
     # H1 Trend
     df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
     # H1 ADX for trend strength confirmation
@@ -122,11 +139,13 @@ def strategy_2_logic(config, error_count=0):
     if has_crossover and crossover_direction == "BUY":
         if h1_trend == "BULLISH":
             # Extension Check
-            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+            extension_multiplier = config['parameters'].get('extension_multiplier', 1.5)
+            if abs(last['close'] - last['ema14']) > (extension_multiplier * last['atr']):
+                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > {extension_multiplier}xATR)")
             # Volume confirmation
-            elif last['tick_volume'] <= (last['vol_ma'] * 1.2):
-                print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < 1.2x MA ({last['vol_ma']:.0f})")
+            volume_multiplier = config['parameters'].get('volume_multiplier', 1.3)
+            if last['tick_volume'] <= (last['vol_ma'] * volume_multiplier):
+                print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < {volume_multiplier}x MA ({last['vol_ma']:.0f})")
             # RSI threshold
             elif last['rsi'] > rsi_buy_threshold:
                 # RSI momentum check
@@ -167,11 +186,13 @@ def strategy_2_logic(config, error_count=0):
     if has_crossover and crossover_direction == "SELL":
         if h1_trend == "BEARISH":
             # Extension Check
-            if abs(last['close'] - last['ema14']) > (1.5 * last['atr']):
-                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > 1.5xATR)")
+            extension_multiplier = config['parameters'].get('extension_multiplier', 1.5)
+            if abs(last['close'] - last['ema14']) > (extension_multiplier * last['atr']):
+                print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > {extension_multiplier}xATR)")
             # Volume confirmation
-            elif last['tick_volume'] <= (last['vol_ma'] * 1.2):
-                print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < 1.2x MA ({last['vol_ma']:.0f})")
+            volume_multiplier = config['parameters'].get('volume_multiplier', 1.3)
+            if last['tick_volume'] <= (last['vol_ma'] * volume_multiplier):
+                print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < {volume_multiplier}x MA ({last['vol_ma']:.0f})")
             # RSI threshold
             elif last['rsi'] < rsi_sell_threshold:
                 # RSI momentum check

@@ -21,6 +21,10 @@
         "h1_adx_threshold": 20,
         "crossover_confirmation": true,
         "loss_streak_threshold": 2,
-        "loss_cooldown_minutes": 45
+        "loss_cooldown_minutes": 45,
+        "volume_multiplier": 1.3,
+        "extension_multiplier": 1.5,
+        "session_start_hour": 0,
+        "session_end_hour": 24
     }
 }

@@ -161,13 +161,13 @@ def strategy_4_logic(config, error_count=0):
     print(f"📊 [Strat 4 Analysis] Trend H1: {trend} (ADX: {h1_adx:.1f}) | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | M1 ADX: {last['adx']:.1f}")
     print(f"   Volume: {df_m1.iloc[-1]['tick_volume']:.0f} / MA: {df_m1.iloc[-1]['vol_ma']:.0f} = {df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x")
     
-    # Filter: Only trade valid breakouts if ADX > 20 (Trend Strength)
-    if last['adx'] < 20: 
-        print(f"   ❌ Filtered: Low M1 ADX ({last['adx']:.1f} < 20) - Choppy Market")
+    # Filter: Only trade valid breakouts if ADX > 25 (Trend Strength)
+    if last['adx'] < 25: 
+        print(f"   ❌ Filtered: Low M1 ADX ({last['adx']:.1f} < 25) - Choppy Market")
     elif has_ut_signal and ut_signal == "BUY" and trend == "BULLISH":
         # Volume confirmation
-        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.2):
-            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.2x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.3):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
         elif last['rsi'] > rsi_buy_threshold:
             # RSI momentum check
             if last['rsi'] > prev['rsi']:
@@ -180,8 +180,8 @@ def strategy_4_logic(config, error_count=0):
             
     elif has_ut_signal and ut_signal == "SELL" and trend == "BEARISH":
         # Volume confirmation
-        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.2):
-            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.2x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.3):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
         elif last['rsi'] < rsi_sell_threshold:
             # RSI momentum check
             if last['rsi'] < prev['rsi']:

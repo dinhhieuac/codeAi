@@ -111,6 +111,18 @@ def calculate_adx(df, period=14):
     
     return df
 
+def calculate_atr(df, period=14):
+    """Calculate ATR Indicator"""
+    df = df.copy()
+    df['high_low'] = df['high'] - df['low']
+    df['high_close'] = np.abs(df['high'] - df['close'].shift())
+    df['low_close'] = np.abs(df['low'] - df['close'].shift())
+    
+    df['tr'] = df[['high_low', 'high_close', 'low_close']].max(axis=1)
+    df['atr'] = df['tr'].rolling(window=period).mean()
+    
+    return df
+
 def calculate_rsi(series, period=14):
     """
     Calculate RSI using Wilder's Smoothing (Standard MT5/TradingView RSI)
