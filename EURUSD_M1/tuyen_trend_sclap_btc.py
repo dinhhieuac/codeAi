@@ -1070,7 +1070,17 @@ def m1_scalp_logic(config, error_count=0):
                         else:
                             # Vẽ trendline sóng hồi
                             log_details.append(f"\n🔍 [BUY] ĐK3b: Vẽ trendline sóng hồi")
-                            trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx)
+                            # QUAN TRỌNG: Vẽ trendline với dữ liệu mới nhất đến current_candle_idx (hoặc pullback_end_idx nếu gần hơn)
+                            # Đảm bảo trendline được vẽ với tất cả dữ liệu có sẵn trước khi kiểm tra phá vỡ
+                            trendline_end_idx = min(pullback_end_idx, current_candle_idx)
+                            # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
+                            if current_candle_idx > pullback_end_idx:
+                                # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                                trendline_end_idx = current_candle_idx
+                                log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
+                                log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                            
+                            trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, trendline_end_idx)
                     
                             if trendline_info is None:
                                 log_details.append(f"   ❌ Không thể vẽ trendline")
@@ -1078,6 +1088,7 @@ def m1_scalp_logic(config, error_count=0):
                             else:
                                 buy_dk3b_ok = True
                                 log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                                log_details.append(f"   📍 Trendline được vẽ từ index {swing_high_idx} đến {trendline_end_idx}")
                                 
                                 # Điều kiện 4: ATR (đã check ở trên)
                                 buy_dk4_ok = atr_ok
@@ -1095,6 +1106,7 @@ def m1_scalp_logic(config, error_count=0):
                                 
                                 # Điều kiện 5: Nến xác nhận phá vỡ trendline
                                 log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
+                                log_details.append(f"   📍 Kiểm tra tại current_candle_idx: {current_candle_idx}, trendline_end_idx: {trendline_end_idx}")
                                 break_ok, break_msg = check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_val)
                         
                                 if not break_ok:
@@ -1220,7 +1232,17 @@ def m1_scalp_logic(config, error_count=0):
                             else:
                                 # Vẽ trendline sóng hồi
                                 log_details.append(f"\n🔍 [SELL] ĐK3b: Vẽ trendline sóng hồi")
-                                trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx)
+                                # QUAN TRỌNG: Vẽ trendline với dữ liệu mới nhất đến current_candle_idx (hoặc pullback_end_idx nếu gần hơn)
+                                # Đảm bảo trendline được vẽ với tất cả dữ liệu có sẵn trước khi kiểm tra phá vỡ
+                                trendline_end_idx = min(pullback_end_idx, current_candle_idx)
+                                # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
+                                if current_candle_idx > pullback_end_idx:
+                                    # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                                    trendline_end_idx = current_candle_idx
+                                    log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
+                                    log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                                
+                                trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, trendline_end_idx)
                         
                                 if trendline_info is None:
                                     log_details.append(f"   ❌ Không thể vẽ trendline")
@@ -1228,6 +1250,7 @@ def m1_scalp_logic(config, error_count=0):
                                 else:
                                     sell_dk3b_ok = True
                                     log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
+                                    log_details.append(f"   📍 Trendline được vẽ từ index {swing_low_idx} đến {trendline_end_idx}")
                                     
                                     # Điều kiện 4: ATR (đã check ở trên)
                                     sell_dk4_ok = atr_ok
@@ -1245,6 +1268,7 @@ def m1_scalp_logic(config, error_count=0):
                                     
                                     # Điều kiện 5: Nến xác nhận phá vỡ trendline
                                     log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
+                                    log_details.append(f"   📍 Kiểm tra tại current_candle_idx: {current_candle_idx}, trendline_end_idx: {trendline_end_idx}")
                                     break_ok, break_msg = check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_val)
                             
                                     if not break_ok:
