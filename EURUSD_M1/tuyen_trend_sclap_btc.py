@@ -8,7 +8,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file, get_pip_size
 
 # Initialize Database
 db = Database()
@@ -1479,16 +1479,9 @@ def m1_scalp_logic(config, error_count=0):
                 risk_percent = config.get('risk_percent', 1.0)  # Default 1%
                 
                 # Calculate SL in pips
-                # Determine pip size
-                symbol_upper = symbol.upper()
-                if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-                    pip_size = 0.1 if point < 0.01 else point
-                elif 'JPY' in symbol_upper:
-                    pip_size = 0.01
-                else:
-                    pip_size = 0.0001
-                
-                sl_pips = abs(sl_distance / pip_size)
+                # Use get_pip_size() from utils to correctly handle BTCUSD, XAUUSD, etc.
+                pip_size = get_pip_size(symbol, symbol_info)
+                sl_pips = abs(sl_distance / pip_size) if pip_size > 0 else 0
                 
                 # Calculate lot size
                 calculated_volume = calculate_lot_size(

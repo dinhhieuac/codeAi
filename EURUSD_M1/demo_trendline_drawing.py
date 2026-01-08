@@ -34,7 +34,7 @@ import sys
 # ===========================================
 TICKET_NUMBER = 3433918380  # None = demo mode, hoặc nhập ticket (ví dụ: 1044748590)
 TICKET_NUMBER=3422943403
-TICKET_NUMBER=3421683434
+TICKET_NUMBER=3444398276
 if TICKET_NUMBER is not None:
     import MetaTrader5 as mt5
     sys.path.append('..')
