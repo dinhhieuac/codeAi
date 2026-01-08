@@ -82,14 +82,8 @@ def get_pip_value_per_lot(symbol, symbol_info=None):
         point = getattr(symbol_info, 'point', 0.0001)
         contract_size = getattr(symbol_info, 'trade_contract_size', 100000)
         
-        # Tính pip size
-        symbol_upper = symbol.upper()
-        if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-            pip_size = 0.1 if point < 0.01 else point
-        elif 'JPY' in symbol_upper:
-            pip_size = 0.01
-        else:
-            pip_size = 0.0001
+        # Tính pip size - sử dụng get_pip_size() từ utils để đảm bảo tính nhất quán
+        pip_size = get_pip_size(symbol, symbol_info)
         
         # Tính pip value từ tick_value và tick_size
         if tick_value is not None and tick_size is not None and tick_size > 0:
@@ -103,6 +97,19 @@ def get_pip_value_per_lot(symbol, symbol_info=None):
                 return 1.0
             else:
                 return contract_size / 100
+        elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+            # BTCUSD: pip value thường là $1 per lot per pip (1.0 pip size)
+            # Hoặc $10 per lot per pip nếu pip_size = 0.1
+            # Sử dụng tick_value và tick_size nếu có, nếu không thì ước tính
+            if tick_value is not None and tick_size is not None and tick_size > 0:
+                # Tính từ tick_value với pip_size từ get_pip_size()
+                pip_size_btc = get_pip_size(symbol, symbol_info)
+                return tick_value * (pip_size_btc / tick_size)
+            # Fallback: ước tính dựa trên contract_size
+            # BTCUSD thường có contract_size = 1 (1 BTC per lot)
+            # Pip value = contract_size * pip_size
+            pip_size_btc = get_pip_size(symbol, symbol_info)
+            return contract_size * pip_size_btc
         elif 'EURUSD' in symbol_upper or 'GBPUSD' in symbol_upper:
             return 10.0
         else:
@@ -111,6 +118,11 @@ def get_pip_value_per_lot(symbol, symbol_info=None):
     # Default fallback nếu không lấy được từ MT5
     symbol_upper = symbol.upper()
     if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 1.0
+    elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        # BTCUSD: ước tính pip value = $1 per lot per pip (nếu pip_size = 1.0)
+        # Hoặc $10 per lot per pip (nếu pip_size = 0.1)
+        # Thường là $1 per lot per pip cho BTCUSD
         return 1.0
     else:
         return 10.0
@@ -1643,6 +1655,19 @@ def m1_scalp_logic(config, error_count=0):
                     print(f"❌ {error_msg}")
                     return error_count + 1, 0
         
+        # Check account balance and margin before sending order
+        account_info = mt5.account_info()
+        if account_info:
+            account_balance = account_info.balance
+            account_equity = account_info.equity
+            account_margin = account_info.margin
+            account_free_margin = account_info.margin_free
+            
+            print(f"   💰 Account Balance: ${account_balance:.2f}")
+            print(f"   💰 Account Equity: ${account_equity:.2f}")
+            print(f"   💰 Used Margin: ${account_margin:.2f}")
+            print(f"   💰 Free Margin: ${account_free_margin:.2f}")
+        
         # Validate order
         print(f"   🔍 Đang validate request...")
         check_result = mt5.order_check(request)
@@ -1651,20 +1676,49 @@ def m1_scalp_logic(config, error_count=0):
             print(f"   ⚠️ order_check() trả về None. Lỗi: {error}")
             print(f"   ⚠️ Vẫn thử gửi lệnh...")
         elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
-            error_msg = f"order_check() không hợp lệ"
-            error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
+            # Improved error handling for "No money" error
+            retcode = check_result.retcode
+            error_comment = check_result.comment if hasattr(check_result, 'comment') else 'Unknown'
+            
+            if retcode == 10019:  # TRADE_RETCODE_NO_MONEY
+                error_msg = "Không đủ tiền trong tài khoản (No Money)"
+                error_detail = f"{error_comment} (Retcode: {retcode})"
+                
+                # Get account info for detailed error message
+                account_info = mt5.account_info()
+                if account_info:
+                    account_balance = account_info.balance
+                    account_equity = account_info.equity
+                    account_margin = account_info.margin
+                    account_free_margin = account_info.margin_free
+                    
+                    error_detail += f"\n💰 Balance: ${account_balance:.2f}"
+                    error_detail += f"\n💰 Equity: ${account_equity:.2f}"
+                    error_detail += f"\n💰 Used Margin: ${account_margin:.2f}"
+                    error_detail += f"\n💰 Free Margin: ${account_free_margin:.2f}"
+                    error_detail += f"\n📊 Volume yêu cầu: {volume:.2f} lot"
+                    error_detail += f"\n💵 Entry Price: {execution_price:.5f}"
+                    error_detail += f"\n🛑 SL: {sl:.5f} | 🎯 TP: {tp:.5f}"
+            else:
+                error_msg = f"order_check() không hợp lệ"
+                error_detail = f"{error_comment} (Retcode: {retcode})"
+            
             print(f"   ❌ {error_msg}: {error_detail}")
             log_to_file(symbol, "ERROR", f"order_check() không hợp lệ: {error_detail}")
+            
+            # Enhanced Telegram message for "No money" error
+            telegram_msg = f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
+            telegram_msg += f"💱 Symbol: {symbol} ({signal_type})\n"
+            telegram_msg += f"❌ Lỗi: {error_msg}\n"
+            telegram_msg += f"📝 Chi tiết: {error_detail}"
+            
             send_telegram(
-                f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
-                f"💱 Symbol: {symbol} ({signal_type})\n"
-                f"❌ Lỗi: {error_msg}\n"
-                f"📝 Chi tiết: {error_detail}",
+                telegram_msg,
                 config.get('telegram_token'),
                 config.get('telegram_chat_id'),
                 symbol=symbol
             )
-            return error_count + 1, check_result.retcode
+            return error_count + 1, retcode
         else:
             print(f"   ✅ Request hợp lệ")
         

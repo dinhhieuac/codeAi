@@ -1511,6 +1511,19 @@ def m1_scalp_logic(config, error_count=0):
                     print(f"❌ {error_msg}")
                     return error_count + 1, 0
         
+        # Check account balance and margin before sending order
+        account_info = mt5.account_info()
+        if account_info:
+            account_balance = account_info.balance
+            account_equity = account_info.equity
+            account_margin = account_info.margin
+            account_free_margin = account_info.margin_free
+            
+            print(f"   💰 Account Balance: ${account_balance:.2f}")
+            print(f"   💰 Account Equity: ${account_equity:.2f}")
+            print(f"   💰 Used Margin: ${account_margin:.2f}")
+            print(f"   💰 Free Margin: ${account_free_margin:.2f}")
+        
         # Validate order
         print(f"   🔍 Đang validate request...")
         check_result = mt5.order_check(request)
@@ -1519,15 +1532,44 @@ def m1_scalp_logic(config, error_count=0):
             print(f"   ⚠️ order_check() trả về None. Lỗi: {error}")
             print(f"   ⚠️ Vẫn thử gửi lệnh...")
         elif hasattr(check_result, 'retcode') and check_result.retcode != 0:
-            error_msg = f"order_check() không hợp lệ"
-            error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
+            # Improved error handling for "No money" error
+            retcode = check_result.retcode
+            error_comment = check_result.comment if hasattr(check_result, 'comment') else 'Unknown'
+            
+            if retcode == 10019:  # TRADE_RETCODE_NO_MONEY
+                error_msg = "Không đủ tiền trong tài khoản (No Money)"
+                error_detail = f"{error_comment} (Retcode: {retcode})"
+                
+                # Get account info for detailed error message
+                account_info = mt5.account_info()
+                if account_info:
+                    account_balance = account_info.balance
+                    account_equity = account_info.equity
+                    account_margin = account_info.margin
+                    account_free_margin = account_info.margin_free
+                    
+                    error_detail += f"\n💰 Balance: ${account_balance:.2f}"
+                    error_detail += f"\n💰 Equity: ${account_equity:.2f}"
+                    error_detail += f"\n💰 Used Margin: ${account_margin:.2f}"
+                    error_detail += f"\n💰 Free Margin: ${account_free_margin:.2f}"
+                    error_detail += f"\n📊 Volume yêu cầu: {volume:.2f} lot"
+                    error_detail += f"\n💵 Entry Price: {execution_price:.5f}"
+                    error_detail += f"\n🛑 SL: {sl:.5f} | 🎯 TP: {tp:.5f}"
+            else:
+                error_msg = f"order_check() không hợp lệ"
+                error_detail = f"{error_comment} (Retcode: {retcode})"
+            
             print(f"   ❌ {error_msg}: {error_detail}")
             log_to_file(symbol, "ERROR", f"order_check() không hợp lệ: {error_detail}")
+            
+            # Enhanced Telegram message for "No money" error
+            telegram_msg = f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
+            telegram_msg += f"💱 Symbol: {symbol} ({signal_type})\n"
+            telegram_msg += f"❌ Lỗi: {error_msg}\n"
+            telegram_msg += f"📝 Chi tiết: {error_detail}"
+            
             telegram_sent = send_telegram(
-                f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
-                f"💱 Symbol: {symbol} ({signal_type})\n"
-                f"❌ Lỗi: {error_msg}\n"
-                f"📝 Chi tiết: {error_detail}",
+                telegram_msg,
                 config.get('telegram_token'),
                 config.get('telegram_chat_id'),
                 symbol=symbol
@@ -1536,7 +1578,7 @@ def m1_scalp_logic(config, error_count=0):
                 print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
                 # Log Telegram error to file
                 log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram lỗi: {error_msg} - {error_detail}")
-            return error_count + 1, check_result.retcode
+            return error_count + 1, retcode
         else:
             print(f"   ✅ Request hợp lệ")
         
