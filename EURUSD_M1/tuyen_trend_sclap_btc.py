@@ -1704,7 +1704,24 @@ def m1_scalp_logic(config, error_count=0):
                 error_detail = f"{error_comment} (Retcode: {retcode})"
             
             print(f"   ❌ {error_msg}: {error_detail}")
-            log_to_file(symbol, "ERROR", f"order_check() không hợp lệ: {error_detail}")
+            
+            # Log chi tiết thông tin lệnh bị lỗi vào file
+            error_log_detail = f"order_check() không hợp lệ: {error_detail}\n"
+            error_log_detail += f"📋 Chi tiết lệnh bị lỗi:\n"
+            error_log_detail += f"   • Signal Type: {signal_type}\n"
+            error_log_detail += f"   • Symbol: {symbol}\n"
+            error_log_detail += f"   • Volume: {volume:.2f} lot\n"
+            error_log_detail += f"   • Entry Price: {execution_price:.5f}\n"
+            error_log_detail += f"   • SL: {sl:.5f}\n"
+            error_log_detail += f"   • TP: {tp:.5f}\n"
+            if account_info:
+                error_log_detail += f"   • Account Balance: ${account_balance:.2f}\n"
+                error_log_detail += f"   • Account Equity: ${account_equity:.2f}\n"
+                error_log_detail += f"   • Used Margin: ${account_margin:.2f}\n"
+                error_log_detail += f"   • Free Margin: ${account_free_margin:.2f}\n"
+            error_log_detail += f"   • Retcode: {retcode}\n"
+            error_log_detail += f"   • Error Comment: {error_comment}"
+            log_to_file(symbol, "ERROR", error_log_detail)
             
             # Enhanced Telegram message for "No money" error
             telegram_msg = f"❌ <b>M1 Scalp Bot - Lỗi Gửi Lệnh</b>\n"
