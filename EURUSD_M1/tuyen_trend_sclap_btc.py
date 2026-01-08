@@ -8,7 +8,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file, get_pip_size
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file, get_pip_size, calculate_adx
 
 # Initialize Database
 db = Database()
@@ -656,6 +656,7 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     ✅ Giá đóng cửa vượt lên trên trendline sóng hồi
     ✅ Giá đóng cửa ≥ EMA 50
     ✅ RSI đang hướng lên (RSI hiện tại > RSI nến trước)
+    ✅ ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
     
     Returns: (is_break, message)
     """
@@ -702,7 +703,16 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     else:
         return False, "RSI không có giá trị"
     
-    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) <= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) > Current Trendline ({trendline_value_current:.5f}), Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}"
+    # 4. ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    current_adx = current_candle.get('adx', None)
+    if pd.isna(current_adx) or current_adx is None:
+        return False, "ADX không có giá trị"
+    
+    adx_ok = current_adx >= 20
+    if not adx_ok:
+        return False, f"ADX ({current_adx:.1f}) < 20"
+    
+    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) <= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) > Current Trendline ({trendline_value_current:.5f}), Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 20"
 
 def check_bearish_divergence(df_m1, lookback=50, max_idx=None):
     """
@@ -829,6 +839,7 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     ✅ Giá đóng cửa phá xuống dưới trendline sóng hồi
     ✅ Giá đóng cửa ≤ EMA 50
     ✅ RSI đang hướng xuống (RSI hiện tại < RSI nến trước)
+    ✅ ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
     
     Returns: (is_break, message)
     """
@@ -875,7 +886,16 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     else:
         return False, "RSI không có giá trị"
     
-    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) >= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) < Current Trendline ({trendline_value_current:.5f}), Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}"
+    # 4. ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    current_adx = current_candle.get('adx', None)
+    if pd.isna(current_adx) or current_adx is None:
+        return False, "ADX không có giá trị"
+    
+    adx_ok = current_adx >= 20
+    if not adx_ok:
+        return False, f"ADX ({current_adx:.1f}) < 20"
+    
+    return True, f"Break confirmed: Prev Close ({prev_candle['close']:.5f}) >= Prev Trendline ({trendline_value_prev:.5f}), Current Close ({current_candle['close']:.5f}) < Current Trendline ({trendline_value_current:.5f}), Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 20"
 
 def m1_scalp_logic(config, error_count=0):
     """
@@ -918,6 +938,7 @@ def m1_scalp_logic(config, error_count=0):
         df_m1['ema200'] = calculate_ema(df_m1['close'], 200)
         df_m1['atr'] = calculate_atr(df_m1, 14)
         df_m1['rsi'] = calculate_rsi(df_m1['close'], 14)
+        df_m1 = calculate_adx(df_m1, period=14)  # Calculate ADX for condition 5
         
         # Calculate RSI(14) on M5
         df_m5['rsi'] = calculate_rsi(df_m5['close'], 14)
@@ -1421,6 +1442,7 @@ def m1_scalp_logic(config, error_count=0):
             # Current indicators
             current_rsi_display = curr_candle.get('rsi', 0)
             rsi_m5_display = df_m5['rsi'].iloc[-2] if len(df_m5) >= 2 else None
+            current_adx_display = curr_candle.get('adx', None)
             print(f"\n📈 [Indicators Hiện Tại]")
             print(f"   💱 Price: {curr_candle['close']:.5f}")
             print(f"   📊 EMA50: {ema50_val:.5f}")
@@ -1433,6 +1455,10 @@ def m1_scalp_logic(config, error_count=0):
                 print(f"   📊 RSI(14)_M5: {rsi_m5_display:.1f}")
             else:
                 print(f"   📊 RSI(14)_M5: N/A")
+            if pd.notna(current_adx_display):
+                print(f"   📊 ADX: {current_adx_display:.1f}")
+            else:
+                print(f"   📊 ADX: N/A")
             if pd.notna(atr_val):
                 symbol_upper = symbol.upper()
                 if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
@@ -1687,6 +1713,9 @@ def m1_scalp_logic(config, error_count=0):
             rsi_m5_val = df_m5['rsi'].iloc[-2] if len(df_m5) >= 2 else None
             if pd.notna(rsi_m5_val):
                 msg_parts.append(f"   • RSI(14)_M5: {rsi_m5_val:.1f}\n")
+            current_adx_val = curr_candle.get('adx', None)
+            if pd.notna(current_adx_val):
+                msg_parts.append(f"   • ADX: {current_adx_val:.1f}\n")
             msg_parts.append(f"   • ATR: {atr_val:.5f}\n")
             msg_parts.append(f"\n")
             msg_parts.append(f"{'='*50}\n")
@@ -1792,6 +1821,7 @@ def log_initial_conditions(config):
     print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
     print("      - Giá đóng cửa ≥ EMA 50")
     print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
+    print("      - ADX ≥ 20 (Nến xác nhận)")
     print("   ✅ Điều kiện 6: Không có Bearish Divergence")
     print("      - Giá không tạo Higher High với RSI Lower High")
     print("   ✅ Điều kiện 7: RSI(14)_M5 >= 55 và <= 65")
@@ -1824,6 +1854,7 @@ def log_initial_conditions(config):
     print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
     print("      - Giá đóng cửa ≤ EMA 50")
     print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
+    print("      - ADX ≥ 20 (Nến xác nhận)")
     print("   ✅ Điều kiện 6: Không có Bullish Divergence")
     print("      - Giá không tạo Lower Low với RSI Higher Low")
     print("   ✅ Điều kiện 7: RSI(14)_M5 >= 35 và <= 45")
