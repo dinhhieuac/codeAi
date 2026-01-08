@@ -1534,7 +1534,44 @@ def m1_scalp_logic(config, error_count=0):
         print(f"   📊 Volume: {volume:.2f} lot")
         print(f"{'='*80}\n")
         
-        # --- 11. Send Order ---
+        # --- 11. Normalize Volume (Validate lot size theo broker requirements) ---
+        # Lấy lot constraints từ symbol_info
+        lot_step = symbol_info.volume_step if symbol_info.volume_step and symbol_info.volume_step > 0 else 0.01
+        lot_min = symbol_info.volume_min if symbol_info.volume_min and symbol_info.volume_min > 0 else 0.01
+        lot_max = symbol_info.volume_max if symbol_info.volume_max and symbol_info.volume_max > 0 else 100.0
+        
+        # Đảm bảo volume đúng format
+        volume = round(volume, 2)
+        volume = max(lot_min, min(volume, lot_max))
+        
+        # Làm tròn theo lot_step (quan trọng cho BTCUSD và các crypto)
+        if lot_step > 0:
+            volume = round(volume / lot_step) * lot_step
+            volume = round(volume, 2)  # Làm tròn lại sau khi nhân với lot_step
+        
+        # Đảm bảo volume vẫn trong khoảng hợp lệ sau khi làm tròn
+        volume = max(lot_min, min(volume, lot_max))
+        
+        # Validate cuối cùng
+        if volume < lot_min or volume > lot_max:
+            error_msg = f"Volume không hợp lệ: {volume} (min: {lot_min}, max: {lot_max}, step: {lot_step})"
+            print(f"❌ {error_msg}")
+            log_to_file(symbol, "ERROR", error_msg)
+            send_telegram(
+                f"❌ <b>M1 Scalp Bot - Lỗi Volume</b>\n"
+                f"💱 Symbol: {symbol}\n"
+                f"❌ {error_msg}",
+                config.get('telegram_token'),
+                config.get('telegram_chat_id'),
+                symbol=symbol
+            )
+            return error_count + 1, 0
+        
+        # Log normalized volume
+        if use_risk_based_lot:
+            print(f"   📊 Volume (normalized): {volume:.2f} lot (min: {lot_min}, max: {lot_max}, step: {lot_step})")
+        
+        # --- 12. Send Order ---
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
