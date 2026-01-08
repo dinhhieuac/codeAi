@@ -2,13 +2,14 @@ import MetaTrader5 as mt5
 import time
 import sys
 import numpy as np
+import pandas as pd
 from datetime import datetime
 
 # Import local modules
 sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
 
 # Initialize Database
 db = Database()
@@ -43,6 +44,16 @@ def strategy_1_logic(config, error_count=0):
     # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
     df_m5['ema200'] = df_m5['close'].rolling(window=200).mean() # Using SMA for simplicity or implement EMA
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    
+    # ADX Filter: ADX(14) >= 20 to confirm trend strength
+    adx_period = config['parameters'].get('adx_period', 14)
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 20)
+    df_m5 = calculate_adx(df_m5, period=adx_period)
+    adx_value = df_m5.iloc[-1]['adx']
+    if pd.isna(adx_value) or adx_value < adx_min_threshold:
+        print(f"❌ ADX Filter: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
+        return error_count, 0
+    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
@@ -65,7 +76,7 @@ def strategy_1_logic(config, error_count=0):
     print(f"\n{'='*80}")
     print(f"📊 [STRATEGY 1: TREND HA ANALYSIS] {symbol}")
     print(f"{'='*80}")
-    print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | RSI: {last_ha['rsi']:.1f}")
+    print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
     
@@ -142,6 +153,7 @@ def strategy_1_logic(config, error_count=0):
         print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
         print(f"   💱 Price: {price:.2f}")
         print(f"   📈 M5 Trend: {current_trend}")
+        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold})")
         print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
         print(f"   📊 RSI: {last_ha['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
@@ -253,6 +265,7 @@ def strategy_1_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
+                f"• ADX: {adx_value:.1f}\n"
                 f"• RSI: {last_ha['rsi']:.1f}"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
