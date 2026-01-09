@@ -34,7 +34,7 @@ import sys
 # ===========================================
 TICKET_NUMBER = 3433918380  # None = demo mode, hoặc nhập ticket (ví dụ: 1044748590)
 TICKET_NUMBER=3422943403
-TICKET_NUMBER=3444398276
+TICKET_NUMBER=3453296474
 if TICKET_NUMBER is not None:
     import MetaTrader5 as mt5
     sys.path.append('..')
@@ -209,21 +209,54 @@ def draw_trendline_from_ticket(ticket_number):
     
     if order_type == "BUY":
         # BUY: Tìm swing high với RSI > 70 trước entry
-        # Tìm trong df_m1 gốc nhưng chỉ xét các nến trước entry
+        # Thử với RSI strict trước, sau đó linh hoạt hơn nếu không tìm thấy
         swing_highs_all = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70)
-        # Lọc chỉ lấy các swing high trước entry
         swing_highs = [sh for sh in swing_highs_all if sh['index'] < entry_idx]
         
+        # Nếu không tìm thấy với RSI > 70, thử với RSI > 60
         if len(swing_highs) == 0:
-            print(f"[ERROR] Khong tim thay swing high voi RSI > 70 truoc entry")
+            print(f"[WARNING] Khong tim thay swing high voi RSI > 70, dang thu voi RSI > 60...")
+            swing_highs_all = find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=60)
+            swing_highs = [sh for sh in swing_highs_all if sh['index'] < entry_idx]
+        
+        # Nếu vẫn không tìm thấy, tìm swing high gần nhất mà không cần RSI
+        if len(swing_highs) == 0:
+            print(f"[WARNING] Khong tim thay swing high voi RSI, dang tim swing high gan nhat...")
+            # Tìm swing high đơn giản (không cần RSI)
+            swing_highs_simple = []
+            lookback = 5
+            for i in range(lookback, entry_idx - lookback):
+                is_swing_high = True
+                for j in range(i - lookback, min(i + lookback + 1, entry_idx)):
+                    if j != i and df_m1.iloc[j]['high'] >= df_m1.iloc[i]['high']:
+                        is_swing_high = False
+                        break
+                if is_swing_high:
+                    rsi_val = df_m1.iloc[i].get('rsi', None)
+                    swing_highs_simple.append({
+                        'index': i,
+                        'price': df_m1.iloc[i]['high'],
+                        'rsi': rsi_val if pd.notna(rsi_val) else None
+                    })
+            
+            if len(swing_highs_simple) > 0:
+                swing_highs = swing_highs_simple
+                print(f"[INFO] Tim thay {len(swing_highs)} swing high (khong can RSI)")
+        
+        if len(swing_highs) == 0:
+            print(f"[ERROR] Khong tim thay swing high truoc entry")
             mt5.shutdown()
             return
         
         swing_high = swing_highs[-1]  # Lấy swing high gần nhất
         swing_idx = swing_high['index']
         swing_price = swing_high['price']
+        rsi_val = swing_high.get('rsi', None)
         
-        print(f"[INFO] Swing High: Index={swing_idx}, Price={swing_price:.5f}, RSI={swing_high['rsi']:.1f}")
+        if rsi_val is not None:
+            print(f"[INFO] Swing High: Index={swing_idx}, Price={swing_price:.5f}, RSI={rsi_val:.1f}")
+        else:
+            print(f"[INFO] Swing High: Index={swing_idx}, Price={swing_price:.5f}, RSI=N/A")
         
         # Vẽ trendline từ swing high đến entry
         # Sử dụng df_m1 gốc với index đúng
@@ -231,21 +264,54 @@ def draw_trendline_from_ticket(ticket_number):
         
     else:  # SELL
         # SELL: Tìm swing low với RSI < 30 trước entry
-        # Tìm trong df_m1 gốc nhưng chỉ xét các nến trước entry
+        # Thử với RSI strict trước, sau đó linh hoạt hơn nếu không tìm thấy
         swing_lows_all = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30)
-        # Lọc chỉ lấy các swing low trước entry
         swing_lows = [sl for sl in swing_lows_all if sl['index'] < entry_idx]
         
+        # Nếu không tìm thấy với RSI < 30, thử với RSI < 40
         if len(swing_lows) == 0:
-            print(f"[ERROR] Khong tim thay swing low voi RSI < 30 truoc entry")
+            print(f"[WARNING] Khong tim thay swing low voi RSI < 30, dang thu voi RSI < 40...")
+            swing_lows_all = find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=40)
+            swing_lows = [sl for sl in swing_lows_all if sl['index'] < entry_idx]
+        
+        # Nếu vẫn không tìm thấy, tìm swing low gần nhất mà không cần RSI
+        if len(swing_lows) == 0:
+            print(f"[WARNING] Khong tim thay swing low voi RSI, dang tim swing low gan nhat...")
+            # Tìm swing low đơn giản (không cần RSI)
+            swing_lows_simple = []
+            lookback = 5
+            for i in range(lookback, entry_idx - lookback):
+                is_swing_low = True
+                for j in range(i - lookback, min(i + lookback + 1, entry_idx)):
+                    if j != i and df_m1.iloc[j]['low'] <= df_m1.iloc[i]['low']:
+                        is_swing_low = False
+                        break
+                if is_swing_low:
+                    rsi_val = df_m1.iloc[i].get('rsi', None)
+                    swing_lows_simple.append({
+                        'index': i,
+                        'price': df_m1.iloc[i]['low'],
+                        'rsi': rsi_val if pd.notna(rsi_val) else None
+                    })
+            
+            if len(swing_lows_simple) > 0:
+                swing_lows = swing_lows_simple
+                print(f"[INFO] Tim thay {len(swing_lows)} swing low (khong can RSI)")
+        
+        if len(swing_lows) == 0:
+            print(f"[ERROR] Khong tim thay swing low truoc entry")
             mt5.shutdown()
             return
         
         swing_low = swing_lows[-1]  # Lấy swing low gần nhất
         swing_idx = swing_low['index']
         swing_price = swing_low['price']
+        rsi_val = swing_low.get('rsi', None)
         
-        print(f"[INFO] Swing Low: Index={swing_idx}, Price={swing_price:.5f}, RSI={swing_low['rsi']:.1f}")
+        if rsi_val is not None:
+            print(f"[INFO] Swing Low: Index={swing_idx}, Price={swing_price:.5f}, RSI={rsi_val:.1f}")
+        else:
+            print(f"[INFO] Swing Low: Index={swing_idx}, Price={swing_price:.5f}, RSI=N/A")
         
         # Vẽ trendline từ swing low đến entry
         # Sử dụng df_m1 gốc với index đúng
@@ -255,99 +321,6 @@ def draw_trendline_from_ticket(ticket_number):
         print(f"[ERROR] Khong the ve trendline")
         mt5.shutdown()
         return
-    
-    # Tính trendline cũ (logic cũ - chỉ chọn đáy/đỉnh cao/thấp hơn trước)
-    trendline_info_old = None
-    if order_type == "BUY":
-        # BUY: Trendline cũ - chỉ chọn đỉnh thấp hơn đỉnh trước
-        pullback_candles = df_m1.iloc[swing_idx:entry_idx + 1]
-        highs = pullback_candles['high'].values
-        local_maxs_old = []
-        for i in range(1, len(highs) - 1):
-            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-                local_maxs_old.append({'pos': i + swing_idx, 'price': highs[i]})
-        
-        # Thêm swing high
-        local_maxs_old.insert(0, {'pos': swing_idx, 'price': df_m1.iloc[swing_idx]['high']})
-        local_maxs_old = sorted(local_maxs_old, key=lambda x: x['pos'])
-        
-        # Logic cũ: chỉ chọn đỉnh thấp hơn đỉnh trước
-        filtered_maxs_old = [local_maxs_old[0]]
-        for i in range(1, len(local_maxs_old)):
-            if local_maxs_old[i]['price'] <= filtered_maxs_old[-1]['price']:
-                filtered_maxs_old.append(local_maxs_old[i])
-        
-        if len(filtered_maxs_old) >= 2:
-            x_old = np.array([m['pos'] for m in filtered_maxs_old])
-            y_old = np.array([m['price'] for m in filtered_maxs_old])
-            n_old = len(x_old)
-            sum_x_old = x_old.sum()
-            sum_y_old = y_old.sum()
-            sum_xy_old = (x_old * y_old).sum()
-            sum_x2_old = (x_old * x_old).sum()
-            denominator_old = n_old * sum_x2_old - sum_x_old * sum_x_old
-            
-            if abs(denominator_old) > 1e-10:
-                slope_old = (n_old * sum_xy_old - sum_x_old * sum_y_old) / denominator_old
-                intercept_old = (sum_y_old - slope_old * sum_x_old) / n_old
-                
-                def trendline_func_old(pos):
-                    return slope_old * pos + intercept_old
-                
-                trendline_info_old = {
-                    'slope': slope_old,
-                    'intercept': intercept_old,
-                    'func': trendline_func_old,
-                    'points': filtered_maxs_old
-                }
-    else:  # SELL
-        # SELL: Trendline cũ - chỉ chọn đáy cao hơn đáy trước
-        pullback_candles = df_m1.iloc[swing_idx:entry_idx + 1]
-        lows = pullback_candles['low'].values
-        local_mins_old = []
-        lookback = 2
-        for i in range(lookback, len(lows) - lookback):
-            is_local_min = True
-            for j in range(i - lookback, i + lookback + 1):
-                if j != i and lows[j] <= lows[i]:
-                    is_local_min = False
-                    break
-            if is_local_min:
-                local_mins_old.append({'pos': i + swing_idx, 'price': lows[i]})
-        
-        # Thêm swing low
-        local_mins_old.insert(0, {'pos': swing_idx, 'price': df_m1.iloc[swing_idx]['low']})
-        local_mins_old = sorted(local_mins_old, key=lambda x: x['pos'])
-        
-        # Logic cũ: chỉ chọn đáy cao hơn đáy trước
-        filtered_mins_old = [local_mins_old[0]]
-        for i in range(1, len(local_mins_old)):
-            if local_mins_old[i]['price'] >= filtered_mins_old[-1]['price']:
-                filtered_mins_old.append(local_mins_old[i])
-        
-        if len(filtered_mins_old) >= 2:
-            x_old = np.array([m['pos'] for m in filtered_mins_old])
-            y_old = np.array([m['price'] for m in filtered_mins_old])
-            n_old = len(x_old)
-            sum_x_old = x_old.sum()
-            sum_y_old = y_old.sum()
-            sum_xy_old = (x_old * y_old).sum()
-            sum_x2_old = (x_old * x_old).sum()
-            denominator_old = n_old * sum_x2_old - sum_x_old * sum_x_old
-            
-            if abs(denominator_old) > 1e-10:
-                slope_old = (n_old * sum_xy_old - sum_x_old * sum_y_old) / denominator_old
-                intercept_old = (sum_y_old - slope_old * sum_x_old) / n_old
-                
-                def trendline_func_old(pos):
-                    return slope_old * pos + intercept_old
-                
-                trendline_info_old = {
-                    'slope': slope_old,
-                    'intercept': intercept_old,
-                    'func': trendline_func_old,
-                    'points': filtered_mins_old
-                }
     
     # Vẽ biểu đồ
     fig, ax = plt.subplots(figsize=(16, 10))
@@ -399,54 +372,15 @@ def draw_trendline_from_ticket(ticket_number):
     else:
         ax.plot(swing_plot_idx, df_m1.iloc[swing_idx]['low'], 'ro', markersize=12, label='Swing Low', zorder=10)
     
-    # Tính entry/SL/TP từ trendline cũ (nếu có)
-    entry_price_old = None
-    sl_old = None
-    tp_old = None
-    if trendline_info_old:
-        # Entry price từ trendline cũ tại entry_idx
-        entry_price_old = trendline_info_old['func'](entry_idx)
-        
-        # Tính SL/TP từ entry price cũ (dùng cùng công thức: SL = 2ATR + 6 point, TP = 2SL)
-        atr_val = df_m1.iloc[entry_idx]['atr']
-        symbol_info = mt5.symbol_info(symbol)
-        if symbol_info and pd.notna(atr_val):
-            point = symbol_info.point
-            sl_distance = (2 * atr_val) + (6 * point)
-            tp_distance = 2 * sl_distance
-            
-            if order_type == "BUY":
-                sl_old = entry_price_old - sl_distance
-                tp_old = entry_price_old + tp_distance
-            else:  # SELL
-                sl_old = entry_price_old + sl_distance
-                tp_old = entry_price_old - tp_distance
-            
-            # Normalize
-            digits = symbol_info.digits
-            entry_price_old = round(entry_price_old, digits)
-            sl_old = round(sl_old, digits)
-            tp_old = round(tp_old, digits)
-    
-    # Vẽ entry point (mới - thực tế)
+    # Vẽ entry point
     entry_plot_idx = entry_idx - start_idx
-    ax.plot(entry_plot_idx, entry_price, 'g*', markersize=15, label=f'Entry NEW ({order_type})', zorder=10)
+    ax.plot(entry_plot_idx, entry_price, 'g*', markersize=15, label=f'Entry ({order_type})', zorder=10)
     
-    # Vẽ entry point cũ (nếu có)
-    if entry_price_old is not None:
-        ax.plot(entry_plot_idx, entry_price_old, 'm*', markersize=12, label=f'Entry OLD ({order_type})', zorder=10)
-    
-    # Vẽ SL/TP mới (thực tế - nếu có)
+    # Vẽ SL/TP (nếu có)
     if sl is not None:
-        ax.axhline(y=sl, color='r', linestyle='--', linewidth=2, alpha=0.8, label='SL NEW')
+        ax.axhline(y=sl, color='r', linestyle='--', linewidth=2, alpha=0.8, label='SL')
     if tp is not None:
-        ax.axhline(y=tp, color='g', linestyle='--', linewidth=2, alpha=0.8, label='TP NEW')
-    
-    # Vẽ SL/TP cũ (nếu có)
-    if sl_old is not None:
-        ax.axhline(y=sl_old, color='m', linestyle=':', linewidth=2, alpha=0.7, label='SL OLD')
-    if tp_old is not None:
-        ax.axhline(y=tp_old, color='m', linestyle=':', linewidth=2, alpha=0.7, label='TP OLD')
+        ax.axhline(y=tp, color='g', linestyle='--', linewidth=2, alpha=0.8, label='TP')
     
     # Vẽ trendline mới (logic mới)
     trendline_points = trendline_info['points']
@@ -457,29 +391,13 @@ def draw_trendline_from_ticket(ticket_number):
             point_plot_idx = point_pos - start_idx
             ax.plot(point_plot_idx, point['price'], 'go', markersize=8, label='Trendline Points (New)' if i == 0 else '')
     
-    # Vẽ đường trendline mới
+    # Vẽ đường trendline
     x_trendline = np.arange(swing_idx, entry_idx + 1)
     y_trendline = [trendline_info['func'](i) for i in x_trendline]
     x_trendline_plot = [i - start_idx for i in x_trendline if start_idx <= i < end_idx]
     y_trendline_plot = [trendline_info['func'](i) for i in x_trendline if start_idx <= i < end_idx]
     if len(x_trendline_plot) > 0:
-        ax.plot(x_trendline_plot, y_trendline_plot, 'r-', linewidth=2.5, label='Trendline (New Logic)', alpha=0.9)
-    
-    # Vẽ trendline cũ (logic cũ) nếu có
-    if trendline_info_old:
-        trendline_points_old = trendline_info_old['points']
-        for i, point in enumerate(trendline_points_old):
-            point_pos = point['pos']
-            if start_idx <= point_pos < end_idx:
-                point_plot_idx = point_pos - start_idx
-                ax.plot(point_plot_idx, point['price'], 'mo', markersize=6, label='Trendline Points (Old)' if i == 0 else '')
-        
-        x_trendline_old = np.arange(swing_idx, entry_idx + 1)
-        y_trendline_old = [trendline_info_old['func'](i) for i in x_trendline_old]
-        x_trendline_plot_old = [i - start_idx for i in x_trendline_old if start_idx <= i < end_idx]
-        y_trendline_plot_old = [trendline_info_old['func'](i) for i in x_trendline_old if start_idx <= i < end_idx]
-        if len(x_trendline_plot_old) > 0:
-            ax.plot(x_trendline_plot_old, y_trendline_plot_old, 'm--', linewidth=2, label='Trendline (Old Logic)', alpha=0.7)
+        ax.plot(x_trendline_plot, y_trendline_plot, 'r-', linewidth=2.5, label='Trendline', alpha=0.9)
     
     # Highlight pullback phase
     pullback_start_plot = swing_idx - start_idx
@@ -496,8 +414,8 @@ def draw_trendline_from_ticket(ticket_number):
     print(f"\n{'='*60}")
     print(f"KET QUA VE TRENDLINE")
     print(f"{'='*60}")
-    print(f"[OK] Trendline MOI: Tim duoc {len(trendline_points)} diem")
-    print(f"\nCac diem trendline MOI:")
+    print(f"[OK] Trendline: Tim duoc {len(trendline_points)} diem")
+    print(f"\nCac diem trendline:")
     for i, point in enumerate(trendline_points):
         point_pos = point['pos']
         time_val = df_m1.iloc[point_pos]['time']
@@ -506,54 +424,13 @@ def draw_trendline_from_ticket(ticket_number):
         else:
             time_str = str(time_val)
         print(f"   Diem {i+1}: Index={point_pos}, Time={time_str}, Price={point['price']:.5f}")
-    print(f"\nTrendline MOI: Slope={trendline_info['slope']:.8f}, Intercept={trendline_info['intercept']:.5f}")
-    
-    if trendline_info_old:
-        print(f"\n[OK] Trendline CU: Tim duoc {len(trendline_info_old['points'])} diem")
-        print(f"\nCac diem trendline CU:")
-        for i, point in enumerate(trendline_info_old['points']):
-            point_pos = point['pos']
-            time_val = df_m1.iloc[point_pos]['time']
-            if hasattr(time_val, 'strftime'):
-                time_str = time_val.strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                time_str = str(time_val)
-            print(f"   Diem {i+1}: Index={point_pos}, Time={time_str}, Price={point['price']:.5f}")
-        print(f"\nTrendline CU: Slope={trendline_info_old['slope']:.8f}, Intercept={trendline_info_old['intercept']:.5f}")
-        print(f"\nSo sanh: Trendline MOI co {len(trendline_points)} diem, Trendline CU co {len(trendline_info_old['points'])} diem")
-        
-        # In thông tin Entry/SL/TP cũ
-        if entry_price_old is not None:
-            print(f"\n{'='*60}")
-            print(f"ENTRY/SL/TP - SO SANH")
-            print(f"{'='*60}")
-            print(f"\n[MOI - Thuc te]")
-            print(f"   Entry: {entry_price:.5f}")
-            if sl is not None:
-                print(f"   SL: {sl:.5f}")
-            if tp is not None:
-                print(f"   TP: {tp:.5f}")
-            
-            print(f"\n[CU - Tinh tu trendline cu]")
-            print(f"   Entry: {entry_price_old:.5f}")
-            if sl_old is not None:
-                print(f"   SL: {sl_old:.5f}")
-            if tp_old is not None:
-                print(f"   TP: {tp_old:.5f}")
-            
-            # Tính chênh lệch
-            entry_diff = entry_price - entry_price_old
-            print(f"\n[Chenh lech]")
-            print(f"   Entry: {entry_diff:+.5f} ({entry_diff/entry_price*100:+.3f}%)")
-            if sl is not None and sl_old is not None:
-                sl_diff = sl - sl_old
-                print(f"   SL: {sl_diff:+.5f}")
-            if tp is not None and tp_old is not None:
-                tp_diff = tp - tp_old
-                print(f"   TP: {tp_diff:+.5f}")
-    else:
-        print(f"\n[WARNING] Khong the ve trendline CU (khong du diem)")
-    
+    print(f"\nTrendline: Slope={trendline_info['slope']:.8f}, Intercept={trendline_info['intercept']:.5f}")
+    print(f"\nEntry/SL/TP:")
+    print(f"   Entry: {entry_price:.5f}")
+    if sl is not None:
+        print(f"   SL: {sl:.5f}")
+    if tp is not None:
+        print(f"   TP: {tp:.5f}")
     print(f"{'='*60}\n")
     
     plt.tight_layout()
@@ -838,7 +715,7 @@ if trendline_info:
     # Vẽ trendline trong khoảng thời gian đã chọn
     x_trendline = np.arange(trendline_start, trendline_end)
     y_trendline = [trendline_info['func'](i - trendline_offset) for i in x_trendline]
-    ax.plot(x_trendline, y_trendline, 'r-', linewidth=2, label='Trendline (New Logic)', alpha=0.8)
+    ax.plot(x_trendline, y_trendline, 'r-', linewidth=2, label='Trendline', alpha=0.8)
     
     # In thông tin
     print(f"\n{'='*60}")
@@ -853,37 +730,6 @@ if trendline_info:
         print(f"   Diem {i+1}: Index={idx}, Time={time_str}, Price={point['price']:.2f}")
     print(f"\nTrendline: Slope={trendline_info['slope']:.6f}, Intercept={trendline_info['intercept']:.2f}")
     print(f"{'='*60}\n")
-
-# Vẽ trendline cũ (logic cũ - chỉ chọn đáy cao hơn đáy trước)
-if len(all_local_mins) > 1:
-    old_filtered = [all_local_mins[0]]
-    for i in range(1, len(all_local_mins)):
-        if all_local_mins[i]['price'] >= old_filtered[-1]['price']:
-            old_filtered.append(all_local_mins[i])
-    
-    if len(old_filtered) >= 2:
-        old_positions = [trendline_offset + p['pos'] for p in old_filtered]
-        old_prices = [p['price'] for p in old_filtered]
-        
-        # Linear regression cho trendline cũ
-        x_old = np.array(old_positions)
-        y_old = np.array(old_prices)
-        n_old = len(x_old)
-        sum_x_old = x_old.sum()
-        sum_y_old = y_old.sum()
-        sum_xy_old = (x_old * y_old).sum()
-        sum_x2_old = (x_old * x_old).sum()
-        denominator_old = n_old * sum_x2_old - sum_x_old * sum_x_old
-        
-        if abs(denominator_old) > 1e-10:
-            slope_old = (n_old * sum_xy_old - sum_x_old * sum_y_old) / denominator_old
-            intercept_old = (sum_y_old - slope_old * sum_x_old) / n_old
-            
-            x_trendline_old = np.arange(trendline_start, trendline_end)
-            y_trendline_old = [slope_old * (i - trendline_offset) + intercept_old for i in x_trendline_old]
-            ax.plot(x_trendline_old, y_trendline_old, 'm--', linewidth=2, label='Trendline (Old Logic)', alpha=0.6)
-            
-            print(f"Trendline cu: {len(old_filtered)} diem (bo sot {len(all_local_mins) - len(old_filtered)} day)")
 
 ax.set_xlabel('Candle Index', fontsize=12)
 ax.set_ylabel('Price', fontsize=12)
