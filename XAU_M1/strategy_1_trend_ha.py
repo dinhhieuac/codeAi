@@ -33,17 +33,33 @@ def strategy_1_logic(config, error_count=0):
             # Silent return to avoid spam
             return error_count, 0
 
-    # 1. Get Data (M1 and M5 for trend)
+    # 1. Get Data (M1, M5 for trend, H1 for long-term trend confirmation)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)
     df_m5 = get_data(symbol, mt5.TIMEFRAME_M5, 200)
+    df_h1 = get_data(symbol, mt5.TIMEFRAME_H1, 200)
     
-    if df_m1 is None or df_m5 is None: 
+    if df_m1 is None or df_m5 is None or df_h1 is None: 
         return error_count, 0
 
     # 2. Calculate Indicators
     # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
     df_m5['ema200'] = df_m5['close'].rolling(window=200).mean() # Using SMA for simplicity or implement EMA
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
+    
+    # H1 Trend Filter: EMA 100 on H1 for long-term trend confirmation
+    h1_ema_period = config['parameters'].get('h1_ema_period', 100)
+    h1_trend_confirmation_required = config['parameters'].get('h1_trend_confirmation_required', True)  # Default: required
+    df_h1['ema100'] = df_h1['close'].rolling(window=h1_ema_period).mean()
+    h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema100'] else "BEARISH"
+    
+    # Check H1 trend alignment with M5 trend
+    if h1_trend_confirmation_required:
+        if h1_trend != current_trend:
+            print(f"❌ H1 Trend Filter: H1 Trend ({h1_trend}) != M5 Trend ({current_trend}) - Không đồng nhất, skipping")
+            return error_count, 0
+        print(f"✅ H1 Trend Filter: H1 Trend ({h1_trend}) == M5 Trend ({current_trend}) - Đồng nhất (EMA{h1_ema_period}: {df_h1.iloc[-1]['ema100']:.2f})")
+    else:
+        print(f"⏭️  H1 Trend Filter: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
     # ADX Filter: ADX(14) >= 20 to confirm trend strength
     adx_period = config['parameters'].get('adx_period', 14)
@@ -76,9 +92,10 @@ def strategy_1_logic(config, error_count=0):
     print(f"\n{'='*80}")
     print(f"📊 [STRATEGY 1: TREND HA ANALYSIS] {symbol}")
     print(f"{'='*80}")
-    print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
+    print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | Trend (H1): {h1_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
+    print(f"   H1 EMA{h1_ema_period}: {df_h1.iloc[-1]['ema100']:.2f} | H1 Close: {df_h1.iloc[-1]['close']:.2f}")
     
     # Track all filter status
     filter_status = []
@@ -91,6 +108,8 @@ def strategy_1_logic(config, error_count=0):
         is_solid_candle = not is_doji(last_ha, threshold=0.2) # Require body > 20% of range for HA
 
         filter_status.append(f"✅ M5 Trend: BULLISH")
+        if h1_trend_confirmation_required:
+            filter_status.append(f"{'✅' if h1_trend == current_trend else '❌'} H1 Trend: {h1_trend} (EMA{h1_ema_period}: {df_h1.iloc[-1]['ema100']:.2f})")
         filter_status.append(f"{'✅' if is_green else '❌'} HA Candle: {'Green' if is_green else 'Red'}")
         filter_status.append(f"{'✅' if is_above_channel else '❌'} Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f}")
         
@@ -120,6 +139,8 @@ def strategy_1_logic(config, error_count=0):
         is_solid_candle = not is_doji(last_ha, threshold=0.2)
 
         filter_status.append(f"✅ M5 Trend: BEARISH")
+        if h1_trend_confirmation_required:
+            filter_status.append(f"{'✅' if h1_trend == current_trend else '❌'} H1 Trend: {h1_trend} (EMA{h1_ema_period}: {df_h1.iloc[-1]['ema100']:.2f})")
         filter_status.append(f"{'✅' if is_red else '❌'} HA Candle: {'Red' if is_red else 'Green'}")
         filter_status.append(f"{'✅' if is_below_channel else '❌'} Below Channel: {last_ha['ha_close']:.2f} < {last_ha['sma55_low']:.2f}")
         
@@ -153,6 +174,9 @@ def strategy_1_logic(config, error_count=0):
         print(f"\n📊 [CHI TIẾT GIÁ TRỊ]")
         print(f"   💱 Price: {price:.2f}")
         print(f"   📈 M5 Trend: {current_trend}")
+        print(f"   📈 H1 Trend: {h1_trend} (EMA{h1_ema_period}: {df_h1.iloc[-1]['ema100']:.2f})")
+        if h1_trend_confirmation_required:
+            print(f"   📈 H1 Trend Alignment: {'✅ Đồng nhất' if h1_trend == current_trend else '❌ Không đồng nhất'}")
         print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold})")
         print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
@@ -232,7 +256,7 @@ def strategy_1_logic(config, error_count=0):
             
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi'])}, 
+                      {"m5_trend": current_trend, "h1_trend": h1_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi'])}, 
                       account_id=config['account'])
 
         # Send Order
@@ -264,7 +288,8 @@ def strategy_1_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• Trend: {current_trend}\n"
+                f"• M5 Trend: {current_trend}\n"
+                f"• H1 Trend: {h1_trend} (EMA{h1_ema_period})\n"
                 f"• ADX: {adx_value:.1f}\n"
                 f"• RSI: {last_ha['rsi']:.1f}"
             )
