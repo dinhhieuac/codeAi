@@ -32,19 +32,129 @@ import sys
 # Để chạy demo mode (dữ liệu giả lập):
 #   TICKET_NUMBER = None
 # ===========================================
-TICKET_NUMBER = 3433918380  # None = demo mode, hoặc nhập ticket (ví dụ: 1044748590)
-TICKET_NUMBER=3422943403
-TICKET_NUMBER=3457303946
-if TICKET_NUMBER is not None:
-    import MetaTrader5 as mt5
-    sys.path.append('..')
-    from utils import load_config, connect_mt5, get_data
-    from tuyen_trend_sclap_xau import (
-        calculate_pullback_trendline, 
-        calculate_pullback_trendline_buy,
-        find_swing_high_with_rsi,
-        find_swing_low_with_rsi
-    )
+
+# Import MT5 và utils
+import MetaTrader5 as mt5
+sys.path.append('..')
+from utils import load_config, connect_mt5, get_data
+from tuyen_trend_sclap_xau import (
+    calculate_pullback_trendline, 
+    calculate_pullback_trendline_buy,
+    find_swing_high_with_rsi,
+    find_swing_low_with_rsi
+)
+
+def find_ticket_by_datetime(target_datetime, symbol=None):
+    """
+    Tìm ticket của lệnh gần nhất với thời gian đã cho
+    Args:
+        target_datetime: datetime object hoặc string (format: 'YYYY-MM-DD HH:MM:SS')
+        symbol: Symbol để filter (None = tất cả symbols)
+    Returns:
+        ticket_number hoặc None
+    """
+    if isinstance(target_datetime, str):
+        try:
+            target_datetime = datetime.strptime(target_datetime, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            try:
+                target_datetime = datetime.strptime(target_datetime, '%Y-%m-%d %H:%M')
+            except ValueError:
+                print(f"[ERROR] Khong the parse datetime: {target_datetime}")
+                return None
+    
+    # Load config
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_tuyen_xau.json")
+    if not os.path.exists(config_path):
+        print(f"[ERROR] Khong tim thay config: {config_path}")
+        return None
+    
+    config = load_config(config_path)
+    if not config:
+        print(f"[ERROR] Khong the load config")
+        return None
+    
+    # Connect MT5
+    if not connect_mt5(config):
+        print(f"[ERROR] Khong the ket noi MT5")
+        return None
+    
+    # Tìm trong positions đang mở
+    positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+    best_ticket = None
+    best_diff = None
+    
+    if positions:
+        for pos in positions:
+            pos_time = datetime.fromtimestamp(pos.time)
+            diff = abs((pos_time - target_datetime).total_seconds())
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_ticket = pos.ticket
+    
+    # Tìm trong history (positions đã đóng)
+    # Lấy deals trong khoảng thời gian ±1 ngày
+    from_time = int((target_datetime - timedelta(days=1)).timestamp())
+    to_time = int((target_datetime + timedelta(days=1)).timestamp())
+    
+    deals = mt5.history_deals_get(from_time, to_time, group="*")
+    if deals:
+        for deal in deals:
+            if deal.entry == mt5.DEAL_ENTRY_IN:
+                if symbol and deal.symbol != symbol:
+                    continue
+                deal_time = datetime.fromtimestamp(deal.time)
+                diff = abs((deal_time - target_datetime).total_seconds())
+                if best_diff is None or diff < best_diff:
+                    best_diff = diff
+                    best_ticket = deal.position_id
+    
+    if best_ticket:
+        print(f"[INFO] Tim thay ticket {best_ticket} gan nhat voi thoi gian {target_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Chenh lech: {best_diff/60:.1f} phut")
+        return best_ticket
+    else:
+        print(f"[ERROR] Khong tim thay lenh nao gan voi thoi gian {target_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        return None
+
+def get_user_input():
+    """
+    Lấy input từ người dùng: ticket hoặc thời gian
+    Returns:
+        ticket_number (int) hoặc None
+    """
+    print("\n" + "="*80)
+    print("VE TRENDLINE TU TICKET HOAC THOI GIAN")
+    print("="*80)
+    print("\nChon che do:")
+    print("  1. Nhap ticket (so)")
+    print("  2. Nhap thoi gian (YYYY-MM-DD HH:MM:SS hoac YYYY-MM-DD HH:MM)")
+    print("  3. Demo mode (du lieu gia lap)")
+    print("  0. Thoat")
+    
+    choice = input("\nNhap lua chon (1/2/3/0): ").strip()
+    
+    if choice == "0":
+        print("Thoat chuong trinh.")
+        sys.exit(0)
+    elif choice == "1":
+        ticket_input = input("Nhap ticket number: ").strip()
+        try:
+            ticket_number = int(ticket_input)
+            return ticket_number
+        except ValueError:
+            print(f"[ERROR] Ticket phai la so nguyen. Nhap: {ticket_input}")
+            return None
+    elif choice == "2":
+        time_input = input("Nhap thoi gian (YYYY-MM-DD HH:MM:SS hoac YYYY-MM-DD HH:MM): ").strip()
+        ticket_number = find_ticket_by_datetime(time_input)
+        return ticket_number
+    elif choice == "3":
+        return None  # Demo mode
+    else:
+        print(f"[ERROR] Lua chon khong hop le: {choice}")
+        return None
 
 def draw_trendline_from_ticket(ticket_number):
     """
@@ -525,9 +635,13 @@ def calculate_pullback_trendline_demo(lows, swing_low_idx=0):
     }, local_mins
 
 # ========== KIỂM TRA MODE ==========
+# Lấy input từ người dùng: ticket hoặc thời gian
+TICKET_NUMBER = get_user_input()
+
 # Nếu có TICKET_NUMBER, vẽ trendline từ ticket
 if TICKET_NUMBER is not None:
     draw_trendline_from_ticket(TICKET_NUMBER)
+    mt5.shutdown()
     sys.exit(0)
 
 # ========== DEMO MODE ==========

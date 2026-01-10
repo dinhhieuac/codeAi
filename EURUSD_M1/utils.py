@@ -359,7 +359,7 @@ def manage_position(order_ticket, symbol, magic, config):
         # 1. Quick Breakeven (10 pips)
         # Move SL to Entry if not already there
         # Check if breakeven is enabled in config (default: true for backward compatibility)
-        enable_breakeven = config.get('enable_breakeven', True)
+        enable_breakeven = config.get('enable_breakeven', False)
         breakeven_trigger_pips = 10.0
         if enable_breakeven and profit_pips > breakeven_trigger_pips:
             # Normalize values to symbol digits for comparison

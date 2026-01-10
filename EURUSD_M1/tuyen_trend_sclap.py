@@ -838,8 +838,11 @@ def m1_scalp_logic(config, error_count=0):
         all_positions = mt5.positions_get(symbol=symbol)
         positions = [pos for pos in (all_positions or []) if pos.magic == magic]
         if positions:
+            # Tắt Breakeven - chỉ dùng Trailing SL
+            config_manage = config.copy()
+            config_manage['enable_breakeven'] = False
             for pos in positions:
-                manage_position(pos.ticket, symbol, magic, config)
+                manage_position(pos.ticket, symbol, magic, config_manage)
             if len(positions) >= max_positions:
                 return error_count, 0
 
