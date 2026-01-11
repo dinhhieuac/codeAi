@@ -255,100 +255,190 @@ def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
     
     return swing_lows
 
-def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+def check_swing_high_upperwick(df_m1, swing_high_idx):
     """
-    Kiểm tra sóng hồi hợp lệ cho BUY:
-    - Giá không tạo đỉnh cao hơn swing high
-    - Số nến hồi tối đa: ≤ max_candles (default 30)
-    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 40-50)
-    - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
-    - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
-    - Giá không phá cấu trúc xu hướng tăng chính
+    Kiểm tra UpperWick ≥ 1.3 ATR tại vùng swing high (±2 nến quanh swing high = 5 nến tổng)
+    Nếu UpperWick ≥ 1.3 ATR → bỏ cả con sóng hồi
     
-    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    Returns: (is_valid, message)
     """
-    if swing_high_idx >= len(df_m1) - 1:
-        return False, None, None, "Swing high quá gần cuối"
+    if swing_high_idx < 2 or swing_high_idx >= len(df_m1) - 2:
+        return False, "Swing high quá gần đầu/cuối, không đủ nến để kiểm tra"
     
-    swing_high_price = df_m1.iloc[swing_high_idx]['high']
+    # Lấy 5 nến: ±2 nến quanh swing high
+    start_idx = max(0, swing_high_idx - 2)
+    end_idx = min(len(df_m1), swing_high_idx + 3)  # +3 vì iloc là exclusive
+    swing_zone = df_m1.iloc[start_idx:end_idx]
     
-    # Tìm điểm kết thúc sóng hồi (từ swing high đến hiện tại hoặc max_candles)
-    pullback_start = swing_high_idx + 1
-    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
-    
-    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
-    
-    if len(pullback_candles) == 0:
-        return False, None, None, "Không có nến sau swing high"
-    
-    # 1. Kiểm tra: Giá không tạo đỉnh cao hơn swing high
-    max_high_after_swing = pullback_candles['high'].max()
-    if max_high_after_swing > swing_high_price:
-        return False, None, None, f"Giá tạo đỉnh cao hơn swing high: {max_high_after_swing:.5f} > {swing_high_price:.5f}"
-    
-    # 2. Kiểm tra số nến hồi ≤ max_candles
-    if len(pullback_candles) > max_candles:
-        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
-    
-    # 3. Kiểm tra RSI trong quá trình hồi > rsi_min_during_pullback
-    pullback_rsi = pullback_candles.get('rsi', pd.Series())
-    if len(pullback_rsi) > 0:
-        min_rsi_during_pullback = pullback_rsi.min()
-        if min_rsi_during_pullback <= rsi_min_during_pullback:
-            return False, None, None, f"RSI trong quá trình hồi ({min_rsi_during_pullback:.1f}) <= {rsi_min_during_pullback}"
-    
-    # 3b. Kiểm tra: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
-    # Lấy ATR từ swing high (hoặc nến gần nhất có ATR)
-    atr_val = None
-    for i in range(swing_high_idx, max(0, swing_high_idx - 20), -1):
-        atr_val = df_m1.iloc[i].get('atr', None)
-        if pd.notna(atr_val):
-            break
-    
-    if atr_val is None or pd.isna(atr_val):
-        # Nếu không tìm thấy ATR, tính ATR từ df_m1
+    # Lấy ATR từ swing high
+    atr_val = df_m1.iloc[swing_high_idx].get('atr', None)
+    if pd.isna(atr_val) or atr_val is None:
+        # Tính ATR nếu không có
         atr_series = calculate_atr(df_m1.iloc[max(0, swing_high_idx - 14):swing_high_idx + 1], period=14)
         if len(atr_series) > 0:
             atr_val = atr_series.iloc[-1]
     
-    # ATR là bắt buộc để kiểm tra điều kiện này
-    if atr_val is None or pd.isna(atr_val):
-        return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến giảm"
+    if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+        return False, "Không thể lấy ATR để kiểm tra UpperWick"
     
-    min_body_threshold = 1.2 * atr_val
-    # Kiểm tra từng nến trong pullback (từ swing high đến trước nến phá trendline)
-    # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
-    candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
+    threshold = 1.3 * atr_val
     
-    for idx, candle in candles_to_check.iterrows():
-        # Kiểm tra nến giảm (bearish: close < open)
-        if candle['close'] < candle['open']:
-            body_size = abs(candle['close'] - candle['open'])
-            if body_size >= min_body_threshold:
-                return False, None, None, f"Có nến giảm với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
+    # Kiểm tra UpperWick của từng nến trong vùng swing high
+    for idx, candle in swing_zone.iterrows():
+        upperwick = candle['high'] - max(candle['open'], candle['close'])
+        if upperwick >= threshold:
+            return False, f"UpperWick ({upperwick:.5f}) ≥ 1.3 ATR ({threshold:.5f}) tại index {idx} trong vùng swing high"
     
-    # 4. Kiểm tra RSI hồi về vùng target (40-50) - kiểm tra nến cuối hoặc gần cuối
-    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
-    if pd.notna(last_rsi):
-        if not (rsi_target_min <= last_rsi <= rsi_target_max):
-            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
-            # Kiểm tra xem có nến nào trong vùng target không
-            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
-            if len(rsi_in_target) == 0:
-                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
+    return True, "UpperWick hợp lệ (< 1.3 ATR)"
+
+def find_first_pullback_candle_buy(df_m1, swing_high_idx):
+    """
+    Tìm nến bắt đầu sóng hồi giảm (nến đầu tiên đi ngược lại xu hướng tăng chính)
+    Điều kiện: Close ≤ Low của nến liền trước
+    Nến này chỉ hợp lệ khi xuất hiện sau giai đoạn giá đã ngừng tạo Higher high, hoặc trải qua pha sideway/nén biên độ
     
-    # 5. Kiểm tra giá không phá cấu trúc xu hướng tăng (kiểm tra Lower Lows)
-    if swing_high_idx > 10:
-        before_swing = df_m1.iloc[swing_high_idx - 20:swing_high_idx]
-        if len(before_swing) > 0:
-            prev_swing_low = before_swing['low'].min()
-            pullback_low = pullback_candles['low'].min()
-            if pullback_low < prev_swing_low * 0.9999:  # 0.1 pip buffer
-                return False, None, None, f"Giá phá cấu trúc: Pullback low {pullback_low:.5f} < Prev swing low {prev_swing_low:.5f}"
+    Returns: (pb1_idx, message) hoặc (None, message) nếu không tìm thấy
+    """
+    if swing_high_idx >= len(df_m1) - 1:
+        return None, "Swing high quá gần cuối"
     
-    pullback_end_idx = pullback_end
+    # Tìm nến đầu tiên thỏa điều kiện Close ≤ Low của nến liền trước
+    for i in range(swing_high_idx + 1, len(df_m1)):
+        if i == 0:
+            continue
+        
+        prev_candle = df_m1.iloc[i - 1]
+        curr_candle = df_m1.iloc[i]
+        
+        # Điều kiện: Close ≤ Low của nến liền trước
+        if curr_candle['close'] <= prev_candle['low']:
+            # Kiểm tra xem có phải sau giai đoạn ngừng tạo Higher high hoặc sideway không
+            # (Có thể kiểm tra thêm logic này nếu cần)
+            return i, f"Nến hồi giảm đầu tiên tại index {i}"
     
-    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+    return None, "Không tìm thấy nến hồi giảm đầu tiên"
+
+def calculate_slope_pullback_down(df_m1, swing_high_idx, pb1_idx):
+    """
+    Tính Slope_Pullback_Down theo công thức:
+    Slope_Pullback_Down = (max(High_Pre[3] ∪ High_PB[1]) - min(Low_PB[1..6])) / Σ(ATR_14,i) với i từ 1 đến 6
+    
+    Trong đó:
+    - PB[1..6] là 6 nến hồi giảm đầu tiên tính từ nến đầu tiên đi ngược lại xu hướng tăng chính
+    - Pre[3] là 3 nến ngay trước nến hồi giảm đầu tiên
+    - PB[1] là nến hồi giảm đầu tiên
+    - ATR_14,i là giá trị ATR(14) của từng nến trong tập 6 nến hồi giảm đầu tiên
+    
+    Returns: (slope_value, message) hoặc (None, message) nếu không đủ dữ liệu
+    """
+    if pb1_idx is None or pb1_idx >= len(df_m1):
+        return None, "Không có nến hồi giảm đầu tiên"
+    
+    # Kiểm tra có đủ 6 nến hồi giảm không
+    if pb1_idx + 5 >= len(df_m1):
+        return None, f"Không đủ 6 nến hồi giảm (chỉ có {len(df_m1) - pb1_idx} nến từ index {pb1_idx})"
+    
+    # Lấy Pre[3]: 3 nến ngay trước PB[1]
+    if pb1_idx < 3:
+        return None, f"Không đủ 3 nến trước PB[1] (chỉ có {pb1_idx} nến)"
+    
+    pre_3_start = pb1_idx - 3
+    pre_3_end = pb1_idx
+    pre_3_candles = df_m1.iloc[pre_3_start:pre_3_end]
+    
+    # Lấy PB[1..6]: 6 nến hồi giảm đầu tiên
+    pb_1_to_6 = df_m1.iloc[pb1_idx:pb1_idx + 6]
+    
+    # Tính max(High_Pre[3] ∪ High_PB[1])
+    high_pre_3 = pre_3_candles['high'].max()
+    high_pb_1 = pb_1_to_6.iloc[0]['high']
+    max_high = max(high_pre_3, high_pb_1)
+    
+    # Tính min(Low_PB[1..6])
+    min_low = pb_1_to_6['low'].min()
+    
+    # Tính Σ(ATR_14,i) với i từ 1 đến 6
+    atr_sum = 0
+    for i in range(6):
+        idx = pb1_idx + i
+        atr_val = df_m1.iloc[idx].get('atr', None)
+        if pd.isna(atr_val) or atr_val is None:
+            # Tính ATR nếu không có
+            atr_series = calculate_atr(df_m1.iloc[max(0, idx - 14):idx + 1], period=14)
+            if len(atr_series) > 0:
+                atr_val = atr_series.iloc[-1]
+        
+        if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+            return None, f"Không thể lấy ATR tại index {idx}"
+        
+        atr_sum += atr_val
+    
+    if atr_sum <= 0:
+        return None, "Tổng ATR không hợp lệ"
+    
+    # Tính Slope_Pullback_Down
+    numerator = max_high - min_low
+    slope = numerator / atr_sum
+    
+    return slope, f"Slope_Pullback_Down = {slope:.2f} (max_high={max_high:.5f}, min_low={min_low:.5f}, atr_sum={atr_sum:.5f})"
+
+def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+    """
+    Kiểm tra sóng hồi hợp lệ cho BUY (Điều kiện 3 mới):
+    
+    A. Swing high hợp lệ:
+    - Kiểm tra UpperWick ≥ 1.3 ATR tại vùng swing high (±2 nến = 5 nến tổng)
+    - Nếu UpperWick ≥ 1.3 ATR → bỏ cả con sóng hồi
+    
+    B. Slope Pullback giảm:
+    - 18 ≤ Slope_Pullback_Down ≤ 48 → Pullback hợp lệ, tiếp tục điều kiện 4
+    - 48 < Slope_Pullback_Down ≤ 62 → Pullback hơi dốc, không entry ngay, cần cấu trúc hồi rõ ràng
+    - Slope_Pullback_Down > 62 → Pullback quá mạnh, loại bỏ toàn bộ sóng hồi
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, slope_category, message)
+    slope_category: 'valid' (18-48), 'steep' (48-62), 'too_steep' (>62), None nếu không hợp lệ
+    """
+    if swing_high_idx >= len(df_m1) - 1:
+        return False, None, None, None, "Swing high quá gần cuối"
+    
+    # A. Kiểm tra Swing high hợp lệ: UpperWick < 1.3 ATR tại vùng swing high (±2 nến)
+    upperwick_ok, upperwick_msg = check_swing_high_upperwick(df_m1, swing_high_idx)
+    if not upperwick_ok:
+        return False, None, None, None, f"ĐK3A: {upperwick_msg}"
+    
+    # B. Tìm nến bắt đầu sóng hồi giảm (PB[1])
+    pb1_idx, pb1_msg = find_first_pullback_candle_buy(df_m1, swing_high_idx)
+    if pb1_idx is None:
+        return False, None, None, None, f"ĐK3B: {pb1_msg}"
+    
+    # C. Tính Slope_Pullback_Down
+    slope_value, slope_msg = calculate_slope_pullback_down(df_m1, swing_high_idx, pb1_idx)
+    if slope_value is None:
+        return False, None, None, None, f"ĐK3C: {slope_msg}"
+    
+    # D. Phân loại slope và xử lý
+    slope_category = None
+    if 18 <= slope_value <= 48:
+        # Pullback hợp lệ → Tiếp tục kiểm tra điều kiện 4
+        slope_category = 'valid'
+        # Lấy pullback candles từ PB[1] đến ít nhất 6 nến (hoặc đến khi có đủ dữ liệu)
+        pullback_end_idx = min(pb1_idx + 5, len(df_m1) - 1)
+        pullback_candles = df_m1.iloc[pb1_idx:pullback_end_idx + 1]
+        return True, pullback_end_idx, pullback_candles, slope_category, f"ĐK3: Pullback hợp lệ (Slope={slope_value:.2f}, 18-48)"
+    
+    elif 48 < slope_value <= 62:
+        # Pullback hơi dốc → KHÔNG ENTRY NGAY
+        # Cần cấu trúc hồi rõ ràng (đáy - đỉnh) và vẽ lại trendline
+        slope_category = 'steep'
+        # Vẫn trả về True nhưng với category 'steep' để xử lý đặc biệt
+        pullback_end_idx = min(pb1_idx + 5, len(df_m1) - 1)
+        pullback_candles = df_m1.iloc[pb1_idx:pullback_end_idx + 1]
+        return True, pullback_end_idx, pullback_candles, slope_category, f"ĐK3: Pullback hơi dốc (Slope={slope_value:.2f}, 48-62) - Cần cấu trúc hồi rõ ràng"
+    
+    else:  # slope_value > 62
+        # Pullback quá mạnh → Loại bỏ toàn bộ sóng hồi
+        slope_category = 'too_steep'
+        return False, None, None, slope_category, f"ĐK3: Pullback quá mạnh (Slope={slope_value:.2f} > 62) - Loại bỏ sóng hồi"
 
 def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
     """
@@ -988,16 +1078,23 @@ def m1_scalp_logic(config, error_count=0):
                 
                 log_details.append(f"   ✅ Tìm thấy swing high: Index={swing_high_idx}, Price={swing_high_price:.5f}, RSI={swing_high_rsi:.1f}")
                 
-                # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
-                log_details.append(f"\n🔍 [BUY] ĐK3: Kiểm tra sóng hồi hợp lệ")
-                pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
+                # Điều kiện 3: Kiểm tra sóng hồi hợp lệ (Logic mới)
+                log_details.append(f"\n🔍 [BUY] ĐK3: Kiểm tra sóng hồi hợp lệ (Logic mới)")
+                pullback_valid, pullback_end_idx, pullback_candles, slope_category, pullback_msg = check_valid_pullback_buy(
                     df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32
                 )
                 
                 if not pullback_valid:
                     log_details.append(f"   ❌ {pullback_msg}")
                     buy_fail_reason = f"ĐK3: {pullback_msg}"
+                elif slope_category == 'steep':
+                    # Pullback hơi dốc → KHÔNG ENTRY NGAY, cần cấu trúc hồi rõ ràng
+                    log_details.append(f"   ⚠️ {pullback_msg}")
+                    log_details.append(f"   ⚠️ Pullback hơi dốc - KHÔNG ENTRY NGAY")
+                    log_details.append(f"   ⚠️ Cần chờ cấu trúc hồi rõ ràng (đáy - đỉnh) và vẽ lại trendline")
+                    buy_fail_reason = f"ĐK3: {pullback_msg} - Cần cấu trúc hồi rõ ràng"
                 else:
+                    # slope_category == 'valid' (18-48)
                     buy_dk3_ok = True
                     log_details.append(f"   ✅ {pullback_msg}")
                     
@@ -1720,13 +1817,15 @@ def log_initial_conditions(config):
     print("   ✅ Điều kiện 1: EMA50 > EMA200")
     print("   ✅ Điều kiện 2: Giá phá vỡ đỉnh trước đó tạo Swing High với RSI > 70")
     print("   ✅ Điều kiện 3: Sóng hồi hợp lệ (Pullback hợp lệ)")
-    print("      - Giá không tạo đỉnh cao hơn swing high")
-    print("      - Số nến hồi tối đa: ≤ 30 nến")
-    print("      - RSI hồi về vùng 40 – 50")
-    print("      - Trong quá trình hồi: RSI > 32")
-    print("      - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1")
-    print("      - Giá không phá cấu trúc xu hướng tăng chính")
-    print("      - Trendline sóng hồi (giảm) từ swing high qua các đỉnh thấp dần")
+    print("      A. Swing high hợp lệ:")
+    print("         - UpperWick < 1.3 ATR tại vùng swing high (±2 nến = 5 nến tổng)")
+    print("         - Nếu UpperWick ≥ 1.3 ATR → bỏ cả con sóng hồi")
+    print("      B. Slope Pullback giảm:")
+    print("         - 18 ≤ Slope_Pullback_Down ≤ 48 → Pullback hợp lệ, tiếp tục điều kiện 4")
+    print("         - 48 < Slope_Pullback_Down ≤ 62 → Pullback hơi dốc, KHÔNG ENTRY NGAY")
+    print("           → Cần cấu trúc hồi rõ ràng (đáy - đỉnh) và vẽ lại trendline")
+    print("         - Slope_Pullback_Down > 62 → Pullback quá mạnh, loại bỏ toàn bộ sóng hồi")
+    print("      Công thức: Slope = (max(High_Pre[3] ∪ High_PB[1]) - min(Low_PB[1..6])) / Σ(ATR_14,i)")
     symbol = config.get('symbol', 'EURUSD')
     min_atr = get_min_atr_threshold(symbol, config)
     symbol_upper = symbol.upper()
