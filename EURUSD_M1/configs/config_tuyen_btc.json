@@ -44,8 +44,8 @@
     "_comment_telegram_token": "Token của Telegram Bot (lấy từ @BotFather)",
     "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
     
-    "_comment_telegram_chat_id": "Chat ID để nhận thông báo (lấy từ @userinfobot)",
-    "telegram_chat_id": "1887610382",
+    "_comment_telegram_chat_id": "Chat ID để nhận thông báo (lấy từ @userinfobot). Channel ID bắt đầu bằng -100",
+    "telegram_chat_id": "-1003342368633",
     
     "parameters": {
         "_comment_sl_mode": "Chế độ tính Stop Loss: 'atr' = dynamic theo ATR, 'fixed' = cố định, 'auto_m5' = tự động M5",
