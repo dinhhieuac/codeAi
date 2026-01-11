@@ -382,6 +382,235 @@ def calculate_slope_pullback_down(df_m1, swing_high_idx, pb1_idx):
     
     return slope, f"Slope_Pullback_Down = {slope:.2f} (max_high={max_high:.5f}, min_low={min_low:.5f}, atr_sum={atr_sum:.5f})"
 
+def check_swing_low_lowerwick(df_m1, swing_low_idx):
+    """
+    Kiểm tra LowerWick ≥ 1.3 ATR tại vùng swing low (±2 nến quanh swing low = 5 nến tổng)
+    Nếu LowerWick ≥ 1.3 ATR → bỏ cả con sóng hồi
+    
+    Returns: (is_valid, message)
+    """
+    if swing_low_idx < 2 or swing_low_idx >= len(df_m1) - 2:
+        return False, "Swing low quá gần đầu/cuối, không đủ nến để kiểm tra"
+    
+    # Lấy 5 nến: ±2 nến quanh swing low
+    start_idx = max(0, swing_low_idx - 2)
+    end_idx = min(len(df_m1), swing_low_idx + 3)  # +3 vì iloc là exclusive
+    swing_zone = df_m1.iloc[start_idx:end_idx]
+    
+    # Lấy ATR từ swing low
+    atr_val = df_m1.iloc[swing_low_idx].get('atr', None)
+    if pd.isna(atr_val) or atr_val is None:
+        # Tính ATR nếu không có
+        atr_series = calculate_atr(df_m1.iloc[max(0, swing_low_idx - 14):swing_low_idx + 1], period=14)
+        if len(atr_series) > 0:
+            atr_val = atr_series.iloc[-1]
+    
+    if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+        return False, "Không thể lấy ATR để kiểm tra LowerWick"
+    
+    threshold = 1.3 * atr_val
+    
+    # Kiểm tra LowerWick của từng nến trong vùng swing low
+    for idx, candle in swing_zone.iterrows():
+        lowerwick = min(candle['open'], candle['close']) - candle['low']
+        if lowerwick >= threshold:
+            return False, f"LowerWick ({lowerwick:.5f}) ≥ 1.3 ATR ({threshold:.5f}) tại index {idx} trong vùng swing low"
+    
+    return True, "LowerWick hợp lệ (< 1.3 ATR)"
+
+def find_first_pullback_candle_sell(df_m1, swing_low_idx):
+    """
+    Tìm nến bắt đầu sóng hồi tăng (nến đầu tiên đi ngược lại xu hướng giảm chính)
+    Điều kiện: Close ≥ High của nến liền trước
+    Nến này chỉ hợp lệ khi xuất hiện sau giai đoạn giá đã ngừng tạo Lower Low, hoặc trải qua pha sideway/nén biên độ
+    
+    Returns: (pb1_idx, message) hoặc (None, message) nếu không tìm thấy
+    """
+    if swing_low_idx >= len(df_m1) - 1:
+        return None, "Swing low quá gần cuối"
+    
+    # Tìm nến đầu tiên thỏa điều kiện Close ≥ High của nến liền trước
+    for i in range(swing_low_idx + 1, len(df_m1)):
+        if i == 0:
+            continue
+        
+        prev_candle = df_m1.iloc[i - 1]
+        curr_candle = df_m1.iloc[i]
+        
+        # Điều kiện: Close ≥ High của nến liền trước
+        if curr_candle['close'] >= prev_candle['high']:
+            # Kiểm tra xem có phải sau giai đoạn ngừng tạo Lower Low hoặc sideway không
+            # (Có thể kiểm tra thêm logic này nếu cần)
+            return i, f"Nến hồi tăng đầu tiên tại index {i}"
+    
+    return None, "Không tìm thấy nến hồi tăng đầu tiên"
+
+def calculate_slope_pullback_up(df_m1, swing_low_idx, pb1_idx):
+    """
+    Tính Slope_Pullback_Up theo công thức:
+    Slope_Pullback_Up = (max(High_PB[1..6]) - min(Low_Pre[3] ∪ Low_PB[1])) / Σ(ATR_14,i) với i từ 1 đến 6
+    
+    Trong đó:
+    - PB[1..6] là 6 nến hồi tăng đầu tiên tính từ nến đầu tiên đi ngược lại xu hướng giảm chính
+    - Pre[3] là 3 nến ngay trước nến hồi tăng đầu tiên
+    - PB[1] là nến hồi tăng đầu tiên
+    - ATR_14,i là giá trị ATR(14) của từng nến trong tập 6 nến hồi tăng đầu tiên
+    
+    Returns: (slope_value, message) hoặc (None, message) nếu không đủ dữ liệu
+    """
+    if pb1_idx is None or pb1_idx >= len(df_m1):
+        return None, "Không có nến hồi tăng đầu tiên"
+    
+    # Kiểm tra có đủ 6 nến hồi tăng không
+    if pb1_idx + 5 >= len(df_m1):
+        return None, f"Không đủ 6 nến hồi tăng (chỉ có {len(df_m1) - pb1_idx} nến từ index {pb1_idx})"
+    
+    # Lấy Pre[3]: 3 nến ngay trước PB[1]
+    if pb1_idx < 3:
+        return None, f"Không đủ 3 nến trước PB[1] (chỉ có {pb1_idx} nến)"
+    
+    pre_3_start = pb1_idx - 3
+    pre_3_end = pb1_idx
+    pre_3_candles = df_m1.iloc[pre_3_start:pre_3_end]
+    
+    # Lấy PB[1..6]: 6 nến hồi tăng đầu tiên
+    pb_1_to_6 = df_m1.iloc[pb1_idx:pb1_idx + 6]
+    
+    # Tính max(High_PB[1..6])
+    max_high = pb_1_to_6['high'].max()
+    
+    # Tính min(Low_Pre[3] ∪ Low_PB[1])
+    low_pre_3 = pre_3_candles['low'].min()
+    low_pb_1 = pb_1_to_6.iloc[0]['low']
+    min_low = min(low_pre_3, low_pb_1)
+    
+    # Tính Σ(ATR_14,i) với i từ 1 đến 6
+    atr_sum = 0
+    for i in range(6):
+        idx = pb1_idx + i
+        atr_val = df_m1.iloc[idx].get('atr', None)
+        if pd.isna(atr_val) or atr_val is None:
+            # Tính ATR nếu không có
+            atr_series = calculate_atr(df_m1.iloc[max(0, idx - 14):idx + 1], period=14)
+            if len(atr_series) > 0:
+                atr_val = atr_series.iloc[-1]
+        
+        if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+            return None, f"Không thể lấy ATR tại index {idx}"
+        
+        atr_sum += atr_val
+    
+    if atr_sum <= 0:
+        return None, "Tổng ATR không hợp lệ"
+    
+    # Tính Slope_Pullback_Up
+    numerator = max_high - min_low
+    slope = numerator / atr_sum
+    
+    return slope, f"Slope_Pullback_Up = {slope:.2f} (max_high={max_high:.5f}, min_low={min_low:.5f}, atr_sum={atr_sum:.5f})"
+
+def check_pullback_lowerwick(df_m1, swing_low_idx, pullback_end_idx):
+    """
+    Kiểm tra LowerWick trong toàn bộ sóng hồi (từ swing low đến trước nến phá trendline)
+    Điều kiện 4: Trong toàn bộ sóng hồi không tồn tại bất kỳ nến nào có LowerWick ≥ 1.3 ATR
+    
+    Args:
+        swing_low_idx: Index của swing low
+        pullback_end_idx: Index của nến cuối cùng trong sóng hồi (trước nến phá trendline)
+    
+    Returns: (is_valid, message)
+    """
+    if swing_low_idx >= pullback_end_idx or swing_low_idx >= len(df_m1) - 1:
+        return False, "Swing low index không hợp lệ"
+    
+    # Lấy toàn bộ sóng hồi (từ swing low + 1 đến pullback_end_idx, không bao gồm nến phá trendline)
+    pullback_start = swing_low_idx + 1
+    pullback_end = min(pullback_end_idx + 1, len(df_m1))  # +1 vì iloc là exclusive
+    
+    if pullback_start >= pullback_end:
+        return False, "Không có nến trong sóng hồi để kiểm tra"
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end]
+    
+    if len(pullback_candles) == 0:
+        return False, "Không có nến trong sóng hồi"
+    
+    # Kiểm tra từng nến trong sóng hồi
+    for idx, candle in pullback_candles.iterrows():
+        # Lấy ATR của nến hiện tại
+        atr_val = candle.get('atr', None)
+        if pd.isna(atr_val) or atr_val is None:
+            # Tính ATR nếu không có
+            candle_idx = pullback_candles.index.get_loc(idx)
+            actual_idx = pullback_start + candle_idx
+            atr_series = calculate_atr(df_m1.iloc[max(0, actual_idx - 14):actual_idx + 1], period=14)
+            if len(atr_series) > 0:
+                atr_val = atr_series.iloc[-1]
+        
+        if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+            continue  # Bỏ qua nến không có ATR
+        
+        # Tính LowerWick
+        lowerwick = min(candle['open'], candle['close']) - candle['low']
+        threshold = 1.3 * atr_val
+        
+        # Kiểm tra LowerWick ≥ 1.3 ATR
+        if lowerwick >= threshold:
+            return False, f"LowerWick ({lowerwick:.5f}) ≥ 1.3 ATR ({threshold:.5f}) tại index {idx} trong sóng hồi"
+    
+    return True, "Không có nến nào trong sóng hồi có LowerWick ≥ 1.3 ATR"
+
+def check_pullback_upperwick(df_m1, swing_high_idx, pullback_end_idx):
+    """
+    Kiểm tra UpperWick trong toàn bộ sóng hồi (từ swing high đến trước nến phá trendline)
+    Điều kiện 4: Trong toàn bộ sóng hồi không tồn tại bất kỳ nến nào có UpperWick ≥ 1.3 ATR
+    
+    Args:
+        swing_high_idx: Index của swing high
+        pullback_end_idx: Index của nến cuối cùng trong sóng hồi (trước nến phá trendline)
+    
+    Returns: (is_valid, message)
+    """
+    if swing_high_idx >= pullback_end_idx or swing_high_idx >= len(df_m1) - 1:
+        return False, "Swing high index không hợp lệ"
+    
+    # Lấy toàn bộ sóng hồi (từ swing high + 1 đến pullback_end_idx, không bao gồm nến phá trendline)
+    pullback_start = swing_high_idx + 1
+    pullback_end = min(pullback_end_idx + 1, len(df_m1))  # +1 vì iloc là exclusive
+    
+    if pullback_start >= pullback_end:
+        return False, "Không có nến trong sóng hồi để kiểm tra"
+    
+    pullback_candles = df_m1.iloc[pullback_start:pullback_end]
+    
+    if len(pullback_candles) == 0:
+        return False, "Không có nến trong sóng hồi"
+    
+    # Kiểm tra từng nến trong sóng hồi
+    for idx, candle in pullback_candles.iterrows():
+        # Lấy ATR của nến hiện tại
+        atr_val = candle.get('atr', None)
+        if pd.isna(atr_val) or atr_val is None:
+            # Tính ATR nếu không có
+            candle_idx = pullback_candles.index.get_loc(idx)
+            actual_idx = pullback_start + candle_idx
+            atr_series = calculate_atr(df_m1.iloc[max(0, actual_idx - 14):actual_idx + 1], period=14)
+            if len(atr_series) > 0:
+                atr_val = atr_series.iloc[-1]
+        
+        if atr_val is None or pd.isna(atr_val) or atr_val <= 0:
+            continue  # Bỏ qua nến không có ATR
+        
+        # Tính UpperWick
+        upperwick = candle['high'] - max(candle['open'], candle['close'])
+        threshold = 1.3 * atr_val
+        
+        # Kiểm tra UpperWick ≥ 1.3 ATR
+        if upperwick >= threshold:
+            return False, f"UpperWick ({upperwick:.5f}) ≥ 1.3 ATR ({threshold:.5f}) tại index {idx} trong sóng hồi"
+    
+    return True, "Không có nến nào trong sóng hồi có UpperWick ≥ 1.3 ATR"
+
 def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
     """
     Kiểm tra sóng hồi hợp lệ cho BUY (Điều kiện 3 mới):
@@ -442,98 +671,61 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
 
 def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
     """
-    Kiểm tra sóng hồi hợp lệ cho SELL:
-    - Giá không tạo đáy thấp hơn swing low
-    - Số nến hồi tối đa: ≤ max_candles (default 30)
-    - RSI hồi về vùng rsi_target_min - rsi_target_max (default 50-60)
-    - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
-    - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
-    - Giá không phá cấu trúc xu hướng giảm chính
+    Kiểm tra sóng hồi hợp lệ cho SELL (Điều kiện 3 mới):
     
-    Returns: (is_valid, pullback_end_idx, pullback_candles, message)
+    A. Swing low hợp lệ:
+    - Kiểm tra LowerWick ≥ 1.3 ATR tại vùng swing low (±2 nến = 5 nến tổng)
+    - Nếu LowerWick ≥ 1.3 ATR → bỏ cả con sóng hồi
+    
+    B. Slope Pullback tăng:
+    - 18 ≤ Slope_Pullback_Up ≤ 48 → Pullback hợp lệ, tiếp tục điều kiện 4
+    - 48 < Slope_Pullback_Up ≤ 62 → Pullback hơi dốc, không entry ngay, cần cấu trúc hồi rõ ràng
+    - Slope_Pullback_Up > 62 → Pullback quá mạnh, loại bỏ toàn bộ sóng hồi
+    
+    Returns: (is_valid, pullback_end_idx, pullback_candles, slope_category, message)
+    slope_category: 'valid' (18-48), 'steep' (48-62), 'too_steep' (>62), None nếu không hợp lệ
     """
     if swing_low_idx >= len(df_m1) - 1:
-        return False, None, None, "Swing low quá gần cuối"
+        return False, None, None, None, "Swing low quá gần cuối"
     
-    swing_low_price = df_m1.iloc[swing_low_idx]['low']
+    # A. Kiểm tra Swing low hợp lệ: LowerWick < 1.3 ATR tại vùng swing low (±2 nến)
+    lowerwick_ok, lowerwick_msg = check_swing_low_lowerwick(df_m1, swing_low_idx)
+    if not lowerwick_ok:
+        return False, None, None, None, f"ĐK3A: {lowerwick_msg}"
     
-    # Tìm điểm kết thúc sóng hồi (từ swing low đến hiện tại hoặc max_candles)
-    pullback_start = swing_low_idx + 1
-    pullback_end = min(pullback_start + max_candles, len(df_m1) - 1)
+    # B. Tìm nến bắt đầu sóng hồi tăng (PB[1])
+    pb1_idx, pb1_msg = find_first_pullback_candle_sell(df_m1, swing_low_idx)
+    if pb1_idx is None:
+        return False, None, None, None, f"ĐK3B: {pb1_msg}"
     
-    pullback_candles = df_m1.iloc[pullback_start:pullback_end + 1]
+    # C. Tính Slope_Pullback_Up
+    slope_value, slope_msg = calculate_slope_pullback_up(df_m1, swing_low_idx, pb1_idx)
+    if slope_value is None:
+        return False, None, None, None, f"ĐK3C: {slope_msg}"
     
-    if len(pullback_candles) == 0:
-        return False, None, None, "Không có nến sau swing low"
+    # D. Phân loại slope và xử lý
+    slope_category = None
+    if 18 <= slope_value <= 48:
+        # Pullback hợp lệ → Tiếp tục kiểm tra điều kiện 4
+        slope_category = 'valid'
+        # Lấy pullback candles từ PB[1] đến ít nhất 6 nến (hoặc đến khi có đủ dữ liệu)
+        pullback_end_idx = min(pb1_idx + 5, len(df_m1) - 1)
+        pullback_candles = df_m1.iloc[pb1_idx:pullback_end_idx + 1]
+        return True, pullback_end_idx, pullback_candles, slope_category, f"ĐK3: Pullback hợp lệ (Slope={slope_value:.2f}, 18-48)"
     
-    # 1. Kiểm tra: Giá không tạo đáy thấp hơn swing low
-    min_low_after_swing = pullback_candles['low'].min()
-    if min_low_after_swing < swing_low_price:
-        return False, None, None, f"Giá tạo đáy thấp hơn swing low: {min_low_after_swing:.5f} < {swing_low_price:.5f}"
+    elif 48 < slope_value <= 62:
+        # Pullback hơi dốc → KHÔNG ENTRY NGAY
+        # Cần cấu trúc hồi rõ ràng (đỉnh - đáy) và vẽ lại trendline
+        slope_category = 'steep'
+        # Vẫn trả về True nhưng với category 'steep' để xử lý đặc biệt
+        pullback_end_idx = min(pb1_idx + 5, len(df_m1) - 1)
+        pullback_candles = df_m1.iloc[pb1_idx:pullback_end_idx + 1]
+        return True, pullback_end_idx, pullback_candles, slope_category, f"ĐK3: Pullback hơi dốc (Slope={slope_value:.2f}, 48-62) - Cần cấu trúc hồi rõ ràng"
     
-    # 2. Kiểm tra số nến hồi ≤ max_candles
-    if len(pullback_candles) > max_candles:
-        return False, None, None, f"Số nến hồi ({len(pullback_candles)}) > {max_candles}"
-    
-    # 3. Kiểm tra RSI trong quá trình hồi < rsi_max_during_pullback
-    pullback_rsi = pullback_candles.get('rsi', pd.Series())
-    if len(pullback_rsi) > 0:
-        max_rsi_during_pullback = pullback_rsi.max()
-        if max_rsi_during_pullback >= rsi_max_during_pullback:
-            return False, None, None, f"RSI trong quá trình hồi ({max_rsi_during_pullback:.1f}) >= {rsi_max_during_pullback}"
-    
-    # 3b. Kiểm tra: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
-    # Lấy ATR từ swing low (hoặc nến gần nhất có ATR)
-    atr_val = None
-    for i in range(swing_low_idx, max(0, swing_low_idx - 20), -1):
-        atr_val = df_m1.iloc[i].get('atr', None)
-        if pd.notna(atr_val):
-            break
-    
-    if atr_val is None or pd.isna(atr_val):
-        # Nếu không tìm thấy ATR, tính ATR từ df_m1
-        atr_series = calculate_atr(df_m1.iloc[max(0, swing_low_idx - 14):swing_low_idx + 1], period=14)
-        if len(atr_series) > 0:
-            atr_val = atr_series.iloc[-1]
-    
-    # ATR là bắt buộc để kiểm tra điều kiện này
-    if atr_val is None or pd.isna(atr_val):
-        return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến tăng"
-    
-    min_body_threshold = 1.2 * atr_val
-    # Kiểm tra từng nến trong pullback (từ swing low đến trước nến phá trendline)
-    # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
-    candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
-    
-    for idx, candle in candles_to_check.iterrows():
-        # Kiểm tra nến tăng (bullish: close > open)
-        if candle['close'] > candle['open']:
-            body_size = abs(candle['close'] - candle['open'])
-            if body_size >= min_body_threshold:
-                return False, None, None, f"Có nến tăng với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
-    
-    # 4. Kiểm tra RSI hồi về vùng target (50-60) - kiểm tra nến cuối hoặc gần cuối
-    last_rsi = pullback_candles.iloc[-1].get('rsi', None)
-    if pd.notna(last_rsi):
-        if not (rsi_target_min <= last_rsi <= rsi_target_max):
-            # Có thể RSI chưa về vùng target nhưng vẫn đang hồi
-            # Kiểm tra xem có nến nào trong vùng target không
-            rsi_in_target = pullback_rsi[(pullback_rsi >= rsi_target_min) & (pullback_rsi <= rsi_target_max)]
-            if len(rsi_in_target) == 0:
-                return False, None, None, f"RSI không hồi về vùng {rsi_target_min}-{rsi_target_max} (hiện tại: {last_rsi:.1f})"
-    
-    # 5. Kiểm tra giá không phá cấu trúc xu hướng giảm (kiểm tra Higher Highs)
-    if swing_low_idx > 10:
-        before_swing = df_m1.iloc[swing_low_idx - 20:swing_low_idx]
-        if len(before_swing) > 0:
-            prev_swing_high = before_swing['high'].max()
-            pullback_high = pullback_candles['high'].max()
-            if pullback_high > prev_swing_high * 1.0001:  # 0.1 pip buffer
-                return False, None, None, f"Giá phá cấu trúc: Pullback high {pullback_high:.5f} > Prev swing high {prev_swing_high:.5f}"
-    
-    pullback_end_idx = pullback_end
-    
-    return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
+    else:  # slope_value > 62
+        # Pullback quá mạnh → Loại bỏ toàn bộ sóng hồi
+        slope_category = 'too_steep'
+        return False, None, None, slope_category, f"ĐK3: Pullback quá mạnh (Slope={slope_value:.2f} > 62) - Loại bỏ sóng hồi"
 
 def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
     """
@@ -705,7 +897,7 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     ✅ Giá đóng cửa vượt lên trên trendline sóng hồi
     ✅ Giá đóng cửa ≥ EMA 50
     ✅ RSI đang hướng lên (RSI hiện tại > RSI nến trước)
-    ✅ ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    ✅ ADX ≥ 18 (Điều kiện 5: Nến xác nhận)
     
     Returns: (is_break, message)
     """
@@ -746,16 +938,16 @@ def check_trendline_break_buy(df_m1, trendline_info, current_candle_idx, ema50_v
     else:
         return False, "Không có nến trước để so sánh RSI"
     
-    # 4. ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    # 4. ADX ≥ 18 (Điều kiện 5: Nến xác nhận)
     current_adx = current_candle.get('adx', None)
     if pd.isna(current_adx) or current_adx is None:
         return False, "ADX không có giá trị"
     
-    adx_ok = current_adx >= 20
+    adx_ok = current_adx >= 18
     if not adx_ok:
-        return False, f"ADX ({current_adx:.1f}) < 20"
+        return False, f"ADX ({current_adx:.1f}) < 18"
     
-    return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 20"
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} > Trendline {trendline_value:.5f}, Close >= EMA50 {ema50_val:.5f}, RSI rising {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 18"
 
 def check_bearish_divergence(df_m1, lookback=50):
     """
@@ -857,7 +1049,7 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     ✅ Giá đóng cửa phá xuống dưới trendline sóng hồi
     ✅ Giá đóng cửa ≤ EMA 50
     ✅ RSI đang hướng xuống (RSI hiện tại < RSI nến trước)
-    ✅ ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    ✅ ADX ≥ 18 (Điều kiện 5: Nến xác nhận)
     
     Returns: (is_break, message)
     """
@@ -898,16 +1090,16 @@ def check_trendline_break_sell(df_m1, trendline_info, current_candle_idx, ema50_
     else:
         return False, "Không có nến trước để so sánh RSI"
     
-    # 4. ADX ≥ 20 (Điều kiện 5: Nến xác nhận)
+    # 4. ADX ≥ 18 (Điều kiện 5: Nến xác nhận)
     current_adx = current_candle.get('adx', None)
     if pd.isna(current_adx) or current_adx is None:
         return False, "ADX không có giá trị"
     
-    adx_ok = current_adx >= 20
+    adx_ok = current_adx >= 18
     if not adx_ok:
-        return False, f"ADX ({current_adx:.1f}) < 20"
+        return False, f"ADX ({current_adx:.1f}) < 18"
     
-    return True, f"Break confirmed: Close {current_candle['close']:.5f} < Trendline {trendline_value:.5f}, Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 20"
+    return True, f"Break confirmed: Close {current_candle['close']:.5f} < Trendline {trendline_value:.5f}, Close <= EMA50 {ema50_val:.5f}, RSI declining {prev_rsi:.1f} -> {current_rsi:.1f}, ADX {current_adx:.1f} >= 18"
 
 def m1_scalp_logic(config, error_count=0):
     """
@@ -1120,7 +1312,8 @@ def m1_scalp_logic(config, error_count=0):
                         log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                         log_details.append(f"   📍 Trendline được vẽ từ index {swing_high_idx} đến {trendline_end_idx}")
                         
-                        # Điều kiện 4: ATR (đã check ở trên)
+                        # Điều kiện 4: ATR (đã check ở trên) và UpperWick trong sóng hồi
+                        log_details.append(f"\n🔍 [BUY] ĐK4: Kiểm tra ATR và UpperWick trong sóng hồi")
                         buy_dk4_ok = atr_ok
                         if not buy_dk4_ok:
                             if pd.notna(atr_val):
@@ -1133,6 +1326,16 @@ def m1_scalp_logic(config, error_count=0):
                                     buy_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                             else:
                                 buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                        else:
+                            # Kiểm tra UpperWick trong toàn bộ sóng hồi
+                            upperwick_ok, upperwick_msg = check_pullback_upperwick(df_m1, swing_high_idx, pullback_end_idx)
+                            if not upperwick_ok:
+                                log_details.append(f"   ❌ {upperwick_msg}")
+                                buy_dk4_ok = False
+                                buy_fail_reason = f"ĐK4: {upperwick_msg}"
+                            else:
+                                log_details.append(f"   ✅ {upperwick_msg}")
+                                buy_dk4_ok = True
                         
                         # Điều kiện 5: Nến xác nhận phá vỡ trendline
                         log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -1233,18 +1436,25 @@ def m1_scalp_logic(config, error_count=0):
                     
                     log_details.append(f"   ✅ Tìm thấy swing low: Index={swing_low_idx}, Price={swing_low_price:.5f}, RSI={swing_low_rsi:.1f}")
                     
-                    # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
-                    log_details.append(f"\n🔍 [SELL] ĐK3: Kiểm tra sóng hồi hợp lệ")
-                    pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
-                        df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
-                    )
-                    
-                    if not pullback_valid:
-                        log_details.append(f"   ❌ {pullback_msg}")
-                        sell_fail_reason = f"ĐK3: {pullback_msg}"
-                    else:
-                        sell_dk3_ok = True
-                        log_details.append(f"   ✅ {pullback_msg}")
+                        # Điều kiện 3: Kiểm tra sóng hồi hợp lệ (Logic mới)
+                        log_details.append(f"\n🔍 [SELL] ĐK3: Kiểm tra sóng hồi hợp lệ (Logic mới)")
+                        pullback_valid, pullback_end_idx, pullback_candles, slope_category, pullback_msg = check_valid_pullback_sell(
+                            df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
+                        )
+                        
+                        if not pullback_valid:
+                            log_details.append(f"   ❌ {pullback_msg}")
+                            sell_fail_reason = f"ĐK3: {pullback_msg}"
+                        elif slope_category == 'steep':
+                            # Pullback hơi dốc → KHÔNG ENTRY NGAY, cần cấu trúc hồi rõ ràng
+                            log_details.append(f"   ⚠️ {pullback_msg}")
+                            log_details.append(f"   ⚠️ Pullback hơi dốc - KHÔNG ENTRY NGAY")
+                            log_details.append(f"   ⚠️ Cần chờ cấu trúc hồi rõ ràng (đỉnh - đáy) và vẽ lại trendline")
+                            sell_fail_reason = f"ĐK3: {pullback_msg} - Cần cấu trúc hồi rõ ràng"
+                        else:
+                            # slope_category == 'valid' (18-48)
+                            sell_dk3_ok = True
+                            log_details.append(f"   ✅ {pullback_msg}")
                         
                         # Vẽ trendline sóng hồi
                         log_details.append(f"\n🔍 [SELL] ĐK3b: Vẽ trendline sóng hồi")
@@ -1268,7 +1478,8 @@ def m1_scalp_logic(config, error_count=0):
                             log_details.append(f"   ✅ Trendline đã vẽ: Slope={trendline_info['slope']:.8f}, Số điểm: {len(trendline_info['points'])}")
                             log_details.append(f"   📍 Trendline được vẽ từ index {swing_low_idx} đến {trendline_end_idx}")
                             
-                            # Điều kiện 4: ATR (đã check ở trên)
+                            # Điều kiện 4: ATR (đã check ở trên) và LowerWick trong sóng hồi
+                            log_details.append(f"\n🔍 [SELL] ĐK4: Kiểm tra ATR và LowerWick trong sóng hồi")
                             sell_dk4_ok = atr_ok
                             if not sell_dk4_ok:
                                 if pd.notna(atr_val):
@@ -1281,6 +1492,16 @@ def m1_scalp_logic(config, error_count=0):
                                         sell_fail_reason = f"ĐK4: ATR ({atr_val:.5f}) < {min_atr:.5f}"
                                 else:
                                     sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
+                            else:
+                                # Kiểm tra LowerWick trong toàn bộ sóng hồi
+                                lowerwick_ok, lowerwick_msg = check_pullback_lowerwick(df_m1, swing_low_idx, pullback_end_idx)
+                                if not lowerwick_ok:
+                                    log_details.append(f"   ❌ {lowerwick_msg}")
+                                    sell_dk4_ok = False
+                                    sell_fail_reason = f"ĐK4: {lowerwick_msg}"
+                                else:
+                                    log_details.append(f"   ✅ {lowerwick_msg}")
+                                    sell_dk4_ok = True
                             
                             # Điều kiện 5: Nến xác nhận phá vỡ trendline
                             log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -1830,16 +2051,25 @@ def log_initial_conditions(config):
     min_atr = get_min_atr_threshold(symbol, config)
     symbol_upper = symbol.upper()
     if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho XAUUSD)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} USD (cho XAUUSD)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing high đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có UpperWick ≥ 1.3 ATR")
     elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho BTCUSD)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} USD (cho BTCUSD)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing high đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có UpperWick ≥ 1.3 ATR")
     else:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} (cho Forex)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing high đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có UpperWick ≥ 1.3 ATR")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
     print("      - Giá đóng cửa vượt lên trên trendline sóng hồi")
     print("      - Giá đóng cửa ≥ EMA 50")
     print("      - RSI đang hướng lên (RSI hiện tại > RSI nến trước)")
-    print("      - ADX ≥ 20 (Nến xác nhận)")
+    print("      - ADX ≥ 18 (Nến xác nhận)")
     print("   ✅ Điều kiện 6: Không có Bearish Divergence")
     print("      - Giá không tạo Higher High với RSI Lower High")
     print("   ✅ Điều kiện 7: RSI(14)_M5 >= 55 và <= 65")
@@ -1851,27 +2081,38 @@ def log_initial_conditions(config):
     print("   ✅ Điều kiện 1: EMA50 < EMA200")
     print("   ✅ Điều kiện 2: Giá phá vỡ đáy trước đó tạo Swing Low với RSI < 30")
     print("   ✅ Điều kiện 3: Sóng hồi hợp lệ (Pullback hợp lệ)")
-    print("      - Giá không tạo đáy thấp hơn swing low")
-    print("      - Số nến hồi tối đa: ≤ 30 nến")
-    print("      - RSI hồi về vùng 50 – 60")
-    print("      - Trong quá trình hồi: RSI < 68")
-    print("      - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1")
-    print("      - Giá không phá cấu trúc xu hướng giảm chính")
-    print("      - Trendline sóng hồi (tăng) từ swing low qua các đáy cao dần")
+    print("      A. Swing low hợp lệ:")
+    print("         - LowerWick < 1.3 ATR tại vùng swing low (±2 nến = 5 nến tổng)")
+    print("         - Nếu LowerWick ≥ 1.3 ATR → bỏ cả con sóng hồi")
+    print("      B. Slope Pullback tăng:")
+    print("         - 18 ≤ Slope_Pullback_Up ≤ 48 → Pullback hợp lệ, tiếp tục điều kiện 4")
+    print("         - 48 < Slope_Pullback_Up ≤ 62 → Pullback hơi dốc, KHÔNG ENTRY NGAY")
+    print("           → Cần cấu trúc hồi rõ ràng (đỉnh - đáy) và vẽ lại trendline")
+    print("         - Slope_Pullback_Up > 62 → Pullback quá mạnh, loại bỏ toàn bộ sóng hồi")
+    print("      Công thức: Slope = (max(High_PB[1..6]) - min(Low_Pre[3] ∪ Low_PB[1])) / Σ(ATR_14,i)")
     symbol = config.get('symbol', 'EURUSD')
     min_atr = get_min_atr_threshold(symbol, config)
     symbol_upper = symbol.upper()
     if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho XAUUSD)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} USD (cho XAUUSD)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing low đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có LowerWick ≥ 1.3 ATR")
     elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} USD (cho BTCUSD)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} USD (cho BTCUSD)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing low đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có LowerWick ≥ 1.3 ATR")
     else:
-        print(f"   ✅ Điều kiện 4: ATR 14 >= {min_atr} (cho Forex)")
+        print(f"   ✅ Điều kiện 4: Sóng hồi hợp lệ (Pullback hợp lệ)")
+        print(f"      - ATR 14 >= {min_atr} (cho Forex)")
+        print(f"      - Trong toàn bộ sóng hồi (từ swing low đến trước nến phá trendline)")
+        print(f"        không tồn tại bất kỳ nến nào có LowerWick ≥ 1.3 ATR")
     print("   ✅ Điều kiện 5: Nến xác nhận phá vỡ trendline")
     print("      - Giá đóng cửa phá xuống dưới trendline sóng hồi")
     print("      - Giá đóng cửa ≤ EMA 50")
     print("      - RSI đang hướng xuống (RSI hiện tại < RSI nến trước)")
-    print("      - ADX ≥ 20 (Nến xác nhận)")
+    print("      - ADX ≥ 18 (Nến xác nhận)")
     print("   ✅ Điều kiện 6: Không có Bullish Divergence")
     print("      - Giá không tạo Lower Low với RSI Higher Low")
     print("   ✅ Điều kiện 7: RSI(14)_M5 >= 35 và <= 45")
