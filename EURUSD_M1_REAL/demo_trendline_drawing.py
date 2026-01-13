@@ -32,19 +32,233 @@ import sys
 # Để chạy demo mode (dữ liệu giả lập):
 #   TICKET_NUMBER = None
 # ===========================================
-TICKET_NUMBER = 3433918380  # None = demo mode, hoặc nhập ticket (ví dụ: 1044748590)
-TICKET_NUMBER=3422943403
-TICKET_NUMBER=3457303946
-if TICKET_NUMBER is not None:
-    import MetaTrader5 as mt5
-    sys.path.append('..')
-    from utils import load_config, connect_mt5, get_data
-    from tuyen_trend_sclap_xau import (
-        calculate_pullback_trendline, 
-        calculate_pullback_trendline_buy,
-        find_swing_high_with_rsi,
-        find_swing_low_with_rsi
-    )
+
+# Import MT5 và utils
+import MetaTrader5 as mt5
+sys.path.append('..')
+from utils import load_config, connect_mt5, get_data
+from tuyen_trend_sclap_xau import (
+    calculate_pullback_trendline, 
+    calculate_pullback_trendline_buy,
+    find_swing_high_with_rsi,
+    find_swing_low_with_rsi
+)
+
+def find_ticket_by_datetime(target_datetime, symbol=None):
+    """
+    Tìm ticket của lệnh gần nhất với thời gian đã cho
+    Args:
+        target_datetime: datetime object hoặc string (format: 'YYYY-MM-DD HH:MM:SS')
+        symbol: Symbol để filter (None = tất cả symbols)
+    Returns:
+        ticket_number hoặc None
+    """
+    if isinstance(target_datetime, str):
+        try:
+            target_datetime = datetime.strptime(target_datetime, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            try:
+                target_datetime = datetime.strptime(target_datetime, '%Y-%m-%d %H:%M')
+            except ValueError:
+                print(f"[ERROR] Khong the parse datetime: {target_datetime}")
+                return None
+    
+    # Load config
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "configs", "config_tuyen_xau.json")
+    if not os.path.exists(config_path):
+        print(f"[ERROR] Khong tim thay config: {config_path}")
+        return None
+    
+    config = load_config(config_path)
+    if not config:
+        print(f"[ERROR] Khong the load config")
+        return None
+    
+    # Connect MT5
+    if not connect_mt5(config):
+        print(f"[ERROR] Khong the ket noi MT5")
+        return None
+    
+    # Tìm trong positions đang mở
+    positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+    best_ticket = None
+    best_diff = None
+    
+    if positions:
+        for pos in positions:
+            pos_time = datetime.fromtimestamp(pos.time)
+            diff = abs((pos_time - target_datetime).total_seconds())
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_ticket = pos.ticket
+    
+    # Tìm trong history (positions đã đóng)
+    # Lấy deals trong khoảng thời gian ±1 ngày
+    from_time = int((target_datetime - timedelta(days=1)).timestamp())
+    to_time = int((target_datetime + timedelta(days=1)).timestamp())
+    
+    deals = mt5.history_deals_get(from_time, to_time, group="*")
+    if deals:
+        for deal in deals:
+            if deal.entry == mt5.DEAL_ENTRY_IN:
+                if symbol and deal.symbol != symbol:
+                    continue
+                deal_time = datetime.fromtimestamp(deal.time)
+                diff = abs((deal_time - target_datetime).total_seconds())
+                if best_diff is None or diff < best_diff:
+                    best_diff = diff
+                    best_ticket = deal.position_id
+    
+    if best_ticket:
+        print(f"[INFO] Tim thay ticket {best_ticket} gan nhat voi thoi gian {target_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Chenh lech: {best_diff/60:.1f} phut")
+        return best_ticket
+    else:
+        print(f"[ERROR] Khong tim thay lenh nao gan voi thoi gian {target_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        return None
+
+def get_user_input():
+    """
+    Lấy input từ người dùng: ticket hoặc thời gian
+    Returns:
+        ticket_number (int) hoặc None
+    """
+    print("\n" + "="*80)
+    print("VE TRENDLINE TU TICKET HOAC THOI GIAN")
+    print("="*80)
+    print("\nChon che do:")
+    print("  1. Nhap ticket (so)")
+    print("  2. Nhap thoi gian (YYYY-MM-DD HH:MM:SS hoac YYYY-MM-DD HH:MM)")
+    print("  3. Demo mode (du lieu gia lap)")
+    print("  0. Thoat")
+    
+    choice = input("\nNhap lua chon (1/2/3/0): ").strip()
+    
+    if choice == "0":
+        print("Thoat chuong trinh.")
+        sys.exit(0)
+    elif choice == "1":
+        ticket_input = input("Nhap ticket number: ").strip()
+        try:
+            ticket_number = int(ticket_input)
+            return ticket_number
+        except ValueError:
+            print(f"[ERROR] Ticket phai la so nguyen. Nhap: {ticket_input}")
+            return None
+    elif choice == "2":
+        time_input = input("Nhap thoi gian (YYYY-MM-DD HH:MM:SS hoac YYYY-MM-DD HH:MM): ").strip()
+        ticket_number = find_ticket_by_datetime(time_input)
+        return ticket_number
+    elif choice == "3":
+        return None  # Demo mode
+    else:
+        print(f"[ERROR] Lua chon khong hop le: {choice}")
+        return None
+
+def calculate_pullback_trendline_buy_with_debug(df_m1, swing_high_idx, pullback_end_idx):
+    """
+    Wrapper function với debug logging cho calculate_pullback_trendline_buy
+    """
+    print(f"\n[DEBUG] calculate_pullback_trendline_buy:")
+    print(f"   swing_high_idx={swing_high_idx}, pullback_end_idx={pullback_end_idx}")
+    print(f"   Khoang cach: {pullback_end_idx - swing_high_idx} nen")
+    print(f"   df_m1 length: {len(df_m1)}")
+    
+    if swing_high_idx >= len(df_m1) - 1:
+        print(f"   [ERROR] swing_high_idx ({swing_high_idx}) >= len(df_m1) - 1 ({len(df_m1) - 1})")
+        return None
+    
+    # Anchor 1
+    anchor1_pos = swing_high_idx
+    anchor1_price = df_m1.iloc[swing_high_idx]['high']
+    print(f"   Anchor 1: Index={anchor1_pos}, Price={anchor1_price:.5f}")
+    
+    # Anchor 2: Tìm trong khoảng 15-30
+    anchor2_start_idx_preferred = swing_high_idx + 15
+    anchor2_end_idx_preferred = min(swing_high_idx + 30, len(df_m1) - 1, pullback_end_idx)
+    print(f"   Anchor 2 preferred range: [{anchor2_start_idx_preferred}, {anchor2_end_idx_preferred}]")
+    
+    # Fallback logic
+    if anchor2_start_idx_preferred >= len(df_m1) or anchor2_start_idx_preferred > anchor2_end_idx_preferred:
+        print(f"   [FALLBACK] Khong du nen trong khoang 15-30, su dung fallback")
+        anchor2_start_idx = swing_high_idx + 3
+        anchor2_end_idx = min(pullback_end_idx, len(df_m1) - 1)
+        print(f"   Anchor 2 fallback range: [{anchor2_start_idx}, {anchor2_end_idx}]")
+        
+        if anchor2_start_idx >= len(df_m1) or anchor2_start_idx >= anchor2_end_idx:
+            print(f"   [ERROR] Khong du nen toi thieu trong fallback range")
+            return None
+    else:
+        anchor2_start_idx = anchor2_start_idx_preferred
+        anchor2_end_idx = anchor2_end_idx_preferred
+        print(f"   [OK] Su dung khoang uu tien 15-30")
+    
+    # Tìm Anchor 2
+    search_range = df_m1.iloc[anchor2_start_idx:anchor2_end_idx + 1]
+    if len(search_range) == 0:
+        print(f"   [ERROR] search_range rong")
+        return None
+    
+    max_high_pos_in_range = search_range['high'].values.argmax()
+    anchor2_pos = anchor2_start_idx + max_high_pos_in_range
+    anchor2_price = df_m1.iloc[anchor2_pos]['high']
+    print(f"   Anchor 2: Index={anchor2_pos}, Price={anchor2_price:.5f}")
+    
+    if anchor2_pos <= anchor1_pos:
+        print(f"   [ERROR] anchor2_pos ({anchor2_pos}) <= anchor1_pos ({anchor1_pos})")
+        return None
+    
+    # Tính trendline
+    x_values = np.array([anchor1_pos, anchor2_pos])
+    y_values = np.array([anchor1_price, anchor2_price])
+    
+    n = 2
+    sum_x = x_values.sum()
+    sum_y = y_values.sum()
+    sum_xy = (x_values * y_values).sum()
+    sum_x2 = (x_values * x_values).sum()
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if abs(denominator) < 1e-10:
+        print(f"   [ERROR] denominator qua nho: {denominator}")
+        return None
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    print(f"   Trendline: Slope={slope:.8f}, Intercept={intercept:.5f}")
+    
+    def trendline_func(pos):
+        return slope * pos + intercept
+    
+    # Validation
+    print(f"   [VALIDATION] Kiem tra cac nen giua Anchor 1 va Anchor 2...")
+    validation_failed = False
+    for i in range(anchor1_pos + 1, anchor2_pos):
+        if i >= len(df_m1):
+            break
+        candle = df_m1.iloc[i]
+        trendline_value = trendline_func(i)
+        if candle['close'] >= trendline_value:
+            print(f"   [VALIDATION FAILED] Nen {i}: Close={candle['close']:.5f} >= Trendline={trendline_value:.5f}")
+            validation_failed = True
+            break
+    
+    if validation_failed:
+        print(f"   [ERROR] Validation failed - co nen Close >= Trendline")
+        return None
+    
+    print(f"   [OK] Validation passed - tat ca nen co Close < Trendline")
+    
+    return {
+        'slope': slope,
+        'intercept': intercept,
+        'func': trendline_func,
+        'points': [
+            {'pos': anchor1_pos, 'price': anchor1_price, 'idx': df_m1.index[anchor1_pos] if hasattr(df_m1.index[anchor1_pos], '__iter__') else anchor1_pos},
+            {'pos': anchor2_pos, 'price': anchor2_price, 'idx': df_m1.index[anchor2_pos] if hasattr(df_m1.index[anchor2_pos], '__iter__') else anchor2_pos}
+        ]
+    }
 
 def draw_trendline_from_ticket(ticket_number):
     """
@@ -260,7 +474,14 @@ def draw_trendline_from_ticket(ticket_number):
         
         # Vẽ trendline từ swing high đến entry
         # Sử dụng df_m1 gốc với index đúng
-        trendline_info = calculate_pullback_trendline_buy(df_m1, swing_idx, entry_idx)
+        print(f"[DEBUG] Dang tinh trendline: swing_idx={swing_idx}, entry_idx={entry_idx}, khoang cach={entry_idx - swing_idx} nen")
+        # Sử dụng hàm với debug logging
+        trendline_info = calculate_pullback_trendline_buy_with_debug(df_m1, swing_idx, entry_idx)
+        
+        if trendline_info is None:
+            print(f"[WARNING] Khong the ve trendline")
+        else:
+            print(f"[OK] Ve duoc trendline voi {len(trendline_info['points'])} diem")
         
     else:  # SELL
         # SELL: Tìm swing low với RSI < 30 trước entry
@@ -331,8 +552,8 @@ def draw_trendline_from_ticket(ticket_number):
     plot_df = df_m1.iloc[start_idx:end_idx].copy()
     plot_df.reset_index(drop=True, inplace=True)
     
-    # Vẽ candlestick
-    width = 0.6
+    # Vẽ candlestick - Body nhỏ, wick dài để dễ nhìn trendline
+    width = 0.3  # Giảm width từ 0.6 xuống 0.3 để body nhỏ hơn
     for i in range(len(plot_df)):
         idx = start_idx + i
         candle = df_m1.iloc[idx]
@@ -348,16 +569,20 @@ def draw_trendline_from_ticket(ticket_number):
             body_bottom = candle['close']
             body_top = candle['open']
         
-        # Vẽ body (thân nến)
+        # Vẽ body (thân nến) - nhỏ hơn và trong suốt hơn
         body_height = abs(candle['close'] - candle['open'])
         if body_height > 0:
             rect = plt.Rectangle((x_pos - width/2, body_bottom), width, body_height, 
-                               facecolor=color, edgecolor='black', linewidth=0.5, alpha=0.7)
+                               facecolor=color, edgecolor='black', linewidth=0.3, alpha=0.5)
             ax.add_patch(rect)
+        else:
+            # Doji - vẽ đường ngang mỏng
+            ax.plot([x_pos - width/2, x_pos + width/2], [candle['close'], candle['close']], 
+                   color='black', linewidth=0.5, alpha=0.5)
         
-        # Vẽ wick (bấc nến)
+        # Vẽ wick (bấc nến) - dài và rõ hơn
         ax.plot([x_pos, x_pos], [candle['low'], candle['high']], 
-               color='black', linewidth=0.5, alpha=0.7)
+               color='black', linewidth=1.0, alpha=0.8, zorder=1)
     
     # Vẽ EMA
     ema50_plot = [df_m1.iloc[start_idx + i]['ema50'] for i in range(len(plot_df))]
@@ -382,22 +607,24 @@ def draw_trendline_from_ticket(ticket_number):
     if tp is not None:
         ax.axhline(y=tp, color='g', linestyle='--', linewidth=2, alpha=0.8, label='TP')
     
-    # Vẽ trendline mới (logic mới)
-    trendline_points = trendline_info['points']
-    for i, point in enumerate(trendline_points):
-        # point['pos'] là index trong df_m1
-        point_pos = point['pos']
-        if start_idx <= point_pos < end_idx:
-            point_plot_idx = point_pos - start_idx
-            ax.plot(point_plot_idx, point['price'], 'go', markersize=8, label='Trendline Points (New)' if i == 0 else '')
-    
-    # Vẽ đường trendline
-    x_trendline = np.arange(swing_idx, entry_idx + 1)
-    y_trendline = [trendline_info['func'](i) for i in x_trendline]
-    x_trendline_plot = [i - start_idx for i in x_trendline if start_idx <= i < end_idx]
-    y_trendline_plot = [trendline_info['func'](i) for i in x_trendline if start_idx <= i < end_idx]
-    if len(x_trendline_plot) > 0:
-        ax.plot(x_trendline_plot, y_trendline_plot, 'r-', linewidth=2.5, label='Trendline', alpha=0.9)
+    # Vẽ trendline (logic Outer Trendline)
+    if trendline_info is not None:
+        trendline_points = trendline_info['points']
+        for i, point in enumerate(trendline_points):
+            # point['pos'] là index trong df_m1
+            point_pos = point['pos']
+            if start_idx <= point_pos < end_idx:
+                point_plot_idx = point_pos - start_idx
+                anchor_name = "Anchor 1" if i == 0 else "Anchor 2"
+                ax.plot(point_plot_idx, point['price'], 'bo', markersize=10, label=f'Trendline Points ({anchor_name})' if i < 2 else '', zorder=5)
+        
+        # Vẽ đường trendline
+        x_trendline = np.arange(swing_idx, entry_idx + 1)
+        y_trendline = [trendline_info['func'](i) for i in x_trendline]
+        x_trendline_plot = [i - start_idx for i in x_trendline if start_idx <= i < end_idx]
+        y_trendline_plot = [trendline_info['func'](i) for i in x_trendline if start_idx <= i < end_idx]
+        if len(x_trendline_plot) > 0:
+            ax.plot(x_trendline_plot, y_trendline_plot, 'b-', linewidth=3, label='Trendline (Outer)', alpha=0.9, zorder=4)
     
     # Highlight pullback phase
     pullback_start_plot = swing_idx - start_idx
@@ -414,17 +641,23 @@ def draw_trendline_from_ticket(ticket_number):
     print(f"\n{'='*60}")
     print(f"KET QUA VE TRENDLINE")
     print(f"{'='*60}")
-    print(f"[OK] Trendline: Tim duoc {len(trendline_points)} diem")
-    print(f"\nCac diem trendline:")
-    for i, point in enumerate(trendline_points):
-        point_pos = point['pos']
-        time_val = df_m1.iloc[point_pos]['time']
-        if hasattr(time_val, 'strftime'):
-            time_str = time_val.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            time_str = str(time_val)
-        print(f"   Diem {i+1}: Index={point_pos}, Time={time_str}, Price={point['price']:.5f}")
-    print(f"\nTrendline: Slope={trendline_info['slope']:.8f}, Intercept={trendline_info['intercept']:.5f}")
+    
+    if trendline_info is not None:
+        trendline_points = trendline_info['points']
+        print(f"\n[TRENDLINE - Logic Outer Trendline]")
+        print(f"   Tim duoc {len(trendline_points)} diem (Anchor 1 + Anchor 2)")
+        for i, point in enumerate(trendline_points):
+            point_pos = point['pos']
+            time_val = df_m1.iloc[point_pos]['time']
+            if hasattr(time_val, 'strftime'):
+                time_str = time_val.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                time_str = str(time_val)
+            anchor_name = "Anchor 1 (Swing High)" if i == 0 else "Anchor 2 (Highest High 15-30)"
+            print(f"   {anchor_name}: Index={point_pos}, Time={time_str}, Price={point['price']:.5f}")
+        print(f"   Slope={trendline_info['slope']:.8f}, Intercept={trendline_info['intercept']:.5f}")
+    else:
+        print(f"\n[ERROR] Khong the ve trendline")
     print(f"\nEntry/SL/TP:")
     print(f"   Entry: {entry_price:.5f}")
     if sl is not None:
@@ -525,9 +758,13 @@ def calculate_pullback_trendline_demo(lows, swing_low_idx=0):
     }, local_mins
 
 # ========== KIỂM TRA MODE ==========
+# Lấy input từ người dùng: ticket hoặc thời gian
+TICKET_NUMBER = get_user_input()
+
 # Nếu có TICKET_NUMBER, vẽ trendline từ ticket
 if TICKET_NUMBER is not None:
     draw_trendline_from_ticket(TICKET_NUMBER)
+    mt5.shutdown()
     sys.exit(0)
 
 # ========== DEMO MODE ==========

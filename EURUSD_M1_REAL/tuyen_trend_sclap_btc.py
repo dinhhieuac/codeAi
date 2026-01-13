@@ -499,46 +499,60 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
 
 def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
     """
-    Vẽ trendline sóng hồi (giảm) nối từ swing high qua các đỉnh thấp dần
+    Vẽ trendline sóng hồi (giảm) "bền vững" (Outer Trendline) cho BUY:
     
-    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
+    1. Anchor 1: Swing High đã được xác nhận ở Điều kiện 2
+    2. Anchor 2: Nến có giá High cao nhất trong khoảng nến thứ 15-30 từ Anchor 1
+    3. Validation: TẤT CẢ các nến giữa Anchor 1 và Anchor 2 phải có Close < Trendline
+    
+    Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None nếu không hợp lệ
     """
-    if swing_high_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
+    if swing_high_idx >= len(df_m1) - 1:
         return None
     
-    pullback_candles = df_m1.iloc[swing_high_idx:pullback_end_idx + 1]
+    # Anchor 1: Swing High (điểm bắt đầu)
+    anchor1_pos = swing_high_idx
+    anchor1_price = df_m1.iloc[swing_high_idx]['high']
     
-    # Tìm các đỉnh (local maxima) trong pullback
-    highs = pullback_candles['high'].values
+    # Anchor 2: Tìm nến có High cao nhất trong khoảng nến thứ 15-30 từ Anchor 1
+    # Ưu tiên: Tìm trong khoảng 15-30 nến
+    anchor2_start_idx_preferred = swing_high_idx + 15
+    anchor2_end_idx_preferred = min(swing_high_idx + 30, len(df_m1) - 1, pullback_end_idx)
     
-    local_maxs = []
-    for i in range(1, len(highs) - 1):
-        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-            idx_in_df = pullback_candles.index[i]
-            pos_in_df = df_m1.index.get_loc(idx_in_df) if hasattr(df_m1.index, 'get_loc') else i + swing_high_idx
-            local_maxs.append({'pos': pos_in_df, 'price': highs[i], 'idx': idx_in_df})
+    # Nếu không đủ nến trong khoảng 15-30, tìm trong phạm vi có sẵn (tối thiểu 3 nến sau Anchor 1)
+    if anchor2_start_idx_preferred >= len(df_m1) or anchor2_start_idx_preferred > anchor2_end_idx_preferred:
+        # Fallback: Tìm trong phạm vi có sẵn (từ nến thứ 3 đến pullback_end_idx)
+        anchor2_start_idx = swing_high_idx + 3  # Tối thiểu 3 nến sau Anchor 1
+        anchor2_end_idx = min(pullback_end_idx, len(df_m1) - 1)
+        
+        # Kiểm tra có đủ nến tối thiểu không (ít nhất 3 nến)
+        if anchor2_start_idx >= len(df_m1) or anchor2_start_idx >= anchor2_end_idx:
+            return None
+    else:
+        # Sử dụng khoảng ưu tiên 15-30 nến
+        anchor2_start_idx = anchor2_start_idx_preferred
+        anchor2_end_idx = anchor2_end_idx_preferred
     
-    # Thêm swing high vào đầu
-    swing_high_pos = swing_high_idx
-    swing_high_price = df_m1.iloc[swing_high_idx]['high']
-    local_maxs.insert(0, {'pos': swing_high_pos, 'price': swing_high_price, 'idx': df_m1.index[swing_high_idx] if hasattr(df_m1.index[swing_high_idx], '__iter__') else swing_high_idx})
-    
-    local_maxs = sorted(local_maxs, key=lambda x: x['pos'])
-    
-    # Lọc các đỉnh thấp dần
-    filtered_maxs = [local_maxs[0]]
-    for i in range(1, len(local_maxs)):
-        if local_maxs[i]['price'] <= filtered_maxs[-1]['price']:
-            filtered_maxs.append(local_maxs[i])
-    
-    if len(filtered_maxs) < 2:
+    # Tìm nến có High cao nhất trong khoảng [anchor2_start_idx, anchor2_end_idx]
+    search_range = df_m1.iloc[anchor2_start_idx:anchor2_end_idx + 1]
+    if len(search_range) == 0:
         return None
     
-    # Linear regression
-    x_values = np.array([m['pos'] for m in filtered_maxs])
-    y_values = np.array([m['price'] for m in filtered_maxs])
+    # Tìm vị trí của nến có High cao nhất trong search_range (position relative to search_range start)
+    max_high_pos_in_range = search_range['high'].values.argmax()
+    anchor2_pos = anchor2_start_idx + max_high_pos_in_range
+    anchor2_price = df_m1.iloc[anchor2_pos]['high']
     
-    n = len(x_values)
+    # Đảm bảo anchor2_pos > anchor1_pos
+    if anchor2_pos <= anchor1_pos:
+        return None
+    
+    # Vẽ trendline từ Anchor 1 đến Anchor 2 (2 điểm)
+    x_values = np.array([anchor1_pos, anchor2_pos])
+    y_values = np.array([anchor1_price, anchor2_price])
+    
+    # Tính slope và intercept (linear regression với 2 điểm)
+    n = 2
     sum_x = x_values.sum()
     sum_y = y_values.sum()
     sum_xy = (x_values * y_values).sum()
@@ -554,11 +568,24 @@ def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
     def trendline_func(pos):
         return slope * pos + intercept
     
+    # QUAN TRỌNG: Validation - TẤT CẢ các nến giữa Anchor 1 và Anchor 2 phải có Close < Trendline
+    for i in range(anchor1_pos + 1, anchor2_pos):
+        if i >= len(df_m1):
+            break
+        candle = df_m1.iloc[i]
+        trendline_value = trendline_func(i)
+        # Nếu có bất kỳ nến nào có Close >= trendline, trendline không hợp lệ
+        if candle['close'] >= trendline_value:
+            return None
+    
     return {
         'slope': slope,
         'intercept': intercept,
         'func': trendline_func,
-        'points': filtered_maxs
+        'points': [
+            {'pos': anchor1_pos, 'price': anchor1_price, 'idx': df_m1.index[anchor1_pos] if hasattr(df_m1.index[anchor1_pos], '__iter__') else anchor1_pos},
+            {'pos': anchor2_pos, 'price': anchor2_price, 'idx': df_m1.index[anchor2_pos] if hasattr(df_m1.index[anchor2_pos], '__iter__') else anchor2_pos}
+        ]
     }
 
 def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
