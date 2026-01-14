@@ -102,6 +102,20 @@ def analyze_order_loss(ticket, order_type, open_time_str, open_price, sl, tp, cl
     # RSI
     ha_df['rsi'] = calculate_rsi(df_m1_entry['close'], period=14)
     
+    # Volume Confirmation: Calculate average volume of last 10 candles
+    volume_lookback = 10
+    if len(df_m1_entry) >= volume_lookback + 1:
+        # Get volume of last 10 candles (excluding current candle)
+        prev_volumes = df_m1_entry.iloc[-(volume_lookback+1):-1]['tick_volume']
+        avg_volume = prev_volumes.mean()
+        current_volume = df_m1_entry.iloc[-1]['tick_volume']
+        volume_multiplier = 1.2  # Volume must be > 1.2x average
+        volume_confirmation = current_volume > (avg_volume * volume_multiplier)
+    else:
+        avg_volume = 0
+        current_volume = df_m1_entry.iloc[-1]['tick_volume'] if len(df_m1_entry) > 0 else 0
+        volume_confirmation = False  # Not enough data
+    
     # Get last 2 HA candles
     if len(ha_df) < 2:
         print(f"❌ Not enough HA candles")
@@ -190,6 +204,15 @@ def analyze_order_loss(ticket, order_type, open_time_str, open_price, sl, tp, cl
         else:
             passed_conditions.append(f"✅ RSI: {last_ha['rsi']:.1f} < 50")
     
+    # Check Volume Confirmation
+    if avg_volume > 0:
+        if not volume_confirmation:
+            issues.append(f"❌ Volume Confirmation: {current_volume:.0f} <= {avg_volume * 1.2:.0f} (cần > 1.2x avg, avg: {avg_volume:.0f})")
+        else:
+            passed_conditions.append(f"✅ Volume Confirmation: {current_volume:.0f} > {avg_volume * 1.2:.0f} (1.2x avg: {avg_volume:.0f})")
+    else:
+        issues.append(f"❌ Volume Confirmation: Không đủ dữ liệu (cần ít nhất {volume_lookback + 1} nến)")
+    
     # Display results
     print(f"\n✅ ĐIỀU KIỆN ĐẠT ({len(passed_conditions)}/{len(passed_conditions) + len(issues)}):")
     for cond in passed_conditions:
@@ -231,6 +254,10 @@ def analyze_order_loss(ticket, order_type, open_time_str, open_price, sl, tp, cl
     print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
     print(f"   📊 RSI: {last_ha['rsi']:.1f}")
+    if avg_volume > 0:
+        print(f"   📊 Volume: {current_volume:.0f} (Avg 10 nến: {avg_volume:.0f}, cần > {avg_volume * 1.2:.0f}) {'✅' if volume_confirmation else '❌'}")
+    else:
+        print(f"   📊 Volume: {current_volume:.0f} (Không đủ dữ liệu)")
     print(f"   🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}")
     if order_type == "BUY":
         sl_distance_pips = (open_price - sl) / 0.01 if sl > 0 else 0
@@ -311,6 +338,19 @@ def analyze_order_loss_with_stats(ticket, order_type, open_time_str, open_price,
     ha_df = calculate_heiken_ashi(df_m1_entry)
     ha_df['rsi'] = calculate_rsi(df_m1_entry['close'], period=14)
     
+    # Volume Confirmation: Calculate average volume of last 10 candles
+    volume_lookback = 10
+    if len(df_m1_entry) >= volume_lookback + 1:
+        prev_volumes = df_m1_entry.iloc[-(volume_lookback+1):-1]['tick_volume']
+        avg_volume = prev_volumes.mean()
+        current_volume = df_m1_entry.iloc[-1]['tick_volume']
+        volume_multiplier = 1.2
+        volume_confirmation = current_volume > (avg_volume * volume_multiplier)
+    else:
+        avg_volume = 0
+        current_volume = df_m1_entry.iloc[-1]['tick_volume'] if len(df_m1_entry) > 0 else 0
+        volume_confirmation = False
+    
     if len(ha_df) < 2:
         return None
     
@@ -323,7 +363,10 @@ def analyze_order_loss_with_stats(ticket, order_type, open_time_str, open_price,
         'rsi': float(last_ha['rsi']),
         'ha_close': float(last_ha['ha_close']),
         'sma55_high': float(last_ha['sma55_high']),
-        'sma55_low': float(last_ha['sma55_low'])
+        'sma55_low': float(last_ha['sma55_low']),
+        'current_volume': float(current_volume),
+        'avg_volume': float(avg_volume),
+        'volume_confirmation': volume_confirmation
     }
     
     # Check conditions
@@ -362,6 +405,15 @@ def analyze_order_loss_with_stats(ticket, order_type, open_time_str, open_price,
         else:
             stats['passed_conditions'].append("RSI")
         
+        # Volume Confirmation
+        if avg_volume > 0:
+            if not volume_confirmation:
+                stats['issues'].append("Volume_Confirmation")
+            else:
+                stats['passed_conditions'].append("Volume_Confirmation")
+        else:
+            stats['issues'].append("Volume_Confirmation")  # Not enough data
+        
         stats['sl_distance_pips'] = (open_price - sl) / 0.01 if sl > 0 else 0
     else:  # SELL
         if current_trend != "BEARISH":
@@ -397,6 +449,15 @@ def analyze_order_loss_with_stats(ticket, order_type, open_time_str, open_price,
             stats['issues'].append("RSI")
         else:
             stats['passed_conditions'].append("RSI")
+        
+        # Volume Confirmation
+        if avg_volume > 0:
+            if not volume_confirmation:
+                stats['issues'].append("Volume_Confirmation")
+            else:
+                stats['passed_conditions'].append("Volume_Confirmation")
+        else:
+            stats['issues'].append("Volume_Confirmation")  # Not enough data
         
         stats['sl_distance_pips'] = (sl - open_price) / 0.01 if sl > 0 else 0
     
@@ -496,7 +557,8 @@ def generate_summary_report(all_stats, output_file):
                 'Below_Channel': 'Không Below Channel (SELL)',
                 'Fresh_Breakout': 'Không phải Fresh Breakout',
                 'Solid_Candle': 'Doji Candle (Indecision)',
-                'RSI': 'RSI không đạt ngưỡng'
+                'RSI': 'RSI không đạt ngưỡng',
+                'Volume_Confirmation': 'Volume không đạt (cần > 1.2x avg 10 nến)'
             }.get(issue, issue)
             report.append(f"  ❌ {issue_name}: {count} lệnh ({percentage:.1f}%)")
     else:
@@ -546,6 +608,20 @@ def generate_summary_report(all_stats, output_file):
                 'Tăng ngưỡng RSI cho BUY (từ > 50 lên > 55)',
                 'Giảm ngưỡng RSI cho SELL (từ < 50 xuống < 45)',
                 'Thêm RSI divergence check để tránh overbought/oversold'
+            ]
+        })
+    
+    if issue_counts.get('Volume_Confirmation', 0) > total_losses * 0.3:
+        improvements.append({
+            'priority': 'HIGH',
+            'issue': 'Volume không đạt xác nhận',
+            'count': issue_counts['Volume_Confirmation'],
+            'percentage': issue_percentages['Volume_Confirmation'],
+            'suggestion': [
+                'Thêm filter Volume Confirmation: Volume nến breakout phải > 1.2x trung bình 10 nến trước',
+                'Chỉ vào lệnh khi có volume confirmation để tránh false breakout',
+                'Có thể tăng multiplier từ 1.2x lên 1.3x nếu vẫn có nhiều false breakout',
+                'Kiểm tra volume trên nhiều timeframe (M1, M5) để xác nhận'
             ]
         })
     
