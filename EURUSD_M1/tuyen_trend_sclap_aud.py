@@ -1291,13 +1291,17 @@ def m1_scalp_logic(config, error_count=0):
                     log_details.append(f"\n🔍 [BUY] ĐK3b: Vẽ trendline sóng hồi")
                     # QUAN TRỌNG: Vẽ trendline với dữ liệu mới nhất đến current_candle_idx (hoặc pullback_end_idx nếu gần hơn)
                     # Đảm bảo trendline được vẽ với tất cả dữ liệu có sẵn trước khi kiểm tra phá vỡ
-                    trendline_end_idx = min(pullback_end_idx, current_candle_idx)
-                    # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
-                    if current_candle_idx > pullback_end_idx:
-                        # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                    if pullback_end_idx is not None:
+                        trendline_end_idx = min(pullback_end_idx, current_candle_idx)
+                        # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
+                        if current_candle_idx > pullback_end_idx:
+                            # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                            trendline_end_idx = current_candle_idx
+                            log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
+                            log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                    else:
                         trendline_end_idx = current_candle_idx
-                        log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
-                        log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                        log_details.append(f"   ⚠️ pullback_end_idx là None, sử dụng current_candle_idx ({current_candle_idx})")
                     
                     trendline_info = calculate_pullback_trendline_buy(df_m1, swing_high_idx, trendline_end_idx)
                     
@@ -1325,14 +1329,19 @@ def m1_scalp_logic(config, error_count=0):
                                 buy_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                         else:
                             # Kiểm tra UpperWick trong toàn bộ sóng hồi
-                            upperwick_ok, upperwick_msg = check_pullback_upperwick(df_m1, swing_high_idx, pullback_end_idx)
-                            if not upperwick_ok:
-                                log_details.append(f"   ❌ {upperwick_msg}")
-                                buy_dk4_ok = False
-                                buy_fail_reason = f"ĐK4: {upperwick_msg}"
+                            if pullback_end_idx is not None:
+                                upperwick_ok, upperwick_msg = check_pullback_upperwick(df_m1, swing_high_idx, pullback_end_idx)
+                                if not upperwick_ok:
+                                    log_details.append(f"   ❌ {upperwick_msg}")
+                                    buy_dk4_ok = False
+                                    buy_fail_reason = f"ĐK4: {upperwick_msg}"
+                                else:
+                                    log_details.append(f"   ✅ {upperwick_msg}")
+                                    buy_dk4_ok = True
                             else:
-                                log_details.append(f"   ✅ {upperwick_msg}")
-                                buy_dk4_ok = True
+                                log_details.append(f"   ❌ pullback_end_idx là None, không thể kiểm tra UpperWick")
+                                buy_dk4_ok = False
+                                buy_fail_reason = "ĐK4: pullback_end_idx là None"
                         
                         # Điều kiện 5: Nến xác nhận phá vỡ trendline
                         log_details.append(f"\n🔍 [BUY] ĐK5: Kiểm tra nến phá vỡ trendline")
@@ -1457,13 +1466,17 @@ def m1_scalp_logic(config, error_count=0):
                         log_details.append(f"\n🔍 [SELL] ĐK3b: Vẽ trendline sóng hồi")
                         # QUAN TRỌNG: Vẽ trendline với dữ liệu mới nhất đến current_candle_idx (hoặc pullback_end_idx nếu gần hơn)
                         # Đảm bảo trendline được vẽ với tất cả dữ liệu có sẵn trước khi kiểm tra phá vỡ
-                        trendline_end_idx = min(pullback_end_idx, current_candle_idx)
-                        # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
-                        if current_candle_idx > pullback_end_idx:
-                            # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                        if pullback_end_idx is not None:
+                            trendline_end_idx = min(pullback_end_idx, current_candle_idx)
+                            # Nhưng nếu current_candle_idx > pullback_end_idx, vẽ lại trendline đến current_candle_idx để có dữ liệu mới nhất
+                            if current_candle_idx > pullback_end_idx:
+                                # Vẽ lại trendline với dữ liệu mới nhất (đến current_candle_idx)
+                                trendline_end_idx = current_candle_idx
+                                log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
+                                log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                        else:
                             trendline_end_idx = current_candle_idx
-                            log_details.append(f"   ⚠️ pullback_end_idx ({pullback_end_idx}) < current_candle_idx ({current_candle_idx})")
-                            log_details.append(f"   🔄 Vẽ lại trendline với dữ liệu mới nhất đến index {trendline_end_idx}")
+                            log_details.append(f"   ⚠️ pullback_end_idx là None, sử dụng current_candle_idx ({current_candle_idx})")
                         
                         trendline_info = calculate_pullback_trendline(df_m1, swing_low_idx, trendline_end_idx)
                         
@@ -1491,14 +1504,19 @@ def m1_scalp_logic(config, error_count=0):
                                     sell_fail_reason = "ĐK4: ATR không có giá trị (NaN)"
                             else:
                                 # Kiểm tra LowerWick trong toàn bộ sóng hồi
-                                lowerwick_ok, lowerwick_msg = check_pullback_lowerwick(df_m1, swing_low_idx, pullback_end_idx)
-                                if not lowerwick_ok:
-                                    log_details.append(f"   ❌ {lowerwick_msg}")
-                                    sell_dk4_ok = False
-                                    sell_fail_reason = f"ĐK4: {lowerwick_msg}"
+                                if pullback_end_idx is not None:
+                                    lowerwick_ok, lowerwick_msg = check_pullback_lowerwick(df_m1, swing_low_idx, pullback_end_idx)
+                                    if not lowerwick_ok:
+                                        log_details.append(f"   ❌ {lowerwick_msg}")
+                                        sell_dk4_ok = False
+                                        sell_fail_reason = f"ĐK4: {lowerwick_msg}"
+                                    else:
+                                        log_details.append(f"   ✅ {lowerwick_msg}")
+                                        sell_dk4_ok = True
                                 else:
-                                    log_details.append(f"   ✅ {lowerwick_msg}")
-                                    sell_dk4_ok = True
+                                    log_details.append(f"   ❌ pullback_end_idx là None, không thể kiểm tra LowerWick")
+                                    sell_dk4_ok = False
+                                    sell_fail_reason = "ĐK4: pullback_end_idx là None"
                             
                             # Điều kiện 5: Nến xác nhận phá vỡ trendline
                             log_details.append(f"\n🔍 [SELL] ĐK5: Kiểm tra nến phá vỡ trendline")
