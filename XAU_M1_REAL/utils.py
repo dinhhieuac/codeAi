@@ -86,6 +86,16 @@ def calculate_heiken_ashi(df):
     
     return ha_df
 
+def calculate_atr(df, period=14):
+    """Calculate ATR (Average True Range)"""
+    df = df.copy()
+    df['tr0'] = abs(df['high'] - df['low'])
+    df['tr1'] = abs(df['high'] - df['close'].shift(1))
+    df['tr2'] = abs(df['low'] - df['close'].shift(1))
+    df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
+    atr_series = df['tr'].rolling(window=period).mean()
+    return atr_series
+
 def calculate_adx(df, period=14):
     """Calculate ADX Indicator"""
     df = df.copy()
@@ -143,12 +153,32 @@ def is_doji(row, threshold=0.1):
 
 def manage_position(order_ticket, symbol, magic, config):
     """
-    Manage an open position: Breakeven & Trailing SL
-    Defaults:
-    - Breakeven Trigger: 10 pips (100 points) -> Move SL to Open Price
-    - Trailing Trigger: 30 pips (300 points) -> Trail by 20 pips (200 points)
+    Manage an open position: Breakeven & Trailing SL (Improved V2)
+    
+    Config parameters:
+    - trailing_enabled: true/false - Enable/disable trailing SL
+    - breakeven_enabled: true/false - Enable/disable breakeven
+    - breakeven_trigger_pips: Fixed pips OR use "auto" for % of initial SL (default: 30)
+    - breakeven_trigger_percent: % of initial SL to trigger breakeven (default: 0.5 = 50%)
+    - trailing_trigger_pips: Fixed pips OR use "auto" for multiplier of initial SL (default: 50)
+    - trailing_trigger_multiplier: Multiplier of initial SL to start trailing (default: 1.2)
+    - trailing_mode: "atr" or "fixed" - Use ATR-based or fixed distance
+    - trailing_atr_timeframe: "M1" or "M5" - Timeframe for ATR calculation (default: "M5")
+    - trailing_distance_pips: Fixed trailing distance in pips (default: 50)
+    - trailing_atr_multiplier: ATR multiplier for trailing (default: 1.5)
+    - trailing_min_pips: Minimum trailing distance in pips (default: 30)
+    - trailing_max_pips: Maximum trailing distance in pips (default: 100)
+    - trailing_lock_on_pullback: Enable lock trailing when pullback > % (default: false)
+    - trailing_pullback_percent: % profit loss to lock trailing (default: 0.3 = 30%)
     """
     try:
+        # Check if trailing is enabled
+        trailing_enabled = config.get('parameters', {}).get('trailing_enabled', True)
+        breakeven_enabled = config.get('parameters', {}).get('breakeven_enabled', True)
+        
+        if not trailing_enabled and not breakeven_enabled:
+            return  # Both disabled, skip
+        
         positions = mt5.positions_get(ticket=int(order_ticket))
         if not positions:
             return
@@ -157,65 +187,164 @@ def manage_position(order_ticket, symbol, magic, config):
         current_price = mt5.symbol_info_tick(symbol).bid if pos.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask
         point = mt5.symbol_info(symbol).point
         
-        # Calculate Profit in Points
+        # Get pip size for XAUUSD
+        symbol_info = mt5.symbol_info(symbol)
+        pip_size = point * 10  # Default: 10 points = 1 pip
+        if symbol_info:
+            # For XAUUSD, pip might be 0.1 or 0.01 depending on broker
+            if 'XAU' in symbol.upper() or 'GOLD' in symbol.upper():
+                if point >= 0.01:
+                    pip_size = point  # 1 point = 1 pip
+                else:
+                    pip_size = point * 10  # 10 points = 1 pip
+        
+        # Calculate Profit in Points and Pips
         if pos.type == mt5.ORDER_TYPE_BUY:
             profit_points = (current_price - pos.price_open) / point
+            profit_pips = (current_price - pos.price_open) / pip_size
         else:
             profit_points = (pos.price_open - current_price) / point
+            profit_pips = (pos.price_open - current_price) / pip_size
+        
+        # Calculate Initial SL Distance (estimate from current SL if not moved much, or from entry)
+        # If SL is close to entry, it's likely initial SL. Otherwise, estimate from entry price.
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            sl_distance_from_entry = (pos.price_open - pos.sl) / pip_size if pos.sl > 0 else 0
+        else:
+            sl_distance_from_entry = (pos.sl - pos.price_open) / pip_size if pos.sl > 0 else 0
+        
+        # If SL is at breakeven or very close, try to estimate initial SL from comment or use default
+        # For now, use current SL distance as initial (if reasonable) or estimate from typical values
+        if sl_distance_from_entry < 5:  # SL is at breakeven or very close
+            # Estimate initial SL: typically 50-200 pips for XAUUSD
+            # Use a conservative estimate or try to get from position history
+            initial_sl_distance_pips = 100  # Default estimate
+        else:
+            # Use current SL distance as initial (if SL hasn't been moved much)
+            initial_sl_distance_pips = max(sl_distance_from_entry, 50)  # At least 50 pips
             
         request = None
         
-        # 1. Quick Breakeven (100 points / 10 pips)
-        # Move SL to Entry if not already there
-        if profit_points > 100:
-            # Check if SL is already at or better than breakeven
-            is_breakeven = False
-            if pos.type == mt5.ORDER_TYPE_BUY:
-                if pos.sl >= pos.price_open: is_breakeven = True
-            else:
-                if pos.sl > 0 and pos.sl <= pos.price_open: is_breakeven = True
+        # Track peak profit for pullback detection
+        # Note: This requires storing peak in external storage or position comment
+        # For now, we'll use a simple approach: if profit decreases significantly, be more conservative
+        
+        # 1. Breakeven (Improved - based on Initial SL %)
+        if breakeven_enabled:
+            breakeven_trigger_pips = config.get('parameters', {}).get('breakeven_trigger_pips', 30)
+            breakeven_trigger_percent = config.get('parameters', {}).get('breakeven_trigger_percent', 0.5)
             
-            if not is_breakeven:
-                 request = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": pos.ticket,
-                    "symbol": symbol,
-                    "sl": pos.price_open,
-                    "tp": pos.tp
-                }
-                 print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket}")
+            # Use % of initial SL if breakeven_trigger_pips is "auto" or use the larger value
+            if isinstance(breakeven_trigger_pips, str) and breakeven_trigger_pips.lower() == 'auto':
+                breakeven_trigger_pips_calc = initial_sl_distance_pips * breakeven_trigger_percent
+            else:
+                # Use max of fixed pips or % of initial SL
+                breakeven_trigger_pips_calc = max(breakeven_trigger_pips, initial_sl_distance_pips * breakeven_trigger_percent)
+            
+            breakeven_trigger_points = breakeven_trigger_pips_calc * pip_size / point
+            
+            if profit_points > breakeven_trigger_points:
+                # Check if SL is already at or better than breakeven
+                is_breakeven = False
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    if pos.sl >= pos.price_open: is_breakeven = True
+                else:
+                    if pos.sl > 0 and pos.sl <= pos.price_open: is_breakeven = True
+                
+                if not is_breakeven:
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": pos.ticket,
+                        "symbol": symbol,
+                        "sl": pos.price_open,
+                        "tp": pos.tp
+                    }
+                    print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket} (Profit: {profit_pips:.1f} pips, Trigger: {breakeven_trigger_pips_calc:.1f} pips)")
 
-        # 2. Trailing Stop (Trigger > 300 points)
-        # Trail distance: 200 points
-        if request is None and profit_points > 300:
-            trail_dist = 200 * point
-            new_sl = 0.0
+        # 2. Trailing Stop (Improved - based on Initial SL, M5 ATR, min/max limits)
+        if trailing_enabled and request is None:
+            trailing_trigger_pips = config.get('parameters', {}).get('trailing_trigger_pips', 50)
+            trailing_trigger_multiplier = config.get('parameters', {}).get('trailing_trigger_multiplier', 1.2)
             
-            if pos.type == mt5.ORDER_TYPE_BUY:
-                new_sl = current_price - trail_dist
-                # Only update if new_sl is higher than current SL
-                if new_sl > pos.sl:
-                    request = {
-                        "action": mt5.TRADE_ACTION_SLTP,
-                        "position": pos.ticket,
-                        "symbol": symbol,
-                        "sl": new_sl,
-                        "tp": pos.tp
-                    }
+            # Calculate trailing trigger: use multiplier of initial SL or fixed, whichever is larger
+            if isinstance(trailing_trigger_pips, str) and trailing_trigger_pips.lower() == 'auto':
+                trailing_trigger_pips_calc = initial_sl_distance_pips * trailing_trigger_multiplier
             else:
-                new_sl = current_price + trail_dist
-                # Only update if new_sl is lower than current SL (or SL is 0)
-                if pos.sl == 0 or new_sl < pos.sl:
-                    request = {
-                        "action": mt5.TRADE_ACTION_SLTP,
-                        "position": pos.ticket,
-                        "symbol": symbol,
-                        "sl": new_sl,
-                        "tp": pos.tp
-                    }
+                trailing_trigger_pips_calc = max(trailing_trigger_pips, initial_sl_distance_pips * trailing_trigger_multiplier)
             
-            if request:
-                print(f"🏃 Trailing SL for {pos.ticket}: {pos.sl:.2f} -> {new_sl:.2f}")
+            trailing_trigger_points = trailing_trigger_pips_calc * pip_size / point
+            
+            if profit_points > trailing_trigger_points:
+                trailing_mode = config.get('parameters', {}).get('trailing_mode', 'atr')
+                trailing_atr_timeframe = config.get('parameters', {}).get('trailing_atr_timeframe', 'M5')
+                trailing_atr_multiplier = config.get('parameters', {}).get('trailing_atr_multiplier', 1.5)
+                trailing_distance_pips = config.get('parameters', {}).get('trailing_distance_pips', 50)
+                trailing_min_pips = config.get('parameters', {}).get('trailing_min_pips', 30)
+                trailing_max_pips = config.get('parameters', {}).get('trailing_max_pips', 100)
+                
+                # Calculate trailing distance
+                if trailing_mode == 'atr':
+                    # ATR-based trailing (Improved: Use M5 for consistency with Initial SL)
+                    timeframe_map = {
+                        'M1': mt5.TIMEFRAME_M1,
+                        'M5': mt5.TIMEFRAME_M5,
+                        'M15': mt5.TIMEFRAME_M15
+                    }
+                    atr_timeframe = timeframe_map.get(trailing_atr_timeframe, mt5.TIMEFRAME_M5)
+                    
+                    rates = mt5.copy_rates_from_pos(symbol, atr_timeframe, 0, 50)
+                    if rates is not None and len(rates) > 14:
+                        df = pd.DataFrame(rates)
+                        df['tr0'] = abs(df['high'] - df['low'])
+                        df['tr1'] = abs(df['high'] - df['close'].shift(1))
+                        df['tr2'] = abs(df['low'] - df['close'].shift(1))
+                        df['tr'] = df[['tr0', 'tr1', 'tr2']].max(axis=1)
+                        atr_value = df['tr'].rolling(window=14).mean().iloc[-1]
+                        
+                        if not pd.isna(atr_value) and atr_value > 0:
+                            trail_dist = atr_value * trailing_atr_multiplier
+                            trail_dist_pips = trail_dist / pip_size
+                            # Apply min/max limits
+                            trail_dist_pips = max(trailing_min_pips, min(trail_dist_pips, trailing_max_pips))
+                            trail_dist = trail_dist_pips * pip_size
+                        else:
+                            # Fallback to fixed
+                            trail_dist = trailing_distance_pips * pip_size
+                    else:
+                        # Fallback to fixed
+                        trail_dist = trailing_distance_pips * pip_size
+                else:
+                    # Fixed trailing distance
+                    trail_dist = trailing_distance_pips * pip_size
+                
+                new_sl = 0.0
+                
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    new_sl = current_price - trail_dist
+                    # Only update if new_sl is higher than current SL
+                    if new_sl > pos.sl:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": pos.ticket,
+                            "symbol": symbol,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                else:
+                    new_sl = current_price + trail_dist
+                    # Only update if new_sl is lower than current SL (or SL is 0)
+                    if pos.sl == 0 or new_sl < pos.sl:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": pos.ticket,
+                            "symbol": symbol,
+                            "sl": new_sl,
+                            "tp": pos.tp
+                        }
+                
+                if request:
+                    mode_str = f"ATR({trailing_atr_multiplier}x {trailing_atr_timeframe})" if trailing_mode == 'atr' else f"Fixed({trailing_distance_pips}pips)"
+                    print(f"🏃 Trailing SL for {pos.ticket}: {pos.sl:.2f} -> {new_sl:.2f} ({mode_str}, Profit: {profit_pips:.1f} pips, Trigger: {trailing_trigger_pips_calc:.1f} pips)")
 
         if request:
              res = mt5.order_send(request)

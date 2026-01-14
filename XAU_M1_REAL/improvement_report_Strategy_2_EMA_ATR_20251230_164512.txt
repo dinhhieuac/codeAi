@@ -1,0 +1,63 @@
+====================================================================================================
+📊 BÁO CÁO TỔNG KẾT PHÂN TÍCH LỆNH THUA
+Strategy: Strategy_2_EMA_ATR
+Ngày tạo: 2025-12-30 16:45:12
+====================================================================================================
+
+## 1. TỔNG QUAN
+----------------------------------------------------------------------------------------------------
+Tổng số lệnh thua phân tích: 135
+Tổng lỗ: $-251.51
+Lỗ trung bình: $-1.86
+Khoảng cách SL trung bình: 420.5 pips
+
+## 2. PHÂN TÍCH LÝ DO THOÁT LỆNH
+----------------------------------------------------------------------------------------------------
+  👤 Manual/Script Close: 79 lệnh (58.5%)
+  🔴 Hit Stop Loss: 56 lệnh (41.5%)
+
+## 3. PHÂN TÍCH ĐIỀU KIỆN KHÔNG ĐẠT
+----------------------------------------------------------------------------------------------------
+  ❌ EMA Crossover không đúng: 132 lệnh (97.8%)
+  ❌ RSI không đạt ngưỡng (BUY > 50, SELL < 50): 77 lệnh (57.0%)
+  ❌ H1 Trend không đúng: 26 lệnh (19.3%)
+  ❌ Price Extension (giá quá xa EMA14): 17 lệnh (12.6%)
+
+## 4. ĐỀ XUẤT CẢI THIỆN
+----------------------------------------------------------------------------------------------------
+
+### 1. [HIGH] EMA Crossover không đúng (132 lệnh - 97.8%)
+
+  • Kiểm tra lại logic crossover (có thể vào lệnh quá sớm)
+  • Thêm confirmation: chờ 1-2 nến sau crossover
+  • Thêm volume confirmation cho crossover
+
+
+### 2. [MEDIUM] RSI không đạt ngưỡng (77 lệnh - 57.0%)
+
+  • Tăng RSI threshold: BUY > 55, SELL < 45
+  • Thêm RSI momentum check (RSI đang tăng/giảm)
+
+
+### 3. [MEDIUM] Cải thiện chung
+
+  • Thêm volume confirmation (volume > 1.3x average)
+  • Thêm consecutive loss management
+  • Thêm session filter (tránh Asian session)
+
+## 5. KẾT LUẬN
+----------------------------------------------------------------------------------------------------
+
+Dựa trên phân tích, các cải thiện ưu tiên:
+
+🔴 ƯU TIÊN CAO:
+  - EMA Crossover không đúng: 132 lệnh (97.8%)
+
+💡 Khuyến nghị:
+  1. Kiểm tra lại logic EMA crossover
+  2. Tăng H1 trend filter strength
+  3. Thêm volume confirmation
+  4. Test trên demo account trước khi áp dụng
+  5. Monitor kết quả và điều chỉnh thêm
+
+====================================================================================================

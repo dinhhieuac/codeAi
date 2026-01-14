@@ -2,12 +2,13 @@ import MetaTrader5 as mt5
 import time
 import sys
 import numpy as np
+import pandas as pd
 
 # Import local modules
 sys.path.append('..')
 from db import Database
-from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
+from datetime import datetime, timedelta
 
 # Initialize Database
 # Initialize Database
@@ -36,9 +37,12 @@ def strategy_2_logic(config, error_count=0):
     
     if df is None or df_h1 is None or df_m5 is None: return error_count, 0
 
-    # H1 Trend
+    # H1 Trend + ADX Filter
     df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
+    df_h1 = calculate_adx(df_h1, period=14)
     h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
+    h1_adx = df_h1.iloc[-1].get('adx', 0)
+    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 20)
 
     # 2. Indicators (M1)
     # EMA 14 and 28
@@ -58,8 +62,12 @@ def strategy_2_logic(config, error_count=0):
     # RSI 14 (Added Filter)
     df['rsi'] = calculate_rsi(df['close'], period=14)
     
+    # Volume MA for confirmation
+    df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
+    
     last = df.iloc[-1]
     prev = df.iloc[-2]
+    prev2 = df.iloc[-3] if len(df) >= 3 else None
     
     # 3. Logic: Crossover + RSI Filter + H1 Trend
     signal = None
@@ -72,63 +80,133 @@ def strategy_2_logic(config, error_count=0):
     # Track all filter status
     filter_status = []
     
-    # Check for crossover
+    # Get config parameters
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)  # Increased from 50
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)  # Decreased from 50
+    volume_threshold = config['parameters'].get('volume_threshold', 1.3)  # Volume confirmation
+    crossover_confirmation = config['parameters'].get('crossover_confirmation', True)  # Wait 1-2 candles after crossover
+    
+    # Check for crossover with confirmation
     has_crossover = False
     crossover_direction = None
+    crossover_confirmed = False
     
-    # BUY: EMA 14 crosses ABOVE EMA 28 AND RSI > 50 AND H1 Bullish
+    # BUY: EMA 14 crosses ABOVE EMA 28
     if prev['ema14'] <= prev['ema28'] and last['ema14'] > last['ema28']:
         has_crossover = True
         crossover_direction = "BUY"
         filter_status.append(f"✅ EMA Crossover: EMA14 > EMA28 (Bullish)")
         
-        if h1_trend == "BULLISH":
-            filter_status.append(f"✅ H1 Trend: BULLISH")
-            # Extension Check
-            price_dist = abs(last['close'] - last['ema14'])
-            atr_threshold = 1.5 * last['atr']
-            is_extended = price_dist > atr_threshold
-            filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
-            
-            if not is_extended:
-                filter_status.append(f"{'✅' if last['rsi'] > 50 else '❌'} RSI > 50: {last['rsi']:.1f}")
-                if last['rsi'] > 50:
-                    signal = "BUY"
-                    print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
-                else:
-                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
+        # Confirmation: Check if crossover is maintained (EMA14 still > EMA28)
+        if crossover_confirmation:
+            # Check if last candle confirms the crossover (EMA14 still above EMA28)
+            if last['ema14'] > last['ema28']:
+                crossover_confirmed = True
+                filter_status.append(f"✅ Crossover Confirmed: EMA14 ({last['ema14']:.3f}) > EMA28 ({last['ema28']:.3f})")
             else:
-                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
+                filter_status.append(f"❌ Crossover Not Confirmed: EMA14 ({last['ema14']:.3f}) <= EMA28 ({last['ema28']:.3f})")
         else:
-            filter_status.append(f"❌ H1 Trend: BEARISH (cần BULLISH)")
-            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
+            crossover_confirmed = True
         
-    # SELL: EMA 14 crosses BELOW EMA 28 AND RSI < 50 AND H1 Bearish
+        if crossover_confirmed:
+            # H1 Trend + ADX Filter
+            if h1_trend == "BULLISH":
+                filter_status.append(f"✅ H1 Trend: BULLISH")
+                
+                if pd.notna(h1_adx) and h1_adx >= h1_adx_threshold:
+                    filter_status.append(f"✅ H1 ADX: {h1_adx:.1f} >= {h1_adx_threshold}")
+                else:
+                    filter_status.append(f"❌ H1 ADX: {h1_adx:.1f} < {h1_adx_threshold} (cần >= {h1_adx_threshold})")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 ADX không đạt")
+                    has_crossover = False  # Reset to skip further checks
+                
+                if has_crossover:
+                    # Extension Check
+                    price_dist = abs(last['close'] - last['ema14'])
+                    atr_threshold = 1.5 * last['atr']
+                    is_extended = price_dist > atr_threshold
+                    filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
+                    
+                    if not is_extended:
+                        # RSI Filter (stricter)
+                        filter_status.append(f"{'✅' if last['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last['rsi']:.1f}")
+                        
+                        if last['rsi'] > rsi_buy_threshold:
+                            # Volume Confirmation
+                            vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+                            is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
+                            filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
+                            
+                            if is_high_volume:
+                                signal = "BUY"
+                                print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                            else:
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold})")
+                    else:
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
+            else:
+                filter_status.append(f"❌ H1 Trend: BEARISH (cần BULLISH)")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
+        
+    # SELL: EMA 14 crosses BELOW EMA 28
     elif prev['ema14'] >= prev['ema28'] and last['ema14'] < last['ema28']:
         has_crossover = True
         crossover_direction = "SELL"
         filter_status.append(f"✅ EMA Crossover: EMA14 < EMA28 (Bearish)")
         
-        if h1_trend == "BEARISH":
-            filter_status.append(f"✅ H1 Trend: BEARISH")
-            # Extension Check
-            price_dist = abs(last['close'] - last['ema14'])
-            atr_threshold = 1.5 * last['atr']
-            is_extended = price_dist > atr_threshold
-            filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
-            
-            if not is_extended:
-                filter_status.append(f"{'✅' if last['rsi'] < 50 else '❌'} RSI < 50: {last['rsi']:.1f}")
-                if last['rsi'] < 50:
-                    signal = "SELL"
-                    print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
-                else:
-                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt")
+        # Confirmation: Check if crossover is maintained
+        if crossover_confirmation:
+            if last['ema14'] < last['ema28']:
+                crossover_confirmed = True
+                filter_status.append(f"✅ Crossover Confirmed: EMA14 ({last['ema14']:.3f}) < EMA28 ({last['ema28']:.3f})")
             else:
-                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
+                filter_status.append(f"❌ Crossover Not Confirmed: EMA14 ({last['ema14']:.3f}) >= EMA28 ({last['ema28']:.3f})")
         else:
-            filter_status.append(f"❌ H1 Trend: BULLISH (cần BEARISH)")
-            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
+            crossover_confirmed = True
+        
+        if crossover_confirmed:
+            # H1 Trend + ADX Filter
+            if h1_trend == "BEARISH":
+                filter_status.append(f"✅ H1 Trend: BEARISH")
+                
+                if pd.notna(h1_adx) and h1_adx >= h1_adx_threshold:
+                    filter_status.append(f"✅ H1 ADX: {h1_adx:.1f} >= {h1_adx_threshold}")
+                else:
+                    filter_status.append(f"❌ H1 ADX: {h1_adx:.1f} < {h1_adx_threshold} (cần >= {h1_adx_threshold})")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 ADX không đạt")
+                    has_crossover = False
+                
+                if has_crossover:
+                    # Extension Check
+                    price_dist = abs(last['close'] - last['ema14'])
+                    atr_threshold = 1.5 * last['atr']
+                    is_extended = price_dist > atr_threshold
+                    filter_status.append(f"{'❌' if is_extended else '✅'} Price Extension: {price_dist:.2f} {'>' if is_extended else '<='} {atr_threshold:.2f} (1.5xATR)")
+                    
+                    if not is_extended:
+                        # RSI Filter (stricter)
+                        filter_status.append(f"{'✅' if last['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last['rsi']:.1f}")
+                        
+                        if last['rsi'] < rsi_sell_threshold:
+                            # Volume Confirmation
+                            vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+                            is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
+                            filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
+                            
+                            if is_high_volume:
+                                signal = "SELL"
+                                print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                            else:
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold})")
+                    else:
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Price Extended")
+            else:
+                filter_status.append(f"❌ H1 Trend: BULLISH (cần BEARISH)")
+                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
 
     else:
         diff = last['ema14'] - last['ema28']
@@ -151,11 +229,14 @@ def strategy_2_logic(config, error_count=0):
         print(f"   💱 Price: {last['close']:.2f}")
         print(f"   📈 H1 Trend: {h1_trend}")
         print(f"   📊 EMA14: {last['ema14']:.3f} | EMA28: {last['ema28']:.3f} | Gap: {last['ema14'] - last['ema28']:.3f}")
-        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        print(f"   📊 H1 ADX: {h1_adx:.1f} (cần >= {h1_adx_threshold})")
         print(f"   📊 ATR: {last['atr']:.2f}")
         price_dist = abs(last['close'] - last['ema14'])
         atr_threshold = 1.5 * last['atr']
         print(f"   📊 Price Distance from EMA14: {price_dist:.2f} (max: {atr_threshold:.2f} = 1.5xATR)")
+        vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
+        print(f"   📊 Volume: {vol_ratio:.2f}x (cần > {volume_threshold}x)")
         
         print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
         print(f"   ✅ PASS: {len([f for f in filter_status if f.startswith('✅')])}")
@@ -164,8 +245,40 @@ def strategy_2_logic(config, error_count=0):
         
     # 4. Execute
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        # Get all deals from history to check Cooldown
+        # --- CONSECUTIVE LOSS GUARD ---
+        loss_streak_threshold = config['parameters'].get('loss_streak_threshold', 2)
+        loss_cooldown_minutes = config['parameters'].get('loss_cooldown_minutes', 45)
+        
+        try:
+            from_timestamp = int((datetime.now() - timedelta(days=1)).timestamp())
+            to_timestamp = int(datetime.now().timestamp())
+            deals = mt5.history_deals_get(from_timestamp, to_timestamp)
+            
+            if deals:
+                closed_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT and d.magic == magic and d.profit != 0]
+                closed_deals.sort(key=lambda x: x.time, reverse=True)
+                
+                loss_streak = 0
+                for deal in closed_deals:
+                    if deal.profit < 0:
+                        loss_streak += 1
+                    else:
+                        break
+                
+                if loss_streak >= loss_streak_threshold:
+                    if len(closed_deals) > 0:
+                        last_deal_time = closed_deals[0].time
+                        last_deal_timestamp = last_deal_time.timestamp() if isinstance(last_deal_time, datetime) else last_deal_time
+                        minutes_since_last = (datetime.now().timestamp() - last_deal_timestamp) / 60
+                        
+                        if minutes_since_last < loss_cooldown_minutes:
+                            remaining = loss_cooldown_minutes - minutes_since_last
+                            print(f"   ⏳ Consecutive Loss Guard: {loss_streak} losses, {remaining:.1f} minutes remaining")
+                            return error_count, 0
+        except Exception as e:
+            print(f"   ⚠️ Error checking consecutive losses: {e}")
+        
+        # --- SPAM FILTER: Check if we traded in the last 5 minutes ---
         deals = mt5.history_deals_get(date_from=time.time() - 300, date_to=time.time())
         if deals:
              my_deals = [d for d in deals if d.magic == magic]
