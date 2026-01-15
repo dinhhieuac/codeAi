@@ -2204,26 +2204,38 @@ if __name__ == "__main__":
                         try:
                             # Fetch data for debug logging
                             symbol = config.get('symbol')
-                            df_m1_debug = get_data(symbol, mt5.TIMEFRAME_M1, 300)
-                            df_m5_debug = get_data(symbol, mt5.TIMEFRAME_M5, 100)
-                            
-                            if df_m1_debug is not None:
-                                # Calculate indicators for debug
-                                df_m1_debug['ema50'] = calculate_ema(df_m1_debug['close'], 50)
-                                df_m1_debug['ema200'] = calculate_ema(df_m1_debug['close'], 200)
-                                df_m1_debug['atr'] = calculate_atr(df_m1_debug, 14)
-                                df_m1_debug['rsi'] = calculate_rsi(df_m1_debug['close'], 14)
-                                df_m1_debug = calculate_adx(df_m1_debug, period=14)
-                                df_m1_debug['vol_ma'] = df_m1_debug['tick_volume'].rolling(window=10).mean()
+                            if symbol:
+                                print(f"📊 [Debug] Đang tạo debug log cho {symbol}...")
+                                df_m1_debug = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+                                df_m5_debug = get_data(symbol, mt5.TIMEFRAME_M5, 100)
                                 
-                                if df_m5_debug is not None:
-                                    df_m5_debug['rsi'] = calculate_rsi(df_m5_debug['close'], 14)
-                                
-                                # Log debug indicators
-                                log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
-                                last_debug_log_time = current_time
+                                if df_m1_debug is not None and len(df_m1_debug) >= 2:
+                                    # Calculate indicators for debug
+                                    df_m1_debug['ema50'] = calculate_ema(df_m1_debug['close'], 50)
+                                    df_m1_debug['ema200'] = calculate_ema(df_m1_debug['close'], 200)
+                                    df_m1_debug['atr'] = calculate_atr(df_m1_debug, 14)
+                                    df_m1_debug['rsi'] = calculate_rsi(df_m1_debug['close'], 14)
+                                    df_m1_debug = calculate_adx(df_m1_debug, period=14)
+                                    df_m1_debug['vol_ma'] = df_m1_debug['tick_volume'].rolling(window=10).mean()
+                                    
+                                    if df_m5_debug is not None and len(df_m5_debug) >= 2:
+                                        df_m5_debug['rsi'] = calculate_rsi(df_m5_debug['close'], 14)
+                                    
+                                    # Log debug indicators
+                                    from utils import log_debug_indicators
+                                    result = log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
+                                    if result:
+                                        last_debug_log_time = current_time
+                                    else:
+                                        print(f"⚠️ [Debug] Không thể ghi debug log cho {symbol}")
+                                else:
+                                    print(f"⚠️ [Debug] Không đủ dữ liệu M1 cho {symbol} (df_m1_debug is None hoặc < 2 nến)")
+                            else:
+                                print(f"⚠️ [Debug] Symbol không có trong config")
                         except Exception as e:
                             print(f"⚠️ Lỗi khi log debug indicators: {e}")
+                            import traceback
+                            traceback.print_exc()
                     
                     consecutive_errors, last_error = m1_scalp_logic(config, consecutive_errors)
                     if consecutive_errors >= 5:

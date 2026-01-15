@@ -2375,7 +2375,8 @@ if __name__ == "__main__":
                                     df_m5_debug['rsi'] = calculate_rsi(df_m5_debug['close'], 14)
                                 
                                 # Log debug indicators
-                                log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
+                                from utils import log_debug_indicators
+                                result = log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
                                 last_debug_log_time = current_time
                         except Exception as e:
                             print(f"⚠️ Lỗi khi log debug indicators: {e}")

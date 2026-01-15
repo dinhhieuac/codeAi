@@ -202,6 +202,8 @@ def check_rsi_reversal_down(rsi_series, lookback=10):
 def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
     """
     Tìm swing high với RSI > min_rsi (default 70)
+    Lọc: UpperWick < 1.3 ATR (loại bỏ swing high có wick quá lớn)
+    
     Returns: list of dicts với {'index': i, 'price': high, 'time': time, 'rsi': rsi_value}
     """
     swing_highs = []
@@ -218,6 +220,24 @@ def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
             # Check RSI at swing high
             rsi_val = df_m1.iloc[i].get('rsi', None)
             if pd.notna(rsi_val) and rsi_val > min_rsi:
+                # Lọc theo UpperWick: UpperWick < 1.3 ATR
+                candle = df_m1.iloc[i]
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                
+                # Lấy ATR tại swing high
+                atr_val = candle.get('atr', None)
+                if atr_val is None or pd.isna(atr_val):
+                    # Nếu không có ATR, tính ATR từ df_m1
+                    atr_series = calculate_atr(df_m1.iloc[max(0, i - 14):i + 1], period=14)
+                    if len(atr_series) > 0:
+                        atr_val = atr_series.iloc[-1]
+                
+                # Kiểm tra điều kiện UpperWick < 1.3 ATR
+                if atr_val is not None and pd.notna(atr_val) and atr_val > 0:
+                    if upper_wick >= 1.3 * atr_val:
+                        # Loại bỏ swing high này (wick quá lớn)
+                        continue
+                
                 swing_highs.append({
                     'index': i,
                     'price': df_m1.iloc[i]['high'],
@@ -230,6 +250,8 @@ def find_swing_high_with_rsi(df_m1, lookback=5, min_rsi=70):
 def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
     """
     Tìm swing low với RSI < min_rsi (default 30)
+    Lọc: LowerWick < 1.3 ATR (loại bỏ swing low có wick quá lớn)
+    
     Returns: list of dicts với {'index': i, 'price': low, 'time': time, 'rsi': rsi_value}
     """
     swing_lows = []
@@ -246,6 +268,24 @@ def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
             # Check RSI at swing low
             rsi_val = df_m1.iloc[i].get('rsi', None)
             if pd.notna(rsi_val) and rsi_val < min_rsi:
+                # Lọc theo LowerWick: LowerWick < 1.3 ATR
+                candle = df_m1.iloc[i]
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                
+                # Lấy ATR tại swing low
+                atr_val = candle.get('atr', None)
+                if atr_val is None or pd.isna(atr_val):
+                    # Nếu không có ATR, tính ATR từ df_m1
+                    atr_series = calculate_atr(df_m1.iloc[max(0, i - 14):i + 1], period=14)
+                    if len(atr_series) > 0:
+                        atr_val = atr_series.iloc[-1]
+                
+                # Kiểm tra điều kiện LowerWick < 1.3 ATR
+                if atr_val is not None and pd.notna(atr_val) and atr_val > 0:
+                    if lower_wick >= 1.3 * atr_val:
+                        # Loại bỏ swing low này (wick quá lớn)
+                        continue
+                
                 swing_lows.append({
                     'index': i,
                     'price': df_m1.iloc[i]['low'],

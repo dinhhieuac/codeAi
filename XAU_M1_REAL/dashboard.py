@@ -114,6 +114,7 @@ def index():
     # Sort by User Defined Order (1, 4, 2, 5)
     desired_order = [
         "Strategy_1_Trend_HA",
+        "Strategy_1_Trend_HA_V2",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR", 
         "Strategy_5_Filter_First"

@@ -230,8 +230,15 @@ def log_debug_indicators(symbol, df_m1, df_m5=None, config=None, log_dir=None):
         os.makedirs(log_dir, exist_ok=True)
         
         # Create debug log filename: {symbol}_debug_{YYYYMMDD}.txt
-        log_filename = f"{symbol.lower()}_debug_{datetime.now().strftime('%Y%m%d')}.txt"
+        # Normalize symbol name (remove spaces, convert to lowercase)
+        if symbol is None:
+            symbol = "UNKNOWN"
+        symbol_normalized = str(symbol).lower().replace(' ', '').replace('-', '').strip()
+        log_filename = f"{symbol_normalized}_debug_{datetime.now().strftime('%Y%m%d')}.txt"
         log_path = os.path.join(log_dir, log_filename)
+        
+        # Debug: Print log path
+        print(f"📝 [Debug Log] Tạo file: {log_path} cho symbol: {symbol} (normalized: {symbol_normalized})")
         
         # Get current candle (last completed candle)
         if len(df_m1) < 2:
@@ -394,6 +401,9 @@ def log_debug_indicators(symbol, df_m1, df_m5=None, config=None, log_dir=None):
         # Write to file
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write('\n'.join(debug_lines))
+        
+        # Print confirmation (only first time per day to avoid spam)
+        print(f"📝 [Debug Log] Đã ghi debug indicators vào: {log_path}")
         
         return True
     except Exception as e:
