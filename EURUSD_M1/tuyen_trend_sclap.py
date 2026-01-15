@@ -262,6 +262,9 @@ def check_swing_high_upperwick(df_m1, swing_high_idx):
     
     Returns: (is_valid, message)
     """
+    if swing_high_idx is None:
+        return False, "Swing high index là None"
+    
     if swing_high_idx < 2 or swing_high_idx >= len(df_m1) - 2:
         return False, "Swing high quá gần đầu/cuối, không đủ nến để kiểm tra"
     
@@ -299,6 +302,9 @@ def find_first_pullback_candle_buy(df_m1, swing_high_idx):
     
     Returns: (pb1_idx, message) hoặc (None, message) nếu không tìm thấy
     """
+    if swing_high_idx is None:
+        return None, "Swing high index là None"
+    
     if swing_high_idx >= len(df_m1) - 1:
         return None, "Swing high quá gần cuối"
     
@@ -331,8 +337,11 @@ def calculate_slope_pullback_down(df_m1, swing_high_idx, pb1_idx):
     
     Returns: (slope_value, message) hoặc (None, message) nếu không đủ dữ liệu
     """
-    if pb1_idx is None or pb1_idx >= len(df_m1):
-        return None, "Không có nến hồi giảm đầu tiên"
+    if swing_high_idx is None or pb1_idx is None:
+        return None, "Swing high index hoặc pb1_idx là None"
+    
+    if pb1_idx >= len(df_m1):
+        return None, "pb1_idx vượt quá độ dài dataframe"
     
     # Kiểm tra có đủ 6 nến hồi giảm không
     if pb1_idx + 5 >= len(df_m1):
@@ -389,6 +398,9 @@ def check_swing_low_lowerwick(df_m1, swing_low_idx):
     
     Returns: (is_valid, message)
     """
+    if swing_low_idx is None:
+        return False, "Swing low index là None"
+    
     if swing_low_idx < 2 or swing_low_idx >= len(df_m1) - 2:
         return False, "Swing low quá gần đầu/cuối, không đủ nến để kiểm tra"
     
@@ -426,6 +438,9 @@ def find_first_pullback_candle_sell(df_m1, swing_low_idx):
     
     Returns: (pb1_idx, message) hoặc (None, message) nếu không tìm thấy
     """
+    if swing_low_idx is None:
+        return None, "Swing low index là None"
+    
     if swing_low_idx >= len(df_m1) - 1:
         return None, "Swing low quá gần cuối"
     
@@ -458,8 +473,11 @@ def calculate_slope_pullback_up(df_m1, swing_low_idx, pb1_idx):
     
     Returns: (slope_value, message) hoặc (None, message) nếu không đủ dữ liệu
     """
-    if pb1_idx is None or pb1_idx >= len(df_m1):
-        return None, "Không có nến hồi tăng đầu tiên"
+    if swing_low_idx is None or pb1_idx is None:
+        return None, "Swing low index hoặc pb1_idx là None"
+    
+    if pb1_idx >= len(df_m1):
+        return None, "pb1_idx vượt quá độ dài dataframe"
     
     # Kiểm tra có đủ 6 nến hồi tăng không
     if pb1_idx + 5 >= len(df_m1):
@@ -571,6 +589,9 @@ def check_pullback_upperwick(df_m1, swing_high_idx, pullback_end_idx):
     
     Returns: (is_valid, message)
     """
+    if swing_high_idx is None or pb1_idx is None:
+        return None, "Swing high index hoặc pb1_idx là None"
+    
     if swing_high_idx >= pullback_end_idx or swing_high_idx >= len(df_m1) - 1:
         return False, "Swing high index không hợp lệ"
     
@@ -627,6 +648,9 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     Returns: (is_valid, pullback_end_idx, pullback_candles, slope_category, message)
     slope_category: 'valid' (18-48), 'steep' (48-62), 'too_steep' (>62), None nếu không hợp lệ
     """
+    if swing_high_idx is None:
+        return False, None, None, None, "Swing high index là None"
+    
     if swing_high_idx >= len(df_m1) - 1:
         return False, None, None, None, "Swing high quá gần cuối"
     
@@ -685,6 +709,9 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     Returns: (is_valid, pullback_end_idx, pullback_candles, slope_category, message)
     slope_category: 'valid' (18-48), 'steep' (48-62), 'too_steep' (>62), None nếu không hợp lệ
     """
+    if swing_low_idx is None:
+        return False, None, None, None, "Swing low index là None"
+    
     if swing_low_idx >= len(df_m1) - 1:
         return False, None, None, None, "Swing low quá gần cuối"
     
@@ -733,6 +760,9 @@ def calculate_pullback_trendline_buy(df_m1, swing_high_idx, pullback_end_idx):
     
     Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
     """
+    if swing_high_idx is None or pullback_end_idx is None:
+        return False, "Swing high index hoặc pullback_end_idx là None"
+    
     if swing_high_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
         return None
     
@@ -797,6 +827,9 @@ def calculate_pullback_trendline(df_m1, swing_low_idx, pullback_end_idx):
     
     Returns: dict với {'slope', 'intercept', 'func', 'points'} hoặc None
     """
+    if swing_low_idx is None or pullback_end_idx is None:
+        return None, "Swing low index hoặc pullback_end_idx là None"
+    
     if swing_low_idx >= pullback_end_idx or pullback_end_idx >= len(df_m1):
         return None
     
@@ -2203,11 +2236,39 @@ if __name__ == "__main__":
             print("🔄 Bắt đầu vòng lặp chính...\n")
             
             loop_count = 0
+            last_debug_log_time = 0
             while True:
                 try:
                     loop_count += 1
                     if loop_count % 60 == 0:  # Print every 60 iterations (~1 minute)
                         print(f"⏳ Bot đang chạy... (vòng lặp #{loop_count})")
+                    
+                    # Log debug indicators mỗi 1 phút (60 giây)
+                    current_time = time.time()
+                    if current_time - last_debug_log_time >= 60:
+                        try:
+                            # Fetch data for debug logging
+                            symbol = config.get('symbol')
+                            df_m1_debug = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+                            df_m5_debug = get_data(symbol, mt5.TIMEFRAME_M5, 100)
+                            
+                            if df_m1_debug is not None:
+                                # Calculate indicators for debug
+                                df_m1_debug['ema50'] = calculate_ema(df_m1_debug['close'], 50)
+                                df_m1_debug['ema200'] = calculate_ema(df_m1_debug['close'], 200)
+                                df_m1_debug['atr'] = calculate_atr(df_m1_debug, 14)
+                                df_m1_debug['rsi'] = calculate_rsi(df_m1_debug['close'], 14)
+                                df_m1_debug = calculate_adx(df_m1_debug, period=14)
+                                df_m1_debug['vol_ma'] = df_m1_debug['tick_volume'].rolling(window=10).mean()
+                                
+                                if df_m5_debug is not None:
+                                    df_m5_debug['rsi'] = calculate_rsi(df_m5_debug['close'], 14)
+                                
+                                # Log debug indicators
+                                log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
+                                last_debug_log_time = current_time
+                        except Exception as e:
+                            print(f"⚠️ Lỗi khi log debug indicators: {e}")
                     
                     consecutive_errors, last_error = m1_scalp_logic(config, consecutive_errors)
                     if consecutive_errors >= 5:

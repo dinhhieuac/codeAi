@@ -8,7 +8,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file, get_pip_size, calculate_adx
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file, get_pip_size, calculate_adx, log_debug_indicators
 
 # Initialize Database
 db = Database()
@@ -2346,11 +2346,39 @@ if __name__ == "__main__":
             print("🔄 Bắt đầu vòng lặp chính...\n")
             
             loop_count = 0
+            last_debug_log_time = 0
             while True:
                 try:
                     loop_count += 1
                     if loop_count % 60 == 0:  # Print every 60 iterations (~1 minute)
                         print(f"⏳ Bot đang chạy... (vòng lặp #{loop_count})")
+                    
+                    # Log debug indicators mỗi 1 phút (60 giây)
+                    current_time = time.time()
+                    if current_time - last_debug_log_time >= 60:
+                        try:
+                            # Fetch data for debug logging
+                            symbol = config.get('symbol')
+                            df_m1_debug = get_data(symbol, mt5.TIMEFRAME_M1, 300)
+                            df_m5_debug = get_data(symbol, mt5.TIMEFRAME_M5, 100)
+                            
+                            if df_m1_debug is not None:
+                                # Calculate indicators for debug
+                                df_m1_debug['ema50'] = calculate_ema(df_m1_debug['close'], 50)
+                                df_m1_debug['ema200'] = calculate_ema(df_m1_debug['close'], 200)
+                                df_m1_debug['atr'] = calculate_atr(df_m1_debug, 14)
+                                df_m1_debug['rsi'] = calculate_rsi(df_m1_debug['close'], 14)
+                                df_m1_debug = calculate_adx(df_m1_debug, period=14)
+                                df_m1_debug['vol_ma'] = df_m1_debug['tick_volume'].rolling(window=10).mean()
+                                
+                                if df_m5_debug is not None:
+                                    df_m5_debug['rsi'] = calculate_rsi(df_m5_debug['close'], 14)
+                                
+                                # Log debug indicators
+                                log_debug_indicators(symbol, df_m1_debug, df_m5_debug, config)
+                                last_debug_log_time = current_time
+                        except Exception as e:
+                            print(f"⚠️ Lỗi khi log debug indicators: {e}")
                     
                     consecutive_errors, last_error = m1_scalp_logic(config, consecutive_errors)
                     if consecutive_errors >= 5:

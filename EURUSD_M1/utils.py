@@ -206,6 +206,202 @@ def send_telegram(message, token, chat_id, symbol=None, log_to_file_enabled=True
             log_to_file(symbol, "TELEGRAM_ERROR", f"Lỗi không xác định: {str(e)}")
         return False
 
+def log_debug_indicators(symbol, df_m1, df_m5=None, config=None, log_dir=None):
+    """
+    Log chi tiết các chỉ số kỹ thuật vào file debug mỗi phút
+    
+    Args:
+        symbol: Trading symbol
+        df_m1: DataFrame M1 với các chỉ số đã tính
+        df_m5: DataFrame M5 (optional)
+        log_dir: Directory to store log files
+    """
+    try:
+        # Get script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Use provided log_dir or default to "logs" in script directory
+        if log_dir is None:
+            log_dir = os.path.join(script_dir, "logs")
+        elif not os.path.isabs(log_dir):
+            log_dir = os.path.join(script_dir, log_dir)
+        
+        # Create logs directory if it doesn't exist
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create debug log filename: {symbol}_debug_{YYYYMMDD}.txt
+        log_filename = f"{symbol.lower()}_debug_{datetime.now().strftime('%Y%m%d')}.txt"
+        log_path = os.path.join(log_dir, log_filename)
+        
+        # Get current candle (last completed candle)
+        if len(df_m1) < 2:
+            return False
+        
+        curr_candle = df_m1.iloc[-2]  # Last completed candle
+        prev_candle = df_m1.iloc[-3] if len(df_m1) >= 3 else None
+        
+        # Get current tick price
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            current_bid = tick.bid if tick else None
+            current_ask = tick.ask if tick else None
+        except:
+            current_bid = None
+            current_ask = None
+        
+        # Format timestamp
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Build debug log content
+        debug_lines = []
+        debug_lines.append("=" * 100)
+        debug_lines.append(f"[{timestamp}] DEBUG INDICATORS - {symbol}")
+        debug_lines.append("=" * 100)
+        
+        # Current Price Info
+        debug_lines.append("\n📊 [GIÁ HIỆN TẠI]")
+        if current_bid and current_ask:
+            debug_lines.append(f"   Bid: {current_bid:.5f} | Ask: {current_ask:.5f} | Spread: {current_ask - current_bid:.5f}")
+        debug_lines.append(f"   Nến hiện tại (đã đóng): Time={curr_candle.name}")
+        debug_lines.append(f"   Open: {curr_candle['open']:.5f} | High: {curr_candle['high']:.5f} | Low: {curr_candle['low']:.5f} | Close: {curr_candle['close']:.5f}")
+        if prev_candle is not None:
+            debug_lines.append(f"   Nến trước: Open: {prev_candle['open']:.5f} | High: {prev_candle['high']:.5f} | Low: {prev_candle['low']:.5f} | Close: {prev_candle['close']:.5f}")
+        
+        # Volume Info
+        debug_lines.append("\n📈 [VOLUME]")
+        debug_lines.append(f"   Tick Volume (nến hiện tại): {curr_candle.get('tick_volume', 'N/A')}")
+        if 'vol_ma' in df_m1.columns:
+            vol_ma = df_m1['vol_ma'].iloc[-2] if pd.notna(df_m1['vol_ma'].iloc[-2]) else None
+            if vol_ma is not None:
+                debug_lines.append(f"   Volume MA(10): {vol_ma:.2f}")
+        
+        # EMA Indicators
+        debug_lines.append("\n📉 [EMA - EXPONENTIAL MOVING AVERAGE]")
+        ema50 = curr_candle.get('ema50', None)
+        ema200 = curr_candle.get('ema200', None)
+        if pd.notna(ema50):
+            debug_lines.append(f"   EMA50: {ema50:.5f}")
+        if pd.notna(ema200):
+            debug_lines.append(f"   EMA200: {ema200:.5f}")
+        if pd.notna(ema50) and pd.notna(ema200):
+            ema_diff = ema50 - ema200
+            ema_diff_pct = (ema_diff / ema200) * 100 if ema200 != 0 else 0
+            debug_lines.append(f"   EMA50 - EMA200: {ema_diff:.5f} ({ema_diff_pct:+.3f}%)")
+            debug_lines.append(f"   Trend: {'BULLISH' if ema50 > ema200 else 'BEARISH'}")
+        
+        # ATR Indicator
+        debug_lines.append("\n📊 [ATR - AVERAGE TRUE RANGE]")
+        atr = curr_candle.get('atr', None)
+        if pd.notna(atr):
+            debug_lines.append(f"   ATR(14): {atr:.5f}")
+            # Calculate ATR in pips for forex
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                debug_lines.append(f"   ATR: {atr:.2f} USD")
+            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                debug_lines.append(f"   ATR: {atr:.2f} USD")
+            else:
+                atr_pips = atr / 0.0001
+                debug_lines.append(f"   ATR: {atr_pips:.1f} pips")
+        
+        # RSI Indicator
+        debug_lines.append("\n📈 [RSI - RELATIVE STRENGTH INDEX]")
+        rsi = curr_candle.get('rsi', None)
+        prev_rsi = prev_candle.get('rsi', None) if prev_candle is not None else None
+        if pd.notna(rsi):
+            debug_lines.append(f"   RSI(14)_M1: {rsi:.2f}")
+            if rsi >= 70:
+                debug_lines.append(f"   RSI Status: OVERBOUGHT (≥70)")
+            elif rsi <= 30:
+                debug_lines.append(f"   RSI Status: OVERSOLD (≤30)")
+            else:
+                debug_lines.append(f"   RSI Status: NEUTRAL")
+        if pd.notna(prev_rsi) and pd.notna(rsi):
+            rsi_change = rsi - prev_rsi
+            debug_lines.append(f"   RSI Change: {rsi_change:+.2f} ({prev_rsi:.2f} → {rsi:.2f})")
+            debug_lines.append(f"   RSI Direction: {'RISING' if rsi > prev_rsi else 'FALLING' if rsi < prev_rsi else 'FLAT'}")
+        
+        # ADX Indicator
+        debug_lines.append("\n📊 [ADX - AVERAGE DIRECTIONAL INDEX]")
+        adx = curr_candle.get('adx', None)
+        di_plus = curr_candle.get('di_plus', None)
+        di_minus = curr_candle.get('di_minus', None)
+        if pd.notna(adx):
+            debug_lines.append(f"   ADX(14): {adx:.2f}")
+            if adx >= 25:
+                debug_lines.append(f"   ADX Status: STRONG TREND (≥25)")
+            elif adx >= 20:
+                debug_lines.append(f"   ADX Status: MODERATE TREND (20-25)")
+            elif adx >= 18:
+                debug_lines.append(f"   ADX Status: WEAK TREND (18-20)")
+            else:
+                debug_lines.append(f"   ADX Status: NO TREND (<18)")
+        if pd.notna(di_plus) and pd.notna(di_minus):
+            debug_lines.append(f"   +DI: {di_plus:.2f} | -DI: {di_minus:.2f}")
+            if di_plus > di_minus:
+                debug_lines.append(f"   Direction: BULLISH (+DI > -DI)")
+            elif di_minus > di_plus:
+                debug_lines.append(f"   Direction: BEARISH (-DI > +DI)")
+            else:
+                debug_lines.append(f"   Direction: NEUTRAL")
+        
+        # M5 RSI (if available)
+        if df_m5 is not None and len(df_m5) >= 2:
+            debug_lines.append("\n📈 [RSI M5]")
+            rsi_m5 = df_m5['rsi'].iloc[-2] if 'rsi' in df_m5.columns else None
+            if pd.notna(rsi_m5):
+                debug_lines.append(f"   RSI(14)_M5: {rsi_m5:.2f}")
+                if 55 <= rsi_m5 <= 65:
+                    debug_lines.append(f"   M5 RSI Status: BUY ZONE (55-65)")
+                elif 35 <= rsi_m5 <= 45:
+                    debug_lines.append(f"   M5 RSI Status: SELL ZONE (35-45)")
+                else:
+                    debug_lines.append(f"   M5 RSI Status: OUT OF ZONE")
+        
+        # Recent Swing Points (skip to avoid circular import)
+        debug_lines.append("\n🔍 [SWING POINTS ANALYSIS]")
+        debug_lines.append(f"   (Swing points analysis available in main strategy logic)")
+        
+        # Current Conditions Summary
+        debug_lines.append("\n✅ [ĐIỀU KIỆN HIỆN TẠI]")
+        if pd.notna(ema50) and pd.notna(ema200):
+            debug_lines.append(f"   ĐK1 BUY (EMA50 > EMA200): {'✅' if ema50 > ema200 else '❌'}")
+            debug_lines.append(f"   ĐK1 SELL (EMA50 < EMA200): {'✅' if ema50 < ema200 else '❌'}")
+        if pd.notna(atr):
+            # Try to get min_atr from config or use default based on symbol
+            min_atr = 0.00011  # Default for forex
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                min_atr = 0.50  # Default for XAUUSD
+            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                min_atr = 10.0  # Default for BTCUSD
+            elif config is not None:
+                # Try to get from config if available
+                try:
+                    # Check if get_min_atr_threshold is available in calling module
+                    import sys
+                    calling_module = sys.modules.get('__main__')
+                    if calling_module and hasattr(calling_module, 'get_min_atr_threshold'):
+                        min_atr = calling_module.get_min_atr_threshold(symbol, config)
+                except:
+                    pass
+            debug_lines.append(f"   ĐK4 ATR (≥ {min_atr:.5f}): {'✅' if atr >= min_atr else '❌'} ({atr:.5f})")
+        if pd.notna(adx):
+            debug_lines.append(f"   ĐK5 ADX (≥ 18): {'✅' if adx >= 18 else '❌'} ({adx:.2f})")
+        
+        debug_lines.append("\n" + "=" * 100 + "\n")
+        
+        # Write to file
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(debug_lines))
+        
+        return True
+    except Exception as e:
+        print(f"⚠️ [Debug Log] Lỗi khi ghi debug log: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def get_data(symbol, timeframe, n=100):
     """Fetch recent candles from MT5"""
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, n)
