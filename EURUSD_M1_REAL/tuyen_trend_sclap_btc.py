@@ -333,6 +333,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     - RSI hồi về vùng rsi_target_min - rsi_target_max (default 40-50)
     - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
     - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
+    - Trong quá trình hồi: Không tồn tại bất kỳ nến nào có UpperWick >= 1.3 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng tăng chính
     - Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
     
@@ -397,6 +398,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
         return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến giảm"
     
     min_body_threshold = 1.2 * atr_val
+    max_upper_wick_threshold = 1.3 * atr_val
     # Kiểm tra từng nến trong pullback (từ swing high đến trước nến phá trendline)
     # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
     candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
@@ -407,6 +409,11 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
             body_size = abs(candle['close'] - candle['open'])
             if body_size >= min_body_threshold:
                 return False, None, None, f"Có nến giảm với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
+        
+        # Kiểm tra UpperWick: Không tồn tại bất kỳ nến nào có UpperWick ≥ 1.3 ATR
+        upper_wick = candle['high'] - max(candle['open'], candle['close'])
+        if upper_wick >= max_upper_wick_threshold:
+            return False, None, None, f"Có nến với UpperWick ({upper_wick:.5f}) >= 1.3 × ATR ({max_upper_wick_threshold:.5f}) tại index {idx}"
     
     # 4. Kiểm tra RSI hồi về vùng target (40-50) - kiểm tra nến cuối hoặc gần cuối
     last_rsi = pullback_candles.iloc[-1].get('rsi', None)
@@ -469,6 +476,7 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     - RSI hồi về vùng rsi_target_min - rsi_target_max (default 50-60)
     - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
     - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
+    - Trong quá trình hồi: Không tồn tại bất kỳ nến nào có LowerWick >= 1.3 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng giảm chính
     - Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
     
@@ -533,6 +541,7 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
         return False, None, None, "Không thể lấy ATR(14)_M1 để kiểm tra điều kiện nến tăng"
     
     min_body_threshold = 1.2 * atr_val
+    max_lower_wick_threshold = 1.3 * atr_val
     # Kiểm tra từng nến trong pullback (từ swing low đến trước nến phá trendline)
     # Loại trừ nến cuối cùng vì đó có thể là nến phá trendline
     candles_to_check = pullback_candles.iloc[:-1] if len(pullback_candles) > 1 else pullback_candles
@@ -543,6 +552,11 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
             body_size = abs(candle['close'] - candle['open'])
             if body_size >= min_body_threshold:
                 return False, None, None, f"Có nến tăng với body ({body_size:.5f}) >= 1.2 × ATR ({min_body_threshold:.5f}) tại index {idx}"
+        
+        # Kiểm tra LowerWick: Không tồn tại bất kỳ nến nào có LowerWick ≥ 1.3 ATR
+        lower_wick = min(candle['open'], candle['close']) - candle['low']
+        if lower_wick >= max_lower_wick_threshold:
+            return False, None, None, f"Có nến với LowerWick ({lower_wick:.5f}) >= 1.3 × ATR ({max_lower_wick_threshold:.5f}) tại index {idx}"
     
     # 4. Kiểm tra RSI hồi về vùng target (50-60) - kiểm tra nến cuối hoặc gần cuối
     last_rsi = pullback_candles.iloc[-1].get('rsi', None)
