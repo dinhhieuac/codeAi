@@ -295,7 +295,7 @@ def find_swing_low_with_rsi(df_m1, lookback=5, min_rsi=30):
     
     return swing_lows
 
-def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32):
+def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32, symbol=None):
     """
     Kiểm tra sóng hồi hợp lệ cho BUY:
     - Giá không tạo đỉnh cao hơn swing high
@@ -304,6 +304,10 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
     - Trong quá trình hồi: RSI > rsi_min_during_pullback (default 32)
     - Trong quá trình hồi: Không có nến giảm nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng tăng chính
+    - Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
+    
+    Args:
+        symbol: Trading symbol để tính pip_size (optional)
     
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
     """
@@ -386,11 +390,41 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
             if pullback_low < prev_swing_low * 0.9999:  # 0.1 pip buffer
                 return False, None, None, f"Giá phá cấu trúc: Pullback low {pullback_low:.5f} < Prev swing low {prev_swing_low:.5f}"
     
+    # 6. Kiểm tra Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
+    if symbol is not None:
+        # Tính pip_size
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            point = symbol_info.point
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                pip_size = 0.1 if point < 0.01 else point
+            elif 'JPY' in symbol_upper:
+                pip_size = 0.01
+            else:
+                pip_size = 0.0001
+            
+            # Tính slope pullback: từ swing high đến pullback end
+            price_start = swing_high_price  # High của swing high
+            price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
+            num_candles = pullback_end_idx - swing_high_idx
+            
+            if num_candles > 0 and pip_size > 0:
+                # Tính slope trong đơn vị pip per candle
+                price_diff = price_start - price_end  # BUY: giá giảm (slope âm)
+                slope_pips = (price_diff / pip_size) / num_candles
+                
+                # Kiểm tra điều kiện slope
+                if slope_pips > 62:
+                    return False, None, None, f"Slope Pullback quá mạnh: {slope_pips:.2f} pips/candle > 62 (loại bỏ)"
+                elif slope_pips < -18 or slope_pips > 48:
+                    return False, None, None, f"Slope Pullback không hợp lệ: {slope_pips:.2f} pips/candle (cần -18 ≤ slope ≤ 48)"
+    
     pullback_end_idx = pullback_end
     
     return True, pullback_end_idx, pullback_candles, "Sóng hồi hợp lệ"
 
-def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68):
+def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68, symbol=None):
     """
     Kiểm tra sóng hồi hợp lệ cho SELL:
     - Giá không tạo đáy thấp hơn swing low
@@ -399,6 +433,10 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
     - Trong quá trình hồi: RSI < rsi_max_during_pullback (default 68)
     - Trong quá trình hồi: Không có nến tăng nào có body >= 1.2 × ATR(14)_M1
     - Giá không phá cấu trúc xu hướng giảm chính
+    - Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
+    
+    Args:
+        symbol: Trading symbol để tính pip_size (optional)
     
     Returns: (is_valid, pullback_end_idx, pullback_candles, message)
     """
@@ -480,6 +518,36 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
             pullback_high = pullback_candles['high'].max()
             if pullback_high > prev_swing_high * 1.0001:  # 0.1 pip buffer
                 return False, None, None, f"Giá phá cấu trúc: Pullback high {pullback_high:.5f} > Prev swing high {prev_swing_high:.5f}"
+    
+    # 6. Kiểm tra Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
+    if symbol is not None:
+        # Tính pip_size
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            point = symbol_info.point
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                pip_size = 0.1 if point < 0.01 else point
+            elif 'JPY' in symbol_upper:
+                pip_size = 0.01
+            else:
+                pip_size = 0.0001
+            
+            # Tính slope pullback: từ swing low đến pullback end
+            price_start = swing_low_price  # Low của swing low
+            price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
+            num_candles = pullback_end_idx - swing_low_idx
+            
+            if num_candles > 0 and pip_size > 0:
+                # Tính slope trong đơn vị pip per candle
+                price_diff = price_end - price_start  # SELL: giá tăng (slope dương)
+                slope_pips = (price_diff / pip_size) / num_candles
+                
+                # Kiểm tra điều kiện slope
+                if slope_pips > 62:
+                    return False, None, None, f"Slope Pullback quá mạnh: {slope_pips:.2f} pips/candle > 62 (loại bỏ)"
+                elif slope_pips < -18 or slope_pips > 48:
+                    return False, None, None, f"Slope Pullback không hợp lệ: {slope_pips:.2f} pips/candle (cần -18 ≤ slope ≤ 48)"
     
     pullback_end_idx = pullback_end
     
@@ -1055,7 +1123,7 @@ def m1_scalp_logic(config, error_count=0):
                 # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
                 log_details.append(f"\n🔍 [BUY] ĐK3: Kiểm tra sóng hồi hợp lệ")
                 pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_buy(
-                    df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32
+                    df_m1, swing_high_idx, max_candles=30, rsi_target_min=40, rsi_target_max=50, rsi_min_during_pullback=32, symbol=symbol
                 )
                 
                 if not pullback_valid:
@@ -1203,7 +1271,7 @@ def m1_scalp_logic(config, error_count=0):
                     # Điều kiện 3: Kiểm tra sóng hồi hợp lệ
                     log_details.append(f"\n🔍 [SELL] ĐK3: Kiểm tra sóng hồi hợp lệ")
                     pullback_valid, pullback_end_idx, pullback_candles, pullback_msg = check_valid_pullback_sell(
-                        df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68
+                        df_m1, swing_low_idx, max_candles=30, rsi_target_min=50, rsi_target_max=60, rsi_max_during_pullback=68, symbol=symbol
                     )
                     
                     if not pullback_valid:
