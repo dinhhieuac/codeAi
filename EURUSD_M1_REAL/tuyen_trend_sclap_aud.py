@@ -414,7 +414,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
             # Tính slope pullback: từ swing high đến pullback end
             price_start = swing_high_price  # High của swing high
             price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
-            num_candles = pullback_end_idx - swing_high_idx
+            num_candles = pullback_end - swing_high_idx
             
             if num_candles > 0 and pip_size > 0:
                 # Tính slope trong đơn vị pip per candle
@@ -550,7 +550,7 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
             # Tính slope pullback: từ swing low đến pullback end
             price_start = swing_low_price  # Low của swing low
             price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
-            num_candles = pullback_end_idx - swing_low_idx
+            num_candles = pullback_end - swing_low_idx
             
             if num_candles > 0 and pip_size > 0:
                 # Tính slope trong đơn vị pip per candle
@@ -1572,14 +1572,14 @@ def m1_scalp_logic(config, error_count=0):
         else:  # SELL
             execution_price = tick.bid
         
-        # --- 9. Spam Filter (60s) ---
+        # --- 9. Spam Filter (300s) ---
         # Chỉ kiểm tra positions do bot này mở (theo magic number)
         all_strat_positions = mt5.positions_get(symbol=symbol)
         strat_positions = [pos for pos in (all_strat_positions or []) if pos.magic == magic]
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
             tick = mt5.symbol_info_tick(symbol)
-            if (tick.time - strat_positions[0].time) < 60:
+            if (tick.time - strat_positions[0].time) < 300:
                 print("   ⏳ Trade taken recently. Waiting.")
                 return error_count, 0
         
@@ -1933,7 +1933,7 @@ def log_initial_conditions(config):
     
     # Spam Filter
     print("\n⏱️ [SPAM FILTER]")
-    print("   ⏳ Cooldown: 60 giây giữa các lệnh")
+    print("   ⏳ Cooldown: 300 giây giữa các lệnh")
     
     # Position Management
     print("\n📊 [QUẢN LÝ VỊ THẾ]")

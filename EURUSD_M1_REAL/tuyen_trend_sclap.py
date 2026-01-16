@@ -414,7 +414,7 @@ def check_valid_pullback_buy(df_m1, swing_high_idx, max_candles=30, rsi_target_m
             # Tính slope pullback: từ swing high đến pullback end
             price_start = swing_high_price  # High của swing high
             price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
-            num_candles = pullback_end_idx - swing_high_idx
+            num_candles = pullback_end - swing_high_idx
             
             if num_candles > 0 and pip_size > 0:
                 # Tính slope trong đơn vị pip per candle
@@ -532,6 +532,36 @@ def check_valid_pullback_sell(df_m1, swing_low_idx, max_candles=30, rsi_target_m
             pullback_high = pullback_candles['high'].max()
             if pullback_high > prev_swing_high * 1.0001:  # 0.1 pip buffer
                 return False, None, None, f"Giá phá cấu trúc: Pullback high {pullback_high:.5f} > Prev swing high {prev_swing_high:.5f}"
+    
+    # 6. Kiểm tra Slope Pullback: -18 ≤ Slope ≤ 48 (hợp lệ), > 62 (loại bỏ)
+    if symbol is not None:
+        # Tính pip_size
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info:
+            point = symbol_info.point
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                pip_size = 0.1 if point < 0.01 else point
+            elif 'JPY' in symbol_upper:
+                pip_size = 0.01
+            else:
+                pip_size = 0.0001
+            
+            # Tính slope pullback: từ swing low đến pullback end
+            price_start = swing_low_price  # Low của swing low
+            price_end = pullback_candles.iloc[-1]['close']  # Close của nến cuối pullback
+            num_candles = pullback_end - swing_low_idx
+            
+            if num_candles > 0 and pip_size > 0:
+                # Tính slope trong đơn vị pip per candle
+                price_diff = price_end - price_start  # SELL: giá tăng (slope dương)
+                slope_pips = (price_diff / pip_size) / num_candles
+                
+                # Kiểm tra điều kiện slope
+                if slope_pips > 62:
+                    return False, None, None, f"Slope Pullback quá mạnh: {slope_pips:.2f} pips/candle > 62 (loại bỏ)"
+                elif slope_pips < -18 or slope_pips > 48:
+                    return False, None, None, f"Slope Pullback không hợp lệ: {slope_pips:.2f} pips/candle (cần -18 ≤ slope ≤ 48)"
     
     pullback_end_idx = pullback_end
     
