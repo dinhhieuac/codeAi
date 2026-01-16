@@ -295,6 +295,92 @@ def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_th
         return True, f"CHOP: body_avg={body_avg:.2f} < {body_threshold * atr_val:.2f}, overlap={avg_overlap:.1%} > {overlap_threshold:.1%}"
     return False, f"Not CHOP: body_avg={body_avg:.2f}, overlap={avg_overlap:.1%}"
 
+def check_atr_volatility_filter(df_m1, current_atr, atr_period=14, lookback_period=50, 
+                                 min_atr_multiplier=0.5, max_atr_multiplier=2.5, 
+                                 use_relative=True, min_absolute=None, max_absolute=None):
+    """
+    ATR VOLATILITY FILTER - Lọc các vùng thị trường có độ biến động quá thấp hoặc quá cao
+    
+    Logic:
+    - Nếu ATR quá thấp (< min_threshold): Thị trường quá yên tĩnh → NO TRADE
+    - Nếu ATR quá cao (> max_threshold): Thị trường quá biến động → NO TRADE
+    - Nếu ATR trong khoảng cho phép: OK → TRADE
+    
+    Parameters:
+    -----------
+    df_m1 : DataFrame
+        DataFrame chứa dữ liệu M1 với cột 'atr' đã được tính toán
+    current_atr : float
+        Giá trị ATR hiện tại
+    atr_period : int
+        Chu kỳ tính ATR (mặc định: 14)
+    lookback_period : int
+        Số nến để tính ATR trung bình (mặc định: 50)
+    min_atr_multiplier : float
+        Hệ số nhân tối thiểu so với ATR trung bình (mặc định: 0.5)
+        Ví dụ: 0.5 = ATR hiện tại phải >= 50% ATR trung bình
+    max_atr_multiplier : float
+        Hệ số nhân tối đa so với ATR trung bình (mặc định: 2.5)
+        Ví dụ: 2.5 = ATR hiện tại phải <= 250% ATR trung bình
+    use_relative : bool
+        True: So sánh với ATR trung bình (relative)
+        False: So sánh với giá trị tuyệt đối (absolute)
+    min_absolute : float
+        Ngưỡng ATR tối thiểu tuyệt đối (nếu use_relative=False)
+    max_absolute : float
+        Ngưỡng ATR tối đa tuyệt đối (nếu use_relative=False)
+    
+    Returns:
+    --------
+    tuple : (is_valid, message)
+        is_valid: True nếu ATR trong khoảng cho phép, False nếu quá thấp/quá cao
+        message: Thông báo mô tả kết quả kiểm tra
+    """
+    if len(df_m1) < max(lookback_period, atr_period):
+        return True, "Không đủ dữ liệu để kiểm tra ATR"
+    
+    if pd.isna(current_atr) or current_atr <= 0:
+        return True, "ATR không hợp lệ, bỏ qua filter"
+    
+    if use_relative:
+        # So sánh với ATR trung bình trong lookback period
+        if 'atr' not in df_m1.columns:
+            return True, "Không có cột ATR, bỏ qua filter"
+        
+        # Lấy ATR trung bình trong lookback period (không bao gồm nến cuối)
+        recent_atr = df_m1['atr'].iloc[-lookback_period:-1]
+        # Loại bỏ các giá trị NaN
+        recent_atr_clean = recent_atr.dropna()
+        if len(recent_atr_clean) == 0:
+            return True, "Không đủ dữ liệu ATR để so sánh (tất cả đều NaN)"
+        
+        avg_atr = recent_atr_clean.mean()
+        
+        if pd.isna(avg_atr) or avg_atr <= 0:
+            return True, "ATR trung bình không hợp lệ, bỏ qua filter"
+        
+        # Tính ngưỡng min và max
+        min_threshold = avg_atr * min_atr_multiplier
+        max_threshold = avg_atr * max_atr_multiplier
+        
+        # Kiểm tra
+        if current_atr < min_threshold:
+            return False, f"ATR quá thấp: {current_atr:.2f} < {min_threshold:.2f} ({min_atr_multiplier:.1f}x avg={avg_atr:.2f}) - Thị trường quá yên tĩnh"
+        elif current_atr > max_threshold:
+            return False, f"ATR quá cao: {current_atr:.2f} > {max_threshold:.2f} ({max_atr_multiplier:.1f}x avg={avg_atr:.2f}) - Thị trường quá biến động"
+        else:
+            return True, f"ATR OK: {current_atr:.2f} trong khoảng [{min_threshold:.2f}, {max_threshold:.2f}] (avg={avg_atr:.2f})"
+    else:
+        # So sánh với giá trị tuyệt đối
+        if min_absolute is not None and current_atr < min_absolute:
+            return False, f"ATR quá thấp: {current_atr:.2f} < {min_absolute:.2f} (ngưỡng tối thiểu)"
+        elif max_absolute is not None and current_atr > max_absolute:
+            return False, f"ATR quá cao: {current_atr:.2f} > {max_absolute:.2f} (ngưỡng tối đa)"
+        else:
+            min_str = f"{min_absolute:.2f}" if min_absolute is not None else "N/A"
+            max_str = f"{max_absolute:.2f}" if max_absolute is not None else "N/A"
+            return True, f"ATR OK: {current_atr:.2f} trong khoảng [{min_str}, {max_str}]"
+
 def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
@@ -410,6 +496,33 @@ def strategy_1_logic(config, error_count=0):
         # Fallback: use recent range
         recent_range = df_m1.iloc[-atr_period:]['high'].max() - df_m1.iloc[-atr_period:]['low'].min()
         atr_val = recent_range / atr_period if recent_range > 0 else 0.1
+    
+    # V2: ATR Volatility Filter - Lọc vùng biến động quá thấp/quá cao
+    atr_volatility_filter_enabled = config['parameters'].get('atr_volatility_filter_enabled', True)  # Default: True
+    if atr_volatility_filter_enabled:
+        atr_lookback_period = config['parameters'].get('atr_lookback_period', 50)  # Default: 50 nến
+        atr_min_multiplier = config['parameters'].get('atr_min_multiplier', 0.5)  # Default: 0.5 (50% ATR trung bình)
+        atr_max_multiplier = config['parameters'].get('atr_max_multiplier', 2.5)  # Default: 2.5 (250% ATR trung bình)
+        atr_use_relative = config['parameters'].get('atr_use_relative', True)  # Default: True (so sánh relative)
+        atr_min_absolute = config['parameters'].get('atr_min_absolute', None)  # Optional: ngưỡng tuyệt đối
+        atr_max_absolute = config['parameters'].get('atr_max_absolute', None)  # Optional: ngưỡng tuyệt đối
+        
+        is_atr_valid, atr_msg = check_atr_volatility_filter(
+            df_m1, atr_val, atr_period=atr_period, 
+            lookback_period=atr_lookback_period,
+            min_atr_multiplier=atr_min_multiplier,
+            max_atr_multiplier=atr_max_multiplier,
+            use_relative=atr_use_relative,
+            min_absolute=atr_min_absolute,
+            max_absolute=atr_max_absolute
+        )
+        
+        if not is_atr_valid:
+            print(f"❌ ATR Volatility Filter: {atr_msg} (Skipping)")
+            return error_count, 0
+        print(f"✅ ATR Volatility Filter: {atr_msg}")
+    else:
+        print(f"⏭️  ATR Volatility Filter: Disabled (optional)")
     
     # V2: CHOP/RANGE Filter (BẮT BUỘC)
     chop_lookback = config['parameters'].get('chop_lookback', 10)
