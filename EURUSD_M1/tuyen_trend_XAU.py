@@ -9,7 +9,7 @@ from datetime import datetime
 # Import local modules
 sys.path.append('..') 
 from db import Database
-from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi
+from utils import load_config, connect_mt5, get_data, send_telegram, manage_position, get_mt5_error_message, calculate_rsi, log_to_file
 
 # Initialize Database
 db = Database()
@@ -1725,6 +1725,8 @@ def tuyen_trend_logic(config, error_count=0):
         print(f"❌ Lỗi trong tuyen_trend_logic (phần đầu): {e}")
         import traceback
         traceback.print_exc()
+        symbol = config.get('symbol', 'UNKNOWN')
+        log_to_file(symbol, "ERROR", f"Exception trong tuyen_trend_logic (phần đầu): {str(e)}")
         return error_count + 1, 0
 
     # --- 3. H1 Higher-timeframe Bias (Supply/Demand) ---
@@ -3180,7 +3182,10 @@ def tuyen_trend_logic(config, error_count=0):
             )
             if error_detail:
                 msg += f"📝 <b>Chi tiết:</b> {error_detail}"
-            send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+            telegram_sent = send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'), symbol=symbol)
+            if not telegram_sent:
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram lỗi: {error_msg} - {error_detail}")
         
         # 1. Check MT5 connection
         if not mt5.terminal_info():
@@ -3188,6 +3193,7 @@ def tuyen_trend_logic(config, error_count=0):
             if not connect_mt5(config):
                 error_msg = "MT5 Terminal không kết nối"
                 print(f"❌ Không thể kết nối lại MT5. Bỏ qua lệnh này.")
+                log_to_file(symbol, "ERROR", f"MT5 Terminal không kết nối - Không thể kết nối lại MT5")
                 send_error_telegram(error_msg, "Không thể kết nối lại MT5 sau khi thử")
                 return error_count + 1, 0
         
@@ -3196,6 +3202,7 @@ def tuyen_trend_logic(config, error_count=0):
         if symbol_info is None:
             error_msg = f"Không thể lấy thông tin symbol: {symbol}"
             print(f"❌ {error_msg}")
+            log_to_file(symbol, "ERROR", f"Không thể lấy thông tin symbol: {symbol}")
             send_error_telegram(error_msg, "Symbol không tồn tại hoặc không khả dụng")
             return error_count + 1, 0
         
@@ -3204,6 +3211,7 @@ def tuyen_trend_logic(config, error_count=0):
             if not mt5.symbol_select(symbol, True):
                 error_msg = f"Không thể kích hoạt symbol: {symbol}"
                 print(f"❌ {error_msg}")
+                log_to_file(symbol, "ERROR", f"Symbol không visible và không thể kích hoạt: {symbol}")
                 send_error_telegram(error_msg, "Symbol không visible và không thể kích hoạt")
                 return error_count + 1, 0
         
@@ -3212,22 +3220,26 @@ def tuyen_trend_logic(config, error_count=0):
             if sl >= price:
                 error_msg = f"BUY order - SL ({sl:.5f}) phải < Entry ({price:.5f})"
                 print(f"❌ Lỗi logic: {error_msg}")
+                log_to_file(symbol, "ERROR", f"Lỗi logic SL/TP: {error_msg}")
                 send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
             if tp <= price:
                 error_msg = f"BUY order - TP ({tp:.5f}) phải > Entry ({price:.5f})"
                 print(f"❌ Lỗi logic: {error_msg}")
+                log_to_file(symbol, "ERROR", f"Lỗi logic SL/TP: {error_msg}")
                 send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
         else:  # SELL
             if sl <= price:
                 error_msg = f"SELL order - SL ({sl:.5f}) phải > Entry ({price:.5f})"
                 print(f"❌ Lỗi logic: {error_msg}")
+                log_to_file(symbol, "ERROR", f"Lỗi logic SL/TP: {error_msg}")
                 send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
             if tp >= price:
                 error_msg = f"SELL order - TP ({tp:.5f}) phải < Entry ({price:.5f})"
                 print(f"❌ Lỗi logic: {error_msg}")
+                log_to_file(symbol, "ERROR", f"Lỗi logic SL/TP: {error_msg}")
                 send_error_telegram("Lỗi logic SL/TP", error_msg)
                 return error_count + 1, 0
         
@@ -3407,6 +3419,7 @@ def tuyen_trend_logic(config, error_count=0):
             error_msg = f"order_check() không hợp lệ"
             error_detail = f"{check_result.comment if hasattr(check_result, 'comment') else 'Unknown'} (Retcode: {check_result.retcode})"
             print(f"   ❌ {error_msg}: {error_detail}")
+            log_to_file(symbol, "ERROR", f"order_check() không hợp lệ: {error_detail}")
             send_error_telegram(error_msg, error_detail)
             return error_count + 1, check_result.retcode
         else:
@@ -3425,12 +3438,21 @@ def tuyen_trend_logic(config, error_count=0):
             print(f"   - Symbol {symbol} có sẵn?")
             print(f"   - Account có quyền trade?")
             print(f"   - SL/TP có hợp lệ? (SL: {sl:.5f}, TP: {tp:.5f})")
+            log_to_file(symbol, "ERROR", f"Order Send Failed: Result is None - Lỗi MT5: {error}")
             send_error_telegram(error_msg, error_detail)
             return error_count + 1, 0
 
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "Tuyen_Trend", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
+            db.log_order(result.order, "Tuyen_Trend_XAUUSD", symbol, signal_type, volume, price, sl, tp, reason, account_id=config['account'])
+            
+            # Log to file: SIGNAL
+            signal_log_content = (
+                f"✅ {signal_type} SIGNAL - Ticket: {result.order} | "
+                f"Entry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f} | "
+                f"Volume: {volume:.2f} lot | Strategy: {reason} | ATR: {atr_val:.5f}"
+            )
+            log_to_file(symbol, "SIGNAL", signal_log_content)
             
             # === DETAILED TELEGRAM MESSAGE ===
             # Build detailed message with all conditions met
@@ -3571,13 +3593,44 @@ def tuyen_trend_logic(config, error_count=0):
             msg_parts.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             
             msg = "".join(msg_parts)
-            send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
+            telegram_sent = send_telegram(msg, config['telegram_token'], config['telegram_chat_id'], symbol=symbol)
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram. Kiểm tra token và chat_id trong config.")
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram cho signal {signal_type} - Ticket: {result.order}")
             return 0, 0
         else:
             error_msg = f"Order Failed: Retcode {result.retcode}"
             error_detail = f"{result.comment if hasattr(result, 'comment') else 'Unknown error'}"
             print(f"❌ {error_msg} - {error_detail}")
+            
+            # Log to file: ERROR
+            error_log_content = (
+                f"❌ ORDER ERROR - {signal_type} | "
+                f"Entry: {price:.5f} | SL: {sl:.5f} | TP: {tp:.5f} | "
+                f"Error: {error_msg} | Detail: {error_detail}"
+            )
+            log_to_file(symbol, "ERROR", error_log_content)
+            
             send_error_telegram(error_msg, error_detail)
+            
+            # Log Telegram error if send failed
+            telegram_sent = send_telegram(
+                f"❌ <b>Tuyen Trend Bot - Lỗi Gửi Lệnh</b>\n"
+                f"💱 Symbol: {symbol} ({signal_type})\n"
+                f"💵 Entry: {price:.5f}\n"
+                f"🛑 SL: {sl:.5f} | 🎯 TP: {tp:.5f}\n"
+                f"❌ Lỗi: {error_msg}\n"
+                f"📝 Chi tiết: {error_detail}",
+                config.get('telegram_token'),
+                config.get('telegram_chat_id'),
+                symbol=symbol
+            )
+            if not telegram_sent:
+                print(f"⚠️ Không thể gửi thông báo Telegram lỗi.")
+                # Log Telegram error to file
+                log_to_file(symbol, "TELEGRAM_ERROR", f"Không thể gửi thông báo Telegram lỗi: {error_msg} - {error_detail}")
+            
             return error_count + 1, result.retcode
 
     return error_count, 0
@@ -3695,7 +3748,7 @@ if __name__ == "__main__":
     
     # Interactive menu để chọn chế độ
     print("="*80)
-    print("🚀 TUYEN TREND BOT (V2) - CHỌN CHẾ ĐỘ FILTER")
+    print("🚀 TUYEN TREND BOT (V2) - XAUUSD - CHỌN CHẾ ĐỘ FILTER")
     print("="*80)
     print("\n📋 Vui lòng chọn chế độ filter:")
     print("   1️⃣  Default (Mặc định) - Cân bằng giữa số lượng và chất lượng (1-3 signals/ngày)")
@@ -3703,7 +3756,7 @@ if __name__ == "__main__":
     print("   3️⃣  Strict (Khắt khe) - Chất lượng cao, ít signals (0-1 signals/ngày)")
     print("   4️⃣  Loose (Lỏng) - Nới lỏng điều kiện, nhiều signals (5-12 signals/ngày)")
     print("   5️⃣  Very Loose (Rất lỏng) - Nới lỏng tối đa, rất nhiều signals (10-20+ signals/ngày)")
-    print("   0️⃣  Sử dụng config mặc định (config_tuyen.json)")
+    print("   0️⃣  Sử dụng config mặc định (config_tuyen_xau.json)")
     print("="*80)
     
     while True:
@@ -3711,28 +3764,28 @@ if __name__ == "__main__":
             choice = input("\n👉 Nhập lựa chọn (1/2/3/4/5/0): ").strip()
             
             if choice == "1":
-                config_filename = "config_tuyen_default.json"
+                config_filename = "config_tuyen_xau_default.json"
                 mode_name = "Mặc Định (Default)"
                 break
             elif choice == "2":
-                config_filename = "config_tuyen_balanced.json"
+                config_filename = "config_tuyen_xau_balanced.json"
                 mode_name = "Cân Bằng (Balanced - Linh Hoạt)"
                 break
             elif choice == "3":
-                config_filename = "config_tuyen_strict.json"
+                config_filename = "config_tuyen_xau_strict.json"
                 mode_name = "Khắt Khe (Strict)"
                 break
             elif choice == "4":
-                config_filename = "config_tuyen_loose.json"
+                config_filename = "config_tuyen_xau_loose.json"
                 mode_name = "Lỏng (Loose - Nhiều Signals)"
                 break
             elif choice == "5":
-                config_filename = "config_tuyen_very_loose.json"
+                config_filename = "config_tuyen_xau_very_loose.json"
                 mode_name = "Rất Lỏng (Very Loose - Rất Nhiều Signals)"
                 break
             elif choice == "0":
-                config_filename = "config_tuyen.json"
-                mode_name = "Config Mặc Định (config_tuyen.json)"
+                config_filename = "config_tuyen_xau.json"
+                mode_name = "Config Mặc Định (config_tuyen_xau.json)"
                 break
             else:
                 print("❌ Lựa chọn không hợp lệ! Vui lòng nhập 1, 2, 3, 4, 5 hoặc 0")
@@ -3747,13 +3800,13 @@ if __name__ == "__main__":
     # Check if config file exists
     if not os.path.exists(config_path):
         print(f"\n❌ Không tìm thấy file config: {config_filename}")
-        print(f"   Đang thử dùng config mặc định: config_tuyen.json")
-        config_path = os.path.join(script_dir, "configs", "config_tuyen.json")
+        print(f"   Đang thử dùng config mặc định: config_tuyen_xau.json")
+        config_path = os.path.join(script_dir, "configs", "config_tuyen_xau.json")
         if not os.path.exists(config_path):
             print(f"❌ Không tìm thấy file config mặc định!")
             sys.exit(1)
-        config_filename = "config_tuyen.json"
-        mode_name = "Config Mặc Định (config_tuyen.json)"
+        config_filename = "config_tuyen_xau.json"
+        mode_name = "Config Mặc Định (config_tuyen_xau.json)"
     
     config = load_config(config_path)
     
@@ -3765,7 +3818,7 @@ if __name__ == "__main__":
     if connect_mt5(config):
         try:
             print("\n" + "="*80)
-            print(f"✅ Tuyen Trend Bot (V2) - Started")
+            print(f"✅ Tuyen Trend Bot (V2) - XAUUSD - Started")
             print(f"📋 Chế độ: {mode_name}")
             print(f"📁 Config: {config_filename}")
             print(f"💱 Symbol: {config.get('symbol', 'N/A')}")

@@ -1,0 +1,46 @@
+{
+    "_comment_account": "Số tài khoản MT5",
+    "account": 413011866,
+    
+    "_comment_password": "Mật khẩu đăng nhập MT5",
+    "password": "Huutuyen10387@",
+    
+    "_comment_server": "Tên server MT5 (Exness-MT5Trial6, Exness-MT5Real, ...)",
+    "server": "Exness-MT5Trial6",
+    
+    "_comment_mt5_path": "Đường dẫn đến file terminal64.exe của MT5",
+    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+    
+    "_comment_symbol": "Cặp tiền giao dịch (EURUSD, XAUUSD, ...)",
+    "symbol": "XAUUSD",
+    
+    "_comment_volume": "Khối lượng giao dịch (lot). 0.01 = 1 micro lot. Chỉ dùng khi use_risk_based_lot = false",
+    "volume": 0.01,
+    
+    "_comment_risk_percent": "Tỷ lệ rủi ro mỗi lệnh (%). 1.0 = rủi ro 1% vốn. Ví dụ: vốn $10,000, risk 1% = $100",
+    "risk_percent": 2.0,
+    
+    "_comment_use_risk_based_lot": "true = Tính lot size tự động theo risk management. false = Dùng volume cố định từ config",
+    "use_risk_based_lot": false,
+    
+    "_comment_min_atr": "ATR threshold tối thiểu (tự động theo symbol nếu không set). XAUUSD: 0.1 USD, BTCUSD: 50.0 USD, EURUSD: 0.00011. Có thể override bằng cách set giá trị này",
+    "min_atr": null,
+    
+    "_comment_magic": "Magic number để phân biệt lệnh của bot này với bot khác",
+    "magic": 500001,
+    
+    "_comment_max_positions": "Số lượng lệnh tối đa cùng lúc. 1 = chỉ 1 lệnh, 2 = tối đa 2 lệnh",
+    "max_positions": 1,
+    
+    "_comment_enable_breakeven": "true = Bật Breakeven (di chuyển SL về entry khi profit > 10 pips). false = Tắt Breakeven",
+    "enable_breakeven": true,
+    
+    "_comment_enable_trailing_stop": "true = Bật Trailing Stop (tự động dời SL theo giá khi profit > 30 pips). false = Tắt Trailing Stop",
+    "enable_trailing_stop": true,
+    
+    "_comment_telegram_token": "Token của Telegram Bot (lấy từ @BotFather)",
+    "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
+    
+    "_comment_telegram_chat_id": "Chat ID để nhận thông báo (lấy từ @userinfobot). Channel ID bắt đầu bằng -100",
+    "telegram_chat_id": "-1003342368633"
+}
