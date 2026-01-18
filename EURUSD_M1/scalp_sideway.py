@@ -44,7 +44,8 @@ from utils_scalp_sideway import (
     calculate_sl_tp,
     check_max_positions_per_zone,
     check_m5_candle_change,
-    get_min_atr_threshold
+    get_min_atr_threshold,
+    get_delta_threshold_multiplier
 )
 
 # Initialize Database
@@ -151,6 +152,9 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         tp1 = None
         tp2 = None
         
+        # Get delta threshold multiplier (k) from config
+        delta_k = get_delta_threshold_multiplier(symbol, config)
+        
         # --- 7. SELL Signal Check ---
         if is_supply and last_supply_price is not None:
             # Check M1 condition: Close >= EMA9
@@ -159,7 +163,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                 delta_high, delta_msg = calculate_delta_high(df_m1, current_idx=current_m1_idx)
                 if delta_high is not None:
                     atr_m1 = current_m1_candle['atr']
-                    is_valid_delta, delta_valid_msg = is_valid_delta_high(delta_high, atr_m1, threshold=0.3)
+                    is_valid_delta, delta_valid_msg = is_valid_delta_high(delta_high, atr_m1, threshold=delta_k)
                     
                     # Update count
                     count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
@@ -218,7 +222,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                 delta_low, delta_msg = calculate_delta_low(df_m1, current_idx=current_m1_idx)
                 if delta_low is not None:
                     atr_m1 = current_m1_candle['atr']
-                    is_valid_delta, delta_valid_msg = is_valid_delta_low(delta_low, atr_m1, threshold=0.3)
+                    is_valid_delta, delta_valid_msg = is_valid_delta_low(delta_low, atr_m1, threshold=delta_k)
                     
                     # Update count
                     count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)

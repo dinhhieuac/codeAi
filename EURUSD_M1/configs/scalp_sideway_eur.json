@@ -26,6 +26,9 @@
     "_comment_min_atr": "ATR threshold tối thiểu (tự động theo symbol nếu không set). XAUUSD: 0.1 USD, BTCUSD: 50.0 USD, EURUSD: 0.00011. Có thể override bằng cách set giá trị này",
     "min_atr": null,
     
+    "_comment_delta_threshold_multiplier": "Hệ số k cho DeltaHigh/DeltaLow: 0 < Delta < k × ATR. Forex: 0.3, Gold: 0.33, BTC: 0.48. Tự động theo symbol nếu không set",
+    "delta_threshold_multiplier": 0.3,
+    
     "_comment_magic": "Magic number để phân biệt lệnh của bot này với bot khác",
     "magic": 500002,
     

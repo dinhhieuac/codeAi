@@ -538,16 +538,16 @@ def is_valid_delta_high(delta_high: float, atr_m1: float, threshold: float = 0.3
     Kiểm tra DeltaHigh hợp lệ
     
     Điều kiện hợp lệ:
-    - 0 < DeltaHigh < 0.3 × ATR(M1)
+    - 0 < DeltaHigh < k × ATR(M1) (k = threshold, default: 0.3)
     
     Reset:
     - DeltaHigh ≤ 0 → RESET
-    - DeltaHigh ≥ 0.3 × ATR → RESET
+    - DeltaHigh ≥ k × ATR → RESET
     
     Args:
         delta_high: Giá trị DeltaHigh
         atr_m1: ATR của M1
-        threshold: Hệ số nhân ATR (default: 0.3)
+        threshold: Hệ số nhân ATR k (default: 0.3)
     
     Returns:
         (is_valid, message)
@@ -576,16 +576,16 @@ def is_valid_delta_low(delta_low: float, atr_m1: float, threshold: float = 0.3) 
     Kiểm tra DeltaLow hợp lệ
     
     Điều kiện hợp lệ:
-    - 0 < DeltaLow < 0.3 × ATR(M1)
+    - 0 < DeltaLow < k × ATR(M1) (k = threshold, default: 0.3)
     
     Reset:
     - DeltaLow ≤ 0 → RESET
-    - DeltaLow >= 0.3 × ATR → RESET
+    - DeltaLow >= k × ATR → RESET
     
     Args:
         delta_low: Giá trị DeltaLow
         atr_m1: ATR của M1
-        threshold: Hệ số nhân ATR (default: 0.3)
+        threshold: Hệ số nhân ATR k (default: 0.3)
     
     Returns:
         (is_valid, message)
@@ -973,3 +973,43 @@ def get_min_atr_threshold(symbol: str, config: Optional[Dict] = None) -> float:
     
     # Default: Use EURUSD threshold
     return 0.00011
+
+
+def get_delta_threshold_multiplier(symbol: str, config: Optional[Dict] = None) -> float:
+    """
+    Get delta threshold multiplier (k) based on symbol type
+    
+    Công thức: DeltaHigh/DeltaLow hợp lệ khi: 0 < Delta < k × ATR(M1)
+    
+    Args:
+        symbol: Trading symbol (EURUSD, XAUUSD, BTCUSD, etc.)
+        config: Config dict (optional, to override with custom value)
+    
+    Returns:
+        k: Delta threshold multiplier
+        - Forex (EURUSD, etc.): 0.3 (default)
+        - Gold (XAUUSD): 0.33
+        - BTCUSD: 0.48
+    """
+    # Check if custom multiplier is provided in config
+    if config is not None:
+        custom_k = config.get('delta_threshold_multiplier', None)
+        if custom_k is not None:
+            return float(custom_k)
+    
+    symbol_upper = symbol.upper()
+    
+    # XAUUSD (Gold): 0.33
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+        return 0.33
+    
+    # BTCUSD: 0.48
+    if 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+        return 0.48
+    
+    # ETHUSD: Similar to BTC
+    if 'ETHUSD' in symbol_upper or 'ETH' in symbol_upper:
+        return 0.48
+    
+    # Forex (EURUSD, GBPUSD, USDJPY, AUDUSD, etc.): 0.3 (default)
+    return 0.3
