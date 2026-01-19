@@ -125,7 +125,13 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         current_m5_candle = df_m5.iloc[current_m5_idx]
         
         # --- 4. Check Bad Market Conditions ---
-        is_valid_market, conditions, market_msg = check_bad_market_conditions(df_m1, current_idx=current_m1_idx)
+        # Get enable_atr_increasing_check from config (default: False)
+        enable_atr_increasing_check = config.get('enable_atr_increasing_check', False)
+        is_valid_market, conditions, market_msg = check_bad_market_conditions(
+            df_m1, 
+            current_idx=current_m1_idx,
+            enable_atr_increasing_check=enable_atr_increasing_check
+        )
         if not is_valid_market:
             # Log but don't return (continue to check other conditions for logging)
             print(f"⚠️ Thị trường xấu: {market_msg}")

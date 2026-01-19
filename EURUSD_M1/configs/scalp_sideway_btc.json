@@ -41,6 +41,9 @@
     "_comment_enable_trailing_stop": "true = Bật Trailing Stop (tự động dời SL theo giá khi profit > 30 pips). false = Tắt Trailing Stop",
     "enable_trailing_stop": true,
     
+    "_comment_enable_atr_increasing_check": "true = Bật kiểm tra ATR tăng liên tiếp 3 nến (dừng trade 40 phút). false = Tắt kiểm tra này (mặc định)",
+    "enable_atr_increasing_check": false,
+    
     "_comment_telegram_token": "Token của Telegram Bot (lấy từ @BotFather)",
     "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
     

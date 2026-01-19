@@ -336,13 +336,14 @@ def check_large_body(df_m1: pd.DataFrame, current_idx: int = -1, multiplier: flo
         return False, f"BodySize ({body_size:.5f}) <= {multiplier} × ATR_M1 ({threshold:.5f})"
 
 
-def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1) -> Tuple[bool, Dict, str]:
+def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enable_atr_increasing_check: bool = False) -> Tuple[bool, Dict, str]:
     """
     Tổng hợp kiểm tra tất cả điều kiện thị trường xấu
     
     Args:
         df_m1: DataFrame M1 với OHLC và ATR
         current_idx: Index của nến hiện tại (default: -1)
+        enable_atr_increasing_check: Bật/tắt kiểm tra ATR tăng liên tiếp (default: False)
     
     Returns:
         (is_valid, conditions_dict, message)
@@ -363,14 +364,23 @@ def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1) -> T
     if not atr_ratio_valid:
         messages.append(atr_ratio_msg)
     
-    # 2. Kiểm tra ATR tăng liên tiếp
-    atr_increasing_pause, atr_increasing_msg = check_atr_increasing(df_m1, current_idx)
-    conditions['atr_increasing'] = {
-        'should_pause': atr_increasing_pause,
-        'message': atr_increasing_msg
-    }
-    if atr_increasing_pause:
-        messages.append(atr_increasing_msg)
+    # 2. Kiểm tra ATR tăng liên tiếp (chỉ kiểm tra nếu enable)
+    atr_increasing_pause = False
+    if enable_atr_increasing_check:
+        atr_increasing_pause, atr_increasing_msg = check_atr_increasing(df_m1, current_idx)
+        conditions['atr_increasing'] = {
+            'should_pause': atr_increasing_pause,
+            'message': atr_increasing_msg,
+            'enabled': True
+        }
+        if atr_increasing_pause:
+            messages.append(atr_increasing_msg)
+    else:
+        conditions['atr_increasing'] = {
+            'should_pause': False,
+            'message': 'Kiểm tra ATR tăng liên tiếp đã tắt',
+            'enabled': False
+        }
     
     # 3. Kiểm tra body size lớn
     large_body_pause, large_body_msg = check_large_body(df_m1, current_idx)
