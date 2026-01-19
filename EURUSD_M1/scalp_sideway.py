@@ -124,6 +124,12 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         current_m1_candle = df_m1.iloc[current_m1_idx]
         current_m5_candle = df_m5.iloc[current_m5_idx]
         
+        # Log details
+        log_details = []
+        log_details.append(f"\n{'='*80}")
+        log_details.append(f"📊 [Scalp Sideway] {symbol} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log_details.append(f"{'='*80}")
+        
         # --- 4. Check Bad Market Conditions ---
         # Get options from config (default: False)
         enable_atr_increasing_check = config.get('enable_atr_increasing_check', False)
@@ -134,25 +140,37 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
             enable_atr_increasing_check=enable_atr_increasing_check,
             enable_large_body_check=enable_large_body_check
         )
+        log_details.append(f"\n🔍 [Thị Trường]")
+        log_details.append(f"   {'✅' if is_valid_market else '❌'} {market_msg}")
         if not is_valid_market:
             # Log but don't return (continue to check other conditions for logging)
-            print(f"⚠️ Thị trường xấu: {market_msg}")
-            # Still continue to check other conditions for logging
+            log_details.append(f"   ⚠️ Thị trường xấu nhưng vẫn tiếp tục kiểm tra các điều kiện khác")
         
         # --- 5. Check Sideway Context ---
         is_sideway, sideway_msg = check_sideway_context(df_m5, current_idx=current_m5_idx)
+        log_details.append(f"\n🔍 [Bối Cảnh Sideway M5]")
+        log_details.append(f"   {'✅' if is_sideway else '❌'} {sideway_msg}")
         if not is_sideway:
+            # Print log and return
+            for detail in log_details:
+                print(detail)
             return error_count, 0  # Not sideway, skip
         
         # --- 6. Check Supply/Demand Zones ---
         is_supply, supply_price, supply_msg = check_supply_m5(df_m5, current_idx=current_m5_idx)
         is_demand, demand_price, demand_msg = check_demand_m5(df_m5, current_idx=current_m5_idx)
         
+        log_details.append(f"\n🔍 [Supply/Demand Zones M5]")
+        log_details.append(f"   {'✅' if is_supply else '❌'} Supply: {supply_msg}")
+        log_details.append(f"   {'✅' if is_demand else '❌'} Demand: {demand_msg}")
+        
         # Update last known zones
         if is_supply:
             last_supply_price = supply_price
+            log_details.append(f"   📍 Supply zone: {supply_price:.5f}")
         if is_demand:
             last_demand_price = demand_price
+            log_details.append(f"   📍 Demand zone: {demand_price:.5f}")
         
         signal_type = None
         entry_price = None
@@ -163,20 +181,33 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         # Get delta threshold multiplier (k) from config
         delta_k = get_delta_threshold_multiplier(symbol, config)
         
+        log_details.append(f"\n🔍 [SELL Signal Check]")
+        
         # --- 7. SELL Signal Check ---
+        if not is_supply or last_supply_price is None:
+            log_details.append(f"   ❌ Không có Supply zone hoặc chưa có Supply zone hợp lệ")
+        
         if is_supply and last_supply_price is not None:
+            log_details.append(f"   ✅ Có Supply zone: {last_supply_price:.5f}")
             # Check M1 condition: Close >= EMA9
-            if current_m1_candle['close'] >= current_m1_candle['ema9']:
+            close_above_ema9 = current_m1_candle['close'] >= current_m1_candle['ema9']
+            log_details.append(f"   {'✅' if close_above_ema9 else '❌'} Close ({current_m1_candle['close']:.5f}) >= EMA9 ({current_m1_candle['ema9']:.5f})")
+            
+            if close_above_ema9:
                 # Calculate DeltaHigh
                 delta_high, delta_msg = calculate_delta_high(df_m1, current_idx=current_m1_idx)
                 if delta_high is not None:
                     atr_m1 = current_m1_candle['atr']
                     is_valid_delta, delta_valid_msg = is_valid_delta_high(delta_high, atr_m1, threshold=delta_k)
+                    log_details.append(f"   📊 DeltaHigh: {delta_high:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
+                    log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
                     
                     # Update count
                     count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                    log_details.append(f"   📊 Count: {count}/2")
                     
                     if is_triggered:
+                        log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện SELL")
                         # Check SELL signal condition
                         is_sell, sell_msg = check_sell_signal_condition(
                             df_m1,
@@ -185,6 +216,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                             current_idx=current_m1_idx,
                             buffer_multiplier=0.2
                         )
+                        log_details.append(f"   {'✅' if is_sell else '❌'} {sell_msg}")
                         
                         if is_sell:
                             # Check max positions per zone
@@ -194,6 +226,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                 "SUPPLY",
                                 max_positions=2
                             )
+                            log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
                             
                             if is_valid_pos:
                                 # Check M5 candle change (if last trade was SL)
@@ -205,7 +238,10 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                     
                                     # Check if M5 candle has changed
                                     if current_m5_time <= last_m5_candle_time:
-                                        print(f"⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                        log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                        log_details.append(f"{'='*80}\n")
+                                        for detail in log_details:
+                                            print(detail)
                                         return error_count, 0
                                 
                                 signal_type = "SELL"
@@ -221,21 +257,41 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                     tp_multiplier=2.0,
                                     symbol_info=symbol_info
                                 )
+                                
+                                log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
+                                log_details.append(f"   Entry: {entry_price:.5f}")
+                                log_details.append(f"   SL: {sl:.5f}")
+                                log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
         
         # --- 8. BUY Signal Check ---
+        log_details.append(f"\n🔍 [BUY Signal Check]")
+        
+        if signal_type is None:
+            if not is_demand or last_demand_price is None:
+                log_details.append(f"   ❌ Không có Demand zone hoặc chưa có Demand zone hợp lệ")
+        
         if signal_type is None and is_demand and last_demand_price is not None:
+            log_details.append(f"   ✅ Có Demand zone: {last_demand_price:.5f}")
             # Check M1 condition: Close <= EMA9
-            if current_m1_candle['close'] <= current_m1_candle['ema9']:
+            close_below_ema9 = current_m1_candle['close'] <= current_m1_candle['ema9']
+            log_details.append(f"   {'✅' if close_below_ema9 else '❌'} Close ({current_m1_candle['close']:.5f}) <= EMA9 ({current_m1_candle['ema9']:.5f})")
+            
+            if close_below_ema9:
                 # Calculate DeltaLow
                 delta_low, delta_msg = calculate_delta_low(df_m1, current_idx=current_m1_idx)
                 if delta_low is not None:
+                    log_details.append(f"   📊 {delta_msg}")
                     atr_m1 = current_m1_candle['atr']
                     is_valid_delta, delta_valid_msg = is_valid_delta_low(delta_low, atr_m1, threshold=delta_k)
+                    log_details.append(f"   📊 DeltaLow: {delta_low:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
+                    log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
                     
                     # Update count
                     count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                    log_details.append(f"   📊 Count: {count}/2")
                     
                     if is_triggered:
+                        log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện BUY")
                         # Check BUY signal condition
                         is_buy, buy_msg = check_buy_signal_condition(
                             df_m1,
@@ -244,6 +300,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                             current_idx=current_m1_idx,
                             buffer_multiplier=0.2
                         )
+                        log_details.append(f"   {'✅' if is_buy else '❌'} {buy_msg}")
                         
                         if is_buy:
                             # Check max positions per zone
@@ -253,6 +310,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                 "DEMAND",
                                 max_positions=2
                             )
+                            log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
                             
                             if is_valid_pos:
                                 # Check M5 candle change (if last trade was SL)
@@ -264,7 +322,10 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                     
                                     # Check if M5 candle has changed
                                     if current_m5_time <= last_m5_candle_time:
-                                        print(f"⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                        log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                        log_details.append(f"{'='*80}\n")
+                                        for detail in log_details:
+                                            print(detail)
                                         return error_count, 0
                                 
                                 signal_type = "BUY"
@@ -280,12 +341,36 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                                     tp_multiplier=2.0,
                                     symbol_info=symbol_info
                                 )
+                                
+                                log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+                                log_details.append(f"   Entry: {entry_price:.5f}")
+                                log_details.append(f"   SL: {sl:.5f}")
+                                log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
         
         # --- 9. No Signal ---
         if signal_type is None:
+            log_details.append(f"\n📋 [Kết Quả]")
+            log_details.append(f"   ❌ Không có signal")
+            log_details.append(f"   💱 Price: {current_m1_candle['close']:.5f}")
+            log_details.append(f"   📊 EMA9: {current_m1_candle['ema9']:.5f}")
+            log_details.append(f"   📊 ATR_M1: {current_m1_candle['atr']:.5f}")
+            if pd.notna(current_m5_candle.get('ema21')):
+                log_details.append(f"   📊 EMA21_M5: {current_m5_candle['ema21']:.5f}")
+            log_details.append(f"   📊 ATR_M5: {current_m5_candle['atr']:.5f}")
+            log_details.append(f"{'='*80}\n")
+            
+            # Print all log details
+            for detail in log_details:
+                print(detail)
+            
             return error_count, 0
         
-        # --- 10. Send Order ---
+        # --- 10. Print Log Details ---
+        log_details.append(f"{'='*80}\n")
+        for detail in log_details:
+            print(detail)
+        
+        # --- 11. Send Order ---
         tick = mt5.symbol_info_tick(symbol)
         if signal_type == "BUY":
             execution_price = tick.ask
