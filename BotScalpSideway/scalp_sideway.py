@@ -45,7 +45,9 @@ from utils_scalp_sideway import (
     check_max_positions_per_zone,
     check_m5_candle_change,
     get_min_atr_threshold,
-    get_delta_threshold_multiplier
+    get_delta_threshold_multiplier,
+    check_price_breakout_sell,
+    check_price_breakout_buy
 )
 
 # Initialize Database
@@ -109,7 +111,7 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         
         # --- 3. Calculate Indicators ---
         df_m1['atr'] = calculate_atr(df_m1, 14)
-        df_m1['ema9'] = calculate_ema(df_m1['close'], 9)
+        # Không cần EMA9 cho M1 (theo document)
         
         df_m5['atr'] = calculate_atr(df_m5, 14)
         df_m5['ema21'] = calculate_ema(df_m5['close'], 21)
@@ -189,22 +191,34 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         
         if is_supply and last_supply_price is not None:
             log_details.append(f"   ✅ Có Supply zone: {last_supply_price:.5f}")
-            # Check M1 condition: Close >= EMA9
-            close_above_ema9 = current_m1_candle['close'] >= current_m1_candle['ema9']
-            log_details.append(f"   {'✅' if close_above_ema9 else '❌'} Close ({current_m1_candle['close']:.5f}) >= EMA9 ({current_m1_candle['ema9']:.5f})")
             
-            if close_above_ema9:
-                # Calculate DeltaHigh
-                delta_high, delta_msg = calculate_delta_high(df_m1, current_idx=current_m1_idx)
-                if delta_high is not None:
-                    atr_m1 = current_m1_candle['atr']
-                    is_valid_delta, delta_valid_msg = is_valid_delta_high(delta_high, atr_m1, threshold=delta_k)
-                    log_details.append(f"   📊 DeltaHigh: {delta_high:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
-                    log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
-                    
-                    # Update count
-                    count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
-                    log_details.append(f"   📊 Count: {count}/2")
+            # Check price breakout (theo document: High_M1 > High_M5_supply + 0.4×ATR_M5 → Dừng trade 40 phút)
+            price_breakout, breakout_msg = check_price_breakout_sell(
+                df_m1, 
+                last_supply_price, 
+                df_m5, 
+                current_idx=current_m1_idx
+            )
+            if price_breakout:
+                log_details.append(f"   ⚠️ {breakout_msg}")
+                log_details.append(f"{'='*80}\n")
+                for detail in log_details:
+                    print(detail)
+                return error_count, 0
+            
+            # Không cần kiểm tra EMA9 (theo document)
+            # Bắt đầu kiểm tra DeltaHigh ngay
+            # Calculate DeltaHigh
+            delta_high, delta_msg = calculate_delta_high(df_m1, current_idx=current_m1_idx)
+            if delta_high is not None:
+                atr_m1 = current_m1_candle['atr']
+                is_valid_delta, delta_valid_msg = is_valid_delta_high(delta_high, atr_m1, threshold=delta_k)
+                log_details.append(f"   📊 DeltaHigh: {delta_high:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
+                log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
+                
+                # Update count
+                count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                log_details.append(f"   📊 Count: {count}/2")
                     
                     if is_triggered:
                         log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện SELL")
@@ -272,23 +286,35 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
         
         if signal_type is None and is_demand and last_demand_price is not None:
             log_details.append(f"   ✅ Có Demand zone: {last_demand_price:.5f}")
-            # Check M1 condition: Close <= EMA9
-            close_below_ema9 = current_m1_candle['close'] <= current_m1_candle['ema9']
-            log_details.append(f"   {'✅' if close_below_ema9 else '❌'} Close ({current_m1_candle['close']:.5f}) <= EMA9 ({current_m1_candle['ema9']:.5f})")
             
-            if close_below_ema9:
-                # Calculate DeltaLow
-                delta_low, delta_msg = calculate_delta_low(df_m1, current_idx=current_m1_idx)
-                if delta_low is not None:
-                    log_details.append(f"   📊 {delta_msg}")
-                    atr_m1 = current_m1_candle['atr']
-                    is_valid_delta, delta_valid_msg = is_valid_delta_low(delta_low, atr_m1, threshold=delta_k)
-                    log_details.append(f"   📊 DeltaLow: {delta_low:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
-                    log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
-                    
-                    # Update count
-                    count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
-                    log_details.append(f"   📊 Count: {count}/2")
+            # Check price breakout (theo document: Low_M1 < Low_M5_demand - 0.4×ATR_M5 → Dừng trade 40 phút)
+            price_breakout, breakout_msg = check_price_breakout_buy(
+                df_m1, 
+                last_demand_price, 
+                df_m5, 
+                current_idx=current_m1_idx
+            )
+            if price_breakout:
+                log_details.append(f"   ⚠️ {breakout_msg}")
+                log_details.append(f"{'='*80}\n")
+                for detail in log_details:
+                    print(detail)
+                return error_count, 0
+            
+            # Không cần kiểm tra EMA9 (theo document)
+            # Bắt đầu kiểm tra DeltaLow ngay
+            # Calculate DeltaLow
+            delta_low, delta_msg = calculate_delta_low(df_m1, current_idx=current_m1_idx)
+            if delta_low is not None:
+                log_details.append(f"   📊 {delta_msg}")
+                atr_m1 = current_m1_candle['atr']
+                is_valid_delta, delta_valid_msg = is_valid_delta_low(delta_low, atr_m1, threshold=delta_k)
+                log_details.append(f"   📊 DeltaLow: {delta_low:.5f}, ATR_M1: {atr_m1:.5f}, k: {delta_k}")
+                log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
+                
+                # Update count
+                count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                log_details.append(f"   📊 Count: {count}/2")
                     
                     if is_triggered:
                         log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện BUY")
@@ -352,7 +378,6 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
             log_details.append(f"\n📋 [Kết Quả]")
             log_details.append(f"   ❌ Không có signal")
             log_details.append(f"   💱 Price: {current_m1_candle['close']:.5f}")
-            log_details.append(f"   📊 EMA9: {current_m1_candle['ema9']:.5f}")
             log_details.append(f"   📊 ATR_M1: {current_m1_candle['atr']:.5f}")
             if pd.notna(current_m5_candle.get('ema21')):
                 log_details.append(f"   📊 EMA21_M5: {current_m5_candle['ema21']:.5f}")

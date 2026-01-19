@@ -185,8 +185,8 @@ def check_atr_ratio(df_m1: pd.DataFrame, current_idx: int = -1, lookback: int = 
     
     ATR_ratio = ATR_M1_current / ATR_M1_avg(lookback)
     
-    Điều kiện:
-    - ATR_ratio > 1.5 → Tạm dừng trade 40 phút
+    Điều kiện (theo document):
+    - ATR_ratio > 2.0 → Tạm dừng trade 20 phút
     - ATR_ratio < 0.5 → Không trade
     
     Args:
@@ -196,7 +196,7 @@ def check_atr_ratio(df_m1: pd.DataFrame, current_idx: int = -1, lookback: int = 
     
     Returns:
         (is_valid, atr_ratio, message)
-        - is_valid: True nếu ATR ratio hợp lệ (0.5 <= ratio <= 1.5)
+        - is_valid: True nếu ATR ratio hợp lệ (0.5 <= ratio <= 2.0)
         - atr_ratio: Giá trị ATR ratio
         - message: Thông báo kết quả
     """
@@ -224,12 +224,12 @@ def check_atr_ratio(df_m1: pd.DataFrame, current_idx: int = -1, lookback: int = 
     
     atr_ratio = current_atr / atr_avg
     
-    if atr_ratio > 1.5:
-        return False, atr_ratio, f"ATR_ratio ({atr_ratio:.3f}) > 1.5 → Tạm dừng trade 40 phút"
+    if atr_ratio > 2.0:
+        return False, atr_ratio, f"ATR_ratio ({atr_ratio:.3f}) > 2.0 → Tạm dừng trade 20 phút"
     elif atr_ratio < 0.5:
         return False, atr_ratio, f"ATR_ratio ({atr_ratio:.3f}) < 0.5 → Không trade"
     else:
-        return True, atr_ratio, f"ATR_ratio ({atr_ratio:.3f}) hợp lệ (0.5 <= ratio <= 1.5)"
+        return True, atr_ratio, f"ATR_ratio ({atr_ratio:.3f}) hợp lệ (0.5 <= ratio <= 2.0)"
 
 
 def check_atr_increasing(df_m1: pd.DataFrame, current_idx: int = -1, consecutive: int = 3) -> Tuple[bool, str]:
@@ -334,6 +334,96 @@ def check_large_body(df_m1: pd.DataFrame, current_idx: int = -1, multiplier: flo
         return True, f"BodySize ({body_size:.5f}) > {multiplier} × ATR_M1 ({threshold:.5f}) → Tạm dừng trade 15 phút"
     else:
         return False, f"BodySize ({body_size:.5f}) <= {multiplier} × ATR_M1 ({threshold:.5f})"
+
+
+def check_price_breakout_sell(df_m1: pd.DataFrame, supply_price: float, df_m5: pd.DataFrame, current_idx: int = -1) -> Tuple[bool, str]:
+    """
+    Kiểm tra High_M1 > High_M5_supply + 0.4 × ATR_M5 (theo document)
+    
+    Điều kiện:
+    - High_M1 > High_M5_supply + 0.4 × ATR_M5 → Dừng trade 40 phút
+    
+    Args:
+        df_m1: DataFrame M1 với OHLC
+        supply_price: Giá Supply (High_M5_prev)
+        df_m5: DataFrame M5 với ATR
+        current_idx: Index của nến M1 hiện tại (default: -1)
+    
+    Returns:
+        (should_pause, message)
+        - should_pause: True nếu cần dừng trade 40 phút
+        - message: Thông báo kết quả
+    """
+    if len(df_m1) < 1 or len(df_m5) < 1:
+        return False, "Không đủ dữ liệu"
+    
+    if current_idx < 0:
+        current_idx = len(df_m1) + current_idx
+    
+    if current_idx < 0 or current_idx >= len(df_m1):
+        return False, "Index không hợp lệ"
+    
+    # Lấy ATR_M5
+    m5_current = df_m5.iloc[-1]
+    atr_m5 = m5_current.get('atr', None)
+    
+    if pd.isna(atr_m5) or atr_m5 is None:
+        return False, "ATR_M5 không có giá trị"
+    
+    current_candle = df_m1.iloc[current_idx]
+    high_m1 = current_candle['high']
+    
+    threshold = supply_price + (0.4 * atr_m5)
+    
+    if high_m1 > threshold:
+        return True, f"High_M1 ({high_m1:.5f}) > Supply + 0.4×ATR_M5 ({threshold:.5f}) → Dừng trade 40 phút"
+    else:
+        return False, f"High_M1 ({high_m1:.5f}) <= Supply + 0.4×ATR_M5 ({threshold:.5f})"
+
+
+def check_price_breakout_buy(df_m1: pd.DataFrame, demand_price: float, df_m5: pd.DataFrame, current_idx: int = -1) -> Tuple[bool, str]:
+    """
+    Kiểm tra Low_M1 < Low_M5_demand - 0.4 × ATR_M5 (theo document)
+    
+    Điều kiện:
+    - Low_M1 < Low_M5_demand - 0.4 × ATR_M5 → Dừng trade 40 phút
+    
+    Args:
+        df_m1: DataFrame M1 với OHLC
+        demand_price: Giá Demand (Low_M5_prev)
+        df_m5: DataFrame M5 với ATR
+        current_idx: Index của nến M1 hiện tại (default: -1)
+    
+    Returns:
+        (should_pause, message)
+        - should_pause: True nếu cần dừng trade 40 phút
+        - message: Thông báo kết quả
+    """
+    if len(df_m1) < 1 or len(df_m5) < 1:
+        return False, "Không đủ dữ liệu"
+    
+    if current_idx < 0:
+        current_idx = len(df_m1) + current_idx
+    
+    if current_idx < 0 or current_idx >= len(df_m1):
+        return False, "Index không hợp lệ"
+    
+    # Lấy ATR_M5
+    m5_current = df_m5.iloc[-1]
+    atr_m5 = m5_current.get('atr', None)
+    
+    if pd.isna(atr_m5) or atr_m5 is None:
+        return False, "ATR_M5 không có giá trị"
+    
+    current_candle = df_m1.iloc[current_idx]
+    low_m1 = current_candle['low']
+    
+    threshold = demand_price - (0.4 * atr_m5)
+    
+    if low_m1 < threshold:
+        return True, f"Low_M1 ({low_m1:.5f}) < Demand - 0.4×ATR_M5 ({threshold:.5f}) → Dừng trade 40 phút"
+    else:
+        return False, f"Low_M1 ({low_m1:.5f}) >= Demand - 0.4×ATR_M5 ({threshold:.5f})"
 
 
 def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enable_atr_increasing_check: bool = False, enable_large_body_check: bool = False) -> Tuple[bool, Dict, str]:
