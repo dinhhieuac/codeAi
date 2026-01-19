@@ -219,63 +219,63 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                 # Update count
                 count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
                 log_details.append(f"   📊 Count: {count}/2")
+                
+                if is_triggered:
+                    log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện SELL")
+                    # Check SELL signal condition
+                    is_sell, sell_msg = check_sell_signal_condition(
+                        df_m1,
+                        last_supply_price,
+                        df_m5,
+                        current_idx=current_m1_idx,
+                        buffer_multiplier=0.2
+                    )
+                    log_details.append(f"   {'✅' if is_sell else '❌'} {sell_msg}")
                     
-                    if is_triggered:
-                        log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện SELL")
-                        # Check SELL signal condition
-                        is_sell, sell_msg = check_sell_signal_condition(
-                            df_m1,
+                    if is_sell:
+                        # Check max positions per zone
+                        is_valid_pos, pos_count, pos_msg = check_max_positions_per_zone(
+                            positions,
                             last_supply_price,
-                            df_m5,
-                            current_idx=current_m1_idx,
-                            buffer_multiplier=0.2
+                            "SUPPLY",
+                            max_positions=2
                         )
-                        log_details.append(f"   {'✅' if is_sell else '❌'} {sell_msg}")
+                        log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
                         
-                        if is_sell:
-                            # Check max positions per zone
-                            is_valid_pos, pos_count, pos_msg = check_max_positions_per_zone(
-                                positions,
-                                last_supply_price,
-                                "SUPPLY",
-                                max_positions=2
-                            )
-                            log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
+                        if is_valid_pos:
+                            # Check M5 candle change (if last trade was SL)
+                            if last_trade_time is not None and last_m5_candle_time is not None:
+                                # Get current M5 candle time
+                                current_m5_time = df_m5.iloc[current_m5_idx]['time']
+                                if isinstance(current_m5_time, pd.Timestamp):
+                                    current_m5_time = current_m5_time.to_pydatetime()
+                                
+                                # Check if M5 candle has changed
+                                if current_m5_time <= last_m5_candle_time:
+                                    log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                    log_details.append(f"{'='*80}\n")
+                                    for detail in log_details:
+                                        print(detail)
+                                    return error_count, 0
                             
-                            if is_valid_pos:
-                                # Check M5 candle change (if last trade was SL)
-                                if last_trade_time is not None and last_m5_candle_time is not None:
-                                    # Get current M5 candle time
-                                    current_m5_time = df_m5.iloc[current_m5_idx]['time']
-                                    if isinstance(current_m5_time, pd.Timestamp):
-                                        current_m5_time = current_m5_time.to_pydatetime()
-                                    
-                                    # Check if M5 candle has changed
-                                    if current_m5_time <= last_m5_candle_time:
-                                        log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
-                                        log_details.append(f"{'='*80}\n")
-                                        for detail in log_details:
-                                            print(detail)
-                                        return error_count, 0
-                                
-                                signal_type = "SELL"
-                                entry_price = current_m1_candle['close']
-                                
-                                # Calculate SL/TP
-                                symbol_info = mt5.symbol_info(symbol)
-                                sl, tp1, tp2, sl_tp_info = calculate_sl_tp(
-                                    entry_price,
-                                    "SELL",
-                                    atr_m1,
-                                    atr_multiplier=2.0,
-                                    tp_multiplier=2.0,
-                                    symbol_info=symbol_info
-                                )
-                                
-                                log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
-                                log_details.append(f"   Entry: {entry_price:.5f}")
-                                log_details.append(f"   SL: {sl:.5f}")
-                                log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
+                            signal_type = "SELL"
+                            entry_price = current_m1_candle['close']
+                            
+                            # Calculate SL/TP
+                            symbol_info = mt5.symbol_info(symbol)
+                            sl, tp1, tp2, sl_tp_info = calculate_sl_tp(
+                                entry_price,
+                                "SELL",
+                                atr_m1,
+                                atr_multiplier=2.0,
+                                tp_multiplier=2.0,
+                                symbol_info=symbol_info
+                            )
+                            
+                            log_details.append(f"\n🚀 [SELL SIGNAL] Tất cả điều kiện đã thỏa!")
+                            log_details.append(f"   Entry: {entry_price:.5f}")
+                            log_details.append(f"   SL: {sl:.5f}")
+                            log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
         
         # --- 8. BUY Signal Check ---
         log_details.append(f"\n🔍 [BUY Signal Check]")
@@ -315,63 +315,63 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                 # Update count
                 count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
                 log_details.append(f"   📊 Count: {count}/2")
+                
+                if is_triggered:
+                    log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện BUY")
+                    # Check BUY signal condition
+                    is_buy, buy_msg = check_buy_signal_condition(
+                        df_m1,
+                        last_demand_price,
+                        df_m5,
+                        current_idx=current_m1_idx,
+                        buffer_multiplier=0.2
+                    )
+                    log_details.append(f"   {'✅' if is_buy else '❌'} {buy_msg}")
                     
-                    if is_triggered:
-                        log_details.append(f"   ✅ Count >= 2 → Kiểm tra điều kiện BUY")
-                        # Check BUY signal condition
-                        is_buy, buy_msg = check_buy_signal_condition(
-                            df_m1,
+                    if is_buy:
+                        # Check max positions per zone
+                        is_valid_pos, pos_count, pos_msg = check_max_positions_per_zone(
+                            positions,
                             last_demand_price,
-                            df_m5,
-                            current_idx=current_m1_idx,
-                            buffer_multiplier=0.2
+                            "DEMAND",
+                            max_positions=2
                         )
-                        log_details.append(f"   {'✅' if is_buy else '❌'} {buy_msg}")
+                        log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
                         
-                        if is_buy:
-                            # Check max positions per zone
-                            is_valid_pos, pos_count, pos_msg = check_max_positions_per_zone(
-                                positions,
-                                last_demand_price,
-                                "DEMAND",
-                                max_positions=2
-                            )
-                            log_details.append(f"   {'✅' if is_valid_pos else '❌'} {pos_msg}")
+                        if is_valid_pos:
+                            # Check M5 candle change (if last trade was SL)
+                            if last_trade_time is not None and last_m5_candle_time is not None:
+                                # Get current M5 candle time
+                                current_m5_time = df_m5.iloc[current_m5_idx]['time']
+                                if isinstance(current_m5_time, pd.Timestamp):
+                                    current_m5_time = current_m5_time.to_pydatetime()
+                                
+                                # Check if M5 candle has changed
+                                if current_m5_time <= last_m5_candle_time:
+                                    log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
+                                    log_details.append(f"{'='*80}\n")
+                                    for detail in log_details:
+                                        print(detail)
+                                    return error_count, 0
                             
-                            if is_valid_pos:
-                                # Check M5 candle change (if last trade was SL)
-                                if last_trade_time is not None and last_m5_candle_time is not None:
-                                    # Get current M5 candle time
-                                    current_m5_time = df_m5.iloc[current_m5_idx]['time']
-                                    if isinstance(current_m5_time, pd.Timestamp):
-                                        current_m5_time = current_m5_time.to_pydatetime()
-                                    
-                                    # Check if M5 candle has changed
-                                    if current_m5_time <= last_m5_candle_time:
-                                        log_details.append(f"   ⚠️ M5 chưa đổi nến sau lệnh SL (last: {last_m5_candle_time}, current: {current_m5_time})")
-                                        log_details.append(f"{'='*80}\n")
-                                        for detail in log_details:
-                                            print(detail)
-                                        return error_count, 0
-                                
-                                signal_type = "BUY"
-                                entry_price = current_m1_candle['close']
-                                
-                                # Calculate SL/TP
-                                symbol_info = mt5.symbol_info(symbol)
-                                sl, tp1, tp2, sl_tp_info = calculate_sl_tp(
-                                    entry_price,
-                                    "BUY",
-                                    atr_m1,
-                                    atr_multiplier=2.0,
-                                    tp_multiplier=2.0,
-                                    symbol_info=symbol_info
-                                )
-                                
-                                log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
-                                log_details.append(f"   Entry: {entry_price:.5f}")
-                                log_details.append(f"   SL: {sl:.5f}")
-                                log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
+                            signal_type = "BUY"
+                            entry_price = current_m1_candle['close']
+                            
+                            # Calculate SL/TP
+                            symbol_info = mt5.symbol_info(symbol)
+                            sl, tp1, tp2, sl_tp_info = calculate_sl_tp(
+                                entry_price,
+                                "BUY",
+                                atr_m1,
+                                atr_multiplier=2.0,
+                                tp_multiplier=2.0,
+                                symbol_info=symbol_info
+                            )
+                            
+                            log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
+                            log_details.append(f"   Entry: {entry_price:.5f}")
+                            log_details.append(f"   SL: {sl:.5f}")
+                            log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
         
         # --- 9. No Signal ---
         if signal_type is None:
