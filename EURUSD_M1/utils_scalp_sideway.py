@@ -336,7 +336,7 @@ def check_large_body(df_m1: pd.DataFrame, current_idx: int = -1, multiplier: flo
         return False, f"BodySize ({body_size:.5f}) <= {multiplier} × ATR_M1 ({threshold:.5f})"
 
 
-def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enable_atr_increasing_check: bool = False) -> Tuple[bool, Dict, str]:
+def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enable_atr_increasing_check: bool = False, enable_large_body_check: bool = False) -> Tuple[bool, Dict, str]:
     """
     Tổng hợp kiểm tra tất cả điều kiện thị trường xấu
     
@@ -344,6 +344,7 @@ def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enab
         df_m1: DataFrame M1 với OHLC và ATR
         current_idx: Index của nến hiện tại (default: -1)
         enable_atr_increasing_check: Bật/tắt kiểm tra ATR tăng liên tiếp (default: False)
+        enable_large_body_check: Bật/tắt kiểm tra body size lớn (default: False)
     
     Returns:
         (is_valid, conditions_dict, message)
@@ -382,14 +383,23 @@ def check_bad_market_conditions(df_m1: pd.DataFrame, current_idx: int = -1, enab
             'enabled': False
         }
     
-    # 3. Kiểm tra body size lớn
-    large_body_pause, large_body_msg = check_large_body(df_m1, current_idx)
-    conditions['large_body'] = {
-        'should_pause': large_body_pause,
-        'message': large_body_msg
-    }
-    if large_body_pause:
-        messages.append(large_body_msg)
+    # 3. Kiểm tra body size lớn (chỉ kiểm tra nếu enable)
+    large_body_pause = False
+    if enable_large_body_check:
+        large_body_pause, large_body_msg = check_large_body(df_m1, current_idx)
+        conditions['large_body'] = {
+            'should_pause': large_body_pause,
+            'message': large_body_msg,
+            'enabled': True
+        }
+        if large_body_pause:
+            messages.append(large_body_msg)
+    else:
+        conditions['large_body'] = {
+            'should_pause': False,
+            'message': 'Kiểm tra body size lớn đã tắt',
+            'enabled': False
+        }
     
     # Tổng hợp
     is_valid = atr_ratio_valid and not atr_increasing_pause and not large_body_pause

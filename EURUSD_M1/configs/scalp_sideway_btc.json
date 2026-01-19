@@ -44,6 +44,9 @@
     "_comment_enable_atr_increasing_check": "true = Bật kiểm tra ATR tăng liên tiếp 3 nến (dừng trade 40 phút). false = Tắt kiểm tra này (mặc định)",
     "enable_atr_increasing_check": false,
     
+    "_comment_enable_large_body_check": "true = Bật kiểm tra body size lớn (BodySize > 1.2 × ATR_M1 → tạm dừng trade 15 phút). false = Tắt kiểm tra này (mặc định)",
+    "enable_large_body_check": false,
+    
     "_comment_telegram_token": "Token của Telegram Bot (lấy từ @BotFather)",
     "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
     
