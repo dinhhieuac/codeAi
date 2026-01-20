@@ -1,0 +1,63 @@
+{
+  "_comment": "=== CONFIG FILE MẪU VỚI GIẢI THÍCH CHI TIẾT ===",
+  "_comment2": "Xem file CONFIG_PARAMETERS_GUIDE.md để biết chi tiết từng parameter",
+  
+  "account": 413011866,
+  "password": "Huutuyen10387@",
+  "server": "Exness-MT5Trial6",
+  "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+  "symbol": "EURUSD",
+  "volume": 0.01,
+  "magic": 400006,
+  "max_positions": 1,
+  "language": "vi",
+  "telegram_token": "YOUR_TELEGRAM_TOKEN",
+  "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID",
+  
+  "parameters": {
+    "_comment_sl_mode": "Chế độ tính Stop Loss: 'atr' (dynamic), 'fixed' (cố định), 'auto_m5' (tự động M5)",
+    "sl_mode": "atr",
+    
+    "_comment_reward_ratio": "Tỷ lệ Risk:Reward (R:R). 2.0 = Risk $1 để kiếm $2 (R:R = 1:2)",
+    "reward_ratio": 2.0,
+    
+    "_comment_atr_period": "Period để tính ATR. 14 = chuẩn, nhỏ hơn = nhạy cảm hơn, lớn hơn = mượt hơn",
+    "atr_period": 14,
+    
+    "_comment_atr_multiplier": "Hệ số nhân ATR để tính SL. 2.0 = SL = 2.0 × ATR. Nhỏ hơn = SL gần hơn, lớn hơn = SL xa hơn",
+    "atr_multiplier": 2.0,
+    
+    "_comment_ema_fast": "Period của EMA nhanh. 21 = chuẩn, dùng để xác định trend ngắn hạn",
+    "ema_fast": 21,
+    
+    "_comment_ema_slow": "Period của EMA chậm. 50 = chuẩn, dùng để xác định trend dài hạn",
+    "ema_slow": 50
+  },
+  
+  "filters": {
+    "_comment_m1_structure": "true = Cần cả Higher/Lower Highs VÀ Lows (khắt khe). false = Chỉ cần 1 trong 2 (linh hoạt)",
+    "m1_structure_require_both": true,
+    
+    "_comment_signal_cluster_count": "Số nến signal tối thiểu cần có. 2 = cần 2 nến signal (cân bằng), 1 = linh hoạt, 3 = khắt khe",
+    "signal_cluster_count": 2,
+    
+    "_comment_signal_cluster_window": "Số nến gần nhất để check signal cluster. 3 = check 3 nến gần nhất (cân bằng)",
+    "signal_cluster_window": 3,
+    
+    "_comment_min_zone_distance": "Khoảng cách tối thiểu (pips) đến Supply/Demand zone ngược. 10 = cần cách 10 pips (cân bằng)",
+    "min_zone_distance_pips": 10,
+    
+    "_comment_breakout_lookback": "Số nến để lookback tìm breakout + retest. 100 = tìm trong 100 nến gần nhất (cân bằng)",
+    "breakout_lookback_candles": 100,
+    
+    "_comment_signal_candle_criteria": "Số điều kiện tối thiểu (trong 8) để signal candle hợp lệ. 6 = cần 6/8 điều kiện (cân bằng)",
+    "signal_candle_min_criteria": 6,
+    
+    "_comment_smooth_pullback_candle": "Multiplier để xác định nến 'lớn'. 2.0 = nến > 2.0x avg range = lớn (cân bằng)",
+    "smooth_pullback_max_candle_multiplier": 2.0,
+    
+    "_comment_smooth_pullback_gap": "Multiplier để xác định 'gap' lớn. 0.5 = gap > 0.5x avg range = lớn (cân bằng)",
+    "smooth_pullback_max_gap_multiplier": 0.5
+  }
+}
+
