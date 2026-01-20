@@ -62,6 +62,75 @@ last_trade_time = None
 last_m5_candle_time = None
 
 
+def log_signal_details_to_file(
+    symbol: str,
+    signal_type: str,
+    entry_price: float,
+    sl: float,
+    tp1: float,
+    tp2: float,
+    log_details: list,
+    additional_info: Optional[Dict] = None
+):
+    """
+    Ghi log chi tiết khi có tín hiệu vào file log
+    
+    Args:
+        symbol: Trading symbol
+        signal_type: "BUY" hoặc "SELL"
+        entry_price: Giá entry
+        sl: Stop Loss
+        tp1: Take Profit 1
+        tp2: Take Profit 2
+        log_details: List các log details đã thu thập
+        additional_info: Dict chứa thông tin bổ sung (delta, count, zone price, etc.)
+    """
+    try:
+        # Tạo nội dung log chi tiết
+        log_content = []
+        log_content.append(f"\n{'='*80}")
+        log_content.append(f"🚀 [SIGNAL DETECTED] {signal_type} - {symbol}")
+        log_content.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log_content.append(f"{'='*80}")
+        
+        # Thêm tất cả log details
+        for detail in log_details:
+            log_content.append(detail)
+        
+        # Thêm thông tin signal chi tiết
+        log_content.append(f"\n📊 [Signal Details]")
+        log_content.append(f"   Signal Type: {signal_type}")
+        log_content.append(f"   Entry Price: {entry_price:.5f}")
+        log_content.append(f"   Stop Loss: {sl:.5f}")
+        log_content.append(f"   Take Profit 1: {tp1:.5f}")
+        log_content.append(f"   Take Profit 2: {tp2:.5f}")
+        log_content.append(f"   SL Distance: {abs(entry_price - sl):.5f}")
+        log_content.append(f"   TP1 Distance: {abs(tp1 - entry_price):.5f}")
+        log_content.append(f"   TP2 Distance: {abs(tp2 - entry_price):.5f}")
+        log_content.append(f"   Risk/Reward (TP1): 1:1")
+        log_content.append(f"   Risk/Reward (TP2): 1:2")
+        
+        # Thêm thông tin bổ sung nếu có
+        if additional_info:
+            log_content.append(f"\n📈 [Additional Info]")
+            for key, value in additional_info.items():
+                if isinstance(value, float):
+                    log_content.append(f"   {key}: {value:.5f}")
+                else:
+                    log_content.append(f"   {key}: {value}")
+        
+        log_content.append(f"{'='*80}\n")
+        
+        # Ghi vào file log
+        log_message = "\n".join(log_content)
+        log_to_file(symbol, "SIGNAL", log_message)
+        
+    except Exception as e:
+        print(f"⚠️ Lỗi khi ghi log chi tiết: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
     """
     Scalp Sideway Strategy Logic
@@ -276,6 +345,27 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                             log_details.append(f"   Entry: {entry_price:.5f}")
                             log_details.append(f"   SL: {sl:.5f}")
                             log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
+                            
+                            # Ghi log chi tiết vào file
+                            additional_info = {
+                                "DeltaHigh": delta_high,
+                                "ATR_M1": atr_m1,
+                                "Delta_K": delta_k,
+                                "Count": count,
+                                "Supply_Price": last_supply_price,
+                                "Current_Price": current_m1_candle['close'],
+                                "Volume": volume
+                            }
+                            log_signal_details_to_file(
+                                symbol,
+                                "SELL",
+                                entry_price,
+                                sl,
+                                tp1,
+                                tp2,
+                                log_details,
+                                additional_info
+                            )
         
         # --- 8. BUY Signal Check ---
         log_details.append(f"\n🔍 [BUY Signal Check]")
@@ -372,6 +462,27 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                             log_details.append(f"   Entry: {entry_price:.5f}")
                             log_details.append(f"   SL: {sl:.5f}")
                             log_details.append(f"   TP1: {tp1:.5f} | TP2: {tp2:.5f}")
+                            
+                            # Ghi log chi tiết vào file
+                            additional_info = {
+                                "DeltaLow": delta_low,
+                                "ATR_M1": atr_m1,
+                                "Delta_K": delta_k,
+                                "Count": count,
+                                "Demand_Price": last_demand_price,
+                                "Current_Price": current_m1_candle['close'],
+                                "Volume": volume
+                            }
+                            log_signal_details_to_file(
+                                symbol,
+                                "BUY",
+                                entry_price,
+                                sl,
+                                tp1,
+                                tp2,
+                                log_details,
+                                additional_info
+                            )
         
         # --- 9. No Signal ---
         if signal_type is None:
@@ -432,12 +543,34 @@ def scalp_sideway_logic(config: Dict, error_count: int = 0) -> tuple:
                 account_id=config.get('account')
             )
             
-            # Log to file
-            log_to_file(
-                symbol,
-                "SIGNAL",
-                f"{signal_type} SIGNAL - Ticket: {result.order} | Entry: {entry_price:.5f} | SL: {sl:.5f} | TP1: {tp1:.5f} | TP2: {tp2:.5f}"
-            )
+            # Ghi log chi tiết khi order thành công
+            order_log_content = []
+            order_log_content.append(f"\n{'='*80}")
+            order_log_content.append(f"✅ [ORDER EXECUTED] {signal_type} - {symbol}")
+            order_log_content.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            order_log_content.append(f"{'='*80}")
+            order_log_content.append(f"🆔 Ticket: {result.order}")
+            order_log_content.append(f"💱 Signal Type: {signal_type}")
+            order_log_content.append(f"💰 Entry Price (Planned): {entry_price:.5f}")
+            order_log_content.append(f"💰 Execution Price (Actual): {execution_price:.5f}")
+            order_log_content.append(f"📊 Volume: {volume:.2f} lot")
+            order_log_content.append(f"🛑 Stop Loss: {sl:.5f}")
+            order_log_content.append(f"🎯 Take Profit 1: {tp1:.5f}")
+            order_log_content.append(f"🎯 Take Profit 2: {tp2:.5f}")
+            order_log_content.append(f"📏 SL Distance: {abs(entry_price - sl):.5f}")
+            order_log_content.append(f"📏 TP1 Distance: {abs(tp1 - entry_price):.5f}")
+            order_log_content.append(f"📏 TP2 Distance: {abs(tp2 - entry_price):.5f}")
+            order_log_content.append(f"📈 Risk/Reward (TP1): 1:1")
+            order_log_content.append(f"📈 Risk/Reward (TP2): 1:2")
+            order_log_content.append(f"🆔 Magic Number: {magic}")
+            order_log_content.append(f"📊 Retcode: {result.retcode}")
+            if hasattr(result, 'deal') and result.deal:
+                order_log_content.append(f"🆔 Deal ID: {result.deal}")
+            order_log_content.append(f"{'='*80}\n")
+            
+            # Ghi vào file log
+            order_log_message = "\n".join(order_log_content)
+            log_to_file(symbol, "SIGNAL", order_log_message)
             
             # Update last trade time
             last_trade_time = datetime.now()

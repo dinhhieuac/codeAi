@@ -40,6 +40,9 @@
     
     "_comment_telegram_chat_id": "Chat ID để nhận thông báo (lấy từ @userinfobot)",
     "telegram_chat_id": "1887610382",
+      
+    "_comment_enable_breakeven": "true = Bật Breakeven (di chuyển SL về entry khi profit > 10 pips). false = Tắt Breakeven",
+    "enable_breakeven": true,
     
     "parameters": {
         "_comment_sl_mode": "Chế độ tính Stop Loss: 'atr' = dynamic theo ATR, 'fixed' = cố định, 'auto_m5' = tự động M5",

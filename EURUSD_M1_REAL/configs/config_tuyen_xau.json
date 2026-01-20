@@ -33,7 +33,7 @@
     "max_positions": 1,
     
     "_comment_enable_breakeven": "true = Bật Breakeven (di chuyển SL về entry khi profit > 10 pips). false = Tắt Breakeven",
-    "enable_breakeven": false,
+    "enable_breakeven": true,
     
     "_comment_enable_trailing_stop": "true = Bật Trailing Stop (tự động dời SL theo giá khi profit > 30 pips). false = Tắt Trailing Stop",
     "enable_trailing_stop": false,

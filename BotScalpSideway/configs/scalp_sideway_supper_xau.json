@@ -1,0 +1,40 @@
+{
+    "_comment_account": "Số tài khoản MT5",
+    "account": 413011866,
+    
+    "_comment_password": "Mật khẩu đăng nhập MT5",
+    "password": "Huutuyen10387@",
+    
+    "_comment_server": "Tên server MT5 (Exness-MT5Trial6, Exness-MT5Real, ...)",
+    "server": "Exness-MT5Trial6",
+    
+    "_comment_mt5_path": "Đường dẫn đến file terminal64.exe của MT5",
+    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+    
+    "_comment_symbol": "Cặp tiền giao dịch (EURUSD, XAUUSD, ...)",
+    "symbol": "XAUUSD",
+    
+    "_comment_volume": "Khối lượng giao dịch (lot). 0.01 = 1 micro lot",
+    "volume": 0.01,
+    
+    "_comment_magic": "Magic number để phân biệt lệnh của bot này với bot khác",
+    "magic": 500101,
+    
+    "_comment_max_positions": "Số lượng lệnh tối đa cùng lúc. 1 = chỉ 1 lệnh, 2 = tối đa 2 lệnh",
+    "max_positions": 1,
+    
+    "_comment_delta_threshold_multiplier": "Hệ số k cho DeltaHigh/DeltaLow: 0 < Delta < k × ATR. Forex: 0.3, Gold: 0.33, BTC: 0.48. Tự động theo symbol nếu không set",
+    "delta_threshold_multiplier": 0.33,
+    
+    "_comment_range_multiplier": "Hệ số q cho Range filter: Range ≥ q × ATR. Forex: 0.55, Gold: 0.65, BTC: 0.7. Tự động theo symbol nếu không set",
+    "range_multiplier": 0.65,
+    
+    "_comment_trailing_e_multiplier": "Hệ số E cho trailing stop: Breakeven trigger = E × ATR. Forex: 0.3, Gold: 0.35, BTC: 0.4. Tự động theo symbol nếu không set",
+    "trailing_e_multiplier": 0.35,
+    
+    "_comment_telegram_token": "Token của Telegram Bot (lấy từ @BotFather)",
+    "telegram_token": "6546177543:AAGJ1yb_s6_WWrk0KtO8ioJe6pfkT9KNpqE",
+    
+    "_comment_telegram_chat_id": "Chat ID để nhận thông báo (lấy từ @userinfobot). Channel ID bắt đầu bằng -100",
+    "telegram_chat_id": "-1003342368633"
+}
