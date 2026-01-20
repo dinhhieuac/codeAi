@@ -204,6 +204,192 @@ def log_debug_order(symbol, signal_type, order_ticket, trendline_info, swing_idx
         traceback.print_exc()
         return False
 
+def log_signal_detected(symbol, signal_type, trendline_info, swing_idx, pullback_end_idx, 
+                        current_candle_idx, trendline_end_idx, df_m1, df_m5, log_details, 
+                        ema50_val, ema200_val, atr_val, current_price, curr_candle, 
+                        point, symbol_info):
+    """
+    Ghi log chi tiết khi phát hiện tín hiệu (trước khi thực thi lệnh)
+    
+    Args:
+        symbol: Trading symbol
+        signal_type: "BUY" or "SELL"
+        trendline_info: Dict với thông tin trendline
+        swing_idx: Index của swing high (BUY) hoặc swing low (SELL)
+        pullback_end_idx: Index kết thúc pullback
+        current_candle_idx: Index của nến hiện tại (nến phá vỡ)
+        trendline_end_idx: Index kết thúc trendline
+        df_m1: DataFrame M1 data
+        df_m5: DataFrame M5 data
+        log_details: List các log details
+        ema50_val, ema200_val, atr_val: Indicator values
+        current_price: Entry price
+        curr_candle: Current candle data
+        point: Point size
+        symbol_info: Symbol info from MT5
+    """
+    try:
+        # Get script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_dir = os.path.join(script_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create signal log filename
+        log_filename = f"{symbol.lower()}_signal_{datetime.now().strftime('%Y%m%d')}.txt"
+        log_path = os.path.join(log_dir, log_filename)
+        
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Calculate SL and TP (same as in main logic)
+        sl_distance = (2 * atr_val) + (6 * point)
+        tp_distance = 2 * sl_distance
+        
+        if signal_type == "BUY":
+            sl = current_price - sl_distance
+            tp = current_price + tp_distance
+        else:  # SELL
+            sl = current_price + sl_distance
+            tp = current_price - tp_distance
+        
+        # Normalize to symbol digits
+        digits = symbol_info.digits
+        sl = round(sl, digits)
+        tp = round(tp, digits)
+        
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*100}\n")
+            f.write(f"[{timestamp}] 🎯 TÍN HIỆU PHÁT HIỆN - {signal_type}\n")
+            f.write(f"{'='*100}\n\n")
+            
+            # 1. Thông tin tín hiệu cơ bản
+            f.write(f"📋 [THÔNG TIN TÍN HIỆU]\n")
+            f.write(f"{'-'*100}\n")
+            f.write(f"   💱 Symbol: {symbol}\n")
+            f.write(f"   📊 Signal Type: {signal_type}\n")
+            f.write(f"   💵 Entry Price: {current_price:.5f} (Close của nến phá vỡ)\n")
+            f.write(f"   🛑 Stop Loss: {sl:.5f} (Distance: {sl_distance:.5f})\n")
+            f.write(f"   🎯 Take Profit: {tp:.5f} (Distance: {tp_distance:.5f})\n")
+            f.write(f"   📍 Nến phá vỡ tại index: {current_candle_idx}\n")
+            f.write(f"\n")
+            
+            # 2. Chi tiết các điều kiện đã thỏa mãn
+            f.write(f"✅ [CHI TIẾT CÁC ĐIỀU KIỆN ĐÃ THỎA MÃN]\n")
+            f.write(f"{'-'*100}\n")
+            for detail in log_details:
+                f.write(f"   {detail}\n")
+            f.write(f"\n")
+            
+            # 3. Thông tin Indicators
+            f.write(f"📊 [INDICATORS TẠI THỜI ĐIỂM PHÁT HIỆN TÍN HIỆU]\n")
+            f.write(f"{'-'*100}\n")
+            f.write(f"   💱 Giá hiện tại: {curr_candle['close']:.5f}\n")
+            f.write(f"   📈 EMA50: {ema50_val:.5f}\n")
+            f.write(f"   📈 EMA200: {ema200_val:.5f}\n")
+            
+            current_rsi = curr_candle.get('rsi', None)
+            if pd.notna(current_rsi):
+                f.write(f"   📊 RSI(M1): {current_rsi:.1f}\n")
+            
+            # RSI M5
+            if len(df_m5) >= 2:
+                rsi_m5 = df_m5['rsi'].iloc[-2]
+                if pd.notna(rsi_m5):
+                    f.write(f"   📊 RSI(14)_M5: {rsi_m5:.1f}\n")
+            
+            current_adx = curr_candle.get('adx', None)
+            if pd.notna(current_adx):
+                f.write(f"   📊 ADX: {current_adx:.1f}\n")
+            
+            f.write(f"   📊 ATR(14): {atr_val:.5f}\n")
+            
+            # ATR in pips/USD for better readability
+            symbol_upper = symbol.upper()
+            if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
+                f.write(f"   📊 ATR: {atr_val:.2f} USD\n")
+            elif 'BTCUSD' in symbol_upper or 'BTC' in symbol_upper:
+                f.write(f"   📊 ATR: {atr_val:.2f} USD\n")
+            else:
+                atr_pips = atr_val / 0.0001
+                f.write(f"   📊 ATR: {atr_pips:.1f} pips\n")
+            
+            f.write(f"\n")
+            
+            # 4. Chi tiết Swing và Pullback
+            f.write(f"📐 [CHI TIẾT SWING VÀ PULLBACK]\n")
+            f.write(f"{'-'*100}\n")
+            if signal_type == "BUY":
+                if swing_idx < len(df_m1):
+                    swing_candle = df_m1.iloc[swing_idx]
+                    swing_price = swing_candle['high']
+                    swing_rsi = swing_candle.get('rsi', None)
+                    f.write(f"   📍 Swing High:\n")
+                    f.write(f"      • Index: {swing_idx}\n")
+                    f.write(f"      • Price: {swing_price:.5f}\n")
+                    if pd.notna(swing_rsi):
+                        f.write(f"      • RSI: {swing_rsi:.1f}\n")
+            else:  # SELL
+                if swing_idx < len(df_m1):
+                    swing_candle = df_m1.iloc[swing_idx]
+                    swing_price = swing_candle['low']
+                    swing_rsi = swing_candle.get('rsi', None)
+                    f.write(f"   📍 Swing Low:\n")
+                    f.write(f"      • Index: {swing_idx}\n")
+                    f.write(f"      • Price: {swing_price:.5f}\n")
+                    if pd.notna(swing_rsi):
+                        f.write(f"      • RSI: {swing_rsi:.1f}\n")
+            
+            f.write(f"   📍 Pullback kết thúc tại index: {pullback_end_idx}\n")
+            f.write(f"\n")
+            
+            # 5. Chi tiết Trendline
+            f.write(f"📐 [CHI TIẾT TRENDLINE]\n")
+            f.write(f"{'-'*100}\n")
+            
+            if trendline_info is None:
+                f.write(f"   ❌ Không có thông tin trendline\n")
+            else:
+                if signal_type == "BUY":
+                    f.write(f"   📍 Loại: Trendline sóng hồi (giảm) cho BUY\n")
+                else:  # SELL
+                    f.write(f"   📍 Loại: Trendline sóng hồi (tăng) cho SELL\n")
+                
+                f.write(f"   📍 Vẽ từ Swing {'High' if signal_type == 'BUY' else 'Low'} (index {swing_idx}) đến index {trendline_end_idx}\n")
+                f.write(f"\n")
+                f.write(f"   📊 Thông số trendline:\n")
+                f.write(f"      • Slope: {trendline_info['slope']:.10f}\n")
+                f.write(f"      • Intercept: {trendline_info['intercept']:.10f}\n")
+                f.write(f"      • Số điểm sử dụng: {len(trendline_info['points'])}\n")
+                
+                f.write(f"\n")
+                f.write(f"   📊 Phương trình trendline:\n")
+                f.write(f"      y = {trendline_info['slope']:.10f} * x + {trendline_info['intercept']:.10f}\n")
+                
+                # Tính giá trị trendline tại nến phá vỡ
+                if current_candle_idx < len(df_m1):
+                    trendline_at_break = trendline_info['func'](current_candle_idx)
+                    break_candle = df_m1.iloc[current_candle_idx]
+                    break_close = break_candle['close']
+                    f.write(f"\n")
+                    f.write(f"   📍 Giá trị trendline tại nến phá vỡ:\n")
+                    f.write(f"      • Index: {current_candle_idx}\n")
+                    f.write(f"      • Trendline value: {trendline_at_break:.5f}\n")
+                    f.write(f"      • Close price: {break_close:.5f}\n")
+                    if signal_type == "BUY":
+                        f.write(f"      • Điều kiện: Close ({break_close:.5f}) > Trendline ({trendline_at_break:.5f}) = ✅\n")
+                    else:
+                        f.write(f"      • Điều kiện: Close ({break_close:.5f}) < Trendline ({trendline_at_break:.5f}) = ✅\n")
+            
+            f.write(f"\n")
+            f.write(f"{'='*100}\n\n")
+        
+        print(f"📝 [Signal Log] Đã ghi log tín hiệu vào: {log_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ [Signal Log] Lỗi khi ghi log tín hiệu: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def calculate_ema(series, span):
     """Calculate EMA"""
     return series.ewm(span=span, adjust=False).mean()
@@ -1393,6 +1579,27 @@ def m1_scalp_logic(config, error_count=0):
                                             
                                             log_details.append(f"\n🚀 [BUY SIGNAL] Tất cả điều kiện đã thỏa!")
                                             log_details.append(f"   Entry: {current_price:.5f} (giá đóng cửa nến phá vỡ)")
+                                            
+                                            # Log detailed signal information to file
+                                            log_signal_detected(
+                                                symbol=symbol,
+                                                signal_type=signal_type,
+                                                trendline_info=trendline_info,
+                                                swing_idx=swing_high_idx,
+                                                pullback_end_idx=pullback_end_idx,
+                                                current_candle_idx=current_candle_idx,
+                                                trendline_end_idx=trendline_end_idx,
+                                                df_m1=df_m1,
+                                                df_m5=df_m5,
+                                                log_details=log_details,
+                                                ema50_val=ema50_val,
+                                                ema200_val=ema200_val,
+                                                atr_val=atr_val,
+                                                current_price=current_price,
+                                                curr_candle=curr_candle,
+                                                point=point,
+                                                symbol_info=symbol_info
+                                            )
                                         else:
                                             if not buy_dk4_ok:
                                                 if pd.notna(atr_val):
