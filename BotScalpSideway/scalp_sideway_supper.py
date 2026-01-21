@@ -199,6 +199,47 @@ def manage_position_supper(order_ticket, symbol, magic, config, df_m1=None):
         traceback.print_exc()
 
 
+def log_debug_check(symbol: str, details: str, log_dir: str = None):
+    """
+    Ghi log debug ngắn gọn khi check tín hiệu
+    Format: time|symbol|details check
+    
+    Args:
+        symbol: Trading symbol
+        details: Chi tiết check (ngắn gọn)
+        log_dir: Directory để lưu log (default: logs/debug)
+    """
+    try:
+        # Get script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Use provided log_dir or default to "logs/debug" in script directory
+        if log_dir is None:
+            log_dir = os.path.join(script_dir, "logs", "debug")
+        elif not os.path.isabs(log_dir):
+            log_dir = os.path.join(script_dir, log_dir)
+        
+        # Create logs directory if it doesn't exist
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create log filename based on symbol and date
+        log_filename = f"{symbol.lower()}_debug_{datetime.now().strftime('%Y%m%d')}.txt"
+        log_path = os.path.join(log_dir, log_filename)
+        
+        # Format log entry: time|symbol|details check
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"{timestamp}|{symbol}|{details}\n"
+        
+        # Append to file
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+        
+        return True
+    except Exception as e:
+        # Silent fail để không làm gián đoạn bot
+        return False
+
+
 def log_signal_details_to_file(
     symbol: str,
     signal_type: str,
@@ -320,12 +361,21 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
         log_details.append(f"\n🔍 [ATR Ratio Filter]")
         log_details.append(f"   {'✅' if is_valid_atr_ratio else '❌'} {atr_ratio_msg}")
         
+        # Initialize debug info string
+        debug_info = f"ATR_Ratio={atr_ratio:.3f} {'OK' if is_valid_atr_ratio else 'FAIL'}"
+        
         if not is_valid_atr_ratio:
             # Reset count và không xét Delta
             sell_count_tracker.reset()
             buy_count_tracker.reset()
             log_details.append(f"   ⚠️ ATR ratio không hợp lệ → KHÔNG xét Delta, Count = 0")
             log_details.append(f"{'='*80}\n")
+            
+            # Log debug - no signal
+            current_price = current_m1_candle['close']
+            atr_m1_val = current_m1_candle.get('atr', 0)
+            log_debug_check(symbol, f"{debug_info} NO_SIGNAL Price={current_price:.5f} ATR={atr_m1_val:.5f}")
+            
             for detail in log_details:
                 print(detail)
             return error_count, 0
@@ -345,6 +395,9 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
         
         log_details.append(f"\n🔍 [SELL Signal Check]")
         
+        # Initialize SELL debug info
+        sell_debug = ""
+        
         # --- 6. SELL Signal Check ---
         if delta_high is not None and delta_low is not None:
             # Check range filter
@@ -357,10 +410,14 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
             log_details.append(f"   📊 Range: {range_value:.5f}, q: {range_q}, Threshold: {range_q * atr_m1:.5f}")
             log_details.append(f"   {'✅' if is_valid_range else '❌'} {range_msg}")
             
+            # Add to debug info
+            sell_debug += f" SELL_Range={range_value:.5f} q={range_q} Th={range_q * atr_m1:.5f} {'OK' if is_valid_range else 'FAIL'}"
+            
             if not is_valid_range:
                 # Range không hợp lệ → Count = 0
                 sell_count_tracker.reset()
                 log_details.append(f"   ⚠️ Range không hợp lệ → Count = 0")
+                sell_debug += f" SELL_Count=0/2 Triggered=NO"
             elif is_valid_range:
                 # Check delta với điều kiện khóa hướng
                 is_valid_delta, delta_valid_msg = is_valid_delta_sell_supper(
@@ -372,9 +429,15 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                 log_details.append(f"   📊 DeltaHigh: {delta_high:.5f}, DeltaLow: {delta_low:.5f}, k: {delta_k}")
                 log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
                 
+                # Add to debug info
+                sell_debug += f" SELL_DeltaH={delta_high:.5f} DeltaL={delta_low:.5f} k={delta_k} ATR={atr_m1:.5f} {'OK' if is_valid_delta else 'FAIL'}"
+                
                 # Update count
                 count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
                 log_details.append(f"   📊 Count: {count}/2")
+                
+                # Add to debug info
+                sell_debug += f" SELL_Count={count}/2 Triggered={'YES' if is_triggered else 'NO'}"
                 
                 if is_triggered:
                     log_details.append(f"   ✅ Count >= 2 → SELL SIGNAL!")
@@ -394,8 +457,14 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                     log_details.append(f"   Entry: {entry_price:.5f}")
                     log_details.append(f"   SL: {sl:.5f}")
                     log_details.append(f"   TP: {tp:.5f}")
+                    
+                    # Add signal to debug info
+                    sell_debug += f" SELL_SIGNAL Entry={entry_price:.5f} SL={sl:.5f} TP={tp:.5f}"
         
         # --- 7. BUY Signal Check ---
+        # Initialize BUY debug info
+        buy_debug = ""
+        
         if signal_type is None:
             log_details.append(f"\n🔍 [BUY Signal Check]")
             
@@ -410,10 +479,14 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                 log_details.append(f"   📊 Range: {range_value:.5f}, q: {range_q}, Threshold: {range_q * atr_m1:.5f}")
                 log_details.append(f"   {'✅' if is_valid_range else '❌'} {range_msg}")
                 
+                # Add to debug info
+                buy_debug += f" BUY_Range={range_value:.5f} q={range_q} Th={range_q * atr_m1:.5f} {'OK' if is_valid_range else 'FAIL'}"
+                
                 if not is_valid_range:
                     # Range không hợp lệ → Count = 0
                     buy_count_tracker.reset()
                     log_details.append(f"   ⚠️ Range không hợp lệ → Count = 0")
+                    buy_debug += f" BUY_Count=0/2 Triggered=NO"
                 elif is_valid_range:
                     # Check delta với điều kiện khóa hướng
                     is_valid_delta, delta_valid_msg = is_valid_delta_buy_supper(
@@ -425,9 +498,15 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                     log_details.append(f"   📊 DeltaLow: {delta_low:.5f}, DeltaHigh: {delta_high:.5f}, k: {delta_k}")
                     log_details.append(f"   {'✅' if is_valid_delta else '❌'} {delta_valid_msg}")
                     
+                    # Add to debug info
+                    buy_debug += f" BUY_DeltaL={delta_low:.5f} DeltaH={delta_high:.5f} k={delta_k} ATR={atr_m1:.5f} {'OK' if is_valid_delta else 'FAIL'}"
+                    
                     # Update count
                     count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
                     log_details.append(f"   📊 Count: {count}/2")
+                    
+                    # Add to debug info
+                    buy_debug += f" BUY_Count={count}/2 Triggered={'YES' if is_triggered else 'NO'}"
                     
                     if is_triggered:
                         log_details.append(f"   ✅ Count >= 2 → BUY SIGNAL!")
@@ -447,6 +526,9 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                         log_details.append(f"   Entry: {entry_price:.5f}")
                         log_details.append(f"   SL: {sl:.5f}")
                         log_details.append(f"   TP: {tp:.5f}")
+                        
+                        # Add signal to debug info
+                        buy_debug += f" BUY_SIGNAL Entry={entry_price:.5f} SL={sl:.5f} TP={tp:.5f}"
         
         # --- 8. No Signal ---
         if signal_type is None:
@@ -457,6 +539,11 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
             log_details.append(f"   📊 ATR_Ratio: {atr_ratio:.3f}")
             log_details.append(f"{'='*80}\n")
             
+            # Combine all debug info and log once
+            current_price = current_m1_candle['close']
+            full_debug = f"{debug_info}{sell_debug}{buy_debug} NO_SIGNAL Price={current_price:.5f} ATR={atr_m1:.5f}"
+            log_debug_check(symbol, full_debug)
+            
             for detail in log_details:
                 print(detail)
             
@@ -466,6 +553,12 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
         log_details.append(f"{'='*80}\n")
         for detail in log_details:
             print(detail)
+        
+        # Log debug for signal (combine all info)
+        if signal_type:
+            current_price = current_m1_candle['close']
+            signal_debug = f"{debug_info}{sell_debug if signal_type == 'SELL' else buy_debug} Price={current_price:.5f} ATR={atr_m1:.5f}"
+            log_debug_check(symbol, signal_debug)
         
         # --- 10. Send Order ---
         tick = mt5.symbol_info_tick(symbol)
