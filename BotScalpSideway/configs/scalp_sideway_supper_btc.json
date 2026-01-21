@@ -1,15 +1,15 @@
 {
     "_comment_account": "Số tài khoản MT5",
-    "account": 413011866,
+    "account": 415166077,
     
     "_comment_password": "Mật khẩu đăng nhập MT5",
-    "password": "Huutuyen10387@",
+    "password": "Huutuyen123@",
     
     "_comment_server": "Tên server MT5 (Exness-MT5Trial6, Exness-MT5Real, ...)",
-    "server": "Exness-MT5Trial6",
+    "server": "Exness-MT5Trial14",
     
     "_comment_mt5_path": "Đường dẫn đến file terminal64.exe của MT5",
-    "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -1\\terminal64.exe",
+    "mt5_path": "C:\\Program Files\\M7\\terminal64.exe",
     
     "_comment_symbol": "Cặp tiền giao dịch (EURUSD, XAUUSD, ...)",
     "symbol": "BTCUSD",

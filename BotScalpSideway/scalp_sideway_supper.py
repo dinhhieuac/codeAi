@@ -347,7 +347,9 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
         if len(df_m1) < 2:
             return error_count, 0
         
-        current_m1_idx = len(df_m1) - 2  # Last completed M1 candle
+        # Last completed M1 candle: nến cuối cùng đã đóng (index -1)
+        # Nến cuối cùng (index -1) là nến đã đóng, nến -2 là nến cũ hơn
+        current_m1_idx = len(df_m1) - 1  # Last completed M1 candle (nến mới nhất đã đóng)
         current_m1_candle = df_m1.iloc[current_m1_idx]
         
         # Log details
