@@ -1,0 +1,54 @@
+====================================================================================================
+📊 BÁO CÁO TỔNG KẾT PHÂN TÍCH LỆNH THUA
+Strategy: Strategy_1_Trend_HA_V2
+Ngày tạo: 2026-01-22 11:23:13
+====================================================================================================
+
+## 1. TỔNG QUAN
+----------------------------------------------------------------------------------------------------
+Tổng số lệnh thua phân tích: 1
+Tổng lỗ: $-114.70
+Lỗ trung bình: $-114.70
+Khoảng cách SL trung bình: 3591.4 pips
+
+## 2. PHÂN TÍCH LÝ DO THOÁT LỆNH
+----------------------------------------------------------------------------------------------------
+  👤 Manual/Script Close: 1 lệnh (100.0%)
+
+## 3. PHÂN TÍCH ĐIỀU KIỆN KHÔNG ĐẠT
+----------------------------------------------------------------------------------------------------
+  ❌ Không Above Channel (BUY): 1 lệnh (100.0%)
+  ❌ RSI không đạt ngưỡng (V2: BUY > 55, SELL < 45): 1 lệnh (100.0%)
+
+## 4. ĐỀ XUẤT CẢI THIỆN
+----------------------------------------------------------------------------------------------------
+
+### 1. [MEDIUM] RSI không đạt ngưỡng (1 lệnh - 100.0%)
+
+  • V2 đã tăng ngưỡng RSI cho BUY (từ > 50 lên > 55)
+  • V2 đã giảm ngưỡng RSI cho SELL (từ < 50 xuống < 45)
+  • Có thể tăng thêm nếu vẫn có nhiều lệnh thua (BUY > 60, SELL < 40)
+  • Thêm RSI divergence check để tránh overbought/oversold
+
+
+### 2. [MEDIUM] Cải thiện chung
+
+  • V2 đã tăng spam filter (từ 60s lên 300s)
+  • Thêm consecutive loss management (dừng sau 2-3 lệnh thua liên tiếp)
+  • Thêm session filter (tránh Asian session nếu không phù hợp)
+  • Thêm volume confirmation (volume > 1.3x average)
+  • V2 đã có ATR filter cho CHOP detection
+
+## 5. KẾT LUẬN
+----------------------------------------------------------------------------------------------------
+
+Dựa trên phân tích, các cải thiện ưu tiên:
+
+💡 Khuyến nghị:
+  1. V2 đã có nhiều cải thiện so với V1 (ADX, CHOP, RSI stricter, confirmation, SL buffer)
+  2. So sánh kết quả V1 vs V2 để đánh giá hiệu quả
+  3. Nếu vẫn có nhiều lệnh thua, xem xét các đề xuất trên
+  4. Test trên demo account trước khi áp dụng thêm cải thiện
+  5. Monitor kết quả và điều chỉnh thêm
+
+====================================================================================================

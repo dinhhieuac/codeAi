@@ -422,6 +422,18 @@ def strategy_1_logic(config, error_count=0):
         print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
         return error_count, 0
     print(f"✅ CHOP Filter: {chop_msg}")
+    
+    # V3: ATR M1 Volatility Filter - Tránh trade khi market quá volatile
+    atr_max_threshold = config['parameters'].get('atr_max_threshold', 3.0)  # > 3.0 → BỎ TRADE
+    atr_caution_threshold = config['parameters'].get('atr_caution_threshold', 2.0)  # 2.0-3.0 → Cẩn trọng
+    
+    if atr_val > atr_max_threshold:
+        print(f"❌ ATR M1 Filter: ATR={atr_val:.2f} > {atr_max_threshold} (Market quá volatile - BỎ TRADE)")
+        return error_count, 0
+    elif atr_val >= atr_caution_threshold:
+        print(f"⚠️ ATR M1 Filter: ATR={atr_val:.2f} trong khoảng {atr_caution_threshold}-{atr_max_threshold} (Rất cẩn trọng)")
+    else:
+        print(f"✅ ATR M1 Filter: ATR={atr_val:.2f} < {atr_caution_threshold} (Điều kiện lý tưởng)")
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
@@ -437,7 +449,9 @@ def strategy_1_logic(config, error_count=0):
     print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-    print(f"   ATR: {atr_val:.2f} | Session: {session_msg}")
+    # ATR status (đã được check ở filter phía trên)
+    atr_status = "🟢 Lý tưởng" if atr_val < atr_caution_threshold else ("🟡 Cẩn trọng" if atr_val < atr_max_threshold else "🔴 Quá cao")
+    print(f"   ATR M1: {atr_val:.2f} ({atr_status}) | Session: {session_msg}")
     
     # Track all filter status
     filter_status = []
@@ -714,6 +728,12 @@ def strategy_1_logic(config, error_count=0):
             buffer = atr_buffer_multiplier * atr_m5
             print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR) [V3: Tăng từ 1.5x]")
             
+            # FIX: Thêm Max Risk Distance để tránh SL quá xa khi market volatile
+            # Max risk = max_risk_atr_multiplier * ATR_M1 (dùng M1 vì phản ánh volatility hiện tại tốt hơn)
+            max_risk_atr_multiplier = config['parameters'].get('max_risk_atr_multiplier', 3.0)  # Default: 3.0x ATR M1
+            max_risk_distance = max_risk_atr_multiplier * atr_val  # atr_val là ATR M1 đã tính ở trên
+            print(f"   ⚠️ Max Risk Distance: {max_risk_distance:.2f} ({max_risk_atr_multiplier}x ATR M1: {atr_val:.2f})")
+            
             if signal == "BUY":
                 sl = prev_m5_low - buffer
                 # Check if SL is too close (safety) - min 10 pips
@@ -721,7 +741,13 @@ def strategy_1_logic(config, error_count=0):
                 if (price - sl) < min_dist:
                     sl = price - min_dist
                 
+                # FIX: Giới hạn risk distance tối đa
                 risk_dist = price - sl
+                if risk_dist > max_risk_distance:
+                    sl = price - max_risk_distance
+                    risk_dist = max_risk_distance
+                    print(f"   ⚠️ Risk quá lớn ({risk_dist:.2f} > {max_risk_distance:.2f}), dùng max risk: {max_risk_distance:.2f}")
+                
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
@@ -731,10 +757,16 @@ def strategy_1_logic(config, error_count=0):
                 if (sl - price) < min_dist:
                     sl = price + min_dist
                 
+                # FIX: Giới hạn risk distance tối đa
                 risk_dist = sl - price
+                if risk_dist > max_risk_distance:
+                    sl = price + max_risk_distance
+                    risk_dist = max_risk_distance
+                    print(f"   ⚠️ Risk quá lớn ({risk_dist:.2f} > {max_risk_distance:.2f}), dùng max risk: {max_risk_distance:.2f}")
+                
                 tp = price - (risk_dist * reward_ratio)
             
-            print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio})")
+            print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio}) | Risk: {risk_dist:.2f}")
             
         else:
             # Fixed Pips (Legacy)
@@ -785,7 +817,7 @@ def strategy_1_logic(config, error_count=0):
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
                 f"• Liquidity Sweep: PASS ✅\n"
                 f"• Displacement Candle: PASS ✅\n"
-                f"• ATR: {atr_val:.2f}\n"
+                f"• ATR M1: {atr_val:.2f} ({atr_status})\n"
                 f"• CHOP Filter: PASS ✅\n"
                 f"• Session: {session_msg}"
             )
@@ -811,6 +843,8 @@ if __name__ == "__main__":
         print("📋 V4 Improvements (Session & Losses):")
         print("   ✅ Session Filter (08:00 - 22:00 default)")
         print("   ✅ Consecutive Loss Stop (Max 3 losses default)")
+        print("   ✅ ATR M1 Volatility Filter (> 3.0 = BỎ TRADE, 2-3 = Cẩn trọng, < 2.0 = Lý tưởng)")
+        print("   ✅ Max Risk Distance (3.0x ATR M1) để tránh SL quá xa")
         print("📋 V3 Improvements (Already included):")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
         print("   ✅ ADX filter increased (>= 25)")

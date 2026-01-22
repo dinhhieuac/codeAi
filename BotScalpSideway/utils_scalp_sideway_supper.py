@@ -336,6 +336,8 @@ def check_range_filter(
 class DeltaCountTrackerSupper:
     """
     Class để theo dõi Count cho DeltaHigh/DeltaLow (bot supper)
+    
+    Logic: Count chỉ tăng khi nến M1 ĐÓNG, không tăng trong khi nến đang hình thành
     """
     
     def __init__(self, min_count: int = 2):
@@ -346,30 +348,45 @@ class DeltaCountTrackerSupper:
         self.count = 0
         self.min_count = min_count
         self.last_valid_idx = None
+        self.last_processed_idx = None  # Track nến đã xử lý để tránh tăng Count nhiều lần
     
     def update(self, is_valid: bool, current_idx: int) -> Tuple[int, bool]:
         """
-        Cập nhật Count
+        Cập nhật Count - CHỈ tăng khi có nến M1 mới đóng
+        
+        Logic:
+        - 0-60s: Theo dõi nến liên tục, KHÔNG tăng Count
+        - Khi nến đóng: Mới tăng Count nếu Delta hợp lệ
         
         Args:
             is_valid: True nếu Delta hợp lệ
-            current_idx: Index của nến hiện tại
+            current_idx: Index của nến hiện tại (nến đã đóng)
         
         Returns:
             (count, is_triggered)
             - count: Giá trị Count hiện tại
             - is_triggered: True nếu Count >= min_count
         """
+        # Chỉ xử lý khi có nến M1 mới đóng (current_idx thay đổi)
+        if self.last_processed_idx is not None and current_idx == self.last_processed_idx:
+            # Cùng nến → Không tăng Count (nến đang hình thành hoặc đã xử lý)
+            is_triggered = self.count >= self.min_count
+            return self.count, is_triggered
+        
+        # Có nến mới → Đánh dấu đã xử lý
+        self.last_processed_idx = current_idx
+        
         if is_valid:
             # Kiểm tra xem có liên tiếp không
             if self.last_valid_idx is not None and current_idx != self.last_valid_idx + 1:
                 # Không liên tiếp → Reset
                 self.count = 0
             
+            # Tăng Count khi nến đóng và Delta hợp lệ
             self.count += 1
             self.last_valid_idx = current_idx
         else:
-            # Reset Count
+            # Reset Count khi Delta không hợp lệ
             self.count = 0
             self.last_valid_idx = None
         
@@ -380,6 +397,7 @@ class DeltaCountTrackerSupper:
         """Reset Count về 0"""
         self.count = 0
         self.last_valid_idx = None
+        self.last_processed_idx = None  # Reset cả processed index
     
     def get_count(self) -> int:
         """Lấy giá trị Count hiện tại"""
