@@ -1,0 +1,27 @@
+{
+    "account": 183677261,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Real25",
+    "mt5_path": "C:/Program Files/MetaTrader 5 EXNESS/terminal64.exe",
+    "symbol": "EURUSDc",
+    "volume": 0.03,
+    "magic": 2000,
+    "max_positions": 1,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "1887610382",
+    "parameters": {
+        "sl_mode": "auto_m5",
+        "reward_ratio": 1.5,
+        "atr_period": 14,
+        "ema_fast": 14,
+        "ema_slow": 28,
+        "rsi_period": 14,
+        "rsi_buy_threshold": 55,
+        "rsi_sell_threshold": 45,
+        "volume_threshold": 1.3,
+        "crossover_confirmation": true,
+        "h1_adx_threshold": 20,
+        "loss_streak_threshold": 2,
+        "loss_cooldown_minutes": 45
+    }
+}

@@ -344,12 +344,13 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
         df_m1['atr'] = calculate_atr(df_m1, 14)
         
         # Get current candle (last completed)
-        if len(df_m1) < 2:
+        if len(df_m1) < 3:
             return error_count, 0
         
-        # Last completed M1 candle: nến cuối cùng đã đóng (index -1)
-        # Nến cuối cùng (index -1) là nến đã đóng, nến -2 là nến cũ hơn
-        current_m1_idx = len(df_m1) - 1  # Last completed M1 candle (nến mới nhất đã đóng)
+        # MT5 copy_rates_from_pos: nến cuối cùng (index -1) là nến đang hình thành (chưa đóng)
+        # Nến cuối cùng đã đóng là nến -2
+        # DeltaHigh = High[-2] - High[-3] (nến cuối cùng đã đóng - nến trước đó đã đóng)
+        current_m1_idx = len(df_m1) - 2  # Last completed M1 candle (nến cuối cùng đã đóng)
         current_m1_candle = df_m1.iloc[current_m1_idx]
         
         # Log details
@@ -373,11 +374,7 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
             log_details.append(f"   ⚠️ ATR ratio không hợp lệ → KHÔNG xét Delta, Count = 0")
             log_details.append(f"{'='*80}\n")
             
-            # Log debug - no signal
-            current_price = current_m1_candle['close']
-            atr_m1_val = current_m1_candle.get('atr', 0)
-            log_debug_check(symbol, f"{debug_info} NO_SIGNAL Price={current_price:.5f} ATR={atr_m1_val:.5f}")
-            
+            # Không log debug khi ATR ratio không hợp lệ (count = 0)
             for detail in log_details:
                 print(detail)
             return error_count, 0
@@ -416,10 +413,10 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
             sell_debug += f" SELL_Range={range_value:.5f} q={range_q} Th={range_q * atr_m1:.5f} {'OK' if is_valid_range else 'FAIL'}"
             
             if not is_valid_range:
-                # Range không hợp lệ → Count = 0
+                # Range không hợp lệ → Reset state
                 sell_count_tracker.reset()
-                log_details.append(f"   ⚠️ Range không hợp lệ → Count = 0")
-                sell_debug += f" SELL_Count=0/2 Triggered=NO"
+                log_details.append(f"   ⚠️ Range không hợp lệ → Reset state")
+                sell_debug += f" SELL_State=WAIT_A SELL_Count=0/2 Triggered=NO"
             elif is_valid_range:
                 # Check delta với điều kiện khóa hướng
                 is_valid_delta, delta_valid_msg = is_valid_delta_sell_supper(
@@ -434,15 +431,16 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                 # Add to debug info
                 sell_debug += f" SELL_DeltaH={delta_high:.5f} DeltaL={delta_low:.5f} k={delta_k} ATR={atr_m1:.5f} {'OK' if is_valid_delta else 'FAIL'}"
                 
-                # Update count
-                count, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
-                log_details.append(f"   📊 Count: {count}/2")
+                # Update state machine
+                state_info, is_triggered = sell_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                count_display = sell_count_tracker.get_count_display()
+                log_details.append(f"   📊 State: {state_info}, Count: {count_display}")
                 
                 # Add to debug info
-                sell_debug += f" SELL_Count={count}/2 Triggered={'YES' if is_triggered else 'NO'}"
+                sell_debug += f" SELL_State={state_info} SELL_Count={count_display} Triggered={'YES' if is_triggered else 'NO'}"
                 
                 if is_triggered:
-                    log_details.append(f"   ✅ Count >= 2 → SELL SIGNAL!")
+                    log_details.append(f"   ✅ Nến B hợp lệ và liên tiếp sau A → SELL SIGNAL!")
                     signal_type = "SELL"
                     entry_price = current_m1_candle['close']
                     
@@ -485,10 +483,10 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                 buy_debug += f" BUY_Range={range_value:.5f} q={range_q} Th={range_q * atr_m1:.5f} {'OK' if is_valid_range else 'FAIL'}"
                 
                 if not is_valid_range:
-                    # Range không hợp lệ → Count = 0
+                    # Range không hợp lệ → Reset state
                     buy_count_tracker.reset()
-                    log_details.append(f"   ⚠️ Range không hợp lệ → Count = 0")
-                    buy_debug += f" BUY_Count=0/2 Triggered=NO"
+                    log_details.append(f"   ⚠️ Range không hợp lệ → Reset state")
+                    buy_debug += f" BUY_State=WAIT_A BUY_Count=0/2 Triggered=NO"
                 elif is_valid_range:
                     # Check delta với điều kiện khóa hướng
                     is_valid_delta, delta_valid_msg = is_valid_delta_buy_supper(
@@ -503,15 +501,16 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
                     # Add to debug info
                     buy_debug += f" BUY_DeltaL={delta_low:.5f} DeltaH={delta_high:.5f} k={delta_k} ATR={atr_m1:.5f} {'OK' if is_valid_delta else 'FAIL'}"
                     
-                    # Update count
-                    count, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
-                    log_details.append(f"   📊 Count: {count}/2")
+                    # Update state machine
+                    state_info, is_triggered = buy_count_tracker.update(is_valid_delta, current_idx=current_m1_idx)
+                    count_display = buy_count_tracker.get_count_display()
+                    log_details.append(f"   📊 State: {state_info}, Count: {count_display}")
                     
                     # Add to debug info
-                    buy_debug += f" BUY_Count={count}/2 Triggered={'YES' if is_triggered else 'NO'}"
+                    buy_debug += f" BUY_State={state_info} BUY_Count={count_display} Triggered={'YES' if is_triggered else 'NO'}"
                     
                     if is_triggered:
-                        log_details.append(f"   ✅ Count >= 2 → BUY SIGNAL!")
+                        log_details.append(f"   ✅ Nến B hợp lệ và liên tiếp sau A → BUY SIGNAL!")
                         signal_type = "BUY"
                         entry_price = current_m1_candle['close']
                         
@@ -541,10 +540,16 @@ def scalp_sideway_supper_logic(config: Dict, error_count: int = 0) -> tuple:
             log_details.append(f"   📊 ATR_Ratio: {atr_ratio:.3f}")
             log_details.append(f"{'='*80}\n")
             
-            # Combine all debug info and log once
-            current_price = current_m1_candle['close']
-            full_debug = f"{debug_info}{sell_debug}{buy_debug} NO_SIGNAL Price={current_price:.5f} ATR={atr_m1:.5f}"
-            log_debug_check(symbol, full_debug)
+            # Chỉ log debug khi count >= 1 (state = WAIT_B)
+            # Kiểm tra nếu SELL hoặc BUY có state = WAIT_B (count = 1/2)
+            should_log = (sell_count_tracker.state == DeltaCountTrackerSupper.STATE_WAIT_B or 
+                         buy_count_tracker.state == DeltaCountTrackerSupper.STATE_WAIT_B)
+            
+            if should_log:
+                # Combine all debug info and log once
+                current_price = current_m1_candle['close']
+                full_debug = f"{debug_info}{sell_debug}{buy_debug} NO_SIGNAL Price={current_price:.5f} ATR={atr_m1:.5f}"
+                log_debug_check(symbol, full_debug)
             
             for detail in log_details:
                 print(detail)

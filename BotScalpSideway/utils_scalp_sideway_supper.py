@@ -337,67 +337,103 @@ class DeltaCountTrackerSupper:
     """
     Class để theo dõi Count cho DeltaHigh/DeltaLow (bot supper)
     
-    Logic: Count chỉ tăng khi nến M1 ĐÓNG, không tăng trong khi nến đang hình thành
+    State Machine:
+    - WAIT_A: chờ nến A hợp lệ
+    - WAIT_B: đã có A, chờ nến B hợp lệ (phải là nến kế tiếp ngay sau A)
+    
+    Logic:
+    - Bước A: Nếu đang WAIT_A và nến hiện tại hợp lệ → chuyển sang WAIT_B, lưu A_index
+    - Bước B: Nếu đang WAIT_B:
+      - Nếu nến hiện tại hợp lệ VÀ nó là nến ngay sau A → ENTRY → Reset về WAIT_A
+      - Ngược lại (B fail hoặc không liên tiếp) → Reset về WAIT_A
     """
+    
+    STATE_WAIT_A = "WAIT_A"
+    STATE_WAIT_B = "WAIT_B"
     
     def __init__(self, min_count: int = 2):
         """
         Args:
-            min_count: Số Count tối thiểu để trigger signal (default: 2)
+            min_count: Số Count tối thiểu để trigger signal (default: 2, không dùng nữa nhưng giữ để tương thích)
         """
-        self.count = 0
-        self.min_count = min_count
-        self.last_valid_idx = None
-        self.last_processed_idx = None  # Track nến đã xử lý để tránh tăng Count nhiều lần
+        self.state = self.STATE_WAIT_A
+        self.a_index = None  # Lưu index của nến A
+        self.last_processed_idx = None  # Track nến đã xử lý để tránh xử lý nhiều lần
     
-    def update(self, is_valid: bool, current_idx: int) -> Tuple[int, bool]:
+    def update(self, is_valid: bool, current_idx: int) -> Tuple[str, bool]:
         """
-        Cập nhật Count - CHỈ tăng khi có nến M1 mới đóng
-        
-        Logic:
-        - 0-60s: Theo dõi nến liên tục, KHÔNG tăng Count
-        - Khi nến đóng: Mới tăng Count nếu Delta hợp lệ
+        Cập nhật State Machine - CHỈ xử lý khi có nến M1 mới đóng
         
         Args:
             is_valid: True nếu Delta hợp lệ
             current_idx: Index của nến hiện tại (nến đã đóng)
         
         Returns:
-            (count, is_triggered)
-            - count: Giá trị Count hiện tại
-            - is_triggered: True nếu Count >= min_count
+            (state_info, is_triggered)
+            - state_info: Thông tin state hiện tại (dạng "WAIT_A" hoặc "WAIT_B(A_idx)")
+            - is_triggered: True nếu đạt điều kiện entry (nến B hợp lệ và liên tiếp sau A)
         """
         # Chỉ xử lý khi có nến M1 mới đóng (current_idx thay đổi)
         if self.last_processed_idx is not None and current_idx == self.last_processed_idx:
-            # Cùng nến → Không tăng Count (nến đang hình thành hoặc đã xử lý)
-            is_triggered = self.count >= self.min_count
-            return self.count, is_triggered
+            # Cùng nến → Không xử lý (nến đang hình thành hoặc đã xử lý)
+            state_info = self._get_state_info()
+            is_triggered = (self.state == self.STATE_WAIT_B and is_valid and 
+                          self.a_index is not None and current_idx == self.a_index + 1)
+            return state_info, is_triggered
         
         # Có nến mới → Đánh dấu đã xử lý
         self.last_processed_idx = current_idx
         
-        if is_valid:
-            # Kiểm tra xem có liên tiếp không
-            if self.last_valid_idx is not None and current_idx != self.last_valid_idx + 1:
-                # Không liên tiếp → Reset
-                self.count = 0
-            
-            # Tăng Count khi nến đóng và Delta hợp lệ
-            self.count += 1
-            self.last_valid_idx = current_idx
-        else:
-            # Reset Count khi Delta không hợp lệ
-            self.count = 0
-            self.last_valid_idx = None
+        # State Machine Logic
+        if self.state == self.STATE_WAIT_A:
+            # Bước A: Chờ nến A hợp lệ
+            if is_valid:
+                # Nến A hợp lệ → chuyển sang WAIT_B, lưu A_index
+                self.state = self.STATE_WAIT_B
+                self.a_index = current_idx
+            else:
+                # Nến không hợp lệ → vẫn ở WAIT_A
+                pass
         
-        is_triggered = self.count >= self.min_count
-        return self.count, is_triggered
+        elif self.state == self.STATE_WAIT_B:
+            # Bước B: Đã có A, chờ nến B hợp lệ (phải là nến kế tiếp)
+            if is_valid and self.a_index is not None and current_idx == self.a_index + 1:
+                # Nến B hợp lệ VÀ là nến ngay sau A → ENTRY
+                # Reset về WAIT_A sau khi trigger
+                self.state = self.STATE_WAIT_A
+                self.a_index = None
+                state_info = "TRIGGERED"
+                return state_info, True
+            else:
+                # B fail hoặc không liên tiếp → Reset về WAIT_A
+                self.state = self.STATE_WAIT_A
+                self.a_index = None
+        
+        state_info = self._get_state_info()
+        is_triggered = False
+        return state_info, is_triggered
+    
+    def _get_state_info(self) -> str:
+        """Trả về thông tin state dạng string"""
+        if self.state == self.STATE_WAIT_A:
+            return "WAIT_A"
+        elif self.state == self.STATE_WAIT_B:
+            return f"WAIT_B(A={self.a_index})"
+        return "UNKNOWN"
+    
+    def get_count_display(self) -> str:
+        """Trả về string hiển thị Count (tương thích với format cũ)"""
+        if self.state == self.STATE_WAIT_A:
+            return "0/2"
+        elif self.state == self.STATE_WAIT_B:
+            return "1/2"
+        return "0/2"
     
     def reset(self):
-        """Reset Count về 0"""
-        self.count = 0
-        self.last_valid_idx = None
-        self.last_processed_idx = None  # Reset cả processed index
+        """Reset về trạng thái ban đầu"""
+        self.state = self.STATE_WAIT_A
+        self.a_index = None
+        self.last_processed_idx = None
     
     def get_count(self) -> int:
         """Lấy giá trị Count hiện tại"""
