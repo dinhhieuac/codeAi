@@ -137,5 +137,5 @@ def index():
                            filter_label=filter_label)
 
 if __name__ == '__main__':
-    print(f"🚀 Dashboard running on http://127.0.0.1:5007")
-    app.run(debug=True, port=5007)
+    print(f"🚀 Dashboard running on http://127.0.0.1:5008")
+    app.run(debug=True, port=5008)

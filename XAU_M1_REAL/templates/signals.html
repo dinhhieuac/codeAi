@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signals Analysis - XAUUSD Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+        }
+
+        .profit-pos {
+            color: green;
+            font-weight: bold;
+        }
+
+        .profit-neg {
+            color: red;
+            font-weight: bold;
+        }
+
+        .badge-buy {
+            background-color: #198754;
+        }
+
+        .badge-sell {
+            background-color: #dc3545;
+        }
+
+        .status-badge {
+            font-size: 0.85em;
+            padding: 0.35em 0.65em;
+        }
+
+        .signal-row {
+            transition: background-color 0.2s;
+        }
+
+        .signal-row:hover {
+            background-color: #f0f0f0;
+        }
+
+        .checking {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .spinner-border-sm {
+            width: 1rem;
+            height: 1rem;
+            border-width: 0.15em;
+        }
+
+        .copy-success {
+            color: #198754;
+            font-size: 0.85em;
+        }
+
+        .copy-details-btn {
+            min-width: 70px;
+        }
+
+        .analyze-signal-btn {
+            min-width: 80px;
+        }
+
+        .analysis-modal .analysis-item {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+
+        .analysis-item.success {
+            background-color: #d4edda;
+            border-color: #28a745;
+        }
+
+        .analysis-item.error {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+        }
+
+        .analysis-item.warning {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .analysis-item.info {
+            background-color: #d1ecf1;
+            border-color: #17a2b8;
+        }
+
+        .recommendation-item {
+            padding: 8px;
+            margin-bottom: 8px;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+
+        .recommendation-item.success {
+            background-color: #d4edda;
+            border-color: #28a745;
+        }
+
+        .recommendation-item.error {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+        }
+
+        .recommendation-item.warning {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .recommendation-item.info {
+            background-color: #d1ecf1;
+            border-color: #17a2b8;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1"><i class="fas fa-signal"></i> Signals Analysis</span>
+            <div>
+                <a href="/" class="btn btn-outline-light btn-sm me-2">
+                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                </a>
+                <span class="text-white"><i class="fas fa-sync"></i> Auto-refresh: F5</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h3>{{ filter_label }}</h3>
+            <div class="d-flex gap-2">
+                <div class="btn-group" role="group">
+                    <a href="/signals?days=1" class="btn btn-outline-primary {% if current_filter == '1' %}active{% endif %}">1 Day</a>
+                    <a href="/signals?days=3" class="btn btn-outline-primary {% if current_filter == '3' %}active{% endif %}">3 Days</a>
+                    <a href="/signals?days=7" class="btn btn-outline-primary {% if current_filter == '7' %}active{% endif %}">7 Days</a>
+                    <a href="/signals?days=30" class="btn btn-outline-primary {% if current_filter == '30' %}active{% endif %}">30 Days</a>
+                    <a href="/signals?days=all" class="btn btn-outline-primary {% if current_filter == 'all' %}active{% endif %}">All Time</a>
+                </div>
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Export orders to CSV">
+                        <i class="fas fa-download"></i> Export Orders
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="/api/export_orders?days={{ current_filter }}&strategy=all">All Strategies</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        {% for strategy in strategies %}
+                        <li><a class="dropdown-item" href="/api/export_orders?days={{ current_filter }}&strategy={{ strategy }}">{{ strategy }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Stats Summary -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Signals</h5>
+                        <h2 class="card-text">{{ total_signals }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Matched Orders</h5>
+                        <h2 class="card-text">{{ matched_orders }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Wins</h5>
+                        <h2 class="card-text">{{ wins }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-danger text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Losses</h5>
+                        <h2 class="card-text">{{ losses }}</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signals Table -->
+        <div class="card">
+            <div class="card-header bg-white">
+                <h5 class="mb-0"><i class="fas fa-list"></i> Signals List</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Strategy</th>
+                                <th>Signal</th>
+                                <th>Symbol</th>
+                                <th>Price</th>
+                                <th>SL</th>
+                                <th>TP</th>
+                                <th>Status</th>
+                                <th>Result</th>
+                                <th>Details</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sig in signals %}
+                            <tr class="signal-row" id="signal-row-{{ sig.id }}">
+                                <td>{{ sig.timestamp }}</td>
+                                <td><span class="badge bg-secondary">{{ sig.strategy_name }}</span></td>
+                                <td>
+                                    {% if sig.signal_type == 'BUY' %}
+                                    <span class="badge badge-buy">BUY</span>
+                                    {% else %}
+                                    <span class="badge badge-sell">SELL</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ sig.symbol }}</td>
+                                <td>{{ "%.5f"|format(sig.price) }}</td>
+                                <td>{{ "%.5f"|format(sig.sl) if sig.sl else '-' }}</td>
+                                <td>{{ "%.5f"|format(sig.tp) if sig.tp else '-' }}</td>
+                                <td id="status-{{ sig.id }}">
+                                    {% if sig.has_order %}
+                                        {% if sig.order_status == 'closed' %}
+                                            <span class="badge bg-dark status-badge">Closed</span>
+                                        {% else %}
+                                            <span class="badge bg-warning status-badge">Open</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-secondary status-badge">Not Found</span>
+                                    {% endif %}
+                                </td>
+                                <td id="result-{{ sig.id }}">
+                                    {% if sig.has_order and sig.order_profit is not none %}
+                                        <span class="{% if sig.order_profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+                                            ${{ "%.2f"|format(sig.order_profit) }}
+                                        </span>
+                                        <br>
+                                        <small class="text-muted">Ticket: {{ sig.order_ticket }}</small>
+                                    {% elif sig.has_order %}
+                                        <span class="text-muted">Running...</span>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td id="details-{{ sig.id }}">
+                                    <button class="btn btn-sm btn-outline-secondary copy-details-btn" 
+                                            data-signal-id="{{ sig.id }}"
+                                            data-signal-data='{{ sig|tojson }}'
+                                            title="Copy signal details">
+                                        <i class="fas fa-copy"></i> Copy
+                                    </button>
+                                </td>
+                                <td id="action-{{ sig.id }}">
+                                    <div class="btn-group" role="group">
+                                        {% if not sig.has_order %}
+                                            <button class="btn btn-sm btn-primary check-mt5-btn" data-signal-id="{{ sig.id }}">
+                                                <i class="fas fa-search"></i> Check MT5
+                                            </button>
+                                        {% else %}
+                                            <button class="btn btn-sm btn-outline-primary check-mt5-btn" data-signal-id="{{ sig.id }}">
+                                                <i class="fas fa-sync"></i> Re-check
+                                            </button>
+                                        {% endif %}
+                                        <button class="btn btn-sm btn-info analyze-signal-btn" data-signal-id="{{ sig.id }}" title="Analyze signal">
+                                            <i class="fas fa-chart-line"></i> Analyze
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Handle Check MT5 button clicks
+            document.querySelectorAll('.check-mt5-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const signalId = this.getAttribute('data-signal-id');
+                    checkSignalMT5(signalId);
+                });
+            });
+
+            // Handle Copy Details button clicks
+            document.querySelectorAll('.copy-details-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const signalData = JSON.parse(this.getAttribute('data-signal-data'));
+                    copySignalDetails(signalData, this);
+                });
+            });
+
+            // Handle Analyze button clicks
+            document.querySelectorAll('.analyze-signal-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const signalId = this.getAttribute('data-signal-id');
+                    analyzeSignal(signalId);
+                });
+            });
+        });
+
+        function formatSignalDetails(signalData) {
+            let details = `=== SIGNAL DETAILS ===\n`;
+            details += `ID: ${signalData.id}\n`;
+            details += `Timestamp: ${signalData.timestamp}\n`;
+            details += `Strategy: ${signalData.strategy_name}\n`;
+            details += `Symbol: ${signalData.symbol}\n`;
+            details += `Signal Type: ${signalData.signal_type}\n`;
+            details += `Price: ${signalData.price ? signalData.price.toFixed(5) : 'N/A'}\n`;
+            details += `Stop Loss: ${signalData.sl ? signalData.sl.toFixed(5) : 'N/A'}\n`;
+            details += `Take Profit: ${signalData.tp ? signalData.tp.toFixed(5) : 'N/A'}\n`;
+            details += `Status: ${signalData.status || 'N/A'}\n`;
+            details += `Account ID: ${signalData.account_id || 'N/A'}\n`;
+            
+            if (signalData.indicators) {
+                try {
+                    const indicators = typeof signalData.indicators === 'string' 
+                        ? JSON.parse(signalData.indicators) 
+                        : signalData.indicators;
+                    details += `\n=== INDICATORS ===\n`;
+                    details += JSON.stringify(indicators, null, 2);
+                } catch (e) {
+                    details += `\n=== INDICATORS ===\n`;
+                    details += signalData.indicators;
+                }
+            }
+            
+            if (signalData.has_order) {
+                details += `\n\n=== ORDER INFO ===\n`;
+                details += `Ticket: ${signalData.order_ticket || 'N/A'}\n`;
+                details += `Status: ${signalData.order_status || 'N/A'}\n`;
+                if (signalData.order_profit !== null && signalData.order_profit !== undefined) {
+                    details += `Profit: $${signalData.order_profit.toFixed(2)}\n`;
+                } else {
+                    details += `Profit: Running...\n`;
+                }
+            } else {
+                details += `\n\n=== ORDER INFO ===\n`;
+                details += `No matching order found\n`;
+            }
+            
+            return details;
+        }
+
+        function copySignalDetails(signalData, button) {
+            const details = formatSignalDetails(signalData);
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(details).then(() => {
+                // Show success feedback
+                const originalHTML = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                button.classList.remove('btn-outline-secondary');
+                button.classList.add('btn-success');
+                
+                setTimeout(() => {
+                    button.innerHTML = originalHTML;
+                    button.classList.remove('btn-success');
+                    button.classList.add('btn-outline-secondary');
+                }, 2000);
+            }).catch(err => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = details;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.select();
+                
+                try {
+                    document.execCommand('copy');
+                    const originalHTML = button.innerHTML;
+                    button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                    button.classList.remove('btn-outline-secondary');
+                    button.classList.add('btn-success');
+                    
+                    setTimeout(() => {
+                        button.innerHTML = originalHTML;
+                        button.classList.remove('btn-success');
+                        button.classList.add('btn-outline-secondary');
+                    }, 2000);
+                } catch (err) {
+                    alert('Failed to copy. Please copy manually.');
+                }
+                
+                document.body.removeChild(textArea);
+            });
+        }
+
+        function checkSignalMT5(signalId) {
+            const row = document.getElementById(`signal-row-${signalId}`);
+            const actionCell = document.getElementById(`action-${signalId}`);
+            const resultCell = document.getElementById(`result-${signalId}`);
+            const statusCell = document.getElementById(`status-${signalId}`);
+            
+            // Disable button and show loading
+            row.classList.add('checking');
+            actionCell.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Checking...';
+            
+            fetch(`/api/check_signal/${signalId}`)
+                .then(response => response.json())
+                .then(data => {
+                    row.classList.remove('checking');
+                    
+                    if (data.error) {
+                        actionCell.innerHTML = `<button class="btn btn-sm btn-primary check-mt5-btn" data-signal-id="${signalId}">
+                            <i class="fas fa-search"></i> Check MT5
+                        </button>`;
+                        resultCell.innerHTML = `<span class="text-danger">Error: ${data.error}</span>`;
+                        return;
+                    }
+                    
+                    // Update status and result based on response
+                    if (data.status === 'closed') {
+                        statusCell.innerHTML = '<span class="badge bg-dark status-badge">Closed</span>';
+                        const resultClass = data.result === 'win' ? 'profit-pos' : 'profit-neg';
+                        resultCell.innerHTML = `
+                            <span class="${resultClass}">$${data.profit.toFixed(2)}</span>
+                            <br>
+                            <small class="text-muted">Ticket: ${data.position_ticket}</small>
+                            <br>
+                            <small class="text-muted">Close: ${data.close_price.toFixed(5)}</small>
+                        `;
+                    } else if (data.status === 'open') {
+                        statusCell.innerHTML = '<span class="badge bg-warning status-badge">Open</span>';
+                        const resultClass = data.current_profit >= 0 ? 'profit-pos' : 'profit-neg';
+                        resultCell.innerHTML = `
+                            <span class="${resultClass}">$${data.current_profit.toFixed(2)}</span>
+                            <br>
+                            <small class="text-muted">Ticket: ${data.position_ticket}</small>
+                        `;
+                    } else if (data.status === 'not_found') {
+                        statusCell.innerHTML = '<span class="badge bg-secondary status-badge">Not Found</span>';
+                        resultCell.innerHTML = `<span class="text-muted">${data.message}</span>`;
+                    } else {
+                        statusCell.innerHTML = '<span class="badge bg-secondary status-badge">Unknown</span>';
+                        resultCell.innerHTML = `<span class="text-muted">${data.message || 'Unknown status'}</span>`;
+                    }
+                    
+                    // Re-enable button
+                    actionCell.innerHTML = `<button class="btn btn-sm btn-outline-primary check-mt5-btn" data-signal-id="${signalId}">
+                        <i class="fas fa-sync"></i> Re-check
+                    </button>`;
+                    
+                    // Re-attach event listener
+                    actionCell.querySelector('.check-mt5-btn').addEventListener('click', function() {
+                        checkSignalMT5(signalId);
+                    });
+                })
+                .catch(error => {
+                    row.classList.remove('checking');
+                    actionCell.innerHTML = `<button class="btn btn-sm btn-primary check-mt5-btn" data-signal-id="${signalId}">
+                        <i class="fas fa-search"></i> Check MT5
+                    </button>`;
+                    resultCell.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+                    
+                    // Re-attach event listener
+                    actionCell.querySelector('.check-mt5-btn').addEventListener('click', function() {
+                        checkSignalMT5(signalId);
+                    });
+                });
+        }
+
+        function analyzeSignal(signalId) {
+            // Show loading modal
+            const modal = new bootstrap.Modal(document.getElementById('analysisModal'));
+            document.getElementById('analysisModalBody').innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Analyzing signal...</p></div>';
+            modal.show();
+
+            fetch(`/api/analyze_signal/${signalId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('analysisModalBody').innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                        return;
+                    }
+
+                    let html = '<div class="analysis-content">';
+                    
+                    // Signal Info
+                    html += '<div class="card mb-3"><div class="card-header"><h5 class="mb-0">Signal Information</h5></div><div class="card-body">';
+                    html += `<p><strong>Strategy:</strong> ${data.signal_info.strategy}</p>`;
+                    html += `<p><strong>Symbol:</strong> ${data.signal_info.symbol}</p>`;
+                    html += `<p><strong>Type:</strong> <span class="badge ${data.signal_info.type === 'BUY' ? 'badge-buy' : 'badge-sell'}">${data.signal_info.type}</span></p>`;
+                    html += `<p><strong>Price:</strong> ${data.signal_info.price.toFixed(5)}</p>`;
+                    html += `<p><strong>SL:</strong> ${data.signal_info.sl ? data.signal_info.sl.toFixed(5) : 'N/A'}</p>`;
+                    html += `<p><strong>TP:</strong> ${data.signal_info.tp ? data.signal_info.tp.toFixed(5) : 'N/A'}</p>`;
+                    html += `<p><strong>Timestamp:</strong> ${data.signal_info.timestamp}</p>`;
+                    html += '</div></div>';
+
+                    // Statistics
+                    html += '<div class="card mb-3"><div class="card-header"><h5 class="mb-0">Statistics (Similar Signals)</h5></div><div class="card-body">';
+                    html += `<p><strong>Similar Signals:</strong> ${data.statistics.similar_signals_count}</p>`;
+                    html += `<p><strong>With Results:</strong> ${data.statistics.similar_with_results}</p>`;
+                    html += `<p><strong>Win Rate:</strong> ${data.statistics.win_rate}%</p>`;
+                    html += `<p><strong>Avg Profit:</strong> $${data.statistics.avg_profit}</p>`;
+                    html += `<p><strong>Avg Loss:</strong> $${data.statistics.avg_loss}</p>`;
+                    html += `<p><strong>Profit Factor:</strong> ${data.statistics.profit_factor}</p>`;
+                    html += '</div></div>';
+
+                    // Analysis
+                    if (data.analysis && data.analysis.length > 0) {
+                        html += '<div class="card mb-3"><div class="card-header"><h5 class="mb-0">Analysis</h5></div><div class="card-body">';
+                        data.analysis.forEach(item => {
+                            html += `<div class="analysis-item ${item.type}">`;
+                            html += `<strong>${item.title}</strong><br>`;
+                            html += `<span>${item.message}</span>`;
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    }
+
+                    // Recommendations
+                    if (data.recommendations && data.recommendations.length > 0) {
+                        html += '<div class="card mb-3"><div class="card-header"><h5 class="mb-0">Recommendations</h5></div><div class="card-body">';
+                        data.recommendations.forEach(item => {
+                            html += `<div class="recommendation-item ${item.type}">`;
+                            html += `<strong>${item.title}</strong><br>`;
+                            html += `<span>${item.message}</span>`;
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    } else {
+                        html += '<div class="alert alert-info">No specific recommendations at this time.</div>';
+                    }
+
+                    html += '</div>';
+                    document.getElementById('analysisModalBody').innerHTML = html;
+                })
+                .catch(error => {
+                    document.getElementById('analysisModalBody').innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                });
+        }
+    </script>
+
+    <!-- Analysis Modal -->
+    <div class="modal fade" id="analysisModal" tabindex="-1" aria-labelledby="analysisModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="analysisModalLabel"><i class="fas fa-chart-line"></i> Signal Analysis</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="analysisModalBody">
+                    <!-- Content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

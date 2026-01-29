@@ -3,6 +3,8 @@ import sqlite3
 import json
 import os
 import time
+import signal
+import sys
 from datetime import datetime
 from db import Database
 from utils import connect_mt5
@@ -154,30 +156,70 @@ def load_strategy_configs(script_dir):
     return strategies
 
 def main():
-    # Pass None so db.py uses the internal absolute path logic
-    db = Database(None)
-    
-    import os
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Auto-load strategy configs mapping
-    strategies = load_strategy_configs(script_dir)
-    
-    from datetime import datetime
-    
-    for strat_name, config_file in strategies.items():
-        if os.path.exists(config_file):
-            print(f"\n--- Processing {strat_name} ---")
-            config = load_config(config_file)
-            update_trades_for_strategy(db, config, strat_name)
-        else:
-            print(f"⚠️ Config not found: {config_file} (skipping {strat_name})")
+    try:
+        # Pass None so db.py uses the internal absolute path logic
+        db = Database(None)
+        
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Auto-load strategy configs mapping
+        strategies = load_strategy_configs(script_dir)
+        
+        from datetime import datetime
+        
+        for strat_name, config_file in strategies.items():
+            if os.path.exists(config_file):
+                print(f"\n--- Processing {strat_name} ---")
+                config = load_config(config_file)
+                update_trades_for_strategy(db, config, strat_name)
+            else:
+                print(f"⚠️ Config not found: {config_file} (skipping {strat_name})")
 
-    print("\n✅ Update Complete!")
-    mt5.shutdown()
+        print("\n✅ Update Complete!")
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted during update. Cleaning up...")
+        raise  # Re-raise to be handled by outer try-catch
+    finally:
+        # Ensure MT5 is shut down even if interrupted
+        try:
+            mt5.shutdown()
+        except:
+            pass
+
+def signal_handler(sig, frame):
+    """Handle SIGINT (Ctrl+C) gracefully"""
+    print("\n\n⚠️ Interrupt received. Shutting down gracefully...")
+    try:
+        mt5.shutdown()
+        print("✅ MT5 connection closed.")
+    except:
+        pass
+    print("👋 Goodbye!")
+    sys.exit(0)
 
 if __name__ == "__main__":
-    while True:
-        main()
-        print("Sleeping for 600 seconds...") 
-        time.sleep(600)
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        while True:
+            main()
+            print("Sleeping for 600 seconds... (Press Ctrl+C to stop)") 
+            try:
+                time.sleep(600)
+            except KeyboardInterrupt:
+                print("\n⚠️ Interrupted during sleep. Exiting gracefully...")
+                break
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted. Shutting down MT5 and exiting...")
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+    finally:
+        # Ensure MT5 is properly shut down
+        try:
+            mt5.shutdown()
+            print("✅ MT5 connection closed.")
+        except:
+            pass
+        print("👋 Goodbye!")
