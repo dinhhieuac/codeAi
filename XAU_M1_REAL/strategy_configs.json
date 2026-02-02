@@ -2,6 +2,7 @@
     "Strategy_1_Trend_HA": "configs/config_1.json",
     "Strategy_1_Trend_HA_V2": "configs/config_1_v2.json",
     "Strategy_1_Trend_HA_V2.1": "configs/config_1_v2.1.json",
+    "Strategy_1_Trend_HA_V3": "configs/config_1_v3.json",    
     "Strategy_2_EMA_ATR": "configs/config_2.json",
     "Strategy_3_PA_Volume": "configs/config_3.json",
     "Strategy_4_UT_Bot": "configs/config_4.json",

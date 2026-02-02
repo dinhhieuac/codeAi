@@ -116,10 +116,11 @@ def index():
         bot_stats[-1]['chart_data'] = points
         
     # Sort by Net Profit
-    # Sort by User Defined Order (1, 4, 2, 5)
+    # Sort by User Defined Order (1, V2, V3, 4, 2, 5)
     desired_order = [
         "Strategy_1_Trend_HA",
         "Strategy_1_Trend_HA_V2",
+        "Strategy_1_Trend_HA_V3",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR", 
         "Strategy_5_Filter_First"

@@ -76,6 +76,48 @@ def update_trades_for_strategy(db, config, strategy_name):
             if not active_pos:
                 print(f"❓ Trade {ticket} not in Open Positions and not in History (Manual Check Needed or date range issue)")
 
+def load_strategy_configs(script_dir):
+    """
+    Load strategy configs mapping from file or auto-detect from configs directory.
+    Returns a dictionary mapping strategy_name -> config_file_path
+    """
+    # Try to load from strategy_configs.json first
+    config_mapping_file = os.path.join(script_dir, "strategy_configs.json")
+    if os.path.exists(config_mapping_file):
+        try:
+            with open(config_mapping_file, 'r') as f:
+                mapping = json.load(f)
+                # Convert relative paths to absolute
+                strategies = {}
+                for strat_name, config_path in mapping.items():
+                    if not os.path.isabs(config_path):
+                        config_path = os.path.join(script_dir, config_path)
+                    strategies[strat_name] = config_path
+                return strategies
+        except Exception as e:
+            print(f"⚠️ Could not load strategy_configs.json: {e}")
+    
+    # Fallback: Auto-detect from configs directory
+    configs_dir = os.path.join(script_dir, "configs")
+    strategies = {}
+    
+    if os.path.exists(configs_dir):
+        # Map common strategy names to config files
+        strategy_mapping = {
+            "Strategy_1_Trend_HA": "config_1.json",
+            "Strategy_2_EMA_ATR": "config_2.json",
+            "Strategy_3_PA_Volume": "config_3.json",
+            "Strategy_4_UT_Bot": "config_4.json",
+            "Strategy_5_Filter_First": "config_5.json"
+        }
+        
+        for strat_name, config_file in strategy_mapping.items():
+            config_path = os.path.join(configs_dir, config_file)
+            if os.path.exists(config_path):
+                strategies[strat_name] = config_path
+    
+    return strategies
+
 def main():
     # Pass None so db.py uses the internal absolute path logic
     db = Database(None)
