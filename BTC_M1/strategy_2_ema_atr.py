@@ -63,7 +63,7 @@ def strategy_2_logic(config, error_count=0):
     df_h1['ema50'] = df_h1['close'].ewm(span=50, adjust=False).mean()
     # H1 ADX for trend strength confirmation
     df_h1 = calculate_adx(df_h1, period=14)
-    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 20)
+    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 28)  # Upgraded from 20 to 28
     h1_adx = df_h1.iloc[-1].get('adx', 0)
     
     h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
@@ -144,11 +144,11 @@ def strategy_2_logic(config, error_count=0):
     if has_crossover and crossover_direction == "BUY":
         if h1_trend == "BULLISH":
             # Extension Check
-            extension_multiplier = config['parameters'].get('extension_multiplier', 1.5)
+            extension_multiplier = config['parameters'].get('extension_multiplier', 1.0)  # Upgraded from 1.5 to 1.0
             if abs(last['close'] - last['ema14']) > (extension_multiplier * last['atr']):
                 print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > {extension_multiplier}xATR)")
             # Volume confirmation
-            volume_multiplier = config['parameters'].get('volume_multiplier', 1.3)
+            volume_multiplier = config['parameters'].get('volume_multiplier', 1.66)  # Upgraded from 1.3 to 1.66
             if last['tick_volume'] <= (last['vol_ma'] * volume_multiplier):
                 print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < {volume_multiplier}x MA ({last['vol_ma']:.0f})")
             # RSI threshold
@@ -191,11 +191,11 @@ def strategy_2_logic(config, error_count=0):
     if has_crossover and crossover_direction == "SELL":
         if h1_trend == "BEARISH":
             # Extension Check
-            extension_multiplier = config['parameters'].get('extension_multiplier', 1.5)
+            extension_multiplier = config['parameters'].get('extension_multiplier', 1.0)  # Upgraded from 1.5 to 1.0
             if abs(last['close'] - last['ema14']) > (extension_multiplier * last['atr']):
                 print(f"   ❌ Filtered: Price Extended (Dist: {abs(last['close'] - last['ema14']):.2f} > {extension_multiplier}xATR)")
             # Volume confirmation
-            volume_multiplier = config['parameters'].get('volume_multiplier', 1.3)
+            volume_multiplier = config['parameters'].get('volume_multiplier', 1.66)  # Upgraded from 1.3 to 1.66
             if last['tick_volume'] <= (last['vol_ma'] * volume_multiplier):
                 print(f"   ❌ Filtered: Volume {last['tick_volume']:.0f} < {volume_multiplier}x MA ({last['vol_ma']:.0f})")
             # RSI threshold

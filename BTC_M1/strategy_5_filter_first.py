@@ -76,18 +76,18 @@ def strategy_5_logic(config, error_count=0):
     # Volume MA (for volume confirmation)
     df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
     
-    # RSI thresholds (configurable, default 55/45)
-    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
-    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+    # RSI thresholds (configurable, default 60/40 - upgraded from 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 60)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 40)
     
-    # Volume threshold (configurable, default 1.5x)
-    volume_threshold = config['parameters'].get('volume_threshold', 1.5)
+    # Volume threshold (configurable, default 2.0x - upgraded from 1.5x)
+    volume_threshold = config['parameters'].get('volume_threshold', 2.0)
     
     # Breakout confirmation flag
     breakout_confirmation = config['parameters'].get('breakout_confirmation', True)
     
-    # Buffer multiplier (configurable, default 100 = 5000 points for BTC)
-    buffer_multiplier = config['parameters'].get('buffer_multiplier', 100)
+    # Buffer multiplier (configurable, default 175 - upgraded from 100 to reduce false breakouts)
+    buffer_multiplier = config['parameters'].get('buffer_multiplier', 175)
     buffer = buffer_multiplier * mt5.symbol_info(symbol).point
 
     if len(df) < 3:
@@ -120,10 +120,11 @@ def strategy_5_logic(config, error_count=0):
         print(f"   ❌ Filtered: ATR {atr_pips:.1f}p không trong khoảng {atr_min}-{atr_max}p")
         return error_count, 0
     
-    # ADX Filter (Trend Strength)
+    # ADX Filter (Trend Strength) - Upgraded from 25 to 32
     adx_value = last.get('adx', 0)
-    if pd.isna(adx_value) or adx_value < 25:
-        print(f"   ❌ Filtered: ADX {adx_value:.1f} < 25 (Choppy Market)")
+    m1_adx_threshold = config['parameters'].get('m1_adx_threshold', 32)
+    if pd.isna(adx_value) or adx_value < m1_adx_threshold:
+        print(f"   ❌ Filtered: ADX {adx_value:.1f} < {m1_adx_threshold} (Choppy Market)")
         return error_count, 0
     
     # Volume Confirmation
@@ -183,10 +184,14 @@ def strategy_5_logic(config, error_count=0):
     if false_breakout:
         return error_count, 0
     
-    # BUY Signal
+    # BUY Signal (Stricter filter - Win Rate only 22.9%)
     if has_breakout and breakout_direction == "BUY":
         if m5_trend == "BULLISH":
-            if last['rsi'] > rsi_buy_threshold:
+            # Stricter ADX requirement for BUY (Win Rate 22.9% vs SELL 35.2%)
+            buy_adx_threshold = config['parameters'].get('buy_adx_threshold', 35)
+            if adx_value < buy_adx_threshold:
+                print(f"   ❌ Filtered: BUY requires higher ADX ({adx_value:.1f} < {buy_adx_threshold})")
+            elif last['rsi'] > rsi_buy_threshold:
                 # RSI momentum check
                 if last['rsi'] > prev['rsi']:
                     if is_high_volume:

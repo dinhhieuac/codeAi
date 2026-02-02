@@ -74,7 +74,7 @@ def strategy_1_logic(config, error_count=0):
     # ATR for Volatility [NEW]
     df_m5 = calculate_atr(df_m5, period=14)
     
-    adx_threshold = config['parameters'].get('adx_min_threshold', 20)
+    adx_threshold = config['parameters'].get('adx_min_threshold', 28)  # Upgraded from 20 to 28
     atr_threshold = config['parameters'].get('atr_min_threshold', 0.0)
     
     m5_adx = df_m5.iloc[-1].get('adx', 0)
@@ -112,9 +112,9 @@ def strategy_1_logic(config, error_count=0):
     # RSI 14 (Added Filter)
     ha_df['rsi'] = calculate_rsi(df_m1['close'], period=14)
     
-    # RSI thresholds (configurable, default 55/45)
-    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
-    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
+    # RSI thresholds (configurable, default 60/40 - upgraded from 55/45)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 60)
+    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 40)
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
@@ -139,10 +139,10 @@ def strategy_1_logic(config, error_count=0):
         if is_green and is_above_channel:
             if is_fresh_breakout:
                 if is_solid_candle:
-                    # Volume confirmation
-                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.3)
+                    # Volume confirmation (upgraded from 1.3x to 1.5x)
+                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.5)
                     if not is_high_volume:
-                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.5x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
                     elif last_ha['rsi'] > rsi_buy_threshold:
                         signal = "BUY"
                     else:
@@ -164,10 +164,10 @@ def strategy_1_logic(config, error_count=0):
         if is_red and is_below_channel:
             if is_fresh_breakout:
                 if is_solid_candle:
-                    # Volume confirmation
-                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.3)
+                    # Volume confirmation (upgraded from 1.3x to 1.5x)
+                    is_high_volume = df_m1.iloc[-1]['tick_volume'] > (df_m1.iloc[-1]['vol_ma'] * 1.5)
                     if not is_high_volume:
-                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+                        print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.5x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
                     elif last_ha['rsi'] < rsi_sell_threshold:
                         signal = "SELL"
                     else:

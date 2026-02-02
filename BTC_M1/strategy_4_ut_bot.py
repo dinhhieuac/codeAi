@@ -94,8 +94,8 @@ def strategy_4_logic(config, error_count=0):
     # ADX Calculation (M1)
     df_m1 = calculate_adx(df_m1)
     
-    # RSI thresholds (configurable, default 55/45)
-    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
+    # RSI thresholds (configurable, default 65/45 - BUY upgraded from 55 to 65 for stricter filter)
+    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 65)
     rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
     
     # UT confirmation flag
@@ -161,13 +161,18 @@ def strategy_4_logic(config, error_count=0):
     print(f"📊 [Strat 4 Analysis] Trend H1: {trend} (ADX: {h1_adx:.1f}) | UT Pos: {last['pos']} | RSI: {last['rsi']:.1f} | M1 ADX: {last['adx']:.1f}")
     print(f"   Volume: {df_m1.iloc[-1]['tick_volume']:.0f} / MA: {df_m1.iloc[-1]['vol_ma']:.0f} = {df_m1.iloc[-1]['tick_volume']/df_m1.iloc[-1]['vol_ma']:.2f}x")
     
-    # Filter: Only trade valid breakouts if ADX > 25 (Trend Strength)
-    if last['adx'] < 25: 
-        print(f"   ❌ Filtered: Low M1 ADX ({last['adx']:.1f} < 25) - Choppy Market")
+    # Filter: Only trade valid breakouts if ADX > 32 (Trend Strength) - Upgraded from 25
+    m1_adx_threshold = config['parameters'].get('m1_adx_threshold', 32)
+    if last['adx'] < m1_adx_threshold: 
+        print(f"   ❌ Filtered: Low M1 ADX ({last['adx']:.1f} < {m1_adx_threshold}) - Choppy Market")
     elif has_ut_signal and ut_signal == "BUY" and trend == "BULLISH":
-        # Volume confirmation
-        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.3):
-            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        # Stricter filter for BUY (Win Rate only 16.4%) - require higher ADX
+        buy_adx_threshold = config['parameters'].get('buy_adx_threshold', 35)  # Stricter for BUY
+        if last['adx'] < buy_adx_threshold:
+            print(f"   ❌ Filtered: BUY requires higher ADX ({last['adx']:.1f} < {buy_adx_threshold})")
+        # Volume confirmation (upgraded from 1.3x to 1.65x)
+        elif df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.65):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.65x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
         elif last['rsi'] > rsi_buy_threshold:
             # RSI momentum check
             if last['rsi'] > prev['rsi']:
@@ -179,9 +184,9 @@ def strategy_4_logic(config, error_count=0):
             print(f"   ❌ Filtered: Buy Signal but RSI {last['rsi']:.1f} <= {rsi_buy_threshold}")
             
     elif has_ut_signal and ut_signal == "SELL" and trend == "BEARISH":
-        # Volume confirmation
-        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.3):
-            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.3x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
+        # Volume confirmation (upgraded from 1.3x to 1.65x)
+        if df_m1.iloc[-1]['tick_volume'] <= (df_m1.iloc[-1]['vol_ma'] * 1.65):
+            print(f"   ❌ Filtered: Volume {df_m1.iloc[-1]['tick_volume']:.0f} < 1.65x MA ({df_m1.iloc[-1]['vol_ma']:.0f})")
         elif last['rsi'] < rsi_sell_threshold:
             # RSI momentum check
             if last['rsi'] < prev['rsi']:
