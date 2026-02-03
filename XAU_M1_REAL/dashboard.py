@@ -142,6 +142,249 @@ def index():
                            current_filter=days_param,
                            filter_label=filter_label)
 
+@app.route('/atr_analysis')
+def atr_analysis_page():
+    """Display ATR analysis page"""
+    cur = get_db().cursor()
+    
+    # Get all strategies for filter
+    cur.execute("SELECT DISTINCT strategy_name FROM orders")
+    strategies = [row['strategy_name'] for row in cur.fetchall()]
+    
+    return render_template('atr_analysis.html', strategies=strategies)
+
+@app.route('/api/atr_analysis')
+def api_atr_analysis():
+    """API endpoint for ATR analysis data"""
+    cur = get_db().cursor()
+    
+    # Get filter parameters
+    days_param = request.args.get('days', '30')
+    strategy_param = request.args.get('strategy', 'all')
+    threshold = float(request.args.get('threshold', 15.0))
+    
+    if days_param == "all":
+        days = 36500
+    else:
+        try:
+            days = int(days_param)
+        except:
+            days = 30
+    
+    # Calculate cutoff date
+    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Build query with JOIN to signals table to get indicators
+    if strategy_param == "all":
+        query = """
+            SELECT 
+                o.ticket,
+                o.strategy_name,
+                o.order_type,
+                o.profit,
+                o.open_time,
+                s.indicators as signal_indicators
+            FROM orders o
+            LEFT JOIN signals s ON o.strategy_name = s.strategy_name 
+                AND o.symbol = s.symbol 
+                AND o.order_type = s.signal_type
+                AND ABS((julianday(o.open_time) - julianday(s.timestamp)) * 24 * 60) < 30
+            WHERE o.open_time >= ? AND o.profit IS NOT NULL
+        """
+        params = (cutoff_str,)
+    else:
+        query = """
+            SELECT 
+                o.ticket,
+                o.strategy_name,
+                o.order_type,
+                o.profit,
+                o.open_time,
+                s.indicators as signal_indicators
+            FROM orders o
+            LEFT JOIN signals s ON o.strategy_name = s.strategy_name 
+                AND o.symbol = s.symbol 
+                AND o.order_type = s.signal_type
+                AND ABS((julianday(o.open_time) - julianday(s.timestamp)) * 24 * 60) < 30
+            WHERE o.open_time >= ? AND o.strategy_name = ? AND o.profit IS NOT NULL
+        """
+        params = (cutoff_str, strategy_param)
+    
+    cur.execute(query, params)
+    orders = cur.fetchall()
+    
+    # Extract ATR from signal_indicators
+    atr_data = []
+    orders_with_indicators = 0
+    orders_without_indicators = 0
+    
+    for order in orders:
+        try:
+            indicators_str = order['signal_indicators']
+            if indicators_str:
+                orders_with_indicators += 1
+                if isinstance(indicators_str, str):
+                    indicators = json.loads(indicators_str)
+                else:
+                    indicators = indicators_str
+                
+                atr_val = indicators.get('atr', None)
+                if atr_val is not None:
+                    atr_data.append({
+                        'ticket': order['ticket'],
+                        'strategy': order['strategy_name'],
+                        'order_type': order['order_type'],
+                        'atr': float(atr_val),
+                        'profit': float(order['profit']) if order['profit'] else 0,
+                        'win_loss': 'Win' if order['profit'] and order['profit'] > 0 else 'Loss',
+                        'open_time': order['open_time']
+                    })
+                else:
+                    orders_without_indicators += 1
+            else:
+                orders_without_indicators += 1
+        except Exception as e:
+            orders_without_indicators += 1
+            continue
+    
+    # Debug info (can be removed in production)
+    if len(orders) > 0 and len(atr_data) == 0:
+        # Return info about why no data
+        return jsonify({
+            'summary': {
+                'total_trades': len(orders),
+                'atr_low_count': 0,
+                'atr_high_count': 0,
+                'avg_atr': 0,
+                'debug_info': {
+                    'total_orders': len(orders),
+                    'orders_with_indicators': orders_with_indicators,
+                    'orders_without_indicators': orders_without_indicators,
+                    'orders_with_atr': len(atr_data)
+                }
+            },
+            'comparison': {'low': {}, 'high': {}},
+            'chart_data': {'distribution': {'labels': [], 'data': [], 'colors': []}, 'win_rate': {'labels': [], 'data': []}},
+            'trades': []
+        })
+    
+    if not atr_data:
+        return jsonify({
+            'summary': {'total_trades': 0},
+            'comparison': {'low': {}, 'high': {}},
+            'chart_data': {'distribution': {'labels': [], 'data': [], 'colors': []}, 'win_rate': {'labels': [], 'data': []}},
+            'trades': []
+        })
+    
+    # Separate by threshold
+    atr_low = [d for d in atr_data if d['atr'] < threshold]
+    atr_high = [d for d in atr_data if d['atr'] >= threshold]
+    
+    # Calculate summary
+    total_trades = len(atr_data)
+    avg_atr = sum(d['atr'] for d in atr_data) / total_trades if total_trades > 0 else 0
+    
+    # Calculate comparison stats
+    def calc_stats(data):
+        if not data:
+            return {
+                'trades': 0,
+                'win_rate': 0,
+                'total_profit': 0,
+                'profit_factor': 0,
+                'avg_win': 0,
+                'avg_loss': 0
+            }
+        
+        wins = [d for d in data if d['win_loss'] == 'Win']
+        losses = [d for d in data if d['win_loss'] == 'Loss']
+        
+        num_wins = len(wins)
+        num_losses = len(losses)
+        total = len(data)
+        win_rate = (num_wins / total * 100) if total > 0 else 0
+        
+        gross_profit = sum(w['profit'] for w in wins)
+        gross_loss = abs(sum(l['profit'] for l in losses))
+        total_profit = sum(d['profit'] for d in data)
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
+        
+        avg_win = (gross_profit / num_wins) if num_wins > 0 else 0
+        avg_loss = (gross_loss / num_losses) if num_losses > 0 else 0
+        
+        return {
+            'trades': total,
+            'win_rate': win_rate,
+            'total_profit': total_profit,
+            'profit_factor': profit_factor,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss
+        }
+    
+    low_stats = calc_stats(atr_low)
+    high_stats = calc_stats(atr_high)
+    
+    # Prepare chart data - ATR Distribution
+    atr_ranges = [
+        (0, 5, '0-5'),
+        (5, 10, '5-10'),
+        (10, 15, '10-15'),
+        (15, 20, '15-20'),
+        (20, 25, '20-25'),
+        (25, float('inf'), '25+')
+    ]
+    
+    distribution_labels = []
+    distribution_data = []
+    distribution_colors = []
+    
+    for min_atr, max_atr, label in atr_ranges:
+        count = len([d for d in atr_data if min_atr <= d['atr'] < max_atr])
+        distribution_labels.append(label)
+        distribution_data.append(count)
+        if max_atr <= threshold:
+            distribution_colors.append('rgba(40, 167, 69, 0.6)')  # Green
+        else:
+            distribution_colors.append('rgba(220, 53, 69, 0.6)')  # Red
+    
+    # Win Rate by ATR Range
+    win_rate_labels = []
+    win_rate_data = []
+    
+    for min_atr, max_atr, label in atr_ranges:
+        range_data = [d for d in atr_data if min_atr <= d['atr'] < max_atr]
+        if range_data:
+            wins = len([d for d in range_data if d['win_loss'] == 'Win'])
+            win_rate = (wins / len(range_data) * 100) if range_data else 0
+            win_rate_labels.append(label)
+            win_rate_data.append(win_rate)
+    
+    return jsonify({
+        'summary': {
+            'total_trades': total_trades,
+            'atr_low_count': len(atr_low),
+            'atr_high_count': len(atr_high),
+            'avg_atr': avg_atr
+        },
+        'comparison': {
+            'low': low_stats,
+            'high': high_stats
+        },
+        'chart_data': {
+            'distribution': {
+                'labels': distribution_labels,
+                'data': distribution_data,
+                'colors': distribution_colors
+            },
+            'win_rate': {
+                'labels': win_rate_labels,
+                'data': win_rate_data
+            }
+        },
+        'trades': sorted(atr_data, key=lambda x: x['open_time'], reverse=True)[:100]  # Last 100 trades
+    })
+
 @app.route('/signals')
 def signals_page():
     """Display all signals with ability to check MT5 results"""

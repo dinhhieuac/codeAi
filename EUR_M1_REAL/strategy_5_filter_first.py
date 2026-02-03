@@ -46,8 +46,8 @@ def strategy_5_logic(config, error_count=0):
     m5_adx = df_m5.iloc[-1].get('adx', 0)
     m5_adx_threshold = config['parameters'].get('m5_adx_threshold', 20)
 
-    # Donchian Channel (configurable, default 50)
-    donchian_period = config['parameters'].get('donchian_period', 50)  # Increased from 40
+    # Donchian Channel (UPGRADED: Giảm từ 50 xuống 30)
+    donchian_period = config['parameters'].get('donchian_period', 30)  # UPGRADED: Giảm từ 50 xuống 30
     df['upper'] = df['high'].rolling(window=donchian_period).max().shift(1)
     df['lower'] = df['low'].rolling(window=donchian_period).min().shift(1)
     
@@ -69,6 +69,9 @@ def strategy_5_logic(config, error_count=0):
     
     # Volume MA (for volume confirmation)
     df['vol_ma'] = df['tick_volume'].rolling(window=20).mean()
+    
+    # UPGRADED: VWAP calculation for confirmation
+    df['vwap'] = (df['close'] * df['tick_volume']).rolling(window=donchian_period).sum() / df['tick_volume'].rolling(window=donchian_period).sum()
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
@@ -78,11 +81,11 @@ def strategy_5_logic(config, error_count=0):
     signal = None
     
     # Get config parameters
-    buffer_multiplier = config['parameters'].get('buffer_multiplier', 100)  # Increased from 50
+    buffer_multiplier = config['parameters'].get('buffer_multiplier', 150)  # UPGRADED: Tăng từ 100 lên 150 points
     buffer = buffer_multiplier * mt5.symbol_info(symbol).point
     breakout_confirmation = config['parameters'].get('breakout_confirmation', True)  # Wait 1-2 candles after breakout
     
-    # ATR Volatility Filter
+    # ATR Volatility Filter (UPGRADED: Hẹp range từ 10-200 xuống 20-100 pips)
     atr_value = last['atr'] if not pd.isna(last['atr']) else 0
     point = mt5.symbol_info(symbol).point
     # Với EURUSD: ATR được tính bằng giá trị thực
@@ -91,9 +94,9 @@ def strategy_5_logic(config, error_count=0):
     # Nếu ATR = 10 points → ATR(pips) = 10 / 10 = 1 pip
     atr_pips = (atr_value / point) / 10 if point > 0 else 0
     # EURUSD M1: ATR thường từ 5-30 pips (tùy volatility)
-    # Threshold điều chỉnh để phù hợp với EURUSD M1 scalping
-    atr_min = 10   # Minimum ATR (pips) - tránh market quá yên tĩnh
-    atr_max = 200  # Maximum ATR (pips) - tránh market quá biến động (news events)
+    # UPGRADED: Hẹp range để tránh extreme volatility
+    atr_min = 20   # UPGRADED: Tăng từ 10 lên 20 pips
+    atr_max = 100  # UPGRADED: Giảm từ 200 xuống 100 pips
     
     print(f"\n{'='*80}")
     print(f"📊 [STRATEGY 5: FILTER FIRST ANALYSIS] {symbol}")
@@ -117,9 +120,9 @@ def strategy_5_logic(config, error_count=0):
     else:
         filter_status.append(f"✅ ATR: {atr_pips:.1f}p trong khoảng {atr_min}-{atr_max}p")
     
-    # ADX Filter (Trend Strength)
+    # ADX Filter (UPGRADED: Nâng từ 20 lên 30)
     adx_value = last.get('adx', 0)
-    adx_threshold = config['parameters'].get('adx_threshold', 20)
+    adx_threshold = config['parameters'].get('adx_threshold', 30)  # UPGRADED: Nâng từ 20 lên 30
     if pd.isna(adx_value) or adx_value < adx_threshold:
         filter_status.append(f"❌ M1 ADX: {adx_value:.1f} < {adx_threshold} (Choppy Market)")
         print(f"\n{'='*80}")
@@ -141,8 +144,10 @@ def strategy_5_logic(config, error_count=0):
     rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)  # Increased from 50
     rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)  # Decreased from 50
     
-    # False Breakout Check
+    # UPGRADED: False Breakout Check + False History Check (bỏ nếu 2 false gần)
     false_breakout = False
+    false_history_count = 0
+    
     if last['close'] > (last['upper'] + buffer):
         # BUY: Kiểm tra nến trước có phá vỡ nhưng đóng ngược lại không
         if prev['high'] > last['upper'] and prev['close'] < last['upper']:
@@ -154,9 +159,30 @@ def strategy_5_logic(config, error_count=0):
             false_breakout = True
             filter_status.append(f"❌ False Breakout SELL: Nến trước phá vỡ nhưng đóng ngược lại")
     
+    # UPGRADED: Check false history (kiểm tra 10 nến gần nhất có bao nhiêu false breakout)
+    if len(df) >= 10:
+        for i in range(2, min(12, len(df))):  # Check last 10 candles
+            check_candle = df.iloc[-i]
+            check_prev = df.iloc[-i-1] if i+1 < len(df) else None
+            check_upper = df.iloc[-i]['upper'] if pd.notna(df.iloc[-i].get('upper')) else None
+            check_lower = df.iloc[-i]['lower'] if pd.notna(df.iloc[-i].get('lower')) else None
+            
+            if check_prev is not None and check_upper is not None and check_lower is not None:
+                # Check BUY false
+                if check_prev['high'] > check_upper and check_candle['close'] < check_upper:
+                    false_history_count += 1
+                # Check SELL false
+                elif check_prev['low'] < check_lower and check_candle['close'] > check_lower:
+                    false_history_count += 1
+    
     if false_breakout:
+        filter_status.append(f"❌ False Breakout: Current candle")
+    if false_history_count >= 2:
+        filter_status.append(f"❌ False History: {false_history_count} false breakouts trong 10 nến gần nhất")
+    
+    if false_breakout or false_history_count >= 2:
         print(f"\n{'='*80}")
-        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - False Breakout Detected")
+        print(f"❌ [KHÔNG CÓ TÍN HIỆU] - False Breakout Detected (Current: {false_breakout}, History: {false_history_count})")
         print(f"{'='*80}")
         for status in filter_status:
             print(f"   {status}")
@@ -201,18 +227,31 @@ def strategy_5_logic(config, error_count=0):
                     has_breakout_buy = False
                 
                 if has_breakout_buy:
-                    # RSI Filter (stricter)
-                    filter_status.append(f"{'✅' if last['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last['rsi']:.1f}")
-                    
-                    if last['rsi'] > rsi_buy_threshold:
-                        filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
-                        if is_high_volume:
-                            signal = "BUY"
-                            print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
-                        else:
-                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                    # UPGRADED: VWAP Confirmation (breakout vượt VWAP)
+                    vwap_value = last.get('vwap', None)
+                    vwap_confirmation_required = config['parameters'].get('vwap_confirmation_required', True)
+                    vwap_ok = True
+                    if vwap_confirmation_required and pd.notna(vwap_value):
+                        vwap_ok = last['close'] > vwap_value
+                        filter_status.append(f"{'✅' if vwap_ok else '❌'} VWAP Confirmation: Close {last['close']:.2f} > VWAP {vwap_value:.2f}")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold})")
+                        filter_status.append(f"⏭️ VWAP Confirmation: Disabled")
+                    
+                    if vwap_ok:
+                        # RSI Filter (stricter)
+                        filter_status.append(f"{'✅' if last['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last['rsi']:.1f}")
+                        
+                        if last['rsi'] > rsi_buy_threshold:
+                            filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
+                            if is_high_volume:
+                                signal = "BUY"
+                                print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
+                            else:
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold})")
+                    else:
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - VWAP confirmation không đạt")
             else:
                 filter_status.append(f"❌ M5 Trend: BEARISH (cần BULLISH)")
                 print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - M5 Trend không phù hợp")
@@ -254,18 +293,31 @@ def strategy_5_logic(config, error_count=0):
                     has_breakout_sell = False
                 
                 if has_breakout_sell:
-                    # RSI Filter (stricter)
-                    filter_status.append(f"{'✅' if last['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last['rsi']:.1f}")
-                    
-                    if last['rsi'] < rsi_sell_threshold:
-                        filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
-                        if is_high_volume:
-                            signal = "SELL"
-                            print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
-                        else:
-                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                    # UPGRADED: VWAP Confirmation (breakout vượt VWAP)
+                    vwap_value = last.get('vwap', None)
+                    vwap_confirmation_required = config['parameters'].get('vwap_confirmation_required', True)
+                    vwap_ok = True
+                    if vwap_confirmation_required and pd.notna(vwap_value):
+                        vwap_ok = last['close'] < vwap_value
+                        filter_status.append(f"{'✅' if vwap_ok else '❌'} VWAP Confirmation: Close {last['close']:.2f} < VWAP {vwap_value:.2f}")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold})")
+                        filter_status.append(f"⏭️ VWAP Confirmation: Disabled")
+                    
+                    if vwap_ok:
+                        # RSI Filter (stricter)
+                        filter_status.append(f"{'✅' if last['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last['rsi']:.1f}")
+                        
+                        if last['rsi'] < rsi_sell_threshold:
+                            filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>' if is_high_volume else '<'} {volume_threshold}x")
+                            if is_high_volume:
+                                signal = "SELL"
+                                print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
+                            else:
+                                print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold})")
+                    else:
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - VWAP confirmation không đạt")
             else:
                 filter_status.append(f"❌ M5 Trend: BULLISH (cần BEARISH)")
                 print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - M5 Trend không phù hợp")
@@ -296,8 +348,11 @@ def strategy_5_logic(config, error_count=0):
         print(f"   💱 Price: {last['close']:.2f}")
         print(f"   📈 M5 Trend: {m5_trend}")
         print(f"   📊 Donchian Upper: {last['upper']:.2f} | Lower: {last['lower']:.2f} | Period: {donchian_period}")
-        print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips)")
-        print(f"   📊 M1 ADX: {adx_value:.1f} (cần >= {adx_threshold})")
+        vwap_value = last.get('vwap', None)
+        if pd.notna(vwap_value):
+            print(f"   📊 VWAP: {vwap_value:.2f} (UPGRADED: VWAP confirmation)")
+        print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips) [UPGRADED: Hẹp range]")
+        print(f"   📊 M1 ADX: {adx_value:.1f} (cần >= {adx_threshold}) [UPGRADED: Từ 20 lên 30]")
         print(f"   📊 M5 ADX: {m5_adx:.1f} (cần >= {m5_adx_threshold})")
         print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
         print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
@@ -455,10 +510,11 @@ def strategy_5_logic(config, error_count=0):
                 f"💵 <b>Price:</b> {price}\n"
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
-                f"• Donchian Breakout ({donchian_period} periods)\n"
+                f"• Donchian Breakout ({donchian_period} periods) [UPGRADED: 30]\n"
+                f"• VWAP: {last.get('vwap', 0):.2f} [UPGRADED: VWAP confirmation]\n"
                 f"• RSI: {last['rsi']:.1f}\n"
-                f"• ADX: {adx_value:.1f}\n"
-                f"• ATR: {atr_pips:.1f} pips\n"
+                f"• ADX: {adx_value:.1f} [UPGRADED: >= 30]\n"
+                f"• ATR: {atr_pips:.1f} pips [UPGRADED: 20-100 range]\n"
                 f"• Volume: {int(last['tick_volume'])} ({last['tick_volume']/last['vol_ma']:.1f}x avg)"
             )
             send_telegram(msg, config['telegram_token'], config['telegram_chat_id'])
@@ -478,7 +534,14 @@ if __name__ == "__main__":
     consecutive_errors = 0
     
     if config and connect_mt5(config):
-        print("✅ Strategy 5: Filter First - Started")
+        print("✅ Strategy 5: Filter First - Started (UPGRADED)")
+        print("📋 UPGRADED Improvements:")
+        print("   ✅ Donchian period reduced (50 → 30)")
+        print("   ✅ M1 ADX threshold increased (20 → 30)")
+        print("   ✅ Buffer multiplier increased (100 → 150 points)")
+        print("   ✅ ATR range narrowed (10-200 → 20-100 pips)")
+        print("   ✅ VWAP confirmation added")
+        print("   ✅ False history check (skip if 2+ false breakouts in last 10 candles)")
         try:
             while True:
                 consecutive_errors, last_error_code = strategy_5_logic(config, consecutive_errors)

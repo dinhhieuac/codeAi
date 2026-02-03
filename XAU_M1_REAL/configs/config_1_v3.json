@@ -22,6 +22,7 @@
         "adx_period": 14,
         "adx_min_threshold": 25,
         "atr_period": 14,
+        "atr_max_threshold": 15.0,
         "sl_buffer_multiplier": 0.25,
         "h1_ema_period": 100,
         "h1_trend_confirmation_required": true,

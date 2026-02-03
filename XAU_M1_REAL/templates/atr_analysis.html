@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATR Analysis - XAUUSD Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+            margin-bottom: 20px;
+        }
+
+        .profit-pos {
+            color: green;
+            font-weight: bold;
+        }
+
+        .profit-neg {
+            color: red;
+            font-weight: bold;
+        }
+
+        .atr-low {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+        }
+
+        .atr-high {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+        }
+
+        .atr-medium {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">📊 ATR Analysis Dashboard</span>
+            <div>
+                <a href="/" class="btn btn-outline-light btn-sm me-2">
+                    <i class="fas fa-home"></i> Main Dashboard
+                </a>
+                <a href="/signals" class="btn btn-outline-light btn-sm me-2">
+                    <i class="fas fa-signal"></i> Signals
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <!-- Filter Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-filter"></i> Filter Options</h5>
+                <div class="row">
+                    <div class="col-md-3">
+                        <label for="daysFilter" class="form-label">Time Period</label>
+                        <select class="form-select" id="daysFilter" onchange="updateAnalysis()">
+                            <option value="7">Last 7 Days</option>
+                            <option value="30" selected>Last 30 Days</option>
+                            <option value="90">Last 90 Days</option>
+                            <option value="all">All Time</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="strategyFilter" class="form-label">Strategy</label>
+                        <select class="form-select" id="strategyFilter" onchange="updateAnalysis()">
+                            <option value="all">All Strategies</option>
+                            {% for strategy in strategies %}
+                            <option value="{{ strategy }}">{{ strategy }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="atrThreshold" class="form-label">ATR Threshold</label>
+                        <input type="number" class="form-control" id="atrThreshold" value="15.0" step="0.1" onchange="updateAnalysis()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">&nbsp;</label>
+                        <button class="btn btn-primary w-100" onclick="updateAnalysis()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="stat-value text-primary" id="totalTrades">-</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="stat-value text-success" id="atrLowTrades">-</div>
+                    <div class="stat-label">ATR &lt; Threshold</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="stat-value text-danger" id="atrHighTrades">-</div>
+                    <div class="stat-label">ATR &gt;= Threshold</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="stat-value" id="avgATR">-</div>
+                    <div class="stat-label">Average ATR</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ATR Ranges Comparison -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-check-circle"></i> ATR &lt; Threshold (Will Trade)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value text-success" id="lowWinRate">-</div>
+                                <div class="stat-label">Win Rate</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="lowProfit">-</div>
+                                <div class="stat-label">Total Profit</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value" id="lowTrades">-</div>
+                                <div class="stat-label">Trades</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="lowProfitFactor">-</div>
+                                <div class="stat-label">Profit Factor</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value" id="lowAvgWin">-</div>
+                                <div class="stat-label">Avg Win</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="lowAvgLoss">-</div>
+                                <div class="stat-label">Avg Loss</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0"><i class="fas fa-times-circle"></i> ATR &gt;= Threshold (Will Block)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value text-danger" id="highWinRate">-</div>
+                                <div class="stat-label">Win Rate</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="highProfit">-</div>
+                                <div class="stat-label">Total Profit</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value" id="highTrades">-</div>
+                                <div class="stat-label">Trades</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="highProfitFactor">-</div>
+                                <div class="stat-label">Profit Factor</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="stat-value" id="highAvgWin">-</div>
+                                <div class="stat-label">Avg Win</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-value" id="highAvgLoss">-</div>
+                                <div class="stat-label">Avg Loss</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ATR Distribution Chart -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-chart-bar"></i> ATR Distribution</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="atrDistributionChart" height="100"></canvas>
+            </div>
+        </div>
+
+        <!-- Win Rate by ATR Range Chart -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-chart-line"></i> Win Rate by ATR Range</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="winRateChart" height="100"></canvas>
+            </div>
+        </div>
+
+        <!-- Detailed Table -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-table"></i> Trade Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="tradesTable">
+                        <thead>
+                            <tr>
+                                <th>Ticket</th>
+                                <th>Strategy</th>
+                                <th>Type</th>
+                                <th>ATR</th>
+                                <th>Win/Loss</th>
+                                <th>Profit</th>
+                                <th>Open Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tradesTableBody">
+                            <!-- Data will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let atrDistributionChart = null;
+        let winRateChart = null;
+
+        function updateAnalysis() {
+            const days = document.getElementById('daysFilter').value;
+            const strategy = document.getElementById('strategyFilter').value;
+            const threshold = parseFloat(document.getElementById('atrThreshold').value);
+
+            // Show loading state
+            document.getElementById('totalTrades').textContent = 'Loading...';
+            
+            fetch(`/api/atr_analysis?days=${days}&strategy=${strategy}&threshold=${threshold}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Data received:', data);
+                    if (data.summary) {
+                        if (data.summary.total_trades === 0) {
+                            console.warn('No trades found in the selected period.');
+                            alert('No trades found in the selected period. Try changing the time filter.');
+                        } else if (data.summary.debug_info && data.summary.debug_info.orders_with_atr === 0) {
+                            console.warn('Trades found but no ATR data:', data.summary.debug_info);
+                            alert(`Found ${data.summary.debug_info.total_orders} trades, but none have ATR indicators.\n\n` +
+                                  `Orders with indicators: ${data.summary.debug_info.orders_with_indicators}\n` +
+                                  `Orders without indicators: ${data.summary.debug_info.orders_without_indicators}\n\n` +
+                                  `Make sure signals are being saved with ATR in indicators.`);
+                        }
+                    }
+                    updateSummary(data.summary);
+                    updateComparison(data.comparison);
+                    updateCharts(data.chart_data);
+                    updateTable(data.trades);
+                })
+                .catch(error => {
+                    console.error('Error fetching ATR analysis:', error);
+                    alert('Error loading data: ' + error.message + '\nCheck console for details.');
+                    // Reset to default values
+                    document.getElementById('totalTrades').textContent = '0';
+                });
+        }
+
+        function updateSummary(summary) {
+            document.getElementById('totalTrades').textContent = summary.total_trades || 0;
+            document.getElementById('atrLowTrades').textContent = summary.atr_low_count || 0;
+            document.getElementById('atrHighTrades').textContent = summary.atr_high_count || 0;
+            document.getElementById('avgATR').textContent = (summary.avg_atr || 0).toFixed(2);
+        }
+
+        function updateComparison(comparison) {
+            // Low ATR (Will Trade)
+            document.getElementById('lowTrades').textContent = comparison.low.trades || 0;
+            document.getElementById('lowWinRate').textContent = (comparison.low.win_rate || 0).toFixed(1) + '%';
+            document.getElementById('lowProfit').textContent = '$' + (comparison.low.total_profit || 0).toFixed(2);
+            document.getElementById('lowProfitFactor').textContent = (comparison.low.profit_factor || 0).toFixed(2);
+            document.getElementById('lowAvgWin').textContent = '$' + (comparison.low.avg_win || 0).toFixed(2);
+            document.getElementById('lowAvgLoss').textContent = '$' + (comparison.low.avg_loss || 0).toFixed(2);
+
+            // High ATR (Will Block)
+            document.getElementById('highTrades').textContent = comparison.high.trades || 0;
+            document.getElementById('highWinRate').textContent = (comparison.high.win_rate || 0).toFixed(1) + '%';
+            document.getElementById('highProfit').textContent = '$' + (comparison.high.total_profit || 0).toFixed(2);
+            document.getElementById('highProfitFactor').textContent = (comparison.high.profit_factor || 0).toFixed(2);
+            document.getElementById('highAvgWin').textContent = '$' + (comparison.high.avg_win || 0).toFixed(2);
+            document.getElementById('highAvgLoss').textContent = '$' + (comparison.high.avg_loss || 0).toFixed(2);
+        }
+
+        function updateCharts(chartData) {
+            // ATR Distribution Chart
+            const ctx1 = document.getElementById('atrDistributionChart').getContext('2d');
+            if (atrDistributionChart) {
+                atrDistributionChart.destroy();
+            }
+            atrDistributionChart = new Chart(ctx1, {
+                type: 'bar',
+                data: {
+                    labels: chartData.distribution.labels,
+                    datasets: [{
+                        label: 'Number of Trades',
+                        data: chartData.distribution.data,
+                        backgroundColor: chartData.distribution.colors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+
+            // Win Rate Chart
+            const ctx2 = document.getElementById('winRateChart').getContext('2d');
+            if (winRateChart) {
+                winRateChart.destroy();
+            }
+            winRateChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: chartData.win_rate.labels,
+                    datasets: [{
+                        label: 'Win Rate (%)',
+                        data: chartData.win_rate.data,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateTable(trades) {
+            const tbody = document.getElementById('tradesTableBody');
+            tbody.innerHTML = '';
+
+            trades.forEach(trade => {
+                const row = document.createElement('tr');
+                const atrClass = trade.atr < parseFloat(document.getElementById('atrThreshold').value) ? 'atr-low' : 'atr-high';
+                row.className = atrClass;
+                
+                const profitClass = trade.profit >= 0 ? 'profit-pos' : 'profit-neg';
+                const winLossBadge = trade.win_loss === 'Win' 
+                    ? '<span class="badge bg-success">Win</span>' 
+                    : '<span class="badge bg-danger">Loss</span>';
+                const typeBadge = trade.order_type === 'BUY' 
+                    ? '<span class="badge bg-success">BUY</span>' 
+                    : '<span class="badge bg-danger">SELL</span>';
+
+                row.innerHTML = `
+                    <td>${trade.ticket}</td>
+                    <td>${trade.strategy}</td>
+                    <td>${typeBadge}</td>
+                    <td><strong>${trade.atr.toFixed(2)}</strong></td>
+                    <td>${winLossBadge}</td>
+                    <td class="${profitClass}">$${trade.profit.toFixed(2)}</td>
+                    <td>${trade.open_time}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Initial load
+        updateAnalysis();
+    </script>
+</body>
+
+</html>

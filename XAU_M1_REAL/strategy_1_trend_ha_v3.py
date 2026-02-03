@@ -143,13 +143,23 @@ def strategy_1_logic(config, error_count=0):
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
     df_m1['sma55_low'] = df_m1['low'].rolling(window=55).mean()
     
-    # V3: Calculate ATR for SL buffer
+    # V3: Calculate ATR for SL buffer and Volatility Filter
     atr_period = config['parameters'].get('atr_period', 14)
     df_m1['atr'] = calculate_atr(df_m1, period=atr_period)
     atr_val = df_m1.iloc[-1]['atr']
     if pd.isna(atr_val) or atr_val <= 0:
         recent_range = df_m1.iloc[-atr_period:]['high'].max() - df_m1.iloc[-atr_period:]['low'].min()
         atr_val = recent_range / atr_period if recent_range > 0 else 0.1
+    
+    # V3: ATR M1 Volatility Filter - Chỉ trade khi ATR < 15.0
+    # XAUUSD M1: ATR thường 10-20, chỉ trade khi ATR < 15.0 để tránh market quá volatile
+    atr_max_threshold = config['parameters'].get('atr_max_threshold', 15.0)  # >= 15.0 → BỎ TRADE
+    
+    if atr_val >= atr_max_threshold:
+        print(f"❌ ATR M1 Filter: ATR={atr_val:.2f} >= {atr_max_threshold} (Market quá volatile - BỎ TRADE)")
+        return error_count, 0
+    else:
+        print(f"✅ ATR M1 Filter: ATR={atr_val:.2f} < {atr_max_threshold} (Điều kiện OK - Cho phép trade)")
     
     # Heiken Ashi
     ha_df = calculate_heiken_ashi(df_m1)
@@ -425,6 +435,7 @@ if __name__ == "__main__":
         print("📋 V3 Improvements:")
         print("   ✅ RSI > 50 cho BUY (thay vì > 55)")
         print("   ✅ ADX > 25 (thay vì >= 20)")
+        print("   ✅ ATR M1 Filter: Chỉ trade khi ATR < 15.0 (XAUUSD)")
         print("   ✅ Blocked hours: 11:00-12:00, 18:00-19:00")
         print("   ✅ SL nới rộng thêm 20-30% dựa trên ATR")
         print("   ✅ Break-even khi giá đi 50% đến TP")

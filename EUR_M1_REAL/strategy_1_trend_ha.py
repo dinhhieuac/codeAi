@@ -9,10 +9,62 @@ from datetime import datetime
 sys.path.append('..') # Add parent directory to path to find EUR_M1 modules if running from sub-folder
 from db import Database
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr
 
 # Initialize Database
 db = Database()
+
+def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_threshold=0.7):
+    """
+    CHOP / RANGE FILTER
+    IF last 10 candles:
+    - body_avg < 0.5 × ATR
+    - overlap > 70%
+    → MARKET = CHOP → NO TRADE
+    """
+    if len(df_m1) < lookback:
+        return False, "Không đủ dữ liệu"
+    
+    recent_candles = df_m1.iloc[-lookback:]
+    
+    # Tính body trung bình
+    bodies = abs(recent_candles['close'] - recent_candles['open'])
+    body_avg = bodies.mean()
+    
+    # Tính overlap (tỷ lệ nến chồng lên nhau)
+    overlaps = 0
+    total_pairs = 0
+    for i in range(len(recent_candles) - 1):
+        candle1 = recent_candles.iloc[i]
+        candle2 = recent_candles.iloc[i + 1]
+        
+        # Tính overlap range
+        range1 = (candle1['low'], candle1['high'])
+        range2 = (candle2['low'], candle2['high'])
+        
+        overlap_low = max(range1[0], range2[0])
+        overlap_high = min(range1[1], range2[1])
+        
+        if overlap_low < overlap_high:
+            overlap_size = overlap_high - overlap_low
+            range1_size = range1[1] - range1[0]
+            range2_size = range2[1] - range2[0]
+            avg_range = (range1_size + range2_size) / 2
+            
+            if avg_range > 0:
+                overlap_ratio = overlap_size / avg_range
+                overlaps += overlap_ratio
+                total_pairs += 1
+    
+    avg_overlap = overlaps / total_pairs if total_pairs > 0 else 0
+    
+    # Kiểm tra điều kiện chop
+    body_condition = body_avg < (body_threshold * atr_val)
+    overlap_condition = avg_overlap > overlap_threshold
+    
+    if body_condition and overlap_condition:
+        return True, f"CHOP: body_avg={body_avg:.2f} < {body_threshold * atr_val:.2f}, overlap={avg_overlap:.1%} > {overlap_threshold:.1%}"
+    return False, f"Not CHOP: body_avg={body_avg:.2f}, overlap={avg_overlap:.1%}"
 
 def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']
@@ -42,8 +94,8 @@ def strategy_1_logic(config, error_count=0):
         return error_count, 0
 
     # 2. Calculate Indicators
-    # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
-    df_m5['ema200'] = df_m5['close'].rolling(window=200).mean() # Using SMA for simplicity or implement EMA
+    # Trend Filter: EMA 200 on M5 (FIXED: Use EMA thực sự thay vì SMA)
+    df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()  # EMA thực sự
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
     
     # H1 Trend Filter: EMA 100 on H1 for long-term trend confirmation
@@ -61,19 +113,46 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  H1 Trend Filter: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
-    # ADX Filter: ADX(14) >= 20 to confirm trend strength
+    # ADX Filter: ADX(14) >= 25 to confirm trend strength (UPGRADED: từ 20 lên 25)
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 20)
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 25)  # UPGRADED: từ 20 lên 25
     df_m5 = calculate_adx(df_m5, period=adx_period)
+    df_h1 = calculate_adx(df_h1, period=adx_period)  # Thêm ADX cho H1
     adx_value = df_m5.iloc[-1]['adx']
+    adx_h1_value = df_h1.iloc[-1]['adx']
     if pd.isna(adx_value) or adx_value < adx_min_threshold:
-        print(f"❌ ADX Filter: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
+        print(f"❌ ADX Filter M5: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
         return error_count, 0
-    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
+    if pd.isna(adx_h1_value) or adx_h1_value < adx_min_threshold:
+        print(f"❌ ADX Filter H1: ADX={adx_h1_value:.1f} < {adx_min_threshold} (No trend, skipping)")
+        return error_count, 0
+    print(f"✅ ADX Filter: M5 ADX={adx_value:.1f}, H1 ADX={adx_h1_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
     df_m1['sma55_low'] = df_m1['low'].rolling(window=55).mean()
+    
+    # ATR for CHOP filter and trailing stop
+    df_m1['atr'] = calculate_atr(df_m1, period=14)
+    atr_val = df_m1.iloc[-1]['atr']
+    if pd.isna(atr_val) or atr_val <= 0:
+        recent_range = df_m1.iloc[-14:]['high'].max() - df_m1.iloc[-14:]['low'].min()
+        atr_val = recent_range / 14 if recent_range > 0 else 0.1
+    
+    # CHOP Filter (UPGRADED: Thêm CHOP filter)
+    chop_lookback = config['parameters'].get('chop_lookback', 10)
+    chop_body_threshold = config['parameters'].get('chop_body_threshold', 0.5)
+    chop_overlap_threshold = config['parameters'].get('chop_overlap_threshold', 0.7)
+    is_chop, chop_msg = check_chop_range(df_m1, atr_val, lookback=chop_lookback, 
+                                         body_threshold=chop_body_threshold, 
+                                         overlap_threshold=chop_overlap_threshold)
+    if is_chop:
+        print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
+        return error_count, 0
+    print(f"✅ CHOP Filter: {chop_msg}")
+    
+    # Volume MA for confirmation (UPGRADED: Thêm volume confirmation)
+    df_m1['vol_ma'] = df_m1['tick_volume'].rolling(window=20).mean()
     
     # Heiken Ashi
     ha_df = calculate_heiken_ashi(df_m1)
@@ -122,8 +201,18 @@ def strategy_1_logic(config, error_count=0):
                     rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)  # Default: 55 (tăng từ 50)
                     filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f}")
                     if last_ha['rsi'] > rsi_buy_threshold:
-                        signal = "BUY"
-                        print(f"\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} > {rsi_buy_threshold})")
+                        # Volume Confirmation (UPGRADED: Thêm volume confirmation ≥1.3x MA20)
+                        volume_threshold = config['parameters'].get('volume_threshold', 1.3)
+                        current_volume = df_m1.iloc[-1]['tick_volume']
+                        vol_ma = df_m1.iloc[-1]['vol_ma']
+                        is_high_volume = current_volume >= (vol_ma * volume_threshold)
+                        vol_ratio = current_volume / vol_ma if vol_ma > 0 else 0
+                        filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>=' if is_high_volume else '<'} {volume_threshold}x")
+                        if is_high_volume:
+                            signal = "BUY"
+                            print(f"\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} > {rsi_buy_threshold}, Volume: {vol_ratio:.2f}x)")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đạt (cần >= {volume_threshold}x, hiện tại: {vol_ratio:.2f}x)")
                     else:
                         print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else: 
@@ -155,8 +244,18 @@ def strategy_1_logic(config, error_count=0):
                     rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)  # Default: 45 (giảm từ 50)
                     filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f}")
                     if last_ha['rsi'] < rsi_sell_threshold:
-                        signal = "SELL"
-                        print(f"\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} < {rsi_sell_threshold})")
+                        # Volume Confirmation (UPGRADED: Thêm volume confirmation ≥1.3x MA20)
+                        volume_threshold = config['parameters'].get('volume_threshold', 1.3)
+                        current_volume = df_m1.iloc[-1]['tick_volume']
+                        vol_ma = df_m1.iloc[-1]['vol_ma']
+                        is_high_volume = current_volume >= (vol_ma * volume_threshold)
+                        vol_ratio = current_volume / vol_ma if vol_ma > 0 else 0
+                        filter_status.append(f"{'✅' if is_high_volume else '❌'} Volume: {vol_ratio:.2f}x {'>=' if is_high_volume else '<'} {volume_threshold}x")
+                        if is_high_volume:
+                            signal = "SELL"
+                            print(f"\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} < {rsi_sell_threshold}, Volume: {vol_ratio:.2f}x)")
+                        else:
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đạt (cần >= {volume_threshold}x, hiện tại: {vol_ratio:.2f}x)")
                     else:
                         print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold}, hiện tại: {last_ha['rsi']:.1f})")
                 else:
@@ -203,14 +302,27 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        # --- SPAM FILTER: Check if we traded in the last 300 seconds (UPGRADED: từ 60s lên 300s) ---
+        spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 300)  # UPGRADED: từ 60 lên 300
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
             last_trade_time = strat_positions[0].time
             current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+            
+            # Convert to timestamp if needed
+            if isinstance(last_trade_time, datetime):
+                last_trade_timestamp = last_trade_time.timestamp()
+            else:
+                last_trade_timestamp = last_trade_time
+            if isinstance(current_server_time, datetime):
+                current_timestamp = current_server_time.timestamp()
+            else:
+                current_timestamp = current_server_time
+            
+            time_since_last = current_timestamp - last_trade_timestamp
+            if time_since_last < spam_filter_seconds:
+                print(f"   ⏳ Skipping: Trade already taken {time_since_last:.0f}s ago (Wait {spam_filter_seconds}s)")
                 return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
@@ -228,8 +340,15 @@ def strategy_1_logic(config, error_count=0):
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
             
-            # Add a small buffer (e.g., 20 points / 2 pips) to avoid noise
-            buffer = 20 * mt5.symbol_info(symbol).point
+            # UPGRADED: Buffer dựa trên ATR M5 (1.5x ATR) thay vì fixed 20 points
+            atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 1.5)
+            df_m5['atr'] = calculate_atr(df_m5, period=14)
+            atr_m5 = df_m5.iloc[-2]['atr']
+            if pd.isna(atr_m5) or atr_m5 <= 0:
+                m5_range = prev_m5_high - prev_m5_low
+                atr_m5 = m5_range / 14 if m5_range > 0 else 0.1
+            buffer = atr_buffer_multiplier * atr_m5
+            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR)")
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer

@@ -58,6 +58,91 @@ def check_trading_session(config):
         print(f"⚠️ Session check error: {e}")
         return True, "Session check skipped (error)"
 
+def check_max_daily_loss(symbol, magic, max_daily_loss_percent=2.0):
+    """
+    Check if daily loss exceeds max_daily_loss_percent of account balance.
+    Returns True if we should STOP trading (daily loss too high).
+    """
+    if max_daily_loss_percent <= 0:
+        return False, "Disabled"
+    
+    try:
+        # Get account info
+        account_info = mt5.account_info()
+        if account_info is None:
+            return False, "Cannot get account info"
+        
+        account_balance = account_info.balance
+        max_daily_loss_amount = account_balance * (max_daily_loss_percent / 100.0)
+        
+        # Get today's start time
+        now = datetime.now()
+        today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
+        
+        # Get deals from today
+        deals = mt5.history_deals_get(today_start, now, group=symbol)
+        
+        if deals is None or len(deals) == 0:
+            return False, "No deals today"
+        
+        # Filter by magic number and closed trades
+        my_deals = [d for d in deals if d.magic == magic and d.entry == mt5.DEAL_ENTRY_OUT]
+        
+        # Calculate total loss today
+        daily_loss = sum([d.profit for d in my_deals if d.profit < 0])
+        
+        if abs(daily_loss) >= max_daily_loss_amount:
+            return True, f"STOP: Daily loss {abs(daily_loss):.2f} >= {max_daily_loss_amount:.2f} ({max_daily_loss_percent}% of balance {account_balance:.2f})"
+        
+        return False, f"OK: Daily loss {abs(daily_loss):.2f} < {max_daily_loss_amount:.2f}"
+        
+    except Exception as e:
+        print(f"⚠️ Max daily loss check error: {e}")
+        return False, "Error checking daily loss"
+
+def check_news_time(config):
+    """
+    Simple news filter: Avoid trading 30 minutes before/after high-impact news times.
+    For EURUSD, major news typically at:
+    - 08:30, 10:00, 13:30, 15:00, 16:00 GMT (UK/EU/US times)
+    """
+    news_filter_enabled = config['parameters'].get('news_filter_enabled', True)
+    if not news_filter_enabled:
+        return True, "News filter disabled"
+    
+    try:
+        # Get current server time
+        symbol = config['symbol']
+        current_time = mt5.symbol_info_tick(symbol).time
+        if isinstance(current_time, (int, float)):
+            current_dt = datetime.fromtimestamp(current_time)
+        else:
+            current_dt = current_time
+        
+        current_hour = current_dt.hour
+        current_minute = current_dt.minute
+        current_time_minutes = current_hour * 60 + current_minute
+        
+        # High-impact news times (GMT) - 30 minutes before/after
+        news_times = [
+            (8*60, 30),   # 08:00-09:00
+            (9*60, 30),   # 09:30-10:30
+            (13*60, 30),  # 13:00-14:00
+            (14*60, 30),  # 14:30-15:30
+            (15*60, 30),  # 15:30-16:30
+        ]
+        
+        for news_start, window in news_times:
+            news_end = news_start + window
+            if news_start <= current_time_minutes <= news_end:
+                return False, f"News time: {current_hour:02d}:{current_minute:02d} (avoid {news_start//60:02d}:{news_start%60:02d}-{news_end//60:02d}:{news_end%60:02d})"
+        
+        return True, "Not news time"
+        
+    except Exception as e:
+        print(f"⚠️ News filter error: {e}")
+        return True, "News filter skipped (error)"
+
 def check_consecutive_losses(symbol, magic, limit=3, lookback_hours=24):
     """
     Check if the last 'limit' closed trades were losses within the last 'lookback_hours'.
@@ -301,7 +386,23 @@ def strategy_1_logic(config, error_count=0):
     magic = config['magic']
     max_positions = config.get('max_positions', 1)
     
-    # 0. Check Consecutive Losses Limit (Strategy Protection)
+    # 0. Check Max Daily Loss (UPGRADED: Thêm max daily loss guard)
+    max_daily_loss_percent = config['parameters'].get('max_daily_loss_percent', 2.0)  # Default: 2% of account
+    daily_loss_enabled = config['parameters'].get('daily_loss_enabled', True)
+    
+    if daily_loss_enabled:
+        should_stop_daily, daily_loss_msg = check_max_daily_loss(symbol, magic, max_daily_loss_percent)
+        if should_stop_daily:
+            print(f"🛑 [DAILY LOSS STOP] {daily_loss_msg}. Waiting user intervention or restart.")
+            return error_count, 0
+    
+    # 0.1 Check News Time (UPGRADED: Thêm news filter)
+    is_not_news_time, news_msg = check_news_time(config)
+    if not is_not_news_time:
+        print(f"💤 [NEWS FILTER] {news_msg}")
+        return error_count, 0
+    
+    # 0.2 Check Consecutive Losses Limit (Strategy Protection)
     max_losses = config['parameters'].get('max_consecutive_losses', 3)
     pause_on_losses = config['parameters'].get('pause_on_losses', True)
     
@@ -379,9 +480,9 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  H1 Trend Confirmation: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
-    # V3: ADX Filter - Giảm threshold từ 25 xuống 22 (default)
+    # UPGRADED: ADX Filter - Nâng threshold từ 22 lên 28 (default)
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 22)  # V3: Giảm từ 25 xuống 22
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 28)  # UPGRADED: Nâng từ 22 lên 28
     df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
     if pd.isna(adx_value) or adx_value < adx_min_threshold:
@@ -472,34 +573,34 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: Improved RSI filter - Giảm threshold từ 60 xuống 58 (default)
-                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 58)  # V3: Giảm từ 60 xuống 58
-                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
+                    # UPGRADED: RSI filter - Nâng threshold từ 58 lên 60 (default)
+                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 60)  # UPGRADED: Nâng từ 58 lên 60
+                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (UPGRADED: stricter)")
                     if last_ha['rsi'] > rsi_buy_threshold:
-                        # V3: Liquidity Sweep Check - OPTIONAL
-                        liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', False)  # Default: False
-                        buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1 (giảm từ 2)
-                        wick_multiplier = config['parameters'].get('liquidity_sweep_wick_multiplier', 1.2)  # Default: 1.2 (giảm từ 1.5)
+                        # UPGRADED: Liquidity Sweep Check - BẬT MẶC ĐỊNH
+                        liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', True)  # UPGRADED: Default: True (bật mặc định)
+                        buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1
+                        wick_multiplier = config['parameters'].get('liquidity_sweep_wick_multiplier', 1.2)  # Default: 1.2
                         has_sweep = True  # Default: pass if not required
                         sweep_msg = "Skipped (optional)"
                         if liquidity_sweep_required:
                             has_sweep, sweep_msg = check_liquidity_sweep_buy(df_m1, atr_val, symbol=symbol, buffer_pips=buffer_pips, wick_multiplier=wick_multiplier)
                         filter_status.append(f"{'✅' if has_sweep else '❌'} Liquidity Sweep: {sweep_msg}")
                         if has_sweep:
-                            # V3: Displacement Candle Check - OPTIONAL
-                            displacement_required = config['parameters'].get('displacement_required', False)  # Default: False
-                            displacement_body_multiplier = config['parameters'].get('displacement_body_multiplier', 1.0)  # Default: 1.0 (giảm từ 1.2)
+                            # UPGRADED: Displacement Candle Check - BẬT MẶC ĐỊNH
+                            displacement_required = config['parameters'].get('displacement_required', True)  # UPGRADED: Default: True (bật mặc định)
+                            displacement_body_multiplier = config['parameters'].get('displacement_body_multiplier', 1.0)  # Default: 1.0
                             has_displacement = True  # Default: pass if not required
                             displacement_msg = "Skipped (optional)"
                             if displacement_required:
                                 has_displacement, displacement_msg = check_displacement_candle(df_m1, atr_val, "BUY", body_multiplier=displacement_body_multiplier)
                             filter_status.append(f"{'✅' if has_displacement else '❌'} Displacement Candle: {displacement_msg}")
                             if has_displacement:
-                                # V3: Volume Confirmation - OPTIONAL
-                                volume_confirmation_required = config['parameters'].get('volume_confirmation_required', False)  # Default: False
+                                # UPGRADED: Volume Confirmation - BẬT MẶC ĐỊNH
+                                volume_confirmation_required = config['parameters'].get('volume_confirmation_required', True)  # UPGRADED: Default: True (bật mặc định)
                                 current_volume = df_m1.iloc[-1]['tick_volume']
                                 vol_ma = df_m1.iloc[-1]['vol_ma']
-                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.1)  # Default: 1.1 (giảm từ 1.3)
+                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.1)  # Default: 1.1
                                 has_volume_confirmation = True  # Default: pass if not required
                                 if volume_confirmation_required:
                                     has_volume_confirmation = current_volume > (vol_ma * volume_multiplier)
@@ -563,34 +664,34 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: Improved RSI filter - Tăng threshold từ 40 lên 42 (default)
-                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 42)  # V3: Tăng từ 40 lên 42
-                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
+                    # UPGRADED: RSI filter - Giảm threshold từ 42 xuống 40 (default)
+                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 40)  # UPGRADED: Giảm từ 42 xuống 40
+                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (UPGRADED: stricter)")
                     if last_ha['rsi'] < rsi_sell_threshold:
-                        # V3: Liquidity Sweep Check - OPTIONAL
-                        liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', False)  # Default: False
-                        buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1 (giảm từ 2)
-                        wick_multiplier = config['parameters'].get('liquidity_sweep_wick_multiplier', 1.2)  # Default: 1.2 (giảm từ 1.5)
+                        # UPGRADED: Liquidity Sweep Check - BẬT MẶC ĐỊNH
+                        liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', True)  # UPGRADED: Default: True (bật mặc định)
+                        buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1
+                        wick_multiplier = config['parameters'].get('liquidity_sweep_wick_multiplier', 1.2)  # Default: 1.2
                         has_sweep = True  # Default: pass if not required
                         sweep_msg = "Skipped (optional)"
                         if liquidity_sweep_required:
                             has_sweep, sweep_msg = check_liquidity_sweep_sell(df_m1, atr_val, symbol=symbol, buffer_pips=buffer_pips, wick_multiplier=wick_multiplier)
                         filter_status.append(f"{'✅' if has_sweep else '❌'} Liquidity Sweep: {sweep_msg}")
                         if has_sweep:
-                            # V3: Displacement Candle Check - OPTIONAL
-                            displacement_required = config['parameters'].get('displacement_required', False)  # Default: False
-                            displacement_body_multiplier = config['parameters'].get('displacement_body_multiplier', 1.0)  # Default: 1.0 (giảm từ 1.2)
+                            # UPGRADED: Displacement Candle Check - BẬT MẶC ĐỊNH
+                            displacement_required = config['parameters'].get('displacement_required', True)  # UPGRADED: Default: True (bật mặc định)
+                            displacement_body_multiplier = config['parameters'].get('displacement_body_multiplier', 1.0)  # Default: 1.0
                             has_displacement = True  # Default: pass if not required
                             displacement_msg = "Skipped (optional)"
                             if displacement_required:
                                 has_displacement, displacement_msg = check_displacement_candle(df_m1, atr_val, "SELL", body_multiplier=displacement_body_multiplier)
                             filter_status.append(f"{'✅' if has_displacement else '❌'} Displacement Candle: {displacement_msg}")
                             if has_displacement:
-                                # V3: Volume Confirmation - OPTIONAL
-                                volume_confirmation_required = config['parameters'].get('volume_confirmation_required', False)  # Default: False
+                                # UPGRADED: Volume Confirmation - BẬT MẶC ĐỊNH
+                                volume_confirmation_required = config['parameters'].get('volume_confirmation_required', True)  # UPGRADED: Default: True (bật mặc định)
                                 current_volume = df_m1.iloc[-1]['tick_volume']
                                 vol_ma = df_m1.iloc[-1]['vol_ma']
-                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.1)  # Default: 1.1 (giảm từ 1.3)
+                                volume_multiplier = config['parameters'].get('volume_confirmation_multiplier', 1.1)  # Default: 1.1
                                 has_volume_confirmation = True  # Default: pass if not required
                                 if volume_confirmation_required:
                                     has_volume_confirmation = current_volume > (vol_ma * volume_multiplier)
@@ -714,9 +815,8 @@ def strategy_1_logic(config, error_count=0):
             prev_m5_high = df_m5.iloc[-2]['high']
             prev_m5_low = df_m5.iloc[-2]['low']
             
-            # V3: Calculate ATR on M5 for better buffer - Tăng multiplier từ 1.5x lên 2.0x (default)
+            # UPGRADED: Dynamic ATR buffer cho SL (1.5x nếu ATR thấp, 2.5x nếu cao)
             atr_period_m5 = config['parameters'].get('atr_period', 14)
-            atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 2.0)  # V3: Tăng từ 1.5 lên 2.0
             df_m5['atr'] = calculate_atr(df_m5, period=atr_period_m5)
             atr_m5 = df_m5.iloc[-2]['atr']
             if pd.isna(atr_m5) or atr_m5 <= 0:
@@ -724,9 +824,26 @@ def strategy_1_logic(config, error_count=0):
                 m5_range = prev_m5_high - prev_m5_low
                 atr_m5 = m5_range / atr_period_m5 if m5_range > 0 else 0.1
             
-            # V3: Buffer dựa trên ATR - Tăng từ 1.5x lên 2.0x (có thể config lên 2.5x)
+            # UPGRADED: Dynamic buffer based on ATR level
+            # Calculate ATR percentile (so sánh với ATR M5 trong 50 nến gần nhất)
+            atr_history = df_m5['atr'].iloc[-50:].dropna()
+            if len(atr_history) > 0:
+                atr_median = atr_history.median()
+                if atr_m5 < atr_median * 0.8:  # ATR thấp (< 80% median)
+                    atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier_low', 1.5)  # 1.5x cho ATR thấp
+                    buffer_type = "Low ATR"
+                elif atr_m5 > atr_median * 1.2:  # ATR cao (> 120% median)
+                    atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier_high', 2.5)  # 2.5x cho ATR cao
+                    buffer_type = "High ATR"
+                else:  # ATR bình thường
+                    atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 2.0)  # 2.0x cho ATR bình thường
+                    buffer_type = "Normal ATR"
+            else:
+                atr_buffer_multiplier = config['parameters'].get('atr_buffer_multiplier', 2.0)
+                buffer_type = "Default"
+            
             buffer = atr_buffer_multiplier * atr_m5
-            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR) [V3: Tăng từ 1.5x]")
+            print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR, {buffer_type}) [UPGRADED: Dynamic]")
             
             # FIX: Thêm Max Risk Distance để tránh SL quá xa khi market volatile
             # Max risk = max_risk_atr_multiplier * ATR_M1 (dùng M1 vì phản ánh volatility hiện tại tốt hơn)
@@ -839,26 +956,26 @@ if __name__ == "__main__":
     consecutive_errors = 0
     
     if config and connect_mt5(config):
-        print("✅ Strategy 1: Trend HA V4 - Started")
-        print("📋 V4 Improvements (Session & Losses):")
+        print("✅ Strategy 1: Trend HA V2 - Started (UPGRADED)")
+        print("📋 UPGRADED Improvements:")
+        print("   ✅ RSI threshold stricter (BUY >60, SELL <40)")
+        print("   ✅ All optional filters enabled by default (volume, liquidity sweep, displacement)")
+        print("   ✅ ADX threshold increased (>= 28, từ 22)")
+        print("   ✅ Max daily loss guard (2% account default)")
+        print("   ✅ Dynamic ATR buffer (1.5x low, 2.0x normal, 2.5x high)")
+        print("   ✅ News filter (avoid 30min before/after high-impact news)")
+        print("📋 Previous Improvements (V2/V3):")
         print("   ✅ Session Filter (08:00 - 22:00 default)")
         print("   ✅ Consecutive Loss Stop (Max 3 losses default)")
-        print("   ✅ ATR M1 Volatility Filter (> 3.0 = BỎ TRADE, 2-3 = Cẩn trọng, < 2.0 = Lý tưởng)")
-        print("   ✅ Max Risk Distance (3.0x ATR M1) để tránh SL quá xa")
-        print("📋 V3 Improvements (Already included):")
+        print("   ✅ ATR M1 Volatility Filter (> 3.0 = BỎ TRADE)")
+        print("   ✅ Max Risk Distance (3.0x ATR M1)")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
-        print("   ✅ ADX filter increased (>= 25)")
-        print("   ✅ RSI filter stricter (> 60 / < 40)")
         print("   ✅ CHOP/RANGE filter added")
-        print("   ✅ SL buffer increased (2.0x ATR)")
         print("   ✅ Confirmation check improved")
         print("   ✅ H1 Trend confirmation")
         print("   ✅ EMA50 > EMA200 trên M5")
-        print("   ✅ Liquidity Sweep check")
-        print("   ✅ Displacement Candle check")
-        print("   ✅ Volume confirmation (1.3x avg)")
         print("   ✅ False breakout detection")
-        print("   ✅ Spam filter increased")
+        print("   ✅ Spam filter increased (300s)")
         
         try:
             while True:
