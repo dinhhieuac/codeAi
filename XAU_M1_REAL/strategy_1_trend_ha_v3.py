@@ -169,6 +169,18 @@ def strategy_1_logic(config, error_count=0):
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
+    
+    # V3: RSI Overbought/Oversold Filter - Tránh đuổi theo giá ở cuối xu hướng
+    rsi_value = last_ha['rsi']
+    rsi_overbought_threshold = config['parameters'].get('rsi_overbought_threshold', 70)  # BUY: RSI > 70 → BỎ
+    rsi_oversold_threshold = config['parameters'].get('rsi_oversold_threshold', 30)  # SELL: RSI < 30 → BỎ
+    
+    # Check RSI extreme levels (sẽ check lại sau khi xác định signal)
+    # Tạm thời chỉ log
+    if rsi_value > rsi_overbought_threshold:
+        print(f"⚠️ RSI Overbought: RSI={rsi_value:.1f} > {rsi_overbought_threshold} (Sẽ chặn BUY nếu có signal)")
+    elif rsi_value < rsi_oversold_threshold:
+        print(f"⚠️ RSI Oversold: RSI={rsi_value:.1f} < {rsi_oversold_threshold} (Sẽ chặn SELL nếu có signal)")
 
     # 3. Check Signals
     signal = None
@@ -204,14 +216,26 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: RSI Filter - Giảm threshold xuống > 50 cho BUY (thay vì > 55)
-                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 50)  # V3: Giảm từ 55 xuống 50
-                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V3)")
-                    if last_ha['rsi'] > rsi_buy_threshold:
-                        signal = "BUY"
-                        print(f"\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} > {rsi_buy_threshold})")
+                    # V3: RSI Filter - BUY: RSI >= 52, NO TRADE: 48 < RSI < 52
+                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 52)  # V3: RSI >= 52 → BUY
+                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 48)  # V3: RSI <= 48 → SELL
+                    rsi_value = last_ha['rsi']
+                    
+                    # Check NO TRADE zone: 48 < RSI < 52
+                    if rsi_sell_threshold < rsi_value < rsi_buy_threshold:
+                        filter_status.append(f"❌ RSI NO TRADE Zone: {rsi_value:.1f} trong khoảng {rsi_sell_threshold}-{rsi_buy_threshold} (Không rõ xu hướng)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI trong NO TRADE zone ({rsi_sell_threshold} < RSI={rsi_value:.1f} < {rsi_buy_threshold}) - Không rõ xu hướng")
+                    elif rsi_value >= rsi_buy_threshold:
+                        filter_status.append(f"✅ RSI >= {rsi_buy_threshold}: {rsi_value:.1f} (V3)")
+                        # V3: RSI Overbought Filter - Không BUY nếu RSI > 70
+                        if rsi_value > rsi_overbought_threshold:
+                            filter_status.append(f"❌ RSI Overbought: RSI={rsi_value:.1f} > {rsi_overbought_threshold} (Tránh đuổi theo giá)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI Overbought (RSI: {rsi_value:.1f} > {rsi_overbought_threshold}) - Tránh đuổi theo giá ở cuối xu hướng")
+                        else:
+                            signal = "BUY"
+                            print(f"\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt! (RSI: {rsi_value:.1f} >= {rsi_buy_threshold} và < {rsi_overbought_threshold})")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold}, hiện tại: {last_ha['rsi']:.1f})")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt cho BUY (cần >= {rsi_buy_threshold}, hiện tại: {rsi_value:.1f})")
                 else: 
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -237,14 +261,26 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: RSI Filter - Giữ < 50 cho SELL (hoặc có thể điều chỉnh)
-                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 50)  # V3: Giữ 50
-                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V3)")
-                    if last_ha['rsi'] < rsi_sell_threshold:
-                        signal = "SELL"
-                        print(f"\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt! (RSI: {last_ha['rsi']:.1f} < {rsi_sell_threshold})")
+                    # V3: RSI Filter - SELL: RSI <= 48, NO TRADE: 48 < RSI < 52
+                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 52)  # V3: RSI >= 52 → BUY
+                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 48)  # V3: RSI <= 48 → SELL
+                    rsi_value = last_ha['rsi']
+                    
+                    # Check NO TRADE zone: 48 < RSI < 52
+                    if rsi_sell_threshold < rsi_value < rsi_buy_threshold:
+                        filter_status.append(f"❌ RSI NO TRADE Zone: {rsi_value:.1f} trong khoảng {rsi_sell_threshold}-{rsi_buy_threshold} (Không rõ xu hướng)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI trong NO TRADE zone ({rsi_sell_threshold} < RSI={rsi_value:.1f} < {rsi_buy_threshold}) - Không rõ xu hướng")
+                    elif rsi_value <= rsi_sell_threshold:
+                        filter_status.append(f"✅ RSI <= {rsi_sell_threshold}: {rsi_value:.1f} (V3)")
+                        # V3: RSI Oversold Filter - Không SELL nếu RSI < 30
+                        if rsi_value < rsi_oversold_threshold:
+                            filter_status.append(f"❌ RSI Oversold: RSI={rsi_value:.1f} < {rsi_oversold_threshold} (Tránh đuổi theo giá)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI Oversold (RSI: {rsi_value:.1f} < {rsi_oversold_threshold}) - Tránh đuổi theo giá ở cuối xu hướng")
+                        else:
+                            signal = "SELL"
+                            print(f"\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt! (RSI: {rsi_value:.1f} <= {rsi_sell_threshold} và > {rsi_oversold_threshold})")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold}, hiện tại: {last_ha['rsi']:.1f})")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt cho SELL (cần <= {rsi_sell_threshold}, hiện tại: {rsi_value:.1f})")
                 else:
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -272,9 +308,11 @@ def strategy_1_logic(config, error_count=0):
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
         print(f"   📊 ATR M1: {atr_val:.2f}")
         # Get RSI thresholds for display
-        rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 50)
-        rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 50)
-        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V3: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 52)
+        rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 48)
+        rsi_overbought_threshold = config['parameters'].get('rsi_overbought_threshold', 70)
+        rsi_oversold_threshold = config['parameters'].get('rsi_oversold_threshold', 30)
+        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V3: BUY cần >= {rsi_buy_threshold} và < {rsi_overbought_threshold}, SELL cần <= {rsi_sell_threshold} và > {rsi_oversold_threshold}, NO TRADE: {rsi_sell_threshold} < RSI < {rsi_buy_threshold})")
         if current_trend == "BULLISH":
             print(f"   📊 Above Channel: {last_ha['ha_close']:.2f} > {last_ha['sma55_high']:.2f} = {is_above_channel}")
             print(f"   📊 Fresh Breakout: Prev {prev_ha['ha_close']:.2f} <= {prev_ha['sma55_high']:.2f} = {is_fresh_breakout}")
@@ -349,6 +387,14 @@ def strategy_1_logic(config, error_count=0):
                     sl = price - min_dist
                     
                 risk_dist = price - sl
+                
+                # V3: Max SL Distance Filter - Nếu khoảng cách > 25 giá $ → BỎ LỆNH
+                max_sl_distance = config['parameters'].get('max_sl_distance', 25.0)  # 25 giá $
+                if risk_dist > max_sl_distance:
+                    print(f"❌ Max SL Distance Filter: Risk Distance={risk_dist:.2f} > {max_sl_distance} (Rủi ro quá lớn - BỎ LỆNH)")
+                    return error_count, 0
+                print(f"✅ Max SL Distance Filter: Risk Distance={risk_dist:.2f} <= {max_sl_distance} (OK)")
+                
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
@@ -359,6 +405,14 @@ def strategy_1_logic(config, error_count=0):
                     sl = price + min_dist
                     
                 risk_dist = sl - price
+                
+                # V3: Max SL Distance Filter - Nếu khoảng cách > 25 giá $ → BỎ LỆNH
+                max_sl_distance = config['parameters'].get('max_sl_distance', 25.0)  # 25 giá $
+                if risk_dist > max_sl_distance:
+                    print(f"❌ Max SL Distance Filter: Risk Distance={risk_dist:.2f} > {max_sl_distance} (Rủi ro quá lớn - BỎ LỆNH)")
+                    return error_count, 0
+                print(f"✅ Max SL Distance Filter: Risk Distance={risk_dist:.2f} <= {max_sl_distance} (OK)")
+                
                 tp = price - (risk_dist * reward_ratio)
                 
             print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio})")
@@ -370,6 +424,14 @@ def strategy_1_logic(config, error_count=0):
             
             sl = price - sl_pips if signal == "BUY" else price + sl_pips
             tp = price + tp_pips if signal == "BUY" else price - tp_pips
+            
+            # V3: Max SL Distance Filter - Check cho fixed pips mode
+            risk_dist = abs(price - sl)
+            max_sl_distance = config['parameters'].get('max_sl_distance', 25.0)  # 25 giá $
+            if risk_dist > max_sl_distance:
+                print(f"❌ Max SL Distance Filter: Risk Distance={risk_dist:.2f} > {max_sl_distance} (Rủi ro quá lớn - BỎ LỆNH)")
+                return error_count, 0
+            print(f"✅ Max SL Distance Filter: Risk Distance={risk_dist:.2f} <= {max_sl_distance} (OK)")
         
         # Log signal to DB
         db.log_signal("Strategy_1_Trend_HA_V3", symbol, signal, price, sl, tp, 
@@ -408,7 +470,7 @@ def strategy_1_logic(config, error_count=0):
                 f"• M5 Trend: {current_trend}\n"
                 f"• H1 Trend: {h1_trend} (EMA{h1_ema_period}) ✅\n"
                 f"• ADX: {adx_value:.1f} (> 25 ✅) [V3]\n"
-                f"• RSI: {last_ha['rsi']:.1f} (V3: > 50 ✅)\n"
+                f"• RSI: {last_ha['rsi']:.1f} (V3: >= 52 BUY / <= 48 SELL ✅)\n"
                 f"• ATR M1: {atr_val:.2f}\n"
                 f"• R:R: {reward_ratio} (V3: Dynamic)\n"
                 f"• Session: {session_msg}"
@@ -433,7 +495,7 @@ if __name__ == "__main__":
     if config and connect_mt5(config):
         print("✅ Strategy 1: Trend HA V3 - Started")
         print("📋 V3 Improvements:")
-        print("   ✅ RSI > 50 cho BUY (thay vì > 55)")
+        print("   ✅ RSI >= 52 cho BUY, RSI <= 48 cho SELL, NO TRADE: 48 < RSI < 52")
         print("   ✅ ADX > 25 (thay vì >= 20)")
         print("   ✅ ATR M1 Filter: Chỉ trade khi ATR < 15.0 (XAUUSD)")
         print("   ✅ Blocked hours: 11:00-12:00, 18:00-19:00")
@@ -441,6 +503,8 @@ if __name__ == "__main__":
         print("   ✅ Break-even khi giá đi 50% đến TP")
         print("   ✅ R:R động: 1.8-2.0 cho RSI > 60, 1.5 cho RSI <= 60")
         print("   ✅ H1 Trend confirmation BẮT BUỘC")
+        print("   ✅ Max SL Distance: Bỏ lệnh nếu SL > 25 giá $ (Tránh rủi ro quá lớn)")
+        print("   ✅ RSI Overbought/Oversold: Không BUY nếu RSI > 70, không SELL nếu RSI < 30")
         try:
             while True:
                 consecutive_errors, last_error_code = strategy_1_logic(config, consecutive_errors)
