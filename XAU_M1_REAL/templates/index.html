@@ -201,11 +201,14 @@
                                         <th>Strategy</th>
                                         <th>Type</th>
                                         <th>Price</th>
+                                        <th>SL</th>
+                                        <th>SL Distance</th>
                                         <th>Profit</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for order in orders[:50] %}
+                                    {% set sl_distance = (order.open_price - order.sl) if order.order_type == 'BUY' else (order.sl - order.open_price) if order.sl and order.open_price else None %}
                                     <tr>
                                         <td>{{ order.ticket }}</td>
                                         <td>{{ order.open_time }}</td>
@@ -218,6 +221,14 @@
                                             {% endif %}
                                         </td>
                                         <td>{{ order.open_price }}</td>
+                                        <td>{{ order.sl if order.sl else '-' }}</td>
+                                        <td>
+                                            {% if sl_distance is not none %}
+                                            <strong>{{ "%.2f"|format(sl_distance) }}</strong>
+                                            {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
                                         <td
                                             class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
                                             {% if order.profit is not none %}
@@ -292,6 +303,7 @@
                                         <th>Type</th>
                                         <th>Price</th>
                                         <th>SL</th>
+                                        <th>SL Distance</th>
                                         <th>TP</th>
                                         <th>Profit</th>
                                     </tr>
@@ -299,6 +311,7 @@
                                 <tbody>
                                     {% for order in orders %}
                                     {% if order.strategy_name == bot.raw_name %}
+                                    {% set sl_distance = (order.open_price - order.sl) if order.order_type == 'BUY' else (order.sl - order.open_price) if order.sl and order.open_price else None %}
                                     <tr>
                                         <td>{{ order.ticket }}</td>
                                         <td>{{ order.open_time }}</td>
@@ -311,6 +324,13 @@
                                         </td>
                                         <td>{{ order.open_price }}</td>
                                         <td>{{ order.sl }}</td>
+                                        <td>
+                                            {% if sl_distance is not none %}
+                                            <strong>{{ "%.2f"|format(sl_distance) }}</strong>
+                                            {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
                                         <td>{{ order.tp }}</td>
                                         <td
                                             class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
