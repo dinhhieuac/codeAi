@@ -260,6 +260,7 @@
                                         <th>Strategy</th>
                                         <th>Type</th>
                                         <th>Price</th>
+                                        <th>SL Distance</th>
                                         <th>Profit</th>
                                     </tr>
                                 </thead>
@@ -277,6 +278,17 @@
                                             {% endif %}
                                         </td>
                                         <td>{{ order.open_price }}</td>
+                                        <td>
+                                            {% if order.sl and order.open_price %}
+                                                {% if order.order_type == 'BUY' %}
+                                                    {{ "%.2f"|format(order.open_price - order.sl) }}
+                                                {% else %}
+                                                    {{ "%.2f"|format(order.sl - order.open_price) }}
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
                                         <td
                                             class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
                                             {% if order.profit is not none %}
@@ -418,6 +430,7 @@
                                         <th>Price</th>
                                         <th>SL</th>
                                         <th>TP</th>
+                                        <th>SL Distance</th>
                                         <th>Profit</th>
                                     </tr>
                                 </thead>
@@ -437,6 +450,17 @@
                                         <td>{{ order.open_price }}</td>
                                         <td>{{ order.sl }}</td>
                                         <td>{{ order.tp }}</td>
+                                        <td>
+                                            {% if order.sl and order.open_price %}
+                                                {% if order.order_type == 'BUY' %}
+                                                    {{ "%.2f"|format(order.open_price - order.sl) }}
+                                                {% else %}
+                                                    {{ "%.2f"|format(order.sl - order.open_price) }}
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
                                         <td
                                             class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
                                             {% if order.profit is not none %}
