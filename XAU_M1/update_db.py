@@ -90,6 +90,9 @@ def load_strategy_configs(script_dir):
                 # Convert relative paths to absolute
                 strategies = {}
                 for strat_name, config_path in mapping.items():
+                    # Skip non-strategy keys like "description"
+                    if strat_name == "description" or not isinstance(config_path, str):
+                        continue
                     if not os.path.isabs(config_path):
                         config_path = os.path.join(script_dir, config_path)
                     strategies[strat_name] = config_path

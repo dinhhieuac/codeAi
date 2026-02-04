@@ -6,13 +6,16 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # Import local modules
-sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
-from db import Database
+import os
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)  # Add current directory to path
 from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr
 
-# Initialize Database
-db = Database()
+# Initialize Database with absolute path
+db_path = os.path.join(script_dir, "trades.db")
+db = Database(db_path=db_path)
+print(f"📦 Database initialized: {db_path}")
 
 def check_trading_session(config):
     """
@@ -858,9 +861,13 @@ def strategy_1_logic(config, error_count=0):
             tp = price + tp_pips if signal == "BUY" else price - tp_pips
             
         # Log signal to DB
-        db.log_signal("Strategy_1_Trend_HA_V2", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi']), "adx": float(adx_value), "atr": float(atr_val)}, 
-                      account_id=config['account'])
+        try:
+            db.log_signal("Strategy_1_Trend_HA_V2", symbol, signal, price, sl, tp, 
+                          {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi']), "adx": float(adx_value), "atr": float(atr_val)}, 
+                          account_id=config['account'])
+            print(f"✅ Signal logged to DB: {signal} at {price:.2f}")
+        except Exception as e:
+            print(f"⚠️ Failed to log signal to DB: {e}")
 
         # Send Order
         request = {
@@ -880,7 +887,11 @@ def strategy_1_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
+            try:
+                db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
+                print(f"✅ Order logged to DB: Ticket {result.order}")
+            except Exception as e:
+                print(f"⚠️ Failed to log order to DB: {e}")
             
             # Detailed Telegram Message
             msg = (

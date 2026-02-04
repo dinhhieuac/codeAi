@@ -123,6 +123,10 @@ def load_strategy_configs(script_dir):
                             strategy_name = "Strategy_1_Trend_HA_V2.1"
                         elif "v2" in filename.lower():
                             strategy_name = "Strategy_1_Trend_HA_V2"
+                        elif "v1.1" in filename.lower() or "v1_1" in filename.lower():
+                            strategy_name = "Strategy_1_Trend_HA_V1.1"
+                        elif "v3" in filename.lower():
+                            strategy_name = "Strategy_1_Trend_HA_V3"
                         else:
                             strategy_name = "Strategy_1_Trend_HA"
                     elif filename.startswith("config_2"):
@@ -145,6 +149,7 @@ def load_strategy_configs(script_dir):
         print("⚠️ No strategies auto-detected, using default mapping")
         strategies = {
             "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
+            "Strategy_1_Trend_HA_V1.1": os.path.join(script_dir, "configs", "config_1_v1.1.json"),
             "Strategy_1_Trend_HA_V2": os.path.join(script_dir, "configs", "config_1_v2.json"),
             "Strategy_1_Trend_HA_V2.1": os.path.join(script_dir, "configs", "config_1_v2.1.json"),
             "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
