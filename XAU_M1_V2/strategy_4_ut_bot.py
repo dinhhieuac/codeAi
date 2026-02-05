@@ -76,7 +76,7 @@ def strategy_4_logic(config, error_count=0):
     df_h1 = calculate_adx(df_h1, period=14)
     trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema50'] else "BEARISH"
     h1_adx = df_h1.iloc[-1].get('adx', 0)
-    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 20)
+    h1_adx_threshold = config['parameters'].get('h1_adx_threshold', 35)  # V2: Yêu cầu ADX >35
     
     # RSI Calculation (M1)
     df_m1['rsi'] = calculate_rsi(df_m1['close'], period=14)
@@ -125,10 +125,14 @@ def strategy_4_logic(config, error_count=0):
     # Track all filter status
     filter_status = []
     
-    # Get config parameters
-    adx_threshold = config['parameters'].get('adx_threshold', 20)
-    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)  # Increased from 50
-    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)  # Decreased from 50
+    # Get config parameters - V2: Updated thresholds
+    adx_threshold = config['parameters'].get('adx_threshold', 35)  # V2: Yêu cầu ADX >35
+    rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
+    rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
+    rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
+    rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+    rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
+    rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
     volume_threshold = config['parameters'].get('volume_threshold', 1.3)  # Volume confirmation
     ut_confirmation = config['parameters'].get('ut_confirmation', True)  # Wait for confirmation
     
@@ -164,10 +168,18 @@ def strategy_4_logic(config, error_count=0):
                         ut_signal = None
                     
                     if ut_signal == "BUY":
-                        # RSI Filter (stricter)
-                        filter_status.append(f"{'✅' if last['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last['rsi']:.1f}")
+                        # V2: RSI Range Filter
+                        current_rsi = last['rsi']
+                        if current_rsi > rsi_extreme_high:
+                            filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá cao (>{rsi_extreme_high})")
+                        elif current_rsi < rsi_extreme_low:
+                            filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá thấp (<{rsi_extreme_low})")
+                        elif rsi_buy_min <= current_rsi <= rsi_buy_max:
+                            filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_buy_min}-{rsi_buy_max}")
                         
-                        if last['rsi'] > rsi_buy_threshold:
+                        if rsi_buy_min <= current_rsi <= rsi_buy_max:
                             # Volume Confirmation
                             vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
                             is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
@@ -179,7 +191,8 @@ def strategy_4_logic(config, error_count=0):
                             else:
                                 print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
                         else:
-                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold})")
+                            filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_buy_min}-{rsi_buy_max}")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần trong khoảng {rsi_buy_min}-{rsi_buy_max})")
                 else:
                     filter_status.append(f"❌ H1 Trend: BEARISH (cần BULLISH)")
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
@@ -209,10 +222,18 @@ def strategy_4_logic(config, error_count=0):
                         ut_signal = None
                     
                     if ut_signal == "SELL":
-                        # RSI Filter (stricter)
-                        filter_status.append(f"{'✅' if last['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last['rsi']:.1f}")
+                        # V2: RSI Range Filter
+                        current_rsi = last['rsi']
+                        if current_rsi > rsi_extreme_high:
+                            filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá cao (>{rsi_extreme_high})")
+                        elif current_rsi < rsi_extreme_low:
+                            filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá thấp (<{rsi_extreme_low})")
+                        elif rsi_sell_min <= current_rsi <= rsi_sell_max:
+                            filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_sell_min}-{rsi_sell_max}")
                         
-                        if last['rsi'] < rsi_sell_threshold:
+                        if rsi_sell_min <= current_rsi <= rsi_sell_max:
                             # Volume Confirmation
                             vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
                             is_high_volume = last['tick_volume'] > (last['vol_ma'] * volume_threshold)
@@ -224,7 +245,8 @@ def strategy_4_logic(config, error_count=0):
                             else:
                                 print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Volume không đủ")
                         else:
-                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold})")
+                            filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_sell_min}-{rsi_sell_max}")
+                            print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần trong khoảng {rsi_sell_min}-{rsi_sell_max})")
                 else:
                     filter_status.append(f"❌ H1 Trend: BULLISH (cần BEARISH)")
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - H1 Trend không phù hợp")
@@ -246,8 +268,9 @@ def strategy_4_logic(config, error_count=0):
         print(f"   📈 H1 Trend: {trend}")
         print(f"   📊 H1 ADX: {h1_adx:.1f} (cần >= {h1_adx_threshold})")
         print(f"   📊 UT Position: {last['pos']} (Prev: {prev['pos']})")
-        print(f"   📊 M1 ADX: {last.get('adx', 0):.1f} (cần >= {adx_threshold})")
-        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        print(f"   📊 M1 ADX: {last.get('adx', 0):.1f} (cần >= {adx_threshold}) [V2: Yêu cầu ADX >35]")
+        print(f"   📊 RSI: {last['rsi']:.1f} (V2: BUY cần {rsi_buy_min}-{rsi_buy_max}, SELL cần {rsi_sell_min}-{rsi_sell_max}, reject nếu >{rsi_extreme_high} hoặc <{rsi_extreme_low})")
+        print(f"   📊 H1 ADX: {h1_adx:.1f} (cần >= {h1_adx_threshold}) [V2: Yêu cầu ADX >35]")
         vol_ratio = last['tick_volume'] / last['vol_ma'] if last['vol_ma'] > 0 else 0
         print(f"   📊 Volume: {vol_ratio:.2f}x (cần > {volume_threshold}x)")
         print(f"   📊 UT Trailing Stop: {last.get('x_atr_trailing_stop', 0):.2f}")

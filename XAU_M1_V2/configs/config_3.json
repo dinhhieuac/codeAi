@@ -14,6 +14,11 @@
         "reward_ratio": 1.5,
         "sma_period": 9,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_buy_min": 40,
+        "rsi_buy_max": 60,
+        "rsi_sell_min": 40,
+        "rsi_sell_max": 60,
+        "rsi_extreme_high": 70,
+        "rsi_extreme_low": 30
     }
 }

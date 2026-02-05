@@ -468,9 +468,9 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  H1 Trend Confirmation: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
-    # V3: ADX Filter - Giảm threshold từ 25 xuống 22 (default)
+    # V2: ADX Filter - Yêu cầu ADX >35 cho tất cả lệnh (như V2 thành công)
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 22)  # V3: Giảm từ 25 xuống 22
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 35)  # V2: Yêu cầu ADX >35
     df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
     if pd.isna(adx_value) or adx_value < adx_min_threshold:
@@ -574,10 +574,23 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: Improved RSI filter - Giảm threshold từ 60 xuống 58 (default)
-                    rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 58)  # V3: Giảm từ 60 xuống 58
-                    filter_status.append(f"{'✅' if last_ha['rsi'] > rsi_buy_threshold else '❌'} RSI > {rsi_buy_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
-                    if last_ha['rsi'] > rsi_buy_threshold:
+                    # V2: RSI Threshold - Chỉ BUY nếu RSI 40-60, bỏ lệnh nếu >70 hoặc <30
+                    rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
+                    rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
+                    rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
+                    rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
+                    current_rsi = last_ha['rsi']
+                    
+                    # Check extreme values first (reject if too extreme)
+                    if current_rsi > rsi_extreme_high:
+                        filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá cao (>{rsi_extreme_high}), hiện tại: {current_rsi:.1f}")
+                    elif current_rsi < rsi_extreme_low:
+                        filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá thấp (<{rsi_extreme_low}), hiện tại: {current_rsi:.1f}")
+                    elif rsi_buy_min <= current_rsi <= rsi_buy_max:
+                        filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_buy_min}-{rsi_buy_max}")
+                        # RSI is in valid range, proceed with trade
                         # V3: Liquidity Sweep Check - OPTIONAL
                         liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', False)  # Default: False
                         buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1 (giảm từ 2)
@@ -641,7 +654,8 @@ def strategy_1_logic(config, error_count=0):
                         else:
                             print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {sweep_msg}")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần > {rsi_buy_threshold}, hiện tại: {last_ha['rsi']:.1f})")
+                        filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_buy_min}-{rsi_buy_max}")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần trong khoảng {rsi_buy_min}-{rsi_buy_max}, hiện tại: {current_rsi:.1f})")
                 else: 
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -665,10 +679,23 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V3: Improved RSI filter - Tăng threshold từ 40 lên 42 (default)
-                    rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 42)  # V3: Tăng từ 40 lên 42
-                    filter_status.append(f"{'✅' if last_ha['rsi'] < rsi_sell_threshold else '❌'} RSI < {rsi_sell_threshold}: {last_ha['rsi']:.1f} (V3: stricter)")
-                    if last_ha['rsi'] < rsi_sell_threshold:
+                    # V2: RSI Threshold - Chỉ SELL nếu RSI 40-60, bỏ lệnh nếu >70 hoặc <30
+                    rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
+                    rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+                    rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
+                    rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
+                    current_rsi = last_ha['rsi']
+                    
+                    # Check extreme values first (reject if too extreme)
+                    if current_rsi > rsi_extreme_high:
+                        filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá cao (>{rsi_extreme_high}), hiện tại: {current_rsi:.1f}")
+                    elif current_rsi < rsi_extreme_low:
+                        filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI quá thấp (<{rsi_extreme_low}), hiện tại: {current_rsi:.1f}")
+                    elif rsi_sell_min <= current_rsi <= rsi_sell_max:
+                        filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_sell_min}-{rsi_sell_max}")
+                        # RSI is in valid range, proceed with trade
                         # V3: Liquidity Sweep Check - OPTIONAL
                         liquidity_sweep_required = config['parameters'].get('liquidity_sweep_required', False)  # Default: False
                         buffer_pips = config['parameters'].get('liquidity_sweep_buffer', 1)  # Default: 1 (giảm từ 2)
@@ -732,7 +759,8 @@ def strategy_1_logic(config, error_count=0):
                         else:
                             print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - {sweep_msg}")
                     else:
-                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần < {rsi_sell_threshold}, hiện tại: {last_ha['rsi']:.1f})")
+                        filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_sell_min}-{rsi_sell_max}")
+                        print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI không đạt (cần trong khoảng {rsi_sell_min}-{rsi_sell_max}, hiện tại: {current_rsi:.1f})")
                 else:
                     print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - Doji Candle detected")
             else:
@@ -754,10 +782,14 @@ def strategy_1_logic(config, error_count=0):
         print(f"   📈 M5 Trend: {current_trend}")
         print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-        rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
-        rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
-        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V3: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
-        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold}) [V3: Tăng từ 20 lên 25]")
+        rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
+        rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
+        rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
+        rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+        rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
+        rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
+        print(f"   📊 RSI: {last_ha['rsi']:.1f} (V2: BUY cần {rsi_buy_min}-{rsi_buy_max}, SELL cần {rsi_sell_min}-{rsi_sell_max}, reject nếu >{rsi_extreme_high} hoặc <{rsi_extreme_low})")
+        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold}) [V2: Yêu cầu ADX >35]")
         print(f"   📊 H1 Trend: {h1_trend} (phải == M5 Trend: {current_trend})")
         print(f"   📊 EMA50 M5: {ema50_m5:.2f} | EMA200 M5: {ema200_m5:.2f}")
         print(f"   📊 ATR: {atr_val:.2f}")
@@ -903,8 +935,8 @@ def strategy_1_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
-                f"• ADX: {adx_value:.1f} (>= 25 ✅) [V3: Tăng từ 20]\n"
-                f"• RSI: {last_ha['rsi']:.1f} (V3: {'> 60' if signal == 'BUY' else '< 40'} ✅)\n"
+                f"• ADX: {adx_value:.1f} (>= {adx_min_threshold} ✅) [V2: Yêu cầu ADX >35]\n"
+                f"• RSI: {last_ha['rsi']:.1f} (V2: {'40-60' if signal == 'BUY' else '40-60'} ✅)\n"
                 f"• H1 Trend: {h1_trend} (== M5: {current_trend} ✅)\n"
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
                 f"• Liquidity Sweep: PASS ✅\n"
@@ -935,10 +967,10 @@ if __name__ == "__main__":
         print("📋 V4 Improvements (Session & Losses):")
         print("   ✅ Session Filter (08:00 - 22:00 default)")
         print("   ✅ Consecutive Loss Stop (Max 3 losses default)")
-        print("📋 V3 Improvements (Already included):")
+        print("📋 V2 Improvements (Already included):")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
-        print("   ✅ ADX filter increased (>= 25)")
-        print("   ✅ RSI filter stricter (> 60 / < 40)")
+        print("   ✅ ADX filter increased (>= 35)")
+        print("   ✅ RSI filter range (40-60 for BUY/SELL, reject if >70 or <30)")
         print("   ✅ CHOP/RANGE filter added")
         print("   ✅ SL buffer increased (2.0x ATR)")
         print("   ✅ Confirmation check improved")

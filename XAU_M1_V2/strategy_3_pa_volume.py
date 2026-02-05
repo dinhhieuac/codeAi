@@ -140,6 +140,14 @@ def strategy_3_logic(config, error_count=0):
     filter_status = early_exit_filters.copy()
     signal = None
     
+    # V2: RSI Range Filter parameters
+    rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
+    rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
+    rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
+    rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+    rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
+    rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
+    
     # Check all conditions step by step
     if is_near_sma:
         filter_status.append(f"✅ Price near SMA9: {dist_to_sma:.1f} pts <= {max_sma_distance/point:.0f} pts")
@@ -151,12 +159,18 @@ def strategy_3_logic(config, error_count=0):
                 filter_status.append(f"✅ Price > SMA9: {last['close']:.2f} > {last['sma9']:.2f}")
                 if m5_trend == "BULLISH":
                     filter_status.append(f"✅ M5 Trend: BULLISH")
-                    if last['rsi'] > 50:
-                        filter_status.append(f"✅ RSI > 50: {last['rsi']:.1f}")
+                    # V2: RSI Range Filter
+                    current_rsi = last['rsi']
+                    if current_rsi > rsi_extreme_high:
+                        filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                    elif current_rsi < rsi_extreme_low:
+                        filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                    elif rsi_buy_min <= current_rsi <= rsi_buy_max:
+                        filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_buy_min}-{rsi_buy_max}")
                         signal = "BUY"
                         print("\n✅ [SIGNAL FOUND] BUY - Tất cả điều kiện đạt!")
                     else:
-                        filter_status.append(f"❌ RSI <= 50: {last['rsi']:.1f} (cần > 50)")
+                        filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_buy_min}-{rsi_buy_max}")
                 else:
                     filter_status.append(f"❌ M5 Trend: BEARISH (cần BULLISH)")
             elif is_bearish_pinbar and last['close'] < last['sma9']:
@@ -164,12 +178,18 @@ def strategy_3_logic(config, error_count=0):
                 filter_status.append(f"✅ Price < SMA9: {last['close']:.2f} < {last['sma9']:.2f}")
                 if m5_trend == "BEARISH":
                     filter_status.append(f"✅ M5 Trend: BEARISH")
-                    if last['rsi'] < 50:
-                        filter_status.append(f"✅ RSI < 50: {last['rsi']:.1f}")
+                    # V2: RSI Range Filter
+                    current_rsi = last['rsi']
+                    if current_rsi > rsi_extreme_high:
+                        filter_status.append(f"❌ RSI Extreme High: {current_rsi:.1f} > {rsi_extreme_high} (Reject)")
+                    elif current_rsi < rsi_extreme_low:
+                        filter_status.append(f"❌ RSI Extreme Low: {current_rsi:.1f} < {rsi_extreme_low} (Reject)")
+                    elif rsi_sell_min <= current_rsi <= rsi_sell_max:
+                        filter_status.append(f"✅ RSI Range: {current_rsi:.1f} trong khoảng {rsi_sell_min}-{rsi_sell_max}")
                         signal = "SELL"
                         print("\n✅ [SIGNAL FOUND] SELL - Tất cả điều kiện đạt!")
                     else:
-                        filter_status.append(f"❌ RSI >= 50: {last['rsi']:.1f} (cần < 50)")
+                        filter_status.append(f"❌ RSI Range: {current_rsi:.1f} không trong khoảng {rsi_sell_min}-{rsi_sell_max}")
                 else:
                     filter_status.append(f"❌ M5 Trend: BULLISH (cần BEARISH)")
             else:
@@ -219,7 +239,7 @@ def strategy_3_logic(config, error_count=0):
         print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
         print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips)")
         print(f"   📊 Spread: {spread_pips:.1f} pips (max: {max_spread} pips)")
-        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > 50, SELL cần < 50)")
+        print(f"   📊 RSI: {last['rsi']:.1f} (V2: BUY cần {rsi_buy_min}-{rsi_buy_max}, SELL cần {rsi_sell_min}-{rsi_sell_max}, reject nếu >{rsi_extreme_high} hoặc <{rsi_extreme_low})")
         print(f"   📊 Pinbar: {'Bull' if is_bullish_pinbar else 'Bear' if is_bearish_pinbar else 'None'}")
         if is_bullish_pinbar or is_bearish_pinbar:
             body_pct = (body_size / (last['high'] - last['low'])) * 100 if (last['high'] - last['low']) > 0 else 0
