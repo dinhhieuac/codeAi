@@ -1189,5 +1189,5 @@ def export_signals():
     )
 
 if __name__ == '__main__':
-    print(f"🚀 Dashboard running on http://127.0.0.1:5000")
-    app.run(debug=True, port=5000)
+    print(f"🚀 Dashboard running on http://127.0.0.1:5020")
+    app.run(debug=True, port=5020)

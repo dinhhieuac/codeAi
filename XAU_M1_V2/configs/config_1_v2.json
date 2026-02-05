@@ -5,7 +5,7 @@
     "mt5_path": "C:\\Program Files\\MetaTrader 5 EXNESS -14\\terminal64.exe",
     "symbol": "XAUUSD",
     "volume": 0.01,
-    "magic": 100002,
+    "magic": 100026,
     "max_positions": 1,
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
     "telegram_chat_id": "1887610382",
