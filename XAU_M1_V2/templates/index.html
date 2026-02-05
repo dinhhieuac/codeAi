@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+        }
+
+        .profit-pos {
+            color: green;
+        }
+
+        .profit-neg {
+            color: red;
+        }
+
+        .badge-buy {
+            background-color: #198754;
+        }
+
+        .badge-sell {
+            background-color: #dc3545;
+        }
+        
+        .pnl-calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+        }
+        
+        .calendar-day {
+            aspect-ratio: 1;
+            border: 1px solid #dee2e6;
+            padding: 4px;
+            text-align: center;
+            background-color: #fff;
+            position: relative;
+            min-height: 45px;
+            font-size: 11px;
+        }
+        
+        .calendar-day.has-pnl {
+            font-weight: bold;
+        }
+        
+        .calendar-day.profit {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .calendar-day.loss {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .calendar-day-number {
+            font-size: 11px;
+            margin-bottom: 2px;
+            line-height: 1.2;
+        }
+        
+        .calendar-day-pnl {
+            font-size: 9px;
+            margin-top: 2px;
+            line-height: 1.1;
+        }
+        
+        .calendar-header {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        
+        .calendar-header-day {
+            text-align: center;
+            font-weight: bold;
+            font-size: 10px;
+            color: #6c757d;
+            padding: 2px;
+        }
+        
+        .pnl-calendar {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">🤖 XAUUSD Trading Bot Dashboard</span>
+            <div>
+                <a href="/signals" class="btn btn-outline-light btn-sm me-2">
+                    <i class="fas fa-signal"></i> Signals Analysis
+                </a>
+                <span class="text-white"><i class="fas fa-sync"></i> Auto-refreshing usually requires JS, hit F5
+                    manually</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h3>{{ filter_label }}</h3>
+            <div class="btn-group" role="group">
+                <a href="/?days=1" class="btn btn-outline-primary {% if current_filter == '1' %}active{% endif %}">1
+                    Day</a>
+                <a href="/?days=3" class="btn btn-outline-primary {% if current_filter == '3' %}active{% endif %}">3
+                    Days</a>
+                <a href="/?days=5" class="btn btn-outline-primary {% if current_filter == '5' %}active{% endif %}">5
+                    Days</a>
+                <a href="/?days=7" class="btn btn-outline-primary {% if current_filter == '7' %}active{% endif %}">7
+                    Days</a>
+                <a href="/?days=30" class="btn btn-outline-primary {% if current_filter == '30' %}active{% endif %}">30
+                    Days</a>
+                <a href="/?days=all"
+                    class="btn btn-outline-primary {% if current_filter == 'all' %}active{% endif %}">All Time</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Stats Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Trades</h5>
+                        <h2 class="card-text">{{ total_trades }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card {% if total_profit >= 0 %}bg-success{% else %}bg-danger{% endif %} text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Profit ($)</h5>
+                        <h2 class="card-text">{{ "%.2f"|format(total_profit) }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Win Rate</h5>
+                        <h2 class="card-text">{{ "%.1f"|format(win_rate) }}%</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-secondary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">W / L</h5>
+                        <h2 class="card-text">{{ wins }} / {{ losses }}</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs Navigation -->
+        <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview"
+                    type="button" role="tab" aria-controls="overview" aria-selected="true">Global Overview</button>
+            </li>
+            {% for bot in bot_stats %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-{{ loop.index }}" data-bs-toggle="tab"
+                    data-bs-target="#content-{{ loop.index }}" type="button" role="tab"
+                    aria-controls="content-{{ loop.index }}" aria-selected="false">{{ bot.name }}</button>
+            </li>
+            {% endfor %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="hourly-tab" data-bs-toggle="tab" data-bs-target="#hourly" type="button"
+                    role="tab" aria-controls="hourly" aria-selected="false">Hourly Stats (VN)</button>
+            </li>
+        </ul>
+
+        <!-- Tabs Content -->
+        <div class="tab-content" id="myTabContent">
+
+            <!-- OVERVIEW TAB -->
+            <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview-tab">
+
+                <!-- Bot Performance Stats -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-robot"></i> Strategy Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Strategy</th>
+                                        <th>Trades</th>
+                                        <th>Win Rate</th>
+                                        <th>Profit Factor</th>
+                                        <th>Avg Win</th>
+                                        <th>Avg Loss</th>
+                                        <th>Net Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for bot in bot_stats %}
+                                    <tr>
+                                        <td class="fw-bold text-primary">{{ bot.name }}</td>
+                                        <td>{{ bot.trades }}</td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <span class="me-2">{{ "%.1f"|format(bot.win_rate) }}%</span>
+                                                <div class="progress flex-grow-1" style="height: 6px; width: 60px;">
+                                                    <div class="progress-bar {% if bot.win_rate >= 50 %}bg-success{% else %}bg-warning{% endif %}"
+                                                        role="progressbar" style="width: {{ bot.win_rate }}%"></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            {% if bot.pf >= 1.5 %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% elif bot.pf >= 1.0 %}
+                                            <span class="badge bg-primary">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% else %}
+                                            <span class="badge bg-danger">{{ "%.2f"|format(bot.pf) }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-success">{{ "$%.2f"|format(bot.avg_win) }}</td>
+                                        <td class="text-danger">{{ "$%.2f"|format(bot.avg_loss) }}</td>
+                                        <td
+                                            class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                            {{ "$%.2f"|format(bot.net_profit) }}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Global Orders Table -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-history"></i> Recent Global Trades</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Ticket</th>
+                                        <th>Time</th>
+                                        <th>Strategy</th>
+                                        <th>Type</th>
+                                        <th>Price</th>
+                                        <th>SL Distance</th>
+                                        <th>Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in orders[:50] %}
+                                    <tr>
+                                        <td>{{ order.ticket }}</td>
+                                        <td>{{ order.open_time | to_vn_time }}</td>
+                                        <td><span class="badge bg-secondary">{{ order.strategy_name }}</span></td>
+                                        <td>
+                                            {% if order.order_type == 'BUY' %}
+                                            <span class="badge badge-buy">BUY</span>
+                                            {% else %}
+                                            <span class="badge badge-sell">SELL</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ order.open_price }}</td>
+                                        <td>
+                                            {% if order.sl and order.open_price %}
+                                                {% if order.order_type == 'BUY' %}
+                                                    {{ "%.2f"|format(order.open_price - order.sl) }}
+                                                {% else %}
+                                                    {{ "%.2f"|format(order.sl - order.open_price) }}
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
+                                            {% if order.profit is not none %}
+                                            {{ "%.2f"|format(order.profit) }}
+                                            {% else %}
+                                            <span class="text-muted">Running</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- HOURLY STATS TAB -->
+                        <div class="tab-pane fade" id="hourly" role="tabpanel" aria-labelledby="hourly-tab">
+                            <div class="row">
+                                <div class="col-md-12 mb-4">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title text-center text-muted">Profit by Hour (Vietnam Time)
+                                            </h5>
+                                            <canvas id="hourlyChart" style="max-height: 400px;"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card mb-4">
+                                <div class="card-header bg-white">
+                                    <h5 class="mb-0"><i class="far fa-clock"></i> Hourly Breakdown (Vietnam Time UTC+7)
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle table-sm">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Hour</th>
+                                                    <th>Trades</th>
+                                                    <th>Win Rate</th>
+                                                    <th>Profit</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for stat in hourly_stats %}
+                                                <tr {% if stat.profit> 0 %}class="table-success"{% elif stat.profit < 0
+                                                        %}class="table-danger" {% endif %}>
+                                                        <td><strong>{{ "%02d:00 - %02d:59"|format(stat.hour, stat.hour)
+                                                                }}</strong></td>
+                                                        <td>{{ stat.trades }}</td>
+                                                        <td>
+                                                            {% if stat.trades > 0 %}
+                                                            {{ "%.1f"|format(stat.win_rate) }}%
+                                                            {% else %}
+                                                            -
+                                                            {% endif %}
+                                                        </td>
+                                                        <td class="fw-bold">{{ "$%.2f"|format(stat.profit) }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- INDIVIDUAL BOT TABS -->
+            {% for bot in bot_stats %}
+            <div class="tab-pane fade" id="content-{{ loop.index }}" role="tabpanel"
+                aria-labelledby="tab-{{ loop.index }}">
+
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title text-center text-muted">Equity Curve ({{ filter_label }})</h5>
+                        <canvas id="chart-{{ loop.index }}" style="max-height: 300px;"></canvas>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Net Profit</h5>
+                                <h3
+                                    class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{
+                                    "$%.2f"|format(bot.net_profit) }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Win Rate</h5>
+                                <h3>{{ "%.1f"|format(bot.win_rate) }}%</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h5>Profit Factor</h5>
+                                <h3>{{ "%.2f"|format(bot.pf) }}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Daily PNL Calendar -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0"><i class="fas fa-calendar"></i> PNL hằng ngày (30 ngày gần nhất) - {{ bot.name }}</h6>
+                    </div>
+                    <div class="card-body p-2">
+                        <div id="calendar-{{ loop.index }}">
+                            <!-- Calendar will be rendered by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Ticket</th>
+                                        <th>Time (VN)</th>
+                                        <th>Type</th>
+                                        <th>Price</th>
+                                        <th>SL</th>
+                                        <th>TP</th>
+                                        <th>SL Distance</th>
+                                        <th>Profit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in orders %}
+                                    {% if order.strategy_name == bot.raw_name %}
+                                    <tr>
+                                        <td>{{ order.ticket }}</td>
+                                        <td>{{ order.open_time | to_vn_time }}</td>
+                                        <td>
+                                            {% if order.order_type == 'BUY' %}
+                                            <span class="badge badge-buy">BUY</span>
+                                            {% else %}
+                                            <span class="badge badge-sell">SELL</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ order.open_price }}</td>
+                                        <td>{{ order.sl }}</td>
+                                        <td>{{ order.tp }}</td>
+                                        <td>
+                                            {% if order.sl and order.open_price %}
+                                                {% if order.order_type == 'BUY' %}
+                                                    {{ "%.2f"|format(order.open_price - order.sl) }}
+                                                {% else %}
+                                                    {{ "%.2f"|format(order.sl - order.open_price) }}
+                                                {% endif %}
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td
+                                            class="{% if order.profit is not none and order.profit >= 0 %}profit-pos{% elif order.profit is not none %}profit-neg{% endif %} {% if order.profit is not none and order.profit <= 0 %}fw-bold{% endif %}">
+                                            {% if order.profit is not none %}
+                                            {{ "%.2f"|format(order.profit) }}
+                                            {% else %}
+                                            <span class="text-muted">Running</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            {% endfor %}
+
+        </div>
+
+        <!-- Recent Signals -->
+        <div class="card">
+            <div class="card-header bg-white">
+                <h5 class="mb-0"><i class="fas fa-signal"></i> Recent Signals (Last 50)</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Strategy</th>
+                                <th>Signal</th>
+                                <th>Price</th>
+                                <th>Info</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sig in signals %}
+                            <tr>
+                                <td>{{ sig.timestamp | to_vn_time }}</td>
+                                <td>{{ sig.strategy_name }}</td>
+                                <td>
+                                    {% if sig.signal_type == 'BUY' %}
+                                    <span class="text-success fw-bold">BUY</span>
+                                    {% else %}
+                                    <span class="text-danger fw-bold">SELL</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ sig.price }}</td>
+                                <td class="small text-muted">{{ sig.indicators }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        // Daily PNL Calendar for each bot
+        {% for bot in bot_stats %}
+        (function() {
+            const dailyPnl = {{ bot.daily_pnl | tojson }};
+            const calendarId = 'calendar-{{ loop.index }}';
+            const container = document.getElementById(calendarId);
+            
+            if (!container || !dailyPnl || Object.keys(dailyPnl).length === 0) {
+                container.innerHTML = '<p class="text-muted text-center">No data available</p>';
+                return;
+            }
+            
+            // Get current month from first available date or use current month
+            let currentDate = new Date();
+            const firstDate = Object.keys(dailyPnl).sort()[0];
+            if (firstDate) {
+                currentDate = new Date(firstDate + 'T00:00:00');
+            }
+            
+            let currentMonth = currentDate.getMonth();
+            let currentYear = currentDate.getFullYear();
+            
+            function renderCalendar(month, year) {
+                const firstDay = new Date(year, month, 1);
+                const lastDay = new Date(year, month + 1, 0);
+                const daysInMonth = lastDay.getDate();
+                const startingDayOfWeek = firstDay.getDay(); // 0 = Sunday, 1 = Monday, etc.
+                
+                // Adjust for Monday = 0 (instead of Sunday = 0)
+                const adjustedStartDay = (startingDayOfWeek + 6) % 7; // Convert Sunday=0 to Monday=0
+                
+                let html = '<div class="d-flex justify-content-between align-items-center mb-2">';
+                html += '<button class="btn btn-sm btn-outline-secondary btn-sm" onclick="prevMonth{{ loop.index }}()" style="padding: 2px 8px; font-size: 11px;"><i class="fas fa-chevron-left"></i></button>';
+                html += `<h6 class="mb-0" style="font-size: 13px;">${year}-${String(month + 1).padStart(2, '0')}</h6>`;
+                html += '<button class="btn btn-sm btn-outline-secondary btn-sm" onclick="nextMonth{{ loop.index }}()" style="padding: 2px 8px; font-size: 11px;"><i class="fas fa-chevron-right"></i></button>';
+                html += '</div>';
+                
+                // Calendar header
+                html += '<div class="calendar-header">';
+                const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+                weekDays.forEach(day => {
+                    html += `<div class="calendar-header-day">${day}</div>`;
+                });
+                html += '</div>';
+                
+                // Calendar grid
+                html += '<div class="pnl-calendar">';
+                
+                // Empty cells for days before month starts
+                for (let i = 0; i < adjustedStartDay; i++) {
+                    html += '<div class="calendar-day"></div>';
+                }
+                
+                // Days of the month
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const pnl = dailyPnl[dateKey];
+                    
+                    let dayClass = 'calendar-day';
+                    let pnlHtml = '';
+                    
+                    if (pnl !== undefined) {
+                        dayClass += ' has-pnl';
+                        if (pnl > 0) {
+                            dayClass += ' profit';
+                        } else if (pnl < 0) {
+                            dayClass += ' loss';
+                        }
+                        pnlHtml = `<div class="calendar-day-pnl">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>`;
+                    }
+                    
+                    html += `<div class="${dayClass}">`;
+                    html += `<div class="calendar-day-number">${day}</div>`;
+                    html += pnlHtml;
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+                container.innerHTML = html;
+            }
+            
+            // Store current month/year in global scope for navigation
+            window['currentMonth{{ loop.index }}'] = currentMonth;
+            window['currentYear{{ loop.index }}'] = currentYear;
+            
+            window['prevMonth{{ loop.index }}'] = function() {
+                window['currentMonth{{ loop.index }}']--;
+                if (window['currentMonth{{ loop.index }}'] < 0) {
+                    window['currentMonth{{ loop.index }}'] = 11;
+                    window['currentYear{{ loop.index }}']--;
+                }
+                renderCalendar(window['currentMonth{{ loop.index }}'], window['currentYear{{ loop.index }}']);
+            };
+            
+            window['nextMonth{{ loop.index }}'] = function() {
+                window['currentMonth{{ loop.index }}']++;
+                if (window['currentMonth{{ loop.index }}'] > 11) {
+                    window['currentMonth{{ loop.index }}'] = 0;
+                    window['currentYear{{ loop.index }}']++;
+                }
+                renderCalendar(window['currentMonth{{ loop.index }}'], window['currentYear{{ loop.index }}']);
+            };
+            
+            // Initial render
+            renderCalendar(currentMonth, currentYear);
+        })();
+        {% endfor %}
+    </script>
+
+    <script>
+        {% for bot in bot_stats %}
+        (function () {
+            const ctx = document.getElementById('chart-{{ loop.index }}').getContext('2d');
+            const dataPoints = {{ bot.chart_data | tojson
+        }};
+
+        // Allow empty charts
+        if (!dataPoints || dataPoints.length === 0) return;
+
+        const labels = dataPoints.map(p => p.x);
+        const data = dataPoints.map(p => p.y);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Cumulative Profit ($)',
+                    data: data,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { display: false }, // Hide x labels for cleanliness
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: '#f0f0f0' }
+                    }
+                }
+            }
+        });
+        }) ();
+        {% endfor %}
+    </script>
+    <script>
+        // Hourly Chart
+        (function () {
+            const ctx = document.getElementById('hourlyChart').getContext('2d');
+            const dataStats = {{ hourly_stats | tojson
+        }};
+
+        const labels = dataStats.map(s => s.hour + ":00");
+        const data = dataStats.map(s => s.profit);
+        const backgroundColors = dataStats.map(s => s.profit >= 0 ? 'rgba(75, 192, 192, 0.6)' : 'rgba(255, 99, 132, 0.6)');
+        const borderColors = dataStats.map(s => s.profit >= 0 ? 'rgb(75, 192, 192)' : 'rgb(255, 99, 132)');
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Net Profit ($)',
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    borderColor: borderColors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+        }) ();
+    </script>
+</body>
+
+</html>

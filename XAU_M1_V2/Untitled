@@ -1,0 +1,25 @@
+1️⃣ BẮT BUỘC THÊM SIDEWAY FILTER
+Cách đơn giản nhưng hiệu quả:
+ADX < 18 → NO TRADE
+Range 20–30 nến < 0.6 * SL → NO TRADE
+
+2️⃣ ATR FILTER THÔNG MINH
+ATR < 15 → trade tốt
+ATR 15–25 → trade nhỏ volume
+ATR > 25 → cấm trade
+
+3️⃣ ENTRY TRIGGER LẠI (RẤT QUAN TRỌNG)
+Đừng vào ngay khi signal xuất hiện.
+👉 Nâng cấp:
+Signal xuất hiện
+Chờ 1 pullback nhỏ
+Chỉ vào nếu:
+không phá cấu trúc
+volume không suy yếu
+
+ Winrate tăng, SL giảm rõ rệt
+4TIME FILTER (CỰC KỲ HIỆU QUẢ)
+Cấm trade:
+Phiên Á
+30 phút trước & sau tin lớn
+Khi spread giãn
