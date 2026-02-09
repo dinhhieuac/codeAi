@@ -1,8 +1,8 @@
 {
-    "account": 270590787,
+    "account": 272968624,
     "password": "@Dinhhieu273",
-    "server": "Exness-MT5Trial17",
-    "mt5_path": "C:\\Program Files\\M5\\terminal64.exe",
+    "server": "Exness-MT5Trial14",
+    "mt5_path": "C:\\Program Files\\M2\\terminal64.exe",
     "symbol": "XAUUSD",
     "volume": 0.01,
     "magic": 500025,
