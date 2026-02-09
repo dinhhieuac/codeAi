@@ -1,0 +1,18 @@
+{
+    "account": 270590787,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial17",
+    "mt5_path": "C:\\Program Files\\M5\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100000,
+    "max_positions": 10,
+    "telegram_token": "YOUR_TELEGRAM_TOKEN",
+    "telegram_chat_id": "your_chat_id_here",
+    "parameters": {
+        "sl_pips": 20,
+        "tp_pips": 30,
+        "atr_period": 14,
+        "ma_period": 55
+    }
+}
