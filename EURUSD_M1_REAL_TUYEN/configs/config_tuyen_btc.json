@@ -12,7 +12,7 @@
     "mt5_path": "C:\\Program Files\\M5\\terminal64.exe",
     
     "_comment_symbol": "Cặp tiền giao dịch (EURUSD, XAUUSD, BTCUSD, ...)",
-    "symbol": "BTCUSDc",
+    "symbol": "BTCUSD",
     
     "_comment_volume": "Khối lượng giao dịch (lot). 0.01 = 1 micro lot. Chỉ dùng khi use_risk_based_lot = false",
     "volume": 0.01,

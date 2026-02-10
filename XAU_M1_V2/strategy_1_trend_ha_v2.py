@@ -468,15 +468,20 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  H1 Trend Confirmation: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
-    # V2: ADX Filter - Yêu cầu ADX >35 cho tất cả lệnh (như V2 thành công)
+    # V2: ADX Filter - Chỉ trade khi trend đang mạnh lên (ADX current > ADX previous)
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 35)  # V2: Yêu cầu ADX >35
     df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
-    if pd.isna(adx_value) or adx_value < adx_min_threshold:
-        print(f"❌ ADX Filter: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
+    adx_previous = df_m5.iloc[-2]['adx'] if len(df_m5) >= 2 else None
+    
+    if pd.isna(adx_value) or adx_previous is None or pd.isna(adx_previous):
+        print(f"❌ ADX Filter: Không đủ dữ liệu ADX (current={adx_value:.1f}, previous={adx_previous})")
         return error_count, 0
-    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
+    
+    if adx_value <= adx_previous:
+        print(f"❌ ADX Filter: ADX={adx_value:.1f} <= ADX previous={adx_previous:.1f} (Trend không mạnh lên, skipping)")
+        return error_count, 0
+    print(f"✅ ADX Filter: ADX={adx_value:.1f} > ADX previous={adx_previous:.1f} (Trend đang mạnh lên)")
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
@@ -574,9 +579,9 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: RSI Threshold - Chỉ BUY nếu RSI 40-60, bỏ lệnh nếu >70 hoặc <30
-                    rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
-                    rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
+                    # V2: RSI Threshold - Chỉ BUY nếu RSI 50-65, bỏ lệnh nếu >70 hoặc <30
+                    rsi_buy_min = config['parameters'].get('rsi_buy_min', 50)
+                    rsi_buy_max = config['parameters'].get('rsi_buy_max', 65)
                     rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
                     rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
                     current_rsi = last_ha['rsi']
@@ -679,9 +684,9 @@ def strategy_1_logic(config, error_count=0):
             if is_fresh_breakout:
                 filter_status.append(f"{'✅' if is_solid_candle else '❌'} Solid Candle: {'Not Doji' if is_solid_candle else 'Doji detected (Indecision)'}")
                 if is_solid_candle:
-                    # V2: RSI Threshold - Chỉ SELL nếu RSI 40-60, bỏ lệnh nếu >70 hoặc <30
-                    rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
-                    rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+                    # V2: RSI Threshold - Chỉ SELL nếu RSI 35-50, bỏ lệnh nếu >70 hoặc <30
+                    rsi_sell_min = config['parameters'].get('rsi_sell_min', 35)
+                    rsi_sell_max = config['parameters'].get('rsi_sell_max', 50)
                     rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
                     rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
                     current_rsi = last_ha['rsi']
@@ -782,14 +787,15 @@ def strategy_1_logic(config, error_count=0):
         print(f"   📈 M5 Trend: {current_trend}")
         print(f"   📊 HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
         print(f"   📊 SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-        rsi_buy_min = config['parameters'].get('rsi_buy_min', 40)
-        rsi_buy_max = config['parameters'].get('rsi_buy_max', 60)
-        rsi_sell_min = config['parameters'].get('rsi_sell_min', 40)
-        rsi_sell_max = config['parameters'].get('rsi_sell_max', 60)
+        rsi_buy_min = config['parameters'].get('rsi_buy_min', 50)
+        rsi_buy_max = config['parameters'].get('rsi_buy_max', 65)
+        rsi_sell_min = config['parameters'].get('rsi_sell_min', 35)
+        rsi_sell_max = config['parameters'].get('rsi_sell_max', 50)
         rsi_extreme_high = config['parameters'].get('rsi_extreme_high', 70)
         rsi_extreme_low = config['parameters'].get('rsi_extreme_low', 30)
         print(f"   📊 RSI: {last_ha['rsi']:.1f} (V2: BUY cần {rsi_buy_min}-{rsi_buy_max}, SELL cần {rsi_sell_min}-{rsi_sell_max}, reject nếu >{rsi_extreme_high} hoặc <{rsi_extreme_low})")
-        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold}) [V2: Yêu cầu ADX >35]")
+        adx_previous = df_m5.iloc[-2]['adx'] if len(df_m5) >= 2 else None
+        print(f"   📊 ADX: {adx_value:.1f} (cần > ADX previous={adx_previous:.1f if adx_previous is not None and not pd.isna(adx_previous) else 'N/A'}) [V2: ADX current > ADX previous]")
         print(f"   📊 H1 Trend: {h1_trend} (phải == M5 Trend: {current_trend})")
         print(f"   📊 EMA50 M5: {ema50_m5:.2f} | EMA200 M5: {ema200_m5:.2f}")
         print(f"   📊 ATR: {atr_val:.2f}")
@@ -935,7 +941,7 @@ def strategy_1_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
-                f"• ADX: {adx_value:.1f} (>= {adx_min_threshold} ✅) [V2: Yêu cầu ADX >35]\n"
+                f"• ADX: {adx_value:.1f} (trend đang mạnh lên ✅) [V2: ADX current > ADX previous]\n"
                 f"• RSI: {last_ha['rsi']:.1f} (V2: {'40-60' if signal == 'BUY' else '40-60'} ✅)\n"
                 f"• H1 Trend: {h1_trend} (== M5: {current_trend} ✅)\n"
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
