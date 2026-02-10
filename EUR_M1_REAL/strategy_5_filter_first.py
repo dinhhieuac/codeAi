@@ -219,6 +219,14 @@ def strategy_5_logic(config, error_count=0):
             if m5_trend == "BULLISH":
                 filter_status.append(f"✅ M5 Trend: BULLISH")
                 
+                # UPGRADED: Tuyệt đối không Buy khi RSI > 70
+                if last['rsi'] > 70:
+                    filter_status.append(f"❌ RSI Hard Stop: {last['rsi']:.1f} > 70 (Tuyệt đối không Buy)")
+                    print(f"\n❌ [KHÔNG CÓ TÍN HIỆU] - RSI > 70 (Tuyệt đối không Buy)")
+                    has_breakout_buy = False
+                else:
+                    filter_status.append(f"✅ RSI Hard Stop: {last['rsi']:.1f} <= 70 (OK để Buy)")
+                
                 if pd.notna(m5_adx) and m5_adx >= m5_adx_threshold:
                     filter_status.append(f"✅ M5 ADX: {m5_adx:.1f} >= {m5_adx_threshold}")
                 else:
@@ -354,7 +362,7 @@ def strategy_5_logic(config, error_count=0):
         print(f"   📊 ATR: {atr_pips:.1f} pips (range: {atr_min}-{atr_max} pips) [UPGRADED: Hẹp range]")
         print(f"   📊 M1 ADX: {adx_value:.1f} (cần >= {adx_threshold}) [UPGRADED: Từ 20 lên 30]")
         print(f"   📊 M5 ADX: {m5_adx:.1f} (cần >= {m5_adx_threshold})")
-        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
+        print(f"   📊 RSI: {last['rsi']:.1f} (BUY cần > {rsi_buy_threshold} và <= 70, SELL cần < {rsi_sell_threshold}) [UPGRADED: Tuyệt đối không Buy khi RSI > 70]")
         print(f"   📊 Volume: {last['tick_volume']} / Avg: {int(last['vol_ma'])} = {vol_ratio:.2f}x (cần > {volume_threshold}x)")
         
         print(f"\n💡 Tổng số filters đã kiểm tra: {len(filter_status)}")
@@ -441,6 +449,24 @@ def strategy_5_logic(config, error_count=0):
                     risk_dist = sl - price
                     tp = price - (risk_dist * reward_ratio)
             
+            # UPGRADED: Giới hạn SL tối đa 25 pips
+            max_sl_pips = 25
+            max_sl_dist = max_sl_pips * point * 10  # 25 pips
+            if signal == "BUY":
+                risk_dist = price - sl
+                if risk_dist > max_sl_dist:
+                    sl = price - max_sl_dist
+                    risk_dist = max_sl_dist
+                    tp = price + (risk_dist * reward_ratio)
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
+            else:  # SELL
+                risk_dist = sl - price
+                if risk_dist > max_sl_dist:
+                    sl = price + max_sl_dist
+                    risk_dist = max_sl_dist
+                    tp = price - (risk_dist * reward_ratio)
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
+            
             print(f"   📏 ATR SL: {sl:.2f} ({sl_multiplier}xATR) | TP: {tp:.2f} ({tp_multiplier}xATR, R:R {reward_ratio})")
             
         elif sl_mode == 'auto_m5':
@@ -454,6 +480,13 @@ def strategy_5_logic(config, error_count=0):
                 min_dist = 100 * point
                 if (price - sl) < min_dist: sl = price - min_dist
                 risk_dist = price - sl
+                # UPGRADED: Giới hạn SL tối đa 25 pips
+                max_sl_pips = 25
+                max_sl_dist = max_sl_pips * point * 10
+                if risk_dist > max_sl_dist:
+                    sl = price - max_sl_dist
+                    risk_dist = max_sl_dist
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
@@ -461,12 +494,36 @@ def strategy_5_logic(config, error_count=0):
                 min_dist = 100 * point
                 if (sl - price) < min_dist: sl = price + min_dist
                 risk_dist = sl - price
+                # UPGRADED: Giới hạn SL tối đa 25 pips
+                max_sl_pips = 25
+                max_sl_dist = max_sl_pips * point * 10
+                if risk_dist > max_sl_dist:
+                    sl = price + max_sl_dist
+                    risk_dist = max_sl_dist
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
                 tp = price - (risk_dist * reward_ratio)
             print(f"   📏 Auto M5 SL: {sl:.2f} | TP: {tp:.2f} (R:R {reward_ratio})")
         else:
             # Fixed SL/TP (Legacy)
             sl = price - 2.0 if signal == "BUY" else price + 2.0
             tp = price + 5.0 if signal == "BUY" else price - 5.0
+            # UPGRADED: Giới hạn SL tối đa 25 pips cho Fixed mode
+            max_sl_pips = 25
+            max_sl_dist = max_sl_pips * point * 10
+            if signal == "BUY":
+                risk_dist = price - sl
+                if risk_dist > max_sl_dist:
+                    sl = price - max_sl_dist
+                    risk_dist = max_sl_dist
+                    tp = price + (risk_dist * reward_ratio)
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
+            else:
+                risk_dist = sl - price
+                if risk_dist > max_sl_dist:
+                    sl = price + max_sl_dist
+                    risk_dist = max_sl_dist
+                    tp = price - (risk_dist * reward_ratio)
+                    print(f"   ⚠️ SL giới hạn: Risk {risk_dist/point/10:.1f} pips > {max_sl_pips} pips, dùng max: {max_sl_pips} pips")
             print(f"   📏 Fixed SL: {sl:.2f} | TP: {tp:.2f}")
 
         print(f"🚀 Strat 5 SIGNAL: {signal} @ {price}")

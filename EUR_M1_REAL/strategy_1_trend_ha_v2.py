@@ -480,15 +480,15 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  H1 Trend Confirmation: Disabled (optional) - H1 Trend: {h1_trend}, M5 Trend: {current_trend}")
     
-    # UPGRADED: ADX Filter - Nâng threshold từ 22 lên 28 (default)
+    # UPGRADED: ADX Filter - Chỉ đánh khi ADX > 30
     adx_period = config['parameters'].get('adx_period', 14)
-    adx_min_threshold = config['parameters'].get('adx_min_threshold', 28)  # UPGRADED: Nâng từ 22 lên 28
+    adx_min_threshold = config['parameters'].get('adx_min_threshold', 30)  # UPGRADED: Nâng từ 28 lên 30, chỉ đánh khi > 30
     df_m5 = calculate_adx(df_m5, period=adx_period)
     adx_value = df_m5.iloc[-1]['adx']
-    if pd.isna(adx_value) or adx_value < adx_min_threshold:
-        print(f"❌ ADX Filter: ADX={adx_value:.1f} < {adx_min_threshold} (No trend, skipping)")
+    if pd.isna(adx_value) or adx_value <= adx_min_threshold:
+        print(f"❌ ADX Filter: ADX={adx_value:.1f} <= {adx_min_threshold} (No trend, skipping - chỉ đánh khi ADX > 30)")
         return error_count, 0
-    print(f"✅ ADX Filter: ADX={adx_value:.1f} >= {adx_min_threshold} (Trend confirmed)")
+    print(f"✅ ADX Filter: ADX={adx_value:.1f} > {adx_min_threshold} (Trend confirmed)")
 
     # Channel: 55 SMA High/Low on M1
     df_m1['sma55_high'] = df_m1['high'].rolling(window=55).mean()
@@ -756,7 +756,7 @@ def strategy_1_logic(config, error_count=0):
         rsi_buy_threshold = config['parameters'].get('rsi_buy_threshold', 55)
         rsi_sell_threshold = config['parameters'].get('rsi_sell_threshold', 45)
         print(f"   📊 RSI: {last_ha['rsi']:.1f} (V3: BUY cần > {rsi_buy_threshold}, SELL cần < {rsi_sell_threshold})")
-        print(f"   📊 ADX: {adx_value:.1f} (cần >= {adx_min_threshold}) [V3: Tăng từ 20 lên 25]")
+        print(f"   📊 ADX: {adx_value:.1f} (cần > {adx_min_threshold}) [UPGRADED: Chỉ đánh khi ADX > 30]")
         print(f"   📊 H1 Trend: {h1_trend} (phải == M5 Trend: {current_trend})")
         print(f"   📊 EMA50 M5: {ema50_m5:.2f} | EMA200 M5: {ema200_m5:.2f}")
         print(f"   📊 ATR: {atr_val:.2f}")
@@ -853,9 +853,9 @@ def strategy_1_logic(config, error_count=0):
             
             if signal == "BUY":
                 sl = prev_m5_low - buffer
-                # Check if SL is too close (safety) - min 10 pips
-                min_dist = 100 * mt5.symbol_info(symbol).point
-                if (price - sl) < min_dist:
+                # Check if SL is too close (safety) - min > 10 pips (110 points = 11 pips)
+                min_dist = 110 * mt5.symbol_info(symbol).point
+                if (price - sl) <= min_dist:
                     sl = price - min_dist
                 
                 # FIX: Giới hạn risk distance tối đa
@@ -869,9 +869,9 @@ def strategy_1_logic(config, error_count=0):
                 
             elif signal == "SELL":
                 sl = prev_m5_high + buffer
-                # Check min dist
-                min_dist = 100 * mt5.symbol_info(symbol).point
-                if (sl - price) < min_dist:
+                # Check min dist - min > 10 pips (110 points = 11 pips)
+                min_dist = 110 * mt5.symbol_info(symbol).point
+                if (sl - price) <= min_dist:
                     sl = price + min_dist
                 
                 # FIX: Giới hạn risk distance tối đa
@@ -928,7 +928,7 @@ def strategy_1_logic(config, error_count=0):
                 f"🛑 <b>SL:</b> {sl:.2f} | 🎯 <b>TP:</b> {tp:.2f}\n"
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
-                f"• ADX: {adx_value:.1f} (>= 25 ✅) [V3: Tăng từ 20]\n"
+                f"• ADX: {adx_value:.1f} (> 30 ✅) [UPGRADED: Chỉ đánh khi ADX > 30]\n"
                 f"• RSI: {last_ha['rsi']:.1f} (V3: {'> 60' if signal == 'BUY' else '< 40'} ✅)\n"
                 f"• H1 Trend: {h1_trend} (== M5: {current_trend} ✅)\n"
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
@@ -960,7 +960,7 @@ if __name__ == "__main__":
         print("📋 UPGRADED Improvements:")
         print("   ✅ RSI threshold stricter (BUY >60, SELL <40)")
         print("   ✅ All optional filters enabled by default (volume, liquidity sweep, displacement)")
-        print("   ✅ ADX threshold increased (>= 28, từ 22)")
+        print("   ✅ ADX threshold increased (> 30, từ 28) - Chỉ đánh khi ADX > 30")
         print("   ✅ Max daily loss guard (2% account default)")
         print("   ✅ Dynamic ATR buffer (1.5x low, 2.0x normal, 2.5x high)")
         print("   ✅ News filter (avoid 30min before/after high-impact news)")
