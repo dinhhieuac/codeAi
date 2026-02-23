@@ -1,8 +1,10 @@
-from flask import Flask, render_template, g, request
+from flask import Flask, render_template, g, request, Response
 from datetime import datetime, timedelta
 import json
 import sqlite3
 import os
+import csv
+import io
 
 app = Flask(__name__)
 # Use absolute path to ensure we always find the correct trades.db
@@ -170,6 +172,45 @@ def index():
                            bot_stats=bot_stats,
                            current_filter=days_param,
                            filter_label=filter_label)
+
+
+@app.route('/export_orders')
+def export_orders():
+    """Export orders for a specific bot (strategy) as CSV. Uses same days filter as dashboard."""
+    strategy = request.args.get('strategy', '').strip()
+    if not strategy:
+        return "Missing strategy parameter", 400
+    days_param = request.args.get('days', '30')
+    if days_param == "all":
+        days = 36500
+    else:
+        try:
+            days = int(days_param)
+        except ValueError:
+            days = 30
+    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+    cur = get_db().cursor()
+    cur.execute(
+        "SELECT ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, close_price, profit, comment, account_id FROM orders WHERE strategy_name = ? AND open_time >= ? ORDER BY open_time DESC",
+        (strategy, cutoff_str)
+    )
+    rows = cur.fetchall()
+    keys = ['ticket', 'strategy_name', 'symbol', 'order_type', 'volume', 'open_price', 'sl', 'tp', 'open_time', 'close_price', 'profit', 'comment', 'account_id']
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(keys)
+    for row in rows:
+        writer.writerow([row[k] for k in keys])
+    output.seek(0)
+    safe_name = strategy.replace(" ", "_").replace("/", "-")
+    filename = f"orders_{safe_name}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5005")

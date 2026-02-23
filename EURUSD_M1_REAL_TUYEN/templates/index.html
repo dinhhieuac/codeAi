@@ -139,6 +139,7 @@
                                         <th>Avg Win</th>
                                         <th>Avg Loss</th>
                                         <th>Net Profit</th>
+                                        <th>Export</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -171,11 +172,14 @@
                                             class="{% if bot.net_profit <= 0 %}fw-bold{% endif %} {% if bot.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
                                             {{ "$%.2f"|format(bot.net_profit) }}
                                         </td>
+                                        <td>
+                                            <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-outline-secondary" title="Export orders (CSV)"><i class="fas fa-download"></i> Export</a>
+                                        </td>
                                     </tr>
                                     {% endfor %}
                                     {% else %}
                                     <tr>
-                                        <td colspan="7" class="text-center text-muted py-4">
+                                        <td colspan="8" class="text-center text-muted py-4">
                                             <i class="fas fa-info-circle"></i> No strategy data available for the selected time period.
                                             <br><small>Make sure trades have been closed (profit is not NULL) and match the selected filter.</small>
                                         </td>
@@ -280,8 +284,9 @@
                 </div>
 
                 <div class="card mb-4">
-                    <div class="card-header bg-white">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
+                        <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i> Export orders (CSV)</a>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">

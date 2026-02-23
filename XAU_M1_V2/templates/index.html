@@ -103,6 +103,9 @@
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1">🤖 XAUUSD_M1_V2 Trading Bot Dashboard</span>
             <div>
+                <a href="/api/export_orders?days={{ current_filter }}" class="btn btn-outline-light btn-sm me-2" download>
+                    <i class="fas fa-download"></i> Export Orders
+                </a>
                 <a href="/signals" class="btn btn-outline-light btn-sm me-2">
                     <i class="fas fa-signal"></i> Signals Analysis
                 </a>
@@ -252,8 +255,11 @@
 
                 <!-- Global Orders Table -->
                 <div class="card mb-4">
-                    <div class="card-header bg-white">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0"><i class="fas fa-history"></i> Recent Global Trades</h5>
+                        <a href="/api/export_orders?days={{ current_filter }}" class="btn btn-outline-primary btn-sm" download>
+                            <i class="fas fa-file-csv"></i> Export Orders (CSV)
+                        </a>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
@@ -421,8 +427,11 @@
                 </div>
 
                 <div class="card mb-4">
-                    <div class="card-header bg-white">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
+                        <a href="/api/export_orders?days={{ current_filter }}&strategy={{ bot.raw_name | urlencode }}" class="btn btn-outline-secondary btn-sm" download>
+                            <i class="fas fa-download"></i> Export CSV
+                        </a>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
