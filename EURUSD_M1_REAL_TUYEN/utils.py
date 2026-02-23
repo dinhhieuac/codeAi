@@ -356,11 +356,10 @@ def manage_position(order_ticket, symbol, magic, config):
         
         request = None
         
-        # 1. Quick Breakeven (10 pips)
-        # Move SL to Entry if not already there
-        # Check if breakeven is enabled in config (default: true for backward compatibility)
+        # 1. Quick Breakeven (configurable pips)
+        # Move SL to Entry when profit > breakeven_trigger_pips (default 10). XAU nên dùng 20-25 để tránh "ăn lại" lệnh sớm.
         enable_breakeven = config.get('enable_breakeven', False)
-        breakeven_trigger_pips = 10.0
+        breakeven_trigger_pips = config.get('breakeven_trigger_pips', 10.0)
         if enable_breakeven and profit_pips > breakeven_trigger_pips:
             # Normalize values to symbol digits for comparison
             digits = symbol_info.digits

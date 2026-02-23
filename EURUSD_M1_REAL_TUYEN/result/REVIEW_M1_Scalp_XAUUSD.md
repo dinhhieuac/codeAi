@@ -39,6 +39,7 @@
 - **SL**: `2 × ATR(14)_M1 + 6 × point`
 - **TP**: `2 × SL` → **Tỷ lệ R:R = 1:2**
 - Volume: từ config hoặc risk-based (risk % balance).
+- **Breakeven (utils.manage_position)**: Khi lợi nhuận **> 10 pip**, bot dời SL về giá entry (config `enable_breakeven: true` trong config_tuyen_xau.json). Lệnh đóng khi giá chạm SL mới → có thể đóng tại 0 nếu giá quay về entry.
 
 ---
 
@@ -83,7 +84,7 @@
 
 ### Vấn đề so với kết quả thực tế
 1. **Win rate 0% trong mẫu**: Có thể sample ngắn hoặc giai đoạn không thuận; cần backtest dài hơn và nhiều market regime.
-2. **Nhiều lệnh đóng 0**: Cần rõ nguồn (SL/TP đặt quá sát, hay đóng tay). Nếu đa số là “chạm SL rất sát” thì có thể SL (2ATR + 6pt) trên XAU M1 đang quá chặt.
+2. **Nhiều lệnh đóng 0**: Đây là **Breakeven** (10 pip → dời SL về entry), không phải SL quá sát hay đóng tay. Ý nghĩa: 14 lệnh từng có lãi ≥10 pip nhưng sau đó giá hồi về chạm SL breakeven → có thể TP (2×SL) đang xa, giá ít khi chạm TP trước khi bị kéo về.
 3. **Lỗ lớn vài lệnh**: Một vài lệnh lỗ ~40–54 USD → kiểm tra volume và risk per trade (lot size vs balance).
 4. **XAUUSD biến động mạnh**: ATR M1 có thể bị “noise” → trendline break trên M1 dễ false break; có thể cần thêm filter khung M5/M15 (session, structure) hoặc làm chặt điều kiện break.
 
@@ -95,6 +96,7 @@
 | **RSI M5** | Vùng 55–65 (BUY) / 35–45 (SELL) khá hẹp → có thể nới ra (ví dụ 52–68 và 32–48) và xem lại số lệnh vs chất lượng. |
 | **Pullback** | max_candles=30 có thể dài với M1 → thử rút xuống 20–25 để tránh pullback “quá cũ”. |
 | **Session / timeframe** | Chỉ cho phép vào lệnh trong session có volume (London, NY) hoặc thêm filter structure M5/M15 để tránh scalp M1 thuần trong sideway. |
+| **Breakeven** | Hiện tại: 10 pip → dời SL về 0. 14 lệnh đóng 0 = từng có lãi ≥10 pip rồi bị kéo về. Có thể giữ (bảo vệ vốn) hoặc thử tăng trigger (ví dụ 15 pip) để ít bị “ăn lại” hơn. |
 | **Backtest** | Chạy backtest dài (3–6 tháng) với dữ liệu M1 XAUUSD, so sánh win rate và profit factor với kết quả 24 lệnh thực tế. |
 
 ---
