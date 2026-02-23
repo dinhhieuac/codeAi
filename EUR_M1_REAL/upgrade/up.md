@@ -1,4 +1,4 @@
-----update ngày 09/02/2026------------------
+----update ngày 10/02/2026------------------
 HA V2:Tăng SL lên > 10 pips; Chỉ đánh khi ADX > 30.
 Strategy 5:Giới hạn SL tối đa 25 pips; Tuyệt đối không Buy khi RSI > 70.
 HA V2 (strategy_1_trend_ha_v2.py)
