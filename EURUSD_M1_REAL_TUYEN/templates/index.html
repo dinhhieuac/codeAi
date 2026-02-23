@@ -39,8 +39,13 @@
     <nav class="navbar navbar-dark bg-dark mb-4">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1">🤖 XAUUSD Trading Bot Dashboard TUYEN_SIGNAL</span>
-            <span class="text-white"><i class="fas fa-sync"></i> Auto-refreshing usually requires JS, hit F5
-                manually</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-white me-3"><i class="fas fa-download"></i> Export orders:</span>
+                {% for bot in bot_stats %}
+                <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-outline-light" title="Export {{ bot.name }} (CSV)">{{ bot.name }} CSV</a>
+                {% endfor %}
+                <span class="text-white ms-2"><i class="fas fa-sync"></i> F5 to refresh</span>
+            </div>
         </div>
     </nav>
 
@@ -173,7 +178,7 @@
                                             {{ "$%.2f"|format(bot.net_profit) }}
                                         </td>
                                         <td>
-                                            <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-outline-secondary" title="Export orders (CSV)"><i class="fas fa-download"></i> Export</a>
+                                            <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-primary" title="Export orders (CSV)"><i class="fas fa-download"></i> Export CSV</a>
                                         </td>
                                     </tr>
                                     {% endfor %}
@@ -286,7 +291,7 @@
                 <div class="card mb-4">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
-                        <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i> Export orders (CSV)</a>
+                        <a href="/export_orders?strategy={{ bot.raw_name | urlencode }}&days={{ current_filter }}" class="btn btn-sm btn-primary"><i class="fas fa-download"></i> Export orders (CSV)</a>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">

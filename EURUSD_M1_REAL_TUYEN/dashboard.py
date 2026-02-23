@@ -6,9 +6,10 @@ import os
 import csv
 import io
 
-app = Flask(__name__)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(SCRIPT_DIR, 'templates'))
 # Use absolute path to ensure we always find the correct trades.db
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trades.db')
+DB_PATH = os.path.join(SCRIPT_DIR, 'trades.db')
 
 def get_db():
     db = getattr(g, '_database', None)
