@@ -20,6 +20,10 @@
         "h1_adx_threshold": 25,
         "ut_confirmation": true,
         "loss_streak_threshold": 2,
-        "loss_cooldown_minutes": 45
+        "loss_cooldown_minutes": 45,
+        "trailing_sl_enabled": false,
+        "trailing_sl_start_points": 30000,
+        "breakeven_trigger_points": 10000,
+        "trailing_sl_distance_points": 20000
     }
 }

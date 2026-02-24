@@ -14,6 +14,10 @@
         "reward_ratio": 1.5,
         "sma_period": 9,
         "rsi_period": 14,
-        "rsi_threshold": 50
+        "rsi_threshold": 50,
+        "trailing_sl_enabled": false,
+        "trailing_sl_start_points": 30000,
+        "breakeven_trigger_points": 10000,
+        "trailing_sl_distance_points": 20000
     }
 }

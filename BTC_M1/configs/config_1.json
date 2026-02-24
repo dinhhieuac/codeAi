@@ -24,6 +24,10 @@
         "use_h1_trend": true,
         "atr_min_threshold": 0.0,
         "session_start_hour": 0,
-        "session_end_hour": 24
+        "session_end_hour": 24,
+        "trailing_sl_enabled": false,
+        "trailing_sl_start_points": 30000,
+        "breakeven_trigger_points": 10000,
+        "trailing_sl_distance_points": 20000
     }
 }

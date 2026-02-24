@@ -13,6 +13,10 @@
         "sl_pips": 20,
         "tp_pips": 30,
         "atr_period": 14,
-        "ma_period": 55
+        "ma_period": 55,
+        "trailing_sl_enabled": false,
+        "trailing_sl_start_points": 30000,
+        "breakeven_trigger_points": 10000,
+        "trailing_sl_distance_points": 20000
     }
 }

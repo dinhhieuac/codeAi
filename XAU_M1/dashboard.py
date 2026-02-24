@@ -29,51 +29,84 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
+def _parse_date_range(from_date_str, to_date_str):
+    """Parse from_date and to_date (YYYY-MM-DD). Return (cutoff_utc, end_utc, filter_label) or None if invalid."""
+    try:
+        from_d = datetime.strptime(from_date_str.strip(), "%Y-%m-%d")
+        to_d = datetime.strptime(to_date_str.strip(), "%Y-%m-%d")
+        if from_d > to_d:
+            return None
+        # VN = UTC+7 => UTC = VN - 7
+        start_vn = from_d.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_vn = to_d.replace(hour=23, minute=59, second=59, microsecond=999999)
+        cutoff_utc = start_vn - timedelta(hours=7)
+        end_utc = end_vn - timedelta(hours=7)
+        end_str = end_utc.strftime("%Y-%m-%d %H:%M:%S")
+        return (cutoff_utc, end_str, f"{from_date_str} → {to_date_str}")
+    except (ValueError, AttributeError):
+        return None
+
+
 @app.route('/')
 def index():
     cur = get_db().cursor()
     
-    # Get Filter Parameter
-    days_param = request.args.get('days', '30') # Default 30 days
-    # Calculate cutoff date based on VN Time (UTC+7) start of day
-    if days_param == "all":
-        # Just use a very old date
-        cutoff_date = datetime(2000, 1, 1)
-        filter_label = "All Time"
+    from_date_param = request.args.get('from_date', '').strip()
+    to_date_param = request.args.get('to_date', '').strip()
+    days_param = request.args.get('days', '30')
+    
+    # Priority: custom date range if both from_date and to_date are provided
+    if from_date_param and to_date_param:
+        parsed = _parse_date_range(from_date_param, to_date_param)
+        if parsed:
+            cutoff_date, end_str, filter_label = parsed
+            cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+            current_filter = 'range'
+            cur.execute(
+                "SELECT * FROM orders WHERE open_time >= ? AND open_time <= ? ORDER BY open_time DESC",
+                (cutoff_str, end_str)
+            )
+            orders = cur.fetchall()
+            cur.execute(
+                "SELECT * FROM signals WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 50",
+                (cutoff_str, end_str)
+            )
+            signals = cur.fetchall()
+        else:
+            # invalid range, fallback to days
+            from_date_param = ''
+            to_date_param = ''
+            parsed = None
     else:
-        try:
-            days = int(days_param)
-            if days == 1:
-                filter_label = "Today"
-            else:
-                filter_label = f"Last {days} Days"
-        except:
-            days = 30
-            filter_label = "Last 30 Days"
-            
-        # Current VN Time
-        now_vn = datetime.utcnow() + timedelta(hours=7)
-        # Start of Today VN (00:00:00)
-        start_of_today_vn = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # Calculate start date (VN)
-        # days=1 -> Today 00:00
-        # days=2 -> Yesterday 00:00
-        start_date_vn = start_of_today_vn - timedelta(days=days-1)
-        
-        # Convert back to UTC for DB Query
-        cutoff_date = start_date_vn - timedelta(hours=7)
+        parsed = None
     
-    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-    # print(f"DEBUG: days={days_param}, now_vn={now_vn}, start_vn={start_date_vn}, cutoff_utc={cutoff_str}", flush=True)
-
-    # Fetch Orders Filtered by Time
-    cur.execute("SELECT * FROM orders WHERE open_time >= ? ORDER BY open_time DESC", (cutoff_str,))
-    orders = cur.fetchall()
-    
-    # if orders:
-    #     print(f"DEBUG: First order time (UTC): {orders[0]['open_time']}", flush=True)
-    #     print(f"DEBUG: Last order time (UTC): {orders[-1]['open_time']}", flush=True)
+    if parsed is None:
+        # Get Filter Parameter (days or all)
+        if days_param == "all":
+            cutoff_date = datetime(2000, 1, 1)
+            filter_label = "All Time"
+            current_filter = "all"
+        else:
+            try:
+                days = int(days_param)
+                if days == 1:
+                    filter_label = "Today"
+                else:
+                    filter_label = f"Last {days} Days"
+            except Exception:
+                days = 30
+                filter_label = "Last 30 Days"
+            now_vn = datetime.utcnow() + timedelta(hours=7)
+            start_of_today_vn = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_date_vn = start_of_today_vn - timedelta(days=days - 1)
+            cutoff_date = start_date_vn - timedelta(hours=7)
+            current_filter = days_param
+        
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("SELECT * FROM orders WHERE open_time >= ? ORDER BY open_time DESC", (cutoff_str,))
+        orders = cur.fetchall()
+        cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 50", (cutoff_str,))
+        signals = cur.fetchall()
     
     # Calculate Stats
     total_trades = len(orders)
@@ -81,10 +114,6 @@ def index():
     wins = len([o for o in orders if o['profit'] is not None and o['profit'] > 0])
     losses = len([o for o in orders if o['profit'] is not None and o['profit'] < 0])
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-    
-    # Fetch Recent Signals
-    cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 50", (cutoff_str,))
-    signals = cur.fetchall()
 
     # --- ADVANCED STATS PER STRATEGY ---
     # Auto-detect all strategies from database
@@ -191,8 +220,10 @@ def index():
                            losses=losses,
                            bot_stats=bot_stats,
                            hourly_stats=hourly_stats,
-                           current_filter=days_param,
-                           filter_label=filter_label)
+                           current_filter=current_filter,
+                           filter_label=filter_label,
+                           from_date=from_date_param if from_date_param else '',
+                           to_date=to_date_param if to_date_param else '')
 
 def process_hourly_stats(orders):
     """
