@@ -1760,24 +1760,29 @@ def m1_scalp_logic(config, error_count=0):
         result = mt5.order_send(request)
         
         if result.retcode == mt5.TRADE_RETCODE_DONE:
-            print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "M1_Scalp_XAUUSD", symbol, signal_type, volume, current_price, sl, tp, reason, account_id=config.get('account'))
+            # Giá khớp thực tế từ MT5 (trùng với pos.price_open khi Breakeven) — tránh hiển thị 2 "Entry" khác nhau
+            actual_entry = getattr(result, 'price', None)
+            if actual_entry is None or actual_entry == 0:
+                actual_entry = current_price
+            actual_entry = round(actual_entry, digits)
+            print(f"✅ Order Executed: {result.order} @ {actual_entry:.5f}")
+            db.log_order(result.order, "M1_Scalp_XAUUSD", symbol, signal_type, volume, actual_entry, sl, tp, reason, account_id=config.get('account'))
             
             # Log to file: SIGNAL
             signal_log_content = (
                 f"✅ {signal_type} SIGNAL - Ticket: {result.order} | "
-                f"Entry: {current_price:.5f} | SL: {sl:.5f} | TP: {tp:.5f} | "
+                f"Entry: {actual_entry:.5f} | SL: {sl:.5f} | TP: {tp:.5f} | "
                 f"Volume: {volume:.2f} lot | ATR: {atr_val:.5f}"
             )
             log_to_file(symbol, "SIGNAL", signal_log_content)
             
-            # Detailed Telegram Message
+            # Detailed Telegram Message (Entry = giá khớp thực tế, trùng với Breakeven)
             msg_parts = []
             msg_parts.append(f"✅ <b>M1 Scalp Bot - Lệnh Đã Được Thực Hiện</b>\n")
             msg_parts.append(f"{'='*50}\n")
             msg_parts.append(f"🆔 <b>Ticket:</b> {result.order}\n")
             msg_parts.append(f"💱 <b>Symbol:</b> {symbol} ({signal_type})\n")
-            msg_parts.append(f"💵 <b>Entry Price:</b> {current_price:.5f} (Close của nến phá vỡ)\n")
+            msg_parts.append(f"💵 <b>Entry Price:</b> {actual_entry:.5f} (Giá khớp MT5)\n")
             msg_parts.append(f"🛑 <b>SL:</b> {sl:.5f} (2ATR + 6pt = {sl_distance:.5f})\n")
             msg_parts.append(f"🎯 <b>TP:</b> {tp:.5f} (2SL = {tp_distance:.5f})\n")
             msg_parts.append(f"📊 <b>Volume:</b> {volume:.2f} lot")

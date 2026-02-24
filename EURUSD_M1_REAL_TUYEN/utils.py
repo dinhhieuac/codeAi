@@ -356,11 +356,18 @@ def manage_position(order_ticket, symbol, magic, config):
         
         request = None
         
-        # 1. Quick Breakeven (configurable pips)
-        # Move SL to Entry when profit > breakeven_trigger_pips (default 10). XAU nên dùng 20-25 để tránh "ăn lại" lệnh sớm.
+        # 1. Breakeven (dời SL về entry) — trigger muộn hơn để tránh "ăn lại" lệnh
+        # Có thể dùng: (1) breakeven_trigger_pips cố định, (2) breakeven_ratio_of_sl = chỉ BE khi profit >= X% khoảng cách SL (vd 0.8–1.0)
+        # Dùng giá trị lớn hơn giữa trigger_pips và (nếu có) ratio * sl_distance_pips
         enable_breakeven = config.get('enable_breakeven', False)
-        breakeven_trigger_pips = config.get('breakeven_trigger_pips', 10.0)
-        if enable_breakeven and profit_pips > breakeven_trigger_pips:
+        breakeven_trigger_pips = config.get('breakeven_trigger_pips', 18.0)  # mặc định 18 thay vì 10
+        breakeven_ratio_of_sl = config.get('breakeven_ratio_of_sl', None)  # ví dụ 0.8 = BE khi lãi >= 80% khoảng cách SL
+        required_be_pips = breakeven_trigger_pips
+        if breakeven_ratio_of_sl is not None and pos.sl and pos.sl > 0:
+            sl_distance_price = abs(pos.price_open - pos.sl)
+            sl_distance_pips = sl_distance_price / pip_size
+            required_be_pips = max(required_be_pips, breakeven_ratio_of_sl * sl_distance_pips)
+        if enable_breakeven and profit_pips > required_be_pips:
             # Normalize values to symbol digits for comparison
             digits = symbol_info.digits
             normalized_entry = round(pos.price_open, digits)
@@ -388,7 +395,7 @@ def manage_position(order_ticket, symbol, magic, config):
                     "sl": new_sl,
                     "tp": new_tp
                 }
-                print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry price ({new_sl:.5f}) | Profit: {profit_pips:.1f} pips")
+                print(f"🛡️ [Breakeven] Ticket {pos.ticket}: Moved SL to entry ({new_sl:.5f}) | Profit: {profit_pips:.1f} pips (trigger >= {required_be_pips:.1f} pips)")
                 
                 # Log to file: BREAKEVEN
                 signal_type = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
