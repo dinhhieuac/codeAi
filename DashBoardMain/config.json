@@ -1,0 +1,12 @@
+{
+    "databases": {
+        "XAU_M1": "../XAU_M1/trades.db",
+        "BTC_M1": "../BTC_M1/trades.db",
+        "XAU_M1_REAL": "../XAU_M1_REAL/trades.db",
+        "XAU_M1_V2": "../XAU_M1_V2/trades.db",
+        "EUR_M1_REAL": "../EUR_M1_REAL/trades.db",
+        "EURUSD_M1_REAL_TUYEN": "../EURUSD_M1_REAL_TUYEN/trades.db"
+    },
+    "default": "XAU_M1",
+    "description": "databases: mỗi key là tên tab (vd XAU_M1), value là đường dẫn tới trades.db. default: tab được chọn khi mở trang."
+}

@@ -1,0 +1,4 @@
+{
+    "strategy_order": [],
+    "description": "Thứ tự hiển thị strategy trên dashboard. Để trống [] thì xếp theo lợi nhuận. Thêm tên strategy vào list để tùy chỉnh thứ tự."
+}
