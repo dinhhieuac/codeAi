@@ -261,6 +261,37 @@ def index():
     # --- HOURLY STATS (VIETNAM TIME) ---
     hourly_stats = process_hourly_stats(orders)
 
+    # --- OVERVIEW: 3 biểu đồ thời gian (Equity, PNL/ngày, Thắng-Thua/giờ) ---
+    orders_for_equity = [o for o in orders if o['profit'] is not None]
+    overview_equity_data = []
+    equity = 0
+    for o in sorted(orders_for_equity, key=lambda x: x['open_time']):
+        equity += o['profit']
+        overview_equity_data.append({'x': o['open_time'], 'y': round(equity, 2)})
+
+    daily_pnl_dict = process_daily_pnl(orders_for_equity)
+    overview_daily_pnl = [{'date': k, 'pnl': round(v, 2)} for k, v in sorted(daily_pnl_dict.items())]
+
+    # --- OVERVIEW: RSI & ADX theo thời gian (tất cả bot) ---
+    overview_rsi_adx_data = []
+    orders_with_profit = [o for o in orders if o['profit'] is not None]
+    for strat in strategies:
+        s_orders = [o for o in orders_with_profit if o['strategy_name'] == strat]
+        if not s_orders:
+            continue
+        display_name = format_strategy_name(strat)
+        orders_with_ind = fetch_orders_with_indicators(cur, strat, s_orders)
+        for item in orders_with_ind:
+            rsi, adx = item.get('rsi'), item.get('adx')
+            if rsi is not None or adx is not None:
+                overview_rsi_adx_data.append({
+                    'time': item['order']['open_time'],
+                    'rsi': round(float(rsi), 1) if rsi is not None else None,
+                    'adx': round(float(adx), 1) if adx is not None else None,
+                    'bot': display_name
+                })
+    overview_rsi_adx_data.sort(key=lambda x: x['time'])
+
     return render_template('index.html', 
                            orders=orders, 
                            signals=signals, 
@@ -276,7 +307,10 @@ def index():
                            from_date=from_date_param if from_date_param else '',
                            to_date=to_date_param if to_date_param else '',
                            current_db=g._current_db,
-                           db_tabs=list(DB_MAP.keys()))
+                           db_tabs=list(DB_MAP.keys()),
+                           overview_equity_data=overview_equity_data,
+                           overview_daily_pnl=overview_daily_pnl,
+                           overview_rsi_adx_data=overview_rsi_adx_data)
 
 def process_hourly_stats(orders):
     """

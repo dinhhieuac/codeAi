@@ -266,6 +266,48 @@
                     </div>
                 </div>
 
+                <!-- 3 biểu đồ: Equity, PNL/ngày, Thắng-Thua/giờ (giống details từng bot) -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-chart-line"></i> Đường lợi nhuận tích lũy ({{ filter_label }}) - Tất cả bot</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="overviewEquityChart" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">Nhìn rõ khoảng thời gian lợi nhuận tăng mạnh và khoản lỗ lớn.</p>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-calendar-alt"></i> PNL hằng ngày (giờ VN) - Tất cả bot</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="overviewDailyPnlChart" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">Ngày nào lãi lớn nhất, ngày nào lỗ lớn nhất.</p>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Tỉ lệ thắng / thua theo khung giờ (giờ VN) - Tất cả bot</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="overviewHourlyWinLossChart" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">Khung giờ nào thắng nhiều, khung giờ nào thua nhiều.</p>
+                    </div>
+                </div>
+
+                <!-- RSI & ADX theo thời gian (tất cả bot) -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-tachometer-alt"></i> RSI & ADX theo thời gian (tất cả bot)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="overviewRsiAdxChart" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">Mỗi điểm là một lệnh đã đóng; RSI/ADX lấy từ signal gần nhất. Hover để xem bot và giá trị.</p>
+                    </div>
+                </div>
+
                 <!-- Global Orders Table -->
                 <div class="card mb-4">
                     <div class="card-header bg-white">
@@ -580,6 +622,108 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <script>
+        // Global Overview: 3 biểu đồ (Equity, PNL/ngày, Thắng-Thua/giờ)
+        (function() {
+            const equityData = {{ overview_equity_data | tojson }};
+            const dailyPnlData = {{ overview_daily_pnl | tojson }};
+            const hourlyStats = {{ hourly_stats | tojson }};
+
+            // 1. Đường lợi nhuận tích lũy
+            const equityCtx = document.getElementById('overviewEquityChart');
+            if (equityCtx && equityData && equityData.length > 0) {
+                new Chart(equityCtx.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: equityData.map(p => p.x),
+                        datasets: [{
+                            label: 'Lợi nhuận tích lũy ($)',
+                            data: equityData.map(p => p.y),
+                            borderColor: 'rgb(75, 192, 192)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                            fill: true,
+                            tension: 0.2,
+                            pointRadius: 2,
+                            pointHoverRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: { title: { display: true, text: 'Thời gian' }, ticks: { maxTicksLimit: 14, maxRotation: 45 } },
+                            y: { title: { display: true, text: 'Cumulative PNL ($)' }, beginAtZero: false }
+                        },
+                        plugins: { legend: { position: 'top' } }
+                    }
+                });
+            } else if (equityCtx) {
+                equityCtx.parentElement.innerHTML = '<p class="text-muted text-center mb-0">Chưa có lệnh đã đóng trong kỳ.</p>';
+            }
+
+            // 2. PNL hằng ngày (bar: ngày lãi/lỗ lớn nhất)
+            const dailyCtx = document.getElementById('overviewDailyPnlChart');
+            if (dailyCtx && dailyPnlData && dailyPnlData.length > 0) {
+                const colors = dailyPnlData.map(d => d.pnl >= 0 ? 'rgba(40, 167, 69, 0.7)' : 'rgba(220, 53, 69, 0.7)');
+                new Chart(dailyCtx.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: dailyPnlData.map(d => d.date),
+                        datasets: [{
+                            label: 'PNL ($)',
+                            data: dailyPnlData.map(d => d.pnl),
+                            backgroundColor: colors,
+                            borderColor: dailyPnlData.map(d => d.pnl >= 0 ? 'rgb(40, 167, 69)' : 'rgb(220, 53, 69)'),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: { title: { display: true, text: 'Ngày (VN)' }, ticks: { maxTicksLimit: 20, maxRotation: 45 } },
+                            y: { title: { display: true, text: 'PNL ($)' }, beginAtZero: true }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(ctx) { return 'PNL: $' + ctx.raw.toFixed(2); }
+                                }
+                            }
+                        }
+                    }
+                });
+            } else if (dailyCtx) {
+                dailyCtx.parentElement.innerHTML = '<p class="text-muted text-center mb-0">Chưa có dữ liệu PNL theo ngày.</p>';
+            }
+
+            // 3. Thắng / Thua theo khung giờ
+            const hourlyCtx = document.getElementById('overviewHourlyWinLossChart');
+            if (hourlyCtx && hourlyStats && hourlyStats.length > 0) {
+                const labels = hourlyStats.map(s => (s.hour < 10 ? '0' : '') + s.hour + ':00');
+                new Chart(hourlyCtx.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Thắng', data: hourlyStats.map(s => s.wins), backgroundColor: 'rgba(40, 167, 69, 0.7)', borderColor: 'rgb(40, 167, 69)', borderWidth: 1 },
+                            { label: 'Thua', data: hourlyStats.map(s => s.losses), backgroundColor: 'rgba(220, 53, 69, 0.7)', borderColor: 'rgb(220, 53, 69)', borderWidth: 1 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: { title: { display: true, text: 'Giờ (VN)' } },
+                            y: { beginAtZero: true, title: { display: true, text: 'Số lệnh' } }
+                        },
+                        plugins: { legend: { position: 'top' } }
+                    }
+                });
+            } else if (hourlyCtx) {
+                hourlyCtx.parentElement.innerHTML = '<p class="text-muted text-center mb-0">Chưa có dữ liệu theo giờ.</p>';
+            }
+        })();
+    </script>
+
+    <script>
         // Daily PNL Calendar for each bot
         {% for bot in bot_stats %}
         (function() {
@@ -889,6 +1033,79 @@
             });
         })();
         {% endfor %}
+    </script>
+    <script>
+        // Global Overview: RSI & ADX theo thời gian (tất cả bot)
+        (function() {
+            const ctx = document.getElementById('overviewRsiAdxChart');
+            if (!ctx) return;
+            const rawData = {{ overview_rsi_adx_data | tojson }};
+            if (!rawData || rawData.length === 0) {
+                ctx.parentElement.innerHTML = '<p class="text-muted text-center mb-0">Chưa có dữ liệu RSI/ADX từ signal. Mở tab từng bot để xem theo strategy.</p>';
+                return;
+            }
+            const labels = rawData.map(d => d.time);
+            const rsiData = rawData.map(d => d.rsi);
+            const adxData = rawData.map(d => d.adx);
+            const botLabels = rawData.map(d => d.bot || '');
+
+            new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'RSI',
+                            data: rsiData,
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            fill: false,
+                            tension: 0.2,
+                            spanGaps: true,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: 'ADX',
+                            data: adxData,
+                            borderColor: 'rgb(255, 159, 64)',
+                            backgroundColor: 'rgba(255, 159, 64, 0.1)',
+                            fill: false,
+                            tension: 0.2,
+                            spanGaps: true,
+                            pointRadius: 3,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                afterBody: function(items) {
+                                    const idx = items[0] && items[0].dataIndex;
+                                    return idx !== undefined && botLabels[idx] ? 'Bot: ' + botLabels[idx] : '';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Thời gian mở lệnh (UTC)' },
+                            ticks: { maxTicksLimit: 12, maxRotation: 45 }
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            title: { display: true, text: 'Giá trị (RSI / ADX)' }
+                        }
+                    }
+                }
+            });
+        })();
     </script>
     <script>
         // Hourly Chart
