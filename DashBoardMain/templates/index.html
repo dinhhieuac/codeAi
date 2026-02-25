@@ -436,6 +436,38 @@
                     </div>
                 </div>
 
+                <!-- Win/Loss by hour (Vietnam time) -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Tỉ lệ thắng / thua theo khung giờ (giờ VN) - {{ bot.name }}</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="hourly-winloss-chart-{{ loop.index }}" style="max-height: 320px;"></canvas>
+                    </div>
+                </div>
+
+                <!-- Win/Loss by RSI zone -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0"><i class="fas fa-tachometer-alt"></i> Vùng RSI thắng nhiều nhất / thua nhiều nhất - {{ bot.name }}</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="rsi-winloss-chart-{{ loop.index }}" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">RSI lấy từ signal gần nhất khi mở lệnh. Chỉ lệnh có RSI trong indicators mới được tính.</p>
+                    </div>
+                </div>
+
+                <!-- Win/Loss by ADX zone -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0"><i class="fas fa-chart-line"></i> Vùng ADX thắng nhiều nhất / thua nhiều nhất - {{ bot.name }}</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="adx-winloss-chart-{{ loop.index }}" style="max-height: 320px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">ADX lấy từ signal gần nhất khi mở lệnh. Chỉ lệnh có ADX trong indicators mới được tính.</p>
+                    </div>
+                </div>
+
                 <div class="card mb-4">
                     <div class="card-header bg-white">
                         <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
@@ -694,6 +726,168 @@
             }
         });
         }) ();
+        {% endfor %}
+    </script>
+
+    <script>
+        // Hourly Win/Loss by hour for each bot
+        {% for bot in bot_stats %}
+        (function() {
+            const ctx = document.getElementById('hourly-winloss-chart-{{ loop.index }}');
+            if (!ctx) return;
+            const stats = {{ bot.hourly_win_loss | tojson }};
+            if (!stats || stats.length === 0) return;
+
+            const labels = stats.map(s => (s.hour < 10 ? '0' : '') + s.hour + ':00');
+            const wins = stats.map(s => s.wins);
+            const losses = stats.map(s => s.losses);
+
+            new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Thắng',
+                            data: wins,
+                            backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                            borderColor: 'rgb(40, 167, 69)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Thua',
+                            data: losses,
+                            backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                            borderColor: 'rgb(220, 53, 69)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Giờ (VN)' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Số lệnh' }
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'top' }
+                    }
+                }
+            });
+        })();
+        {% endfor %}
+    </script>
+
+    <script>
+        // RSI Win/Loss by bucket for each bot
+        {% for bot in bot_stats %}
+        (function() {
+            const ctx = document.getElementById('rsi-winloss-chart-{{ loop.index }}');
+            if (!ctx) return;
+            const buckets = {{ bot.rsi_win_loss | tojson }};
+            if (!buckets || buckets.length === 0) return;
+
+            const labels = buckets.map(b => b.label);
+            const wins = buckets.map(b => b.wins);
+            const losses = buckets.map(b => b.losses);
+
+            new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Thắng',
+                            data: wins,
+                            backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                            borderColor: 'rgb(40, 167, 69)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Thua',
+                            data: losses,
+                            backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                            borderColor: 'rgb(220, 53, 69)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Vùng RSI' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Số lệnh' }
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'top' }
+                    }
+                }
+            });
+        })();
+        {% endfor %}
+    </script>
+
+    <script>
+        // ADX Win/Loss by bucket for each bot
+        {% for bot in bot_stats %}
+        (function() {
+            const ctx = document.getElementById('adx-winloss-chart-{{ loop.index }}');
+            if (!ctx) return;
+            const buckets = {{ bot.adx_win_loss | tojson }};
+            if (!buckets || buckets.length === 0) return;
+
+            const labels = buckets.map(b => b.label);
+            const wins = buckets.map(b => b.wins);
+            const losses = buckets.map(b => b.losses);
+
+            new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Thắng',
+                            data: wins,
+                            backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                            borderColor: 'rgb(40, 167, 69)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Thua',
+                            data: losses,
+                            backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                            borderColor: 'rgb(220, 53, 69)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Vùng ADX' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Số lệnh' }
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'top' }
+                    }
+                }
+            });
+        })();
         {% endfor %}
     </script>
     <script>

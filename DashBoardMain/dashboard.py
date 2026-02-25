@@ -234,7 +234,15 @@ def index():
         s_orders_30d = [o for o in orders_30d if o['strategy_name'] == strat]
         daily_pnl = process_daily_pnl(s_orders_30d)
         bot_stats[-1]['daily_pnl'] = daily_pnl
-        
+
+        # Win/Loss by hour (Vietnam time) for this bot
+        bot_stats[-1]['hourly_win_loss'] = process_hourly_stats(s_orders)
+
+        # Win/Loss by RSI and ADX buckets (from closest signal indicators)
+        orders_with_indicators = fetch_orders_with_indicators(cur, strat, s_orders)
+        bot_stats[-1]['rsi_win_loss'] = process_rsi_bucket_stats(orders_with_indicators)
+        bot_stats[-1]['adx_win_loss'] = process_adx_bucket_stats(orders_with_indicators)
+
     # Auto-sort strategies
     # Priority: Use display_order_config if available, otherwise sort by net profit (descending)
     if display_order_config and len(display_order_config) > 0:
@@ -350,6 +358,145 @@ def process_daily_pnl(orders):
             continue
     
     return daily_stats
+
+def fetch_orders_with_indicators(cur, strategy_name, orders):
+    """
+    For each order, find the closest signal (same strategy, symbol, order_type, within 30 min)
+    and extract RSI and ADX from signal indicators.
+    Returns list of dicts: {order, rsi, adx} with rsi/adx=None if not found.
+    """
+    if not orders:
+        return []
+    try:
+        open_times = [o['open_time'] for o in orders]
+        t_min = min(open_times)
+        t_max = max(open_times)
+        try:
+            dt_min = datetime.strptime(t_min, "%Y-%m-%d %H:%M:%S") - timedelta(minutes=30)
+            dt_max = datetime.strptime(t_max, "%Y-%m-%d %H:%M:%S") + timedelta(minutes=30)
+        except ValueError:
+            return [{'order': dict(o), 'rsi': None, 'adx': None} for o in orders]
+        t0 = dt_min.strftime("%Y-%m-%d %H:%M:%S")
+        t1 = dt_max.strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("""
+            SELECT timestamp, symbol, signal_type, indicators
+            FROM signals
+            WHERE strategy_name = ? AND timestamp >= ? AND timestamp <= ?
+        """, (strategy_name, t0, t1))
+        signals = cur.fetchall()
+    except Exception as e:
+        print(f"fetch_orders_with_indicators: {e}")
+        return [{'order': dict(o), 'rsi': None, 'adx': None} for o in orders]
+
+    def parse_indicator(indicators, key, min_val=0, max_val=100):
+        if indicators is None:
+            return None
+        try:
+            if isinstance(indicators, str):
+                data = json.loads(indicators)
+            else:
+                data = indicators
+            if isinstance(data, dict) and key in data:
+                v = float(data[key])
+                return v if min_val <= v <= max_val else None
+            return None
+        except Exception:
+            return None
+
+    def order_time_seconds(ot):
+        try:
+            return datetime.strptime(ot, "%Y-%m-%d %H:%M:%S").timestamp()
+        except Exception:
+            return 0
+
+    result = []
+    for o in orders:
+        o = dict(o)
+        o_time = order_time_seconds(o['open_time'])
+        best_rsi = best_adx = None
+        best_diff = float('inf')
+        for sig in signals:
+            if sig['symbol'] != o.get('symbol') or sig['signal_type'] != o.get('order_type'):
+                continue
+            try:
+                st = datetime.strptime(sig['timestamp'], "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                try:
+                    st = datetime.strptime(str(sig['timestamp'])[:19], "%Y-%m-%d %H:%M:%S").timestamp()
+                except Exception:
+                    continue
+            diff = abs(st - o_time)
+            if diff < best_diff and diff <= 30 * 60:
+                rsi = parse_indicator(sig['indicators'], 'rsi')
+                adx = parse_indicator(sig['indicators'], 'adx')
+                if rsi is not None or adx is not None:
+                    best_diff = diff
+                    best_rsi = rsi
+                    best_adx = adx
+        result.append({'order': o, 'rsi': best_rsi, 'adx': best_adx})
+    return result
+
+def process_rsi_bucket_stats(orders_with_rsi):
+    """
+    Bucket orders by RSI (0-10, 10-20, ..., 90-100) and count wins/losses per bucket.
+    Returns list of {label, wins, losses} for chart.
+    """
+    buckets = []
+    for low in range(0, 100, 10):
+        high = low + 10
+        buckets.append({'label': f'{low}-{high}', 'wins': 0, 'losses': 0})
+    for item in orders_with_rsi:
+        rsi = item.get('rsi')
+        if rsi is None:
+            continue
+        try:
+            rsi = float(rsi)
+            if rsi < 0 or rsi > 100:
+                continue
+        except (TypeError, ValueError):
+            continue
+        profit = item['order'].get('profit')
+        if profit is None:
+            continue
+        idx = min(int(rsi // 10), 9)
+        if rsi == 100:
+            idx = 9
+        if profit > 0:
+            buckets[idx]['wins'] += 1
+        elif profit < 0:
+            buckets[idx]['losses'] += 1
+    return buckets
+
+def process_adx_bucket_stats(orders_with_indicators):
+    """
+    Bucket orders by ADX (0-10, 10-20, ..., 90-100) and count wins/losses per bucket.
+    Returns list of {label, wins, losses} for chart.
+    """
+    buckets = []
+    for low in range(0, 100, 10):
+        high = low + 10
+        buckets.append({'label': f'{low}-{high}', 'wins': 0, 'losses': 0})
+    for item in orders_with_indicators:
+        adx = item.get('adx')
+        if adx is None:
+            continue
+        try:
+            adx = float(adx)
+            if adx < 0 or adx > 100:
+                continue
+        except (TypeError, ValueError):
+            continue
+        profit = item['order'].get('profit')
+        if profit is None:
+            continue
+        idx = min(int(adx // 10), 9)
+        if adx == 100:
+            idx = 9
+        if profit > 0:
+            buckets[idx]['wins'] += 1
+        elif profit < 0:
+            buckets[idx]['losses'] += 1
+    return buckets
 
 def load_display_order_config():
     """
