@@ -146,12 +146,18 @@ def calculate_rsi(series, period=14):
     return rsi
 
 def is_doji(row, threshold=0.1):
-    """Check if candle is a Doji (Body < 10% of Range)"""
+    """Check if candle is a Doji (Body < 10% of Range) - nến thường."""
     body = abs(row['close'] - row['open'])
     rng = row['high'] - row['low']
     return body <= (rng * threshold) if rng > 0 else True
 
-def manage_position(order_ticket, symbol, magic, config):
+def is_doji_ha(row, threshold=0.2):
+    """Check if Heiken Ashi candle is Doji: body < threshold * range (dùng ha_open/ha_close/ha_high/ha_low)."""
+    body = abs(row['ha_close'] - row['ha_open'])
+    rng = row['ha_high'] - row['ha_low']
+    return body <= (rng * threshold) if rng > 0 else True
+
+def manage_position(order_ticket, symbol, magic, config, initial_sl_map=None):
     """
     Manage an open position: Breakeven & Trailing SL (Improved V2)
     
@@ -206,22 +212,18 @@ def manage_position(order_ticket, symbol, magic, config):
             profit_points = (pos.price_open - current_price) / point
             profit_pips = (pos.price_open - current_price) / pip_size
         
-        # Calculate Initial SL Distance (estimate from current SL if not moved much, or from entry)
-        # If SL is close to entry, it's likely initial SL. Otherwise, estimate from entry price.
-        if pos.type == mt5.ORDER_TYPE_BUY:
-            sl_distance_from_entry = (pos.price_open - pos.sl) / pip_size if pos.sl > 0 else 0
+        # Initial SL distance: ưu tiên từ initial_sl_map (lưu khi vào lệnh), không còn ước lượng "<5 pips thì cho 100"
+        if initial_sl_map and isinstance(initial_sl_map, dict) and int(order_ticket) in initial_sl_map:
+            initial_sl_distance_pips = float(initial_sl_map[int(order_ticket)])
         else:
-            sl_distance_from_entry = (pos.sl - pos.price_open) / pip_size if pos.sl > 0 else 0
-        
-        # If SL is at breakeven or very close, try to estimate initial SL from comment or use default
-        # For now, use current SL distance as initial (if reasonable) or estimate from typical values
-        if sl_distance_from_entry < 5:  # SL is at breakeven or very close
-            # Estimate initial SL: typically 50-200 pips for XAUUSD
-            # Use a conservative estimate or try to get from position history
-            initial_sl_distance_pips = 100  # Default estimate
-        else:
-            # Use current SL distance as initial (if SL hasn't been moved much)
-            initial_sl_distance_pips = max(sl_distance_from_entry, 50)  # At least 50 pips
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                sl_distance_from_entry = (pos.price_open - pos.sl) / pip_size if pos.sl > 0 else 0
+            else:
+                sl_distance_from_entry = (pos.sl - pos.price_open) / pip_size if pos.sl > 0 else 0
+            if sl_distance_from_entry < 5:
+                initial_sl_distance_pips = 100
+            else:
+                initial_sl_distance_pips = max(sl_distance_from_entry, 50)
             
         request = None
         
