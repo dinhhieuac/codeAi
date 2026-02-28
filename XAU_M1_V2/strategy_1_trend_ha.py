@@ -1,18 +1,43 @@
 import MetaTrader5 as mt5
 import time
 import sys
+import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
 
 # Import local modules
-sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
-from db import Database
+import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
 from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx
 
 # Initialize Database
 db = Database()
+
+# File lưu last_trade_time ổn định (không phụ thuộc position, không bị reset khi đóng lệnh)
+LAST_TRADE_TIME_FILE = os.path.join(_script_dir, "last_trade_time.json")
+
+def _get_last_trade_time():
+    """Đọc last_trade_time từ file (Unix timestamp). Trả về 0 nếu chưa có."""
+    try:
+        if os.path.isfile(LAST_TRADE_TIME_FILE):
+            with open(LAST_TRADE_TIME_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return float(data.get("last_trade_time", 0))
+    except Exception as e:
+        print(f"⚠️ Read last_trade_time: {e}")
+    return 0.0
+
+def _set_last_trade_time(server_timestamp):
+    """Ghi last_trade_time ra file (Unix timestamp)."""
+    try:
+        with open(LAST_TRADE_TIME_FILE, "w", encoding="utf-8") as f:
+            json.dump({"last_trade_time": float(server_timestamp)}, f)
+    except Exception as e:
+        print(f"⚠️ Write last_trade_time: {e}")
 
 def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']
@@ -42,14 +67,14 @@ def strategy_1_logic(config, error_count=0):
         return error_count, 0
 
     # 2. Calculate Indicators
-    # Trend Filter: EMA 200 on M5 (or M1 as per guide, let's use M5 for better trend)
-    df_m5['ema200'] = df_m5['close'].rolling(window=200).mean() # Using SMA for simplicity or implement EMA
+    # Trend Filter: EMA 200 on M5
+    df_m5['ema200'] = df_m5['close'].ewm(span=200, adjust=False).mean()
     current_trend = "BULLISH" if df_m5.iloc[-1]['close'] > df_m5.iloc[-1]['ema200'] else "BEARISH"
     
-    # H1 Trend Filter: EMA 100 on H1 for long-term trend confirmation
+    # H1 Trend Filter: EMA on H1 for long-term trend confirmation
     h1_ema_period = config['parameters'].get('h1_ema_period', 100)
     h1_trend_confirmation_required = config['parameters'].get('h1_trend_confirmation_required', True)  # Default: required
-    df_h1['ema100'] = df_h1['close'].rolling(window=h1_ema_period).mean()
+    df_h1['ema100'] = df_h1['close'].ewm(span=h1_ema_period, adjust=False).mean()
     h1_trend = "BULLISH" if df_h1.iloc[-1]['close'] > df_h1.iloc[-1]['ema100'] else "BEARISH"
     
     # Check H1 trend alignment with M5 trend
@@ -233,15 +258,19 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
-        strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
-        if strat_positions:
-            strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
-            last_trade_time = strat_positions[0].time
-            current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
-                return error_count, 0
+        # --- SPAM FILTER: Chặn mở lệnh mới nếu (now - last_trade_time) < 120s (last_trade_time lưu file ổn định) ---
+        spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 120)
+        last_trade_ts = _get_last_trade_time()
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            current_ts = time.time()
+        else:
+            t = tick.time
+            current_ts = t.timestamp() if isinstance(t, datetime) else float(t)
+        if last_trade_ts > 0 and (current_ts - last_trade_ts) < spam_filter_seconds:
+            elapsed = current_ts - last_trade_ts
+            print(f"   ⏳ Skipping: Last trade {elapsed:.0f}s ago (wait {spam_filter_seconds}s)")
+            return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")
         
@@ -313,6 +342,12 @@ def strategy_1_logic(config, error_count=0):
         
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
+            # Cập nhật last_trade_time ổn định (file) để spam filter 120s hoạt động đúng
+            tick_after = mt5.symbol_info_tick(symbol)
+            if tick_after is not None:
+                t = tick_after.time
+                ts = t.timestamp() if isinstance(t, datetime) else float(t)
+                _set_last_trade_time(ts)
             print(f"✅ Order Executed: {result.order}")
             db.log_order(result.order, "Strategy_1_Trend_HA", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
             

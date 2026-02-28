@@ -942,7 +942,7 @@ def strategy_1_logic(config, error_count=0):
                 f"📊 <b>Indicators:</b>\n"
                 f"• Trend: {current_trend}\n"
                 f"• ADX: {adx_value:.1f} (trend đang mạnh lên ✅) [V2: ADX current > ADX previous]\n"
-                f"• RSI: {last_ha['rsi']:.1f} (V2: {'40-60' if signal == 'BUY' else '40-60'} ✅)\n"
+                f"• RSI: {last_ha['rsi']:.1f} (V2: BUY {config['parameters'].get('rsi_buy_min', 50)}-{config['parameters'].get('rsi_buy_max', 65)} / SELL {config['parameters'].get('rsi_sell_min', 35)}-{config['parameters'].get('rsi_sell_max', 50)} ✅)\n"
                 f"• H1 Trend: {h1_trend} (== M5: {current_trend} ✅)\n"
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
                 f"• Liquidity Sweep: PASS ✅\n"
