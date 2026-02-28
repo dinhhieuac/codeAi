@@ -615,26 +615,44 @@ def signals_page():
     """Display all signals with ability to check MT5 results"""
     cur = get_db().cursor()
     
-    # Get filter parameter
-    days_param = request.args.get('days', '7')  # Default 7 days
-    if days_param == "all":
-        days = 36500
-        filter_label = "All Time"
+    from_date_param = request.args.get('from_date', '').strip()
+    to_date_param = request.args.get('to_date', '').strip()
+    days_param = request.args.get('days', '7')
+    
+    # Priority: custom date range if both from_date and to_date are provided
+    if from_date_param and to_date_param:
+        parsed = _parse_date_range(from_date_param, to_date_param)
+        if parsed:
+            cutoff_utc, end_str, filter_label = parsed
+            cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
+            cur.execute(
+                "SELECT * FROM signals WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC",
+                (cutoff_str, end_str)
+            )
+            signals = cur.fetchall()
+        else:
+            from_date_param = ''
+            to_date_param = ''
+            parsed = None
     else:
-        try:
-            days = int(days_param)
-            filter_label = f"Last {days} Days"
-        except:
-            days = 7
-            filter_label = "Last 7 Days"
+        parsed = None
     
-    # Calculate cutoff date
-    cutoff_date = datetime.now() - timedelta(days=days)
-    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Fetch signals
-    cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC", (cutoff_str,))
-    signals = cur.fetchall()
+    if parsed is None:
+        # Use days filter
+        if days_param == "all":
+            days = 36500
+            filter_label = "All Time"
+        else:
+            try:
+                days = int(days_param)
+                filter_label = f"Last {days} Days"
+            except Exception:
+                days = 7
+                filter_label = "Last 7 Days"
+        cutoff_date = datetime.now() - timedelta(days=days)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC", (cutoff_str,))
+        signals = cur.fetchall()
     
     # For each signal, try to find matching order
     signals_with_status = []
@@ -713,6 +731,8 @@ def signals_page():
                          losses=losses,
                          current_filter=days_param,
                          filter_label=filter_label,
+                         from_date=from_date_param,
+                         to_date=to_date_param,
                          strategies=strategies,
                          check_mt5_available=False,
                          current_db=g._current_db,
@@ -896,28 +916,41 @@ def analyze_signal(signal_id):
 
 @app.route('/api/export_orders')
 def export_orders():
-    """Export all orders with full information to CSV"""
+    """Export all orders with full information to CSV. Supports days= or from_date&to_date."""
     cur = get_db().cursor()
     
-    # Get filter parameters
     days_param = request.args.get('days', 'all')
+    from_date_param = request.args.get('from_date', '').strip()
+    to_date_param = request.args.get('to_date', '').strip()
     strategy_param = request.args.get('strategy', 'all')
     
-    if days_param == "all":
-        days = 36500
+    if from_date_param and to_date_param:
+        parsed = _parse_date_range(from_date_param, to_date_param)
+        if parsed:
+            cutoff_utc, end_str, _ = parsed
+            cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
+            date_filter = "o.open_time >= ? AND o.open_time <= ?"
+            params = [cutoff_str, end_str]
+        else:
+            from_date_param = ''
+            to_date_param = ''
+            parsed = None
     else:
-        try:
-            days = int(days_param)
-        except:
+        parsed = None
+    
+    if parsed is None:
+        if days_param == "all":
             days = 36500
+        else:
+            try:
+                days = int(days_param)
+            except Exception:
+                days = 36500
+        cutoff_date = datetime.now() - timedelta(days=days)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+        date_filter = "o.open_time >= ?"
+        params = [cutoff_str]
     
-    # Calculate cutoff date
-    cutoff_date = datetime.now() - timedelta(days=days)
-    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Build query with optional strategy filter
-    # First get all orders, then join with closest signal using a simpler approach
-    # Use a two-step process: get orders first, then find matching signals
     base_query = """
         SELECT 
             o.ticket,
@@ -934,10 +967,7 @@ def export_orders():
             o.comment,
             o.account_id
         FROM orders o
-        WHERE o.open_time >= ?
-    """
-    
-    params = [cutoff_str]
+        WHERE """ + date_filter
     
     # Add strategy filter if specified
     if strategy_param and strategy_param != 'all':
@@ -1112,26 +1142,42 @@ def export_orders():
 
 @app.route('/api/export_signals')
 def export_signals():
-    """Export all signals with full information to CSV"""
+    """Export all signals with full information to CSV. Supports days= or from_date&to_date."""
     cur = get_db().cursor()
     
-    # Get filter parameters
     days_param = request.args.get('days', 'all')
+    from_date_param = request.args.get('from_date', '').strip()
+    to_date_param = request.args.get('to_date', '').strip()
     strategy_param = request.args.get('strategy', 'all')
     
-    if days_param == "all":
-        days = 36500
+    # Date range: ưu tiên from_date + to_date
+    if from_date_param and to_date_param:
+        parsed = _parse_date_range(from_date_param, to_date_param)
+        if parsed:
+            cutoff_utc, end_str, _ = parsed
+            cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
+            date_filter = "s.timestamp >= ? AND s.timestamp <= ?"
+            params = [cutoff_str, end_str]
+        else:
+            from_date_param = ''
+            to_date_param = ''
+            parsed = None
     else:
-        try:
-            days = int(days_param)
-        except:
+        parsed = None
+    
+    if parsed is None:
+        if days_param == "all":
             days = 36500
+        else:
+            try:
+                days = int(days_param)
+            except Exception:
+                days = 36500
+        cutoff_date = datetime.now() - timedelta(days=days)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
+        date_filter = "s.timestamp >= ?"
+        params = [cutoff_str]
     
-    # Calculate cutoff date
-    cutoff_date = datetime.now() - timedelta(days=days)
-    cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Build query
     query = """
         SELECT 
             s.id,
@@ -1155,12 +1201,8 @@ def export_signals():
             AND s.symbol = o.symbol 
             AND s.signal_type = o.order_type
             AND ABS((julianday(s.timestamp) - julianday(o.open_time)) * 24 * 60) < 30
-        WHERE s.timestamp >= ?
-    """
+        WHERE """ + date_filter
     
-    params = [cutoff_str]
-    
-    # Add strategy filter if specified
     if strategy_param and strategy_param != 'all':
         query += " AND s.strategy_name = ?"
         params.append(strategy_param)

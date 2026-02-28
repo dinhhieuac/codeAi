@@ -146,38 +146,48 @@
         <ul class="nav nav-tabs nav-fill">
             {% for tab in db_tabs %}
             <li class="nav-item">
-                <a class="nav-link {% if tab == current_db %}active fw-bold{% endif %}" href="/signals?db={{ tab }}&days={{ current_filter }}">{{ tab }}</a>
+                <a class="nav-link {% if tab == current_db %}active fw-bold{% endif %}" href="/signals?db={{ tab }}&days={{ current_filter }}{% if from_date %}&from_date={{ from_date }}{% endif %}{% if to_date %}&to_date={{ to_date }}{% endif %}">{{ tab }}</a>
             </li>
             {% endfor %}
         </ul>
     </div>
 
     <div class="container mb-4">
-        <div class="d-flex justify-content-between align-items-center">
-            <h3>{{ filter_label }} <span class="badge bg-secondary">{{ current_db }}</span></h3>
-            <div class="d-flex gap-2">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <h3 class="mb-0">{{ filter_label }} <span class="badge bg-secondary">{{ current_db }}</span></h3>
+            <div class="d-flex flex-wrap align-items-center gap-2">
                 <div class="btn-group" role="group">
-                    <a href="/signals?db={{ current_db }}&days=1" class="btn btn-outline-primary {% if current_filter == '1' %}active{% endif %}">1 Day</a>
-                    <a href="/signals?db={{ current_db }}&days=3" class="btn btn-outline-primary {% if current_filter == '3' %}active{% endif %}">3 Days</a>
-                    <a href="/signals?db={{ current_db }}&days=7" class="btn btn-outline-primary {% if current_filter == '7' %}active{% endif %}">7 Days</a>
-                    <a href="/signals?db={{ current_db }}&days=30" class="btn btn-outline-primary {% if current_filter == '30' %}active{% endif %}">30 Days</a>
-                    <a href="/signals?db={{ current_db }}&days=all" class="btn btn-outline-primary {% if current_filter == 'all' %}active{% endif %}">All Time</a>
+                    <a href="/signals?db={{ current_db }}&days=1" class="btn btn-outline-primary {% if current_filter == '1' and not from_date %}active{% endif %}">1 Day</a>
+                    <a href="/signals?db={{ current_db }}&days=3" class="btn btn-outline-primary {% if current_filter == '3' and not from_date %}active{% endif %}">3 Days</a>
+                    <a href="/signals?db={{ current_db }}&days=7" class="btn btn-outline-primary {% if current_filter == '7' and not from_date %}active{% endif %}">7 Days</a>
+                    <a href="/signals?db={{ current_db }}&days=30" class="btn btn-outline-primary {% if current_filter == '30' and not from_date %}active{% endif %}">30 Days</a>
+                    <a href="/signals?db={{ current_db }}&days=all" class="btn btn-outline-primary {% if current_filter == 'all' and not from_date %}active{% endif %}">All Time</a>
                 </div>
+                <form class="d-flex align-items-center gap-2 flex-wrap" method="get" action="/signals" style="max-width: 100%;">
+                    <input type="hidden" name="db" value="{{ current_db }}">
+                    <label class="form-label mb-0 small text-muted">Từ ngày</label>
+                    <input type="date" name="from_date" class="form-control form-control-sm" style="width: auto;" value="{{ from_date }}">
+                    <label class="form-label mb-0 small text-muted">Đến ngày</label>
+                    <input type="date" name="to_date" class="form-control form-control-sm" style="width: auto;" value="{{ to_date }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-calendar-alt"></i> Xem
+                    </button>
+                </form>
                 <div class="btn-group" role="group">
-                    <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Export to CSV">
+                    <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Export to CSV (theo bộ lọc hiện tại: từ ngày - đến ngày hoặc days)">
                         <i class="fas fa-download"></i> Export
                     </button>
                     <ul class="dropdown-menu">
                         <li><h6 class="dropdown-header">Export Signals</h6></li>
-                        <li><a class="dropdown-item" href="/api/export_signals?db={{ current_db }}&days={{ current_filter }}&strategy=all">All Strategies</a></li>
+                        <li><a class="dropdown-item" href="/api/export_signals?db={{ current_db }}&days={{ current_filter }}{% if from_date %}&from_date={{ from_date }}&to_date={{ to_date }}{% endif %}&strategy=all">All Strategies</a></li>
                         {% for strategy in strategies %}
-                        <li><a class="dropdown-item" href="/api/export_signals?db={{ current_db }}&days={{ current_filter }}&strategy={{ strategy }}">{{ strategy }}</a></li>
+                        <li><a class="dropdown-item" href="/api/export_signals?db={{ current_db }}&days={{ current_filter }}{% if from_date %}&from_date={{ from_date }}&to_date={{ to_date }}{% endif %}&strategy={{ strategy }}">{{ strategy }}</a></li>
                         {% endfor %}
                         <li><hr class="dropdown-divider"></li>
                         <li><h6 class="dropdown-header">Export Orders</h6></li>
-                        <li><a class="dropdown-item" href="/api/export_orders?db={{ current_db }}&days={{ current_filter }}&strategy=all">All Strategies</a></li>
+                        <li><a class="dropdown-item" href="/api/export_orders?db={{ current_db }}&days={{ current_filter }}{% if from_date %}&from_date={{ from_date }}&to_date={{ to_date }}{% endif %}&strategy=all">All Strategies</a></li>
                         {% for strategy in strategies %}
-                        <li><a class="dropdown-item" href="/api/export_orders?db={{ current_db }}&days={{ current_filter }}&strategy={{ strategy }}">{{ strategy }}</a></li>
+                        <li><a class="dropdown-item" href="/api/export_orders?db={{ current_db }}&days={{ current_filter }}{% if from_date %}&from_date={{ from_date }}&to_date={{ to_date }}{% endif %}&strategy={{ strategy }}">{{ strategy }}</a></li>
                         {% endfor %}
                     </ul>
                 </div>
