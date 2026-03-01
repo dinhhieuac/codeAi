@@ -297,6 +297,17 @@
                     </div>
                 </div>
 
+                <!-- PNL BUY vs SELL (tất cả bot) -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="fas fa-balance-scale"></i> PNL BUY vs SELL - Tất cả bot</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="overviewBuySellPnlChart" style="max-height: 280px;"></canvas>
+                        <p class="small text-muted mt-2 mb-0">So sánh lợi nhuận từ lệnh BUY và lệnh SELL trong kỳ.</p>
+                    </div>
+                </div>
+
                 <!-- RSI & ADX theo thời gian (tất cả bot) -->
                 <div class="card mb-4">
                     <div class="card-header bg-white">
@@ -463,6 +474,16 @@
                                 <h3>{{ "%.2f"|format(bot.pf) }}</h3>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- PNL BUY vs SELL (từng bot) -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0"><i class="fas fa-balance-scale"></i> PNL BUY vs SELL - {{ bot.name }}</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="buy-sell-pnl-chart-{{ loop.index }}" style="max-height: 260px;"></canvas>
                     </div>
                 </div>
 
@@ -720,7 +741,84 @@
             } else if (hourlyCtx) {
                 hourlyCtx.parentElement.innerHTML = '<p class="text-muted text-center mb-0">Chưa có dữ liệu theo giờ.</p>';
             }
+
+            // 4. PNL BUY vs SELL (tất cả bot)
+            const buySellCtx = document.getElementById('overviewBuySellPnlChart');
+            if (buySellCtx) {
+                const buyPnl = {{ overview_buy_pnl | tojson }};
+                const sellPnl = {{ overview_sell_pnl | tojson }};
+                new Chart(buySellCtx.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: ['BUY', 'SELL'],
+                        datasets: [{
+                            label: 'PNL ($)',
+                            data: [buyPnl, sellPnl],
+                            backgroundColor: [
+                                buyPnl >= 0 ? 'rgba(40, 167, 69, 0.7)' : 'rgba(220, 53, 69, 0.7)',
+                                sellPnl >= 0 ? 'rgba(40, 167, 69, 0.7)' : 'rgba(220, 53, 69, 0.7)'
+                            ],
+                            borderColor: [
+                                buyPnl >= 0 ? 'rgb(40, 167, 69)' : 'rgb(220, 53, 69)',
+                                sellPnl >= 0 ? 'rgb(40, 167, 69)' : 'rgb(220, 53, 69)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: { title: { display: true, text: 'PNL ($)' }, beginAtZero: true }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { callbacks: { label: function(ctx) { return 'PNL: $' + ctx.raw.toFixed(2); } } }
+                        }
+                    }
+                });
+            }
         })();
+    </script>
+
+    <script>
+        // PNL BUY vs SELL cho từng bot
+        {% for bot in bot_stats %}
+        (function() {
+            const ctx = document.getElementById('buy-sell-pnl-chart-{{ loop.index }}');
+            if (!ctx) return;
+            const buyPnl = {{ bot.buy_pnl | tojson }};
+            const sellPnl = {{ bot.sell_pnl | tojson }};
+            new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['BUY', 'SELL'],
+                    datasets: [{
+                        label: 'PNL ($)',
+                        data: [buyPnl, sellPnl],
+                        backgroundColor: [
+                            buyPnl >= 0 ? 'rgba(40, 167, 69, 0.7)' : 'rgba(220, 53, 69, 0.7)',
+                            sellPnl >= 0 ? 'rgba(40, 167, 69, 0.7)' : 'rgba(220, 53, 69, 0.7)'
+                        ],
+                        borderColor: [
+                            buyPnl >= 0 ? 'rgb(40, 167, 69)' : 'rgb(220, 53, 69)',
+                            sellPnl >= 0 ? 'rgb(40, 167, 69)' : 'rgb(220, 53, 69)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { title: { display: true, text: 'PNL ($)' }, beginAtZero: true }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: function(c) { return 'PNL: $' + c.raw.toFixed(2); } } }
+                    }
+                }
+            });
+        })();
+        {% endfor %}
     </script>
 
     <script>

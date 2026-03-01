@@ -243,6 +243,12 @@ def index():
         bot_stats[-1]['rsi_win_loss'] = process_rsi_bucket_stats(orders_with_indicators)
         bot_stats[-1]['adx_win_loss'] = process_adx_bucket_stats(orders_with_indicators)
 
+        # PNL BUY vs SELL for this bot
+        s_buy_pnl = sum(o['profit'] for o in s_orders if o['order_type'] == 'BUY')
+        s_sell_pnl = sum(o['profit'] for o in s_orders if o['order_type'] == 'SELL')
+        bot_stats[-1]['buy_pnl'] = round(s_buy_pnl, 2)
+        bot_stats[-1]['sell_pnl'] = round(s_sell_pnl, 2)
+
     # Auto-sort strategies
     # Priority: Use display_order_config if available, otherwise sort by net profit (descending)
     if display_order_config and len(display_order_config) > 0:
@@ -271,6 +277,10 @@ def index():
 
     daily_pnl_dict = process_daily_pnl(orders_for_equity)
     overview_daily_pnl = [{'date': k, 'pnl': round(v, 2)} for k, v in sorted(daily_pnl_dict.items())]
+
+    # --- OVERVIEW: PNL BUY vs SELL (tất cả bot) ---
+    overview_buy_pnl = round(sum(o['profit'] for o in orders_for_equity if o['order_type'] == 'BUY'), 2)
+    overview_sell_pnl = round(sum(o['profit'] for o in orders_for_equity if o['order_type'] == 'SELL'), 2)
 
     # --- OVERVIEW: RSI & ADX theo thời gian (tất cả bot) ---
     overview_rsi_adx_data = []
@@ -310,6 +320,8 @@ def index():
                            db_tabs=list(DB_MAP.keys()),
                            overview_equity_data=overview_equity_data,
                            overview_daily_pnl=overview_daily_pnl,
+                           overview_buy_pnl=overview_buy_pnl,
+                           overview_sell_pnl=overview_sell_pnl,
                            overview_rsi_adx_data=overview_rsi_adx_data)
 
 def process_hourly_stats(orders):
