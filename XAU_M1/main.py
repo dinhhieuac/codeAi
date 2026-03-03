@@ -11,7 +11,7 @@ def main():
     scripts = [
         os.path.join(base_dir, "strategy_1_trend_ha.py"),
         os.path.join(base_dir, "strategy_1_trend_ha_v2.py"),
-        os.path.join(base_dir, "strategy_1_trend_ha_v2.1.py"),
+        os.path.join(base_dir, "strategy_1_trend_ha_v11.py"),
 
         #os.path.join(base_dir, "strategy_2_ema_atr.py"),
         #os.path.join(base_dir, "strategy_3_pa_volume.py"),
