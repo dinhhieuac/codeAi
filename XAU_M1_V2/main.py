@@ -15,7 +15,9 @@ def main():
         #os.path.join(base_dir, "strategy_2_ema_atr.py"),
         #os.path.join(base_dir, "strategy_3_pa_volume.py"),
         #os.path.join(base_dir, "strategy_4_ut_bot.py"),
-        os.path.join(base_dir, "strategy_5_filter_first.py")
+        os.path.join(base_dir, "strategy_5_filter_first.py"),
+        os.path.join(base_dir, "strategy_5_filter_first_v2.py")
+
     ]
 
     processes = []

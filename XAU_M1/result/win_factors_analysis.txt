@@ -1,0 +1,74 @@
+================================================================================
+PHAN TICH KET QUA BOT XAU_M1 - THEO TUNG BOT (CHIEN THUAT)
+================================================================================
+
+--------------------------------------------------------------------------------
+BOT: Strategy_1_Trend_HA
+--------------------------------------------------------------------------------
+  Tong: 271 lenh (Win: 149, Loss: 122), Win rate: 55.0%
+  RSI (luc vao lenh):
+    Win  - TB: 51.58, min: 29.03, max: 64.26, n=149
+    Loss - TB: 52.43, min: 28.72, max: 77.69, n=122
+    => Chenh lech Win - Loss: -0.84
+  Session (gio vao lenh):
+    Asian: Win=53, Loss=41, Win rate=56%
+    Late_NY_Asian: Win=3, Loss=6, Win rate=33%
+    London_NY_Overlap: Win=23, Loss=16, Win rate=59%
+    London_Open: Win=31, Loss=27, Win rate=53%
+    NY: Win=39, Loss=32, Win rate=55%
+  Entry:
+    BUY:  Win=89, Loss=77, Win rate=53.6%
+    SELL: Win=60, Loss=45, Win rate=57.1%
+
+--------------------------------------------------------------------------------
+BOT: Strategy_1_Trend_HA_V2
+--------------------------------------------------------------------------------
+  Tong: 112 lenh (Win: 67, Loss: 45), Win rate: 59.8%
+  RSI (luc vao lenh):
+    Win  - TB: 50.49, min: 18.15, max: 75.46, n=67
+    Loss - TB: 52.03, min: 24.54, max: 64.86, n=45
+    => Chenh lech Win - Loss: -1.54
+  ADX:
+    Win  - TB: 39.85, min: 22.02, max: 78.48, n=67
+    Loss - TB: 41.46, min: 22.27, max: 74.51, n=45
+    => Chenh lech Win - Loss: -1.61
+  ATR:
+    Win  - TB: 4.37, min: 1.23, max: 15.75, n=67
+    Loss - TB: 4.12, min: 1.25, max: 19.48, n=45
+    => Chenh lech Win - Loss: +0.24
+  Session (gio vao lenh):
+    Asian: Win=26, Loss=24, Win rate=52%
+    London_NY_Overlap: Win=19, Loss=7, Win rate=73%
+    London_Open: Win=22, Loss=14, Win rate=61%
+  Entry:
+    BUY:  Win=37, Loss=28, Win rate=56.9%
+    SELL: Win=30, Loss=17, Win rate=63.8%
+
+--------------------------------------------------------------------------------
+BOT: Strategy_5_Filter_First
+--------------------------------------------------------------------------------
+  Tong: 26 lenh (Win: 16, Loss: 10), Win rate: 61.5%
+  RSI (luc vao lenh):
+    Win  - TB: 63.78, min: 17.37, max: 83.80, n=16
+    Loss - TB: 50.46, min: 21.69, max: 78.89, n=10
+    => Chenh lech Win - Loss: +13.32
+  ADX:
+    Win  - TB: 45.52, min: 20.13, max: 82.13, n=16
+    Loss - TB: 38.73, min: 21.47, max: 70.31, n=10
+    => Chenh lech Win - Loss: +6.78
+  ATR:
+    Win  - TB: 1.63, min: 1.11, max: 1.92, n=16
+    Loss - TB: 1.69, min: 1.43, max: 1.97, n=10
+    => Chenh lech Win - Loss: -0.06
+  Session (gio vao lenh):
+    Asian: Win=8, Loss=3, Win rate=73%
+    London_NY_Overlap: Win=1, Loss=0, Win rate=100%
+    London_Open: Win=3, Loss=4, Win rate=43%
+    NY: Win=4, Loss=3, Win rate=57%
+  Entry:
+    BUY:  Win=12, Loss=5, Win rate=70.6%
+    SELL: Win=4, Loss=5, Win rate=44.4%
+
+================================================================================
+Tong hop: 409 lenh tu 3 bot. Bao cao day du: WIN_FACTORS_REPORT.md
+================================================================================
