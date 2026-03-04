@@ -122,6 +122,8 @@ def load_strategy_configs(script_dir):
                     elif filename.startswith("config_1"):
                         if "v2.1" in filename.lower() or "v2_1" in filename.lower():
                             strategy_name = "Strategy_1_Trend_HA_V2.1"
+                        elif "v11" in filename.lower():
+                            strategy_name = "Strategy_1_Trend_HA_V11"
                         elif "v2" in filename.lower():
                             strategy_name = "Strategy_1_Trend_HA_V2"
                         else:
@@ -148,6 +150,7 @@ def load_strategy_configs(script_dir):
             "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
             "Strategy_1_Trend_HA_V2": os.path.join(script_dir, "configs", "config_1_v2.json"),
             "Strategy_1_Trend_HA_V2.1": os.path.join(script_dir, "configs", "config_1_v2.1.json"),
+            "Strategy_1_Trend_HA_V11": os.path.join(script_dir, "configs", "config_1_v11.json"),
             "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
             "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
             "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),

@@ -92,6 +92,7 @@ def main():
         "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json"),
         # M1 Scalp bots (separated by symbol)
         "M1_Scalp_EURUSD": os.path.join(script_dir, "configs", "config_tuyen.json"),
+        "M1_Scalp_AUDUSD": os.path.join(script_dir, "configs", "config_tuyen_aud.json"),
         "M1_Scalp_XAUUSD": os.path.join(script_dir, "configs", "config_tuyen_xau.json"),
         "M1_Scalp_BTCUSD": os.path.join(script_dir, "configs", "config_tuyen_btc.json")
     }
