@@ -203,14 +203,18 @@ def strategy_1_logic(config, error_count=0):
     
     # 4. Execute Trade
     if signal:
-        # --- SPAM FILTER: Check if we traded in the last 60 seconds ---
+        # --- SPAM FILTER: Check if we traded in the last N seconds (configurable) ---
+        spam_filter_seconds = config['parameters'].get('spam_filter_seconds', 180)
         strat_positions = mt5.positions_get(symbol=symbol, magic=magic)
         if strat_positions:
             strat_positions = sorted(strat_positions, key=lambda x: x.time, reverse=True)
             last_trade_time = strat_positions[0].time
             current_server_time = mt5.symbol_info_tick(symbol).time
-            if (current_server_time - last_trade_time) < 60:
-                print(f"   ⏳ Skipping: Trade already taken {current_server_time - last_trade_time}s ago (Wait 60s per candle)")
+            last_ts = last_trade_time.timestamp() if isinstance(last_trade_time, datetime) else last_trade_time
+            current_ts = current_server_time.timestamp() if isinstance(current_server_time, datetime) else current_server_time
+            time_since_last = current_ts - last_ts
+            if time_since_last < spam_filter_seconds:
+                print(f"   ⏳ Skipping: Trade already taken {time_since_last:.0f}s ago (Wait {spam_filter_seconds}s)")
                 return error_count, 0
 
         print(f"🚀 SIGNAL FOUND: {signal} at {price}")

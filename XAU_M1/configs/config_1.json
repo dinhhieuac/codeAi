@@ -10,6 +10,7 @@
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
     "telegram_chat_id": "1887610382",
     "parameters": {
+        "spam_filter_seconds": 180,
         "sl_mode": "auto_m5",
         "reward_ratio": 1.5,
         "sl_pips": 20,
