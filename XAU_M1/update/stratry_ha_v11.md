@@ -65,3 +65,25 @@ Config được load từ: `configs/config_1_v11.json`.
 | Magic (mặc định config) | 100001 | 100011 |
 
 Logic trend (M5/H1), ADX, Heiken Ashi, SMA55, SL/TP, trailing/breakeven giữ nguyên như bản gốc.
+
+---
+
+## Lịch sử cập nhật thêm
+
+### 05/03/2026 — Spam filter: 60s → 180s, cấu hình được
+
+| Mục | Trước | Sau |
+|-----|--------|-----|
+| Thời gian chờ giữa 2 lệnh | Cố định 60 giây | **180 giây** (mặc định), **cấu hình được** qua config |
+| Tham số config | Không có | `parameters.spam_filter_seconds` (mặc định: 180) |
+
+**Chi tiết:**
+
+- Spam filter đọc từ `config['parameters'].get('spam_filter_seconds', 180)`.
+- Chuẩn hóa so sánh thời gian: xử lý cả `datetime` và timestamp từ MT5 để tránh lỗi kiểu dữ liệu.
+- Trong config đã thêm: `"spam_filter_seconds": 180` trong `parameters`.
+
+**File sửa:**
+
+- `XAU_M1/strategy_1_trend_ha_v11.py` (đoạn Execute Trade, spam filter).
+- `XAU_M1/configs/config_1_v11.json` (thêm `spam_filter_seconds`).
