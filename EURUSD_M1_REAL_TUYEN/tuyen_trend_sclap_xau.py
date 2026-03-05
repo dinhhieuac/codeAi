@@ -52,7 +52,7 @@ def get_min_atr_threshold(symbol, config=None):
         return 0.00011
     
     # XAUUSD (Gold): Typically ATR is 0.1-2.0 USD, threshold ~0.1 (equivalent to ~1 pip for gold)
-    if 'XAUUSDc' in symbol_upper or 'GOLD' in symbol_upper:
+    if 'XAUUSD' in symbol_upper or 'GOLD' in symbol_upper:
         return 0.1
     
     # BTCUSD: Typically ATR is 50-500 USD, threshold ~50 (equivalent to ~0.5% of typical BTC price ~10000)
