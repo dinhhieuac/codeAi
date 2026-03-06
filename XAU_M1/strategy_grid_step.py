@@ -48,8 +48,8 @@ def load_cooldown_levels(cooldown_minutes):
     return result
 
 
-def save_cooldown_levels(level_keys_to_add):
-    """Ghi thêm các mức level (với thời gian hiện tại) vào file cooldown."""
+def save_cooldown_levels(level_keys_to_add, step=None):
+    """Ghi thêm các mức level (với thời gian hiện tại) vào file cooldown. step != None: key = price_step (multi-step)."""
     if not level_keys_to_add:
         return
     now = datetime.utcnow().isoformat() + "Z"
@@ -62,7 +62,8 @@ def save_cooldown_levels(level_keys_to_add):
             pass
     levels = data.get("levels", {})
     for key in level_keys_to_add:
-        levels[str(key)] = now
+        k = f"{key}_{step}" if step is not None else str(key)
+        levels[k] = now
     data["levels"] = levels
     try:
         with open(COOLDOWN_FILE, "w", encoding="utf-8") as f:
@@ -71,11 +72,13 @@ def save_cooldown_levels(level_keys_to_add):
         pass
 
 
-def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2):
-    """Kiểm tra mức giá price có đang trong cooldown không."""
+def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2, step=None):
+    """Kiểm tra mức giá price có đang trong cooldown không. step != None: key = price_step."""
     if cooldown_minutes <= 0:
         return False
     key = str(round(float(price), digits))
+    if step is not None:
+        key = f"{key}_{step}"
     return key in levels_dict
 
 
@@ -137,39 +140,56 @@ def check_grid_step_db():
     print(f"{'='*60}\n")
 
 
-def get_grid_anchor_price(symbol, magic):
+def _comment_for_step(step):
+    """Comment MT5 cho từng step. step=None = legacy single (GridStep)."""
+    return "GridStep" if step is None else f"GridStep_{step}"
+
+
+def get_positions_for_step(symbol, magic, step):
+    """Lấy positions thuộc một step (filter theo comment). step=None = tất cả (backward compat)."""
+    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
+    if step is None:
+        return list(positions)
+    comment = _comment_for_step(step)
+    return [p for p in positions if getattr(p, "comment", "") == comment]
+
+
+def get_grid_anchor_price(symbol, magic, step=None):
     """Lấy giá neo grid: giá mở của position mới nhất (theo thời gian). Nếu không có position thì dùng giá thị trường."""
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
+    positions = get_positions_for_step(symbol, magic, step)
     if not positions:
         tick = mt5.symbol_info_tick(symbol)
         return (tick.bid + tick.ask) / 2.0
-    # Position mới nhất
     latest = max(positions, key=lambda p: p.time)
     return float(latest.price_open)
 
 
-def get_pending_orders(symbol, magic):
-    """Lấy danh sách lệnh chờ (pending) của bot."""
+def get_pending_orders(symbol, magic, step=None):
+    """Lấy danh sách lệnh chờ (pending). step=None = tất cả; step=N chỉ lấy comment GridStep_N."""
     orders = mt5.orders_get(symbol=symbol)
     if not orders:
         return []
-    return [o for o in orders if o.magic == magic]
+    orders = [o for o in orders if o.magic == magic]
+    if step is not None:
+        comment = _comment_for_step(step)
+        orders = [o for o in orders if getattr(o, "comment", "") == comment]
+    return orders
 
 
-def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0):
-    """Hủy tất cả lệnh chờ của strategy; cập nhật DB status = CANCELLED."""
-    orders = get_pending_orders(symbol, magic)
+def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0, step=None):
+    """Hủy lệnh chờ của strategy (hoặc chỉ lệnh của step nếu step != None); cập nhật DB = CANCELLED."""
+    orders = get_pending_orders(symbol, magic, step)
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
         db.update_grid_pending_status(o.ticket, "CANCELLED")
     return len(orders)
 
 
-def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0, sl_tp_price=5.0, info=None):
+def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0, sl_tp_price=5.0, info=None, step=None):
     """Kiểm tra lệnh chờ trong DB: nếu ticket không còn trong MT5 orders → khớp hoặc hủy; cập nhật status.
-    Khi lệnh khớp → ghi vào bảng orders với SL/TP đúng (entry ± sl_tp_price), không dùng 0 từ position."""
-    pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic)}
-    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
+    Khi lệnh khớp → ghi vào bảng orders với SL/TP đúng. step=None = single-step mode."""
+    pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
+    positions = get_positions_for_step(symbol, magic, step)
     info = info or mt5.symbol_info(symbol)
     digits = getattr(info, "digits", 2) if info else 2
     pos_by_price = {}
@@ -213,17 +233,17 @@ def position_at_level(positions, level_price, point, tolerance_points=1):
     return False
 
 
-def total_profit(symbol, magic):
-    """Tổng lợi nhuận (floating) của tất cả position thuộc strategy."""
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
+def total_profit(symbol, magic, step=None):
+    """Tổng lợi nhuận (floating) của positions thuộc strategy (hoặc thuộc step nếu step != None)."""
+    positions = get_positions_for_step(symbol, magic, step)
     if not positions:
         return 0.0
     return sum(p.profit + p.swap + getattr(p, 'commission', 0) for p in positions)
 
 
-def ensure_position_sl_tp(symbol, magic, sl_tp_price, info):
-    """Đặt lại SL/TP = 5 (giá) cho position nếu đang 0 (broker không kế thừa từ lệnh chờ)."""
-    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
+def ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step=None):
+    """Đặt lại SL/TP cho position nếu đang 0 (broker không kế thừa từ lệnh chờ)."""
+    positions = get_positions_for_step(symbol, magic, step)
     step = float(sl_tp_price)
     for pos in positions:
         entry = float(pos.price_open)
@@ -248,9 +268,9 @@ def ensure_position_sl_tp(symbol, magic, sl_tp_price, info):
                 print(f"   SL/TP fail pos {pos.ticket}: {r.retcode} {r.comment}")
 
 
-def close_all_positions(symbol, magic):
-    """Đóng tất cả position của strategy (Basket Take Profit)."""
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
+def close_all_positions(symbol, magic, step=None):
+    """Đóng tất cả position của strategy (hoặc chỉ của step nếu step != None)."""
+    positions = get_positions_for_step(symbol, magic, step)
     for p in positions:
         tick = mt5.symbol_info_tick(symbol)
         price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
@@ -268,37 +288,34 @@ def close_all_positions(symbol, magic):
     return len(positions)
 
 
-def strategy_grid_step_logic(config, error_count=0):
+def strategy_grid_step_logic(config, error_count=0, step=None):
+    """Chạy logic grid cho một step. step = giá trị bước (vd 5); step=None = chế độ cũ 1 step (strategy_name Grid_Step)."""
     symbol = config['symbol']
     volume = config['volume']
     magic = config['magic']
     params = config.get('parameters', {})
-    # step: cấu hình 1 giá trị dùng chung cho grid và SL/TP (vd 3, 5, 6, 7...). Có thể ghi đè bằng grid_step_price / sl_tp_price.
-    step_cfg = params.get('step', 5)
-    step_default = float(step_cfg) if step_cfg is not None else 5.0
+    # step=None: backward compat (config chỉ có "step", không có "steps") → 1 kênh, strategy_name "Grid_Step"
+    if step is None:
+        step_val = float(params.get('step', 5) or 5)
+        grid_step_price = step_val
+        sl_tp_price = step_val
+        strategy_name = "Grid_Step"
+        step_filter = None  # không lọc theo comment
+    else:
+        step = float(step)
+        step_val = step
+        grid_step_price = step
+        sl_tp_price = step
+        strategy_name = f"Grid_Step_{step}"
+        step_filter = step
     min_distance_points = params.get('min_distance_points', 5)
     max_positions = config.get('max_positions', 5)
-    target_profit = params.get('target_profit', 50.0)       # Basket TP (currency)
+    target_profit = params.get('target_profit', 50.0)
     spread_max = params.get('spread_max', 0.5)
-    sl_tp_price = params.get('sl_tp_price')
-    if sl_tp_price is not None:
-        sl_tp_price = float(sl_tp_price)
-    else:
-        sl_tp_price = step_default
 
     info = mt5.symbol_info(symbol)
     if not info:
         return error_count, 0
-    # Bước grid theo GIÁ (VD step=5 → 5150, 5155, 5160...). Ưu tiên grid_step_price, không có thì dùng step, cuối cùng grid_step_points*point.
-    grid_step_price = params.get('grid_step_price')
-    if grid_step_price is not None:
-        grid_step_price = float(grid_step_price)
-    else:
-        grid_step_points = params.get('grid_step_points')
-        if grid_step_points is not None:
-            grid_step_price = grid_step_points * info.point
-        else:
-            grid_step_price = step_default
     # XAU min lot = 0.01
     volume_min = getattr(info, 'volume_min', 0.01)
     volume_step = getattr(info, 'volume_step', 0.01)
@@ -309,24 +326,25 @@ def strategy_grid_step_logic(config, error_count=0):
     point = info.point
     min_distance = min_distance_points * point
 
-    # 1. Lấy positions và pending
-    positions = mt5.positions_get(symbol=symbol, magic=magic)
-    positions = list(positions or [])
-    pendings = get_pending_orders(symbol, magic)
+    # 1. Lấy positions và pending (chỉ của step này khi step_filter != None)
+    positions = get_positions_for_step(symbol, magic, step_filter)
+    positions = list(positions)
+    pendings = get_pending_orders(symbol, magic, step_filter)
 
-    # Cập nhật status lệnh chờ trong DB: khớp (FILLED) hoặc hủy (CANCELLED); ghi orders với SL/TP đúng
-    sync_grid_pending_status(symbol, magic, "Grid_Step", config.get('account'), sl_tp_price, info)
+    # Cập nhật status lệnh chờ trong DB
+    sync_grid_pending_status(symbol, magic, strategy_name, config.get('account'), sl_tp_price, info, step_filter)
 
-    # Đặt lại SL/TP = 5 (giá) cho position nếu broker không kế thừa từ lệnh chờ (SL/TP đang 0)
-    ensure_position_sl_tp(symbol, magic, sl_tp_price, info)
+    # Đặt lại SL/TP cho position nếu broker không kế thừa từ lệnh chờ
+    ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step_filter)
 
-    # 2. Basket Take Profit
-    profit = total_profit(symbol, magic)
+    # 2. Basket Take Profit (theo step)
+    profit = total_profit(symbol, magic, step_filter)
     if profit >= target_profit and positions:
-        print(f"✅ [BASKET TP] Profit {profit:.2f} >= {target_profit}, đóng tất cả.")
-        close_all_positions(symbol, magic)
-        cancel_all_pending(symbol, magic, "Grid_Step", config.get('account'))
-        msg = f"✅ Grid Step: Basket TP hit. Profit={profit:.2f} | Closed all."
+        _step_label = step_filter if step_filter is not None else "single"
+        print(f"✅ [BASKET TP] step={_step_label} Profit {profit:.2f} >= {target_profit}, đóng tất cả.")
+        close_all_positions(symbol, magic, step_filter)
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        msg = f"✅ Grid Step {step}: Basket TP hit. Profit={profit:.2f} | Closed all."
         send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
         return 0, 0
 
@@ -355,15 +373,14 @@ def strategy_grid_step_logic(config, error_count=0):
     if len(pendings) == 2:
         return error_count, 0
 
-    # Có ít nhất 1 position → vừa có lệnh khớp: hủy hết pending, đặt cặp mới quanh anchor = giá position mới nhất
+    # Có ít nhất 1 position → hủy pending của step này, đặt cặp mới quanh anchor
     if positions:
-        cancel_all_pending(symbol, magic, "Grid_Step", config.get('account'))
-        current_price = get_grid_anchor_price(symbol, magic)  # giá mở của position mới nhất
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
-        # 0 position, 0 hoặc 1 pending: đặt cặp mới (hoặc cặp đầu tiên)
         if pendings:
-            cancel_all_pending(symbol, magic, "Grid_Step", config.get('account'))  # dọn pending lẻ (1 cái)
-        current_price = get_grid_anchor_price(symbol, magic)  # giá thị trường
+            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
     # ref = mức grid gần giá nhất (round). VD giá 5110 → ref=5110 → BUY 5115, SELL 5105
     ref = round(current_price / grid_step_price) * grid_step_price
@@ -384,18 +401,19 @@ def strategy_grid_step_logic(config, error_count=0):
         if abs(p.price_open - buy_price) < min_distance or abs(p.price_open - sell_price) < min_distance:
             return error_count, 0
 
-    # Cooldown grid level: không trade lại cùng mức trong X phút (giảm whipsaw sideways)
+    # Cooldown grid level (theo step khi chạy nhiều step)
     cooldown_minutes = params.get('cooldown_minutes', 0)
     if cooldown_minutes > 0:
         cooldown_levels = load_cooldown_levels(cooldown_minutes)
-        if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, info.digits) or is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, info.digits):
-            if not hasattr(strategy_grid_step_logic, "_last_cooldown_log") or strategy_grid_step_logic._last_cooldown_log != (buy_price, sell_price):
-                print(f"⏸️ Cooldown: mức {buy_price}/{sell_price} vừa dùng trong {cooldown_minutes} phút, bỏ qua đặt lệnh.")
-                strategy_grid_step_logic._last_cooldown_log = (buy_price, sell_price)
+        if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, info.digits, step_filter) or is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, info.digits, step_filter):
+            _log_key = (step_filter, buy_price, sell_price)
+            if not hasattr(strategy_grid_step_logic, "_last_cooldown_log") or strategy_grid_step_logic._last_cooldown_log != _log_key:
+                print(f"⏸️ Cooldown step={step_filter}: mức {buy_price}/{sell_price} trong {cooldown_minutes} phút, bỏ qua.")
+                strategy_grid_step_logic._last_cooldown_log = _log_key
             return error_count, 0
 
-    # SL/TP = sl_tp_price (mặc định 5 giá). Không trailing, không breakeven.
-    step = float(sl_tp_price)
+    # SL/TP = sl_tp_price (bằng step cho kênh này). Không trailing.
+    step_val = float(sl_tp_price)
     filling = mt5.ORDER_FILLING_FOK
     if info.filling_mode & 2:
         filling = mt5.ORDER_FILLING_IOC
@@ -410,20 +428,20 @@ def strategy_grid_step_logic(config, error_count=0):
             "sl": round(sl, info.digits) if sl else 0.0,
             "tp": round(tp, info.digits) if tp else 0.0,
             "magic": magic,
-            "comment": "GridStep",
+            "comment": _comment_for_step(step_filter),
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling,
         }
         return mt5.order_send(req)
 
-    # BUY @ buy_price → TP = buy_price + step, SL = buy_price - step
-    # SELL @ sell_price → TP = sell_price - step, SL = sell_price + step
-    sl_buy = buy_price - step
-    tp_buy = buy_price + step
-    sl_sell = sell_price + step
-    tp_sell = sell_price - step
+    # BUY @ buy_price → TP = buy_price + step_val, SL = buy_price - step_val
+    sl_buy = buy_price - step_val
+    tp_buy = buy_price + step_val
+    sl_sell = sell_price + step_val
+    tp_sell = sell_price - step_val
 
-    print(f"📤 Đặt lệnh: BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy}), SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
+    _step_label = step_filter if step_filter is not None else step_val
+    print(f"📤 [step={_step_label}] BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy}), SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
     r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
     r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
 
@@ -437,12 +455,12 @@ def strategy_grid_step_logic(config, error_count=0):
         return error_count + 1, getattr(err, 'code', 0)
 
     if r1.retcode == mt5.TRADE_RETCODE_DONE and r2.retcode == mt5.TRADE_RETCODE_DONE:
-        print(f"✅ Grid: BUY_STOP @ {buy_price:.2f}, SELL_STOP @ {sell_price:.2f} | ref={ref}")
+        print(f"✅ Grid step={_step_label}: BUY_STOP @ {buy_price:.2f}, SELL_STOP @ {sell_price:.2f} | ref={ref}")
         if cooldown_minutes > 0:
-            save_cooldown_levels([buy_price, sell_price])
+            save_cooldown_levels([buy_price, sell_price], step_filter)
         acc = config.get('account')
-        db.log_grid_pending(r1.order, "Grid_Step", symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
-        db.log_grid_pending(r2.order, "Grid_Step", symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
+        db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
+        db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
         return 0, 0
     if r1.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
@@ -467,13 +485,26 @@ if __name__ == "__main__":
     consecutive_errors = 0
 
     if config and connect_mt5(config):
-        print("✅ Grid Step Bot - Started")
+        params = config.get("parameters", {})
+        if "steps" in params and params["steps"] is not None:
+            steps_config = params["steps"]
+            if not isinstance(steps_config, list):
+                steps_config = [steps_config]
+            steps_list = [float(s) for s in steps_config]
+        else:
+            steps_list = None  # legacy: 1 step từ "step", gọi logic với step=None
+        label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
+        print(f"✅ Grid Step Bot - Started ({label})")
         loop_count = 0
         try:
             while True:
-                consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors)
+                if steps_list is not None:
+                    for step_val in steps_list:
+                        consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=step_val)
+                else:
+                    consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=None)
                 loop_count += 1
-                # Heartbeat mỗi ~30 giây: trạng thái positions + pendings
+                # Heartbeat mỗi ~30 giây
                 if loop_count % 30 == 0:
                     sym = config["symbol"]
                     mag = config["magic"]
@@ -482,7 +513,8 @@ if __name__ == "__main__":
                     ords = [o for o in ords if o.magic == mag]
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
-                    print(f"🔄 Grid Step | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
+                    steps_info = steps_list if steps_list else "1"
+                    print(f"🔄 Grid Step | Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
 
                 if consecutive_errors >= 5:
                     error_msg = get_mt5_error_message(last_error_code)

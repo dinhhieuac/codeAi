@@ -24,8 +24,18 @@ Step có thể cấu hình **3, 5, 6, 7...** (đơn vị giá, VD với XAU: 5 =
 | **sl_tp_price** | (Tùy chọn) Ghi đè khoảng SL/TP riêng | Nếu không set → dùng `step` |
 | **grid_step_points** | (Tùy chọn) Bước grid theo point: `grid_step_points * point` | Chỉ dùng khi không có `step` / `grid_step_price` |
 | **cooldown_minutes** | (Tùy chọn) Không đặt lại cùng mức grid trong X phút; 0 = tắt | 0 |
+| **steps** | (Tùy chọn) **Nhiều step chạy cùng lúc** — mảng giá trị, VD `[2, 3, 4, 5, 6, 7]` | Nếu không set → dùng 1 step từ `step` |
 
-**Ví dụ config (config_grid_step.json):**
+### Chạy nhiều step cùng lúc
+
+Khi set **`steps`** (mảng), bot chạy **song song nhiều kênh grid**, mỗi kênh một step:
+
+- VD `"steps": [2, 3, 4, 5, 6, 7]` → 7 kênh: step 2, 3, 4, 5, 6, 7 chạy cùng lúc.
+- Mỗi step có **ref / BUY STOP / SELL STOP** riêng (ref = round(anchor/step)*step), **position và pending** tách bạch theo comment `GridStep_{step}`.
+- **max_positions**, **target_profit**, **spread_max**, **cooldown_minutes** dùng chung; **Basket TP** và **cooldown** tính theo từng step.
+- Trong DB: `strategy_name` = `Grid_Step_2`, `Grid_Step_3`, ... `Grid_Step_7` (dashboard hiển thị từng kênh).
+
+**Ví dụ config 1 step (legacy):**
 
 ```json
 "parameters": {
@@ -36,7 +46,19 @@ Step có thể cấu hình **3, 5, 6, 7...** (đơn vị giá, VD với XAU: 5 =
 }
 ```
 
-Đổi step thành 7: `"step": 7`. Muốn grid 10 nhưng SL/TP 5: thêm `"grid_step_price": 10, "sl_tp_price": 5`.
+**Ví dụ config nhiều step:**
+
+```json
+"parameters": {
+    "steps": [2, 3, 4, 5, 6, 7],
+    "min_distance_points": 5,
+    "target_profit": 50.0,
+    "spread_max": 0.5,
+    "cooldown_minutes": 0
+}
+```
+
+Đổi step đơn thành 7: `"step": 7`. Muốn grid 10 nhưng SL/TP 5: dùng mode 1 step và thêm `"grid_step_price": 10, "sl_tp_price": 5`.
 
 ---
 
