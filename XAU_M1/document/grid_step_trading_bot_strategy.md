@@ -1,247 +1,153 @@
-# Grid Step Trading Bot -- Strategy Idea
+# Grid Step Trading Bot — Chiến thuật & Đặc tả
 
-## 1. Overview
+## 1. Tổng quan
 
-This trading bot uses a **price grid / step strategy** without relying
-on traditional technical indicators.
+Bot giao dịch theo **lưới bước giá (grid step)**:
 
-The bot continuously places **two pending orders around the current
-market price**:
+- **Không dùng indicator** (EMA, ADX, RSI, Heiken Ashi...).
+- Luôn đặt **hai lệnh chờ** quanh giá hiện tại:
+  - **BUY STOP** trên giá
+  - **SELL STOP** dưới giá
+- Khi **một lệnh khớp** → hủy lệnh chờ còn lại, **dịch grid** và đặt cặp lệnh chờ mới quanh giá vừa khớp.
+- Mỗi lệnh có **SL/TP cố định** (không trailing, không breakeven).
 
--   A BUY STOP above the price
--   A SELL STOP below the price
+---
 
-When one order is triggered, the bot **shifts the grid in that
-direction** and places a new pair of pending orders.
+## 2. Cấu hình Step (bước giá)
 
-This approach attempts to capture **market movement step‑by‑step**,
-especially during trends.
+Step có thể cấu hình **3, 5, 6, 7...** (đơn vị giá, VD với XAU: 5 = 5 USD).
 
-------------------------------------------------------------------------
+| Tham số | Mô tả | Mặc định |
+|--------|--------|----------|
+| **step** | Bước chung cho grid và SL/TP (có thể đặt 3, 5, 6, 7...) | 5 |
+| **grid_step_price** | (Tùy chọn) Ghi đè bước grid riêng | Nếu không set → dùng `step` |
+| **sl_tp_price** | (Tùy chọn) Ghi đè khoảng SL/TP riêng | Nếu không set → dùng `step` |
+| **grid_step_points** | (Tùy chọn) Bước grid theo point: `grid_step_points * point` | Chỉ dùng khi không có `step` / `grid_step_price` |
 
-# 2. Basic Example
+**Ví dụ config (config_grid_step.json):**
 
-Assume:
+```json
+"parameters": {
+    "step": 5,
+    "min_distance_points": 5,
+    "target_profit": 50.0,
+    "spread_max": 0.5
+}
+```
 
-Current Price = 5000\
-Grid Step = 5
+Đổi step thành 7: `"step": 7`. Muốn grid 10 nhưng SL/TP 5: thêm `"grid_step_price": 10, "sl_tp_price": 5`.
 
-The bot places:
+---
 
-BUY STOP = 5005\
-SELL STOP = 4995
+## 3. Cách tính giá đặt lệnh
 
-------------------------------------------------------------------------
+### 3.1 Giá neo (anchor)
 
-# 3. If BUY 5005 is Triggered
+- **Có ít nhất 1 position** → anchor = **giá mở** của position **mới nhất** (theo thời gian).
+- **Không có position** → anchor = **giá thị trường** (mid = (bid + ask) / 2).
 
-The grid shifts upward.
+### 3.2 Mức grid (ref)
 
-New orders:
+- `ref = round(anchor / grid_step_price) * grid_step_price` (làm tròn đến mức grid gần nhất).
+- VD: step = 5, anchor = 5110 → ref = 5110; anchor = 5112.3 → ref = 5110.
 
-BUY STOP = 5010\
-SELL STOP = 5000
+### 3.3 Giá đặt lệnh chờ
 
-This allows the bot to **follow an upward trend**.
+- **BUY STOP** = ref + grid_step_price  
+- **SELL STOP** = ref - grid_step_price  
 
-Example:
+**Ví dụ (step = 5, ref = 5110):**
 
-5000\
-→ BUY 5005 triggered\
-→ BUY 5010 triggered\
-→ BUY 5015 triggered
+- BUY STOP = 5115  
+- SELL STOP = 5105  
 
-The bot captures multiple steps of the trend.
+---
 
-------------------------------------------------------------------------
+## 4. Luồng hoạt động (Core Logic)
 
-# 4. If SELL 4995 is Triggered
+1. **Đồng bộ DB**: Cập nhật trạng thái lệnh chờ (PENDING → FILLED/CANCELLED); ghi lệnh đã khớp vào bảng `orders` với SL/TP đúng.
+2. **Đảm bảo SL/TP trên position**: Nếu broker không kế thừa SL/TP từ lệnh chờ, bot gửi **TRADE_ACTION_SLTP** để đặt lại SL/TP = entry ± step cho từng position.
+3. **Basket Take Profit**: Nếu tổng lợi nhuận (floating) ≥ `target_profit` → đóng hết position, hủy hết lệnh chờ, gửi Telegram.
+4. **Bảo vệ spread**: Nếu spread (giá) > `spread_max` hoặc grid_step < spread → không đặt lệnh, chờ vòng sau.
+5. **Giới hạn position**: Nếu số position ≥ `max_positions` → không đặt thêm.
+6. **Không sửa lệnh chờ đang có**:
+   - Nếu **đã có đủ 2 lệnh chờ** (1 BUY STOP + 1 SELL STOP) → **không làm gì**, chờ một lệnh khớp.
+   - Chỉ đặt lệnh mới khi:
+     - Chưa có lệnh chờ (0) hoặc chỉ 1 (dọn pending lẻ), hoặc
+     - Vừa có lệnh khớp (có position) → hủy hết pending còn lại, đặt cặp mới quanh **anchor** (giá mở position mới nhất hoặc giá thị trường).
+7. **Grid zone lock**: Không đặt BUY tại mức đã có position, không đặt SELL tại mức đã có position.
+8. **Khoảng cách tối thiểu**: Không đặt nếu giá BUY/SELL mới quá gần bất kỳ position nào (theo `min_distance_points`).
+9. Đặt cặp **BUY STOP** và **SELL STOP** với SL/TP cố định; ghi vào DB (`grid_pending_orders`).
 
-The grid shifts downward.
+---
 
-New orders:
+## 5. SL/TP cố định (không trailing)
 
-BUY STOP = 5000\
-SELL STOP = 4990
+- **BUY** @ price → SL = price - step, TP = price + step  
+- **SELL** @ price → SL = price + step, TP = price - step  
 
-Example:
+Step ở đây là `sl_tp_price` (hoặc `step` nếu không set). Bot **không** tự động dời SL (trailing) hay breakeven.
 
-5000\
-→ SELL 4995 triggered\
-→ SELL 4990 triggered\
-→ SELL 4985 triggered
+---
 
-The bot follows the downward movement.
+## 6. Quản lý rủi ro
 
-------------------------------------------------------------------------
+| Quy tắc | Mô tả |
+|--------|--------|
+| **Grid Zone Lock** | Mỗi mức grid chỉ một lệnh; không mở thêm position trùng mức. |
+| **Min Distance** | Khoảng cách tối thiểu (point) giữa giá đặt lệnh mới và các position hiện có. |
+| **Max Positions** | Giới hạn số position mở cùng lúc (VD: 5). |
+| **Basket Take Profit** | Khi tổng lợi nổi ≥ `target_profit` (VD: 50) → đóng tất cả, hủy pending. |
+| **Spread Protection** | Không giao dịch khi spread (giá) > `spread_max`; grid step (giá) phải ≥ spread. |
 
-# 5. Core Bot Logic
+---
 
-Pseudo code:
+## 7. Cơ sở dữ liệu
 
-    step = 5
+- **grid_pending_orders**: Lưu từng lệnh chờ (BUY_STOP/SELL_STOP): ticket, symbol, order_type, price, sl, tp, volume, status (PENDING → FILLED/CANCELLED), position_ticket (khi FILLED), placed_at, filled_at.
+- **orders**: Lệnh đã khớp (position) được ghi với SL/TP đúng (entry ± step) để dashboard và báo cáo hiển thị chính xác.
 
-    current_price = get_price()
+---
 
-    place_buy_stop(current_price + step)
-    place_sell_stop(current_price - step)
+## 8. Ví dụ chuỗi giá
 
-    on_buy_filled(price):
+**Step = 5, giá hiện tại 5000 (ref = 5000):**
 
-        cancel_previous_pending()
+- Đặt: BUY STOP 5005, SELL STOP 4995.
 
-        place_buy_stop(price + step)
-        place_sell_stop(price - step)
+**Nếu BUY 5005 khớp:**
 
-    on_sell_filled(price):
+- Grid dịch lên; anchor = 5005 (giá mở position mới nhất).
+- ref = 5005 → Đặt mới: BUY STOP 5010, SELL STOP 5000.
 
-        cancel_previous_pending()
+**Nếu SELL 4995 khớp:**
 
-        place_buy_stop(price + step)
-        place_sell_stop(price - step)
+- Anchor = 4995 → ref = 4995.
+- Đặt mới: BUY STOP 5000, SELL STOP 4990.
 
-------------------------------------------------------------------------
+---
 
-# 6. Prevent Opening Too Many Orders
+## 9. Ưu điểm & Rủi ro
 
-The bot must avoid placing multiple trades within the same price range.
+**Ưu điểm:**
 
-### Grid Zone Lock
+- Logic đơn giản, không phụ thuộc indicator.
+- Dễ cấu hình step (3, 5, 6, 7...).
+- Có thể bám theo xu hướng từng bước.
 
-Each grid level can only contain **one order**.
+**Rủi ro:**
 
-Example grid levels:
+- **Sideways**: Giá đi ngang, khớp BUY rồi SELL liên tục → dễ whipsaw.
+- **Biến động tin tức**: Giá nhảy mạnh → nhiều lệnh khớp nhanh.
+- **Đảo chiều**: Nhiều position một chiều, giá đảo chiều → drawdown lớn.
 
-4995\
-5000\
-5005\
-5010
+---
 
-If a trade already exists at **5005**, the bot will not open another
-one.
+## 10. Tóm tắt
 
-------------------------------------------------------------------------
-
-### Distance Filter
-
-Minimum distance between positions:
-
-    min_distance = 5
-
-If a new order is too close to an existing order, it is skipped.
-
-------------------------------------------------------------------------
-
-### Max Positions
-
-Limit total open trades.
-
-Example:
-
-    max_positions = 5
-
-This prevents runaway exposure.
-
-------------------------------------------------------------------------
-
-# 7. Risk Management
-
-Important protection rules:
-
-### Basket Take Profit
-
-Close all trades when total profit reaches target.
-
-Example:
-
-    profit >= target_profit
-    close_all_positions()
-    reset_grid()
-
-------------------------------------------------------------------------
-
-### Spread Protection
-
-Grid size must be larger than spread.
-
-Example (Gold):
-
-Spread ≈ 3--5 points\
-Recommended Grid ≥ 10 points
-
-------------------------------------------------------------------------
-
-# 8. Advantages
-
--   Simple logic
--   No indicators required
--   Easy to automate
--   Works well in trending markets
-
-------------------------------------------------------------------------
-
-# 9. Risks
-
-### Sideways Market
-
-Price moves up and down repeatedly:
-
-5005 BUY\
-5000 SELL\
-5005 BUY\
-5000 SELL
-
-This causes **whipsaw losses**.
-
-------------------------------------------------------------------------
-
-### News Volatility
-
-Large spikes can trigger multiple orders quickly.
-
-------------------------------------------------------------------------
-
-### Trend Reversal
-
-Example:
-
-BUY 5005\
-BUY 5010\
-BUY 5015
-
-Then market drops to 4970.
-
-This creates a **drawdown on the long positions**.
-
-------------------------------------------------------------------------
-
-# 10. Possible Improvements
-
-Professional grid bots often add:
-
--   Volatility filters
--   Time filters (avoid news)
--   Trend bias
--   Multi‑layer grids
-
-Example:
-
-Micro Grid = 5 points\
-Macro Grid = 30 points\
-Super Grid = 100 points
-
-------------------------------------------------------------------------
-
-# 11. Summary
-
-This bot is based on a **step-following grid system**.
-
-Main idea:
-
-1.  Place buy and sell pending orders around price
-2.  When one triggers, shift the grid
-3.  Follow market movement step by step
-4.  Apply strict position and risk limits
-
-With proper risk management, this strategy can be used to build
-**automated trading systems**.
+1. Cấu hình **step** (3, 5, 6, 7...) cho grid và SL/TP; có thể tách `grid_step_price` / `sl_tp_price`.
+2. Luôn đặt **một cặp** BUY STOP và SELL STOP quanh **ref** (ref = round(anchor / grid_step) * grid_step).
+3. Khi **một lệnh khớp** → hủy pending còn lại, đặt cặp mới quanh anchor (giá mở position mới nhất hoặc giá thị trường).
+4. **Không** thay đổi lệnh chờ đang chờ khớp; chỉ đặt mới khi 0/1 pending hoặc sau khi có fill.
+5. SL/TP **cố định** entry ± step; không trailing; có bù SL/TP trên position nếu broker không kế thừa từ lệnh chờ.
+6. Áp dụng **giới hạn position**, **khoảng cách tối thiểu**, **basket TP** và **spread** để quản lý rủi ro.

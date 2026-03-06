@@ -3,7 +3,7 @@ import sqlite3
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from db import Database
 from utils import connect_mt5
 
@@ -11,70 +11,106 @@ def load_config(filepath):
     with open(filepath, 'r') as f:
         return json.load(f)
 
+def _get_closed_positions_from_history(config, days_back=90):
+    """Lấy danh sách position đã đóng từ MT5 history (theo magic), trả về dict position_id -> (profit, close_price, symbol, volume, type, open_price)."""
+    from_date = datetime.utcnow() - timedelta(days=days_back)
+    to_date = datetime.utcnow()
+    magic = config.get('magic', 0)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    if not deals:
+        return {}
+    by_position = {}
+    for d in deals:
+        if getattr(d, 'magic', 0) != magic:
+            continue
+        pid = getattr(d, 'position_id', None) or getattr(d, 'position', None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {'in': None, 'out_profit': 0.0, 'out_price': 0.0}
+        if d.entry == mt5.DEAL_ENTRY_IN:
+            by_position[pid]['in'] = d
+        elif d.entry == mt5.DEAL_ENTRY_OUT:
+            by_position[pid]['out_profit'] += getattr(d, 'profit', 0) + getattr(d, 'swap', 0) + getattr(d, 'commission', 0)
+            by_position[pid]['out_price'] = getattr(d, 'price', 0)
+    result = {}
+    for pid, v in by_position.items():
+        if v['out_profit'] != 0 or v['out_price'] != 0:
+            din = v['in']
+            # deal.type: DEAL_TYPE_BUY=0, DEAL_TYPE_SELL=1
+            is_buy = din and getattr(din, 'type', 1) == getattr(mt5, 'DEAL_TYPE_BUY', 0)
+            result[pid] = (
+                v['out_profit'],
+                v['out_price'],
+                getattr(din, 'symbol', '') if din else '',
+                getattr(din, 'volume', 0) if din else 0,
+                mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
+                getattr(din, 'price', 0) if din else 0
+            )
+    return result
+
+
 def update_trades_for_strategy(db, config, strategy_name):
     # 1. Connect to MT5 for this account
     if not connect_mt5(config):
         print(f"❌ Could not connect for {strategy_name}")
         return
 
-    # Verify Strict Account Match
     current_account = mt5.account_info()
     if current_account is None:
         print(f"❌ Failed to retrieve account info.")
         return
-
     if current_account.login != config['account']:
         print(f"⚠️ CRITICAL: Account Mismatch! Configured: {config['account']} but Active: {current_account.login}")
-        print(f"🛑 Aborting update for {strategy_name} to protect data.")
         return
 
-    # 2. Get Pending Orders from DB for this strategy
-    # Filter by strategy AND account_id (so we don't mix updates)
+    account_id = config['account']
+    magic = config.get('magic', 0)
+
+    # 2. Lấy deals đã đóng từ history (theo khoảng thời gian, tránh history_deals_get(position=ticket) trả về None)
+    closed = _get_closed_positions_from_history(config, days_back=90)
+    if not closed and strategy_name == "Grid_Step":
+        print(f"ℹ️ No closed deals in history for magic {magic} (Grid_Step)")
+
+    # 3. Orders trong DB có profit IS NULL
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?", (strategy_name, config['account']))
-    tickets = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?", (strategy_name, account_id))
+    tickets_pending = [row[0] for row in cursor.fetchall()]
+
+    updated = 0
+    for ticket in tickets_pending:
+        if ticket in closed:
+            profit, close_price, _, _, _, _ = closed[ticket]
+            db.update_order_profit(ticket, close_price, profit)
+            print(f"✅ Updated trade {ticket}: Profit=${profit:.2f}")
+            updated += 1
+
+    # 4. Grid_Step: đồng bộ từ history — position đã đóng nhưng chưa có trong orders thì insert (backfill)
+    # SL/TP chuẩn = entry ± step (step từ config: step hoặc sl_tp_price, mặc định 5)
+    if strategy_name == "Grid_Step" and closed:
+        p = config.get("parameters", {})
+        step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+        for position_id, (profit, close_price, symbol, volume, order_type, open_price) in closed.items():
+            if not db.order_exists(position_id):
+                order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                op = float(open_price)
+                if order_type == mt5.ORDER_TYPE_BUY:
+                    sl, tp = op - step, op + step
+                else:
+                    sl, tp = op + step, op - step
+                db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                             float(volume), op, sl, tp, "GridStep", account_id)
+                db.update_order_profit(position_id, close_price, profit)
+                print(f"✅ Backfill Grid_Step position {position_id}: Profit=${profit:.2f}")
+                updated += 1
+
     conn.close()
-
-    if not tickets:
-        print(f"ℹ️ No pending trades for {strategy_name} (Account {config['account']})")
-        return
-
-    print(f"🔍 Checking {len(tickets)} pending trades for {strategy_name}...")
-
-    # 3. Check history for each ticket
-    # Note: A position might have multiple deals (entry, partial close, close). 
-    # We want the DEAL that closed the position (ENTRY_OUT).
-    
-    # We fetch history from a comfortable past range
-    from_date = datetime(2024, 1, 1) # Adjust as needed
-    to_date = datetime.now()
-    
-    for ticket in tickets:
-        # Get deals associated with this position ticket
-        deals = mt5.history_deals_get(position=ticket)
-        
-        if deals:
-            total_profit = 0.0
-            close_price = 0.0
-            is_closed = False
-            
-            for deal in deals:
-                # ENTRY_OUT means it's a closing deal (TP, SL, or Manual Close)
-                if deal.entry == mt5.DEAL_ENTRY_OUT:
-                    total_profit += deal.profit + deal.swap + deal.commission
-                    close_price = deal.price
-                    is_closed = True
-            
-            if is_closed:
-                print(f"✅ Found CLOSED Trade {ticket}: Profit=${total_profit:.2f}")
-                db.update_order_profit(ticket, close_price, total_profit)
-        else:
-            # Case: Maybe ticket is invalid or too old, or simply still open
-            # We can check if position still exists
-            active_pos = mt5.positions_get(ticket=ticket)
-            if not active_pos:
-                print(f"❓ Trade {ticket} not in Open Positions and not in History (Manual Check Needed or date range issue)")
+    if not tickets_pending and not (strategy_name == "Grid_Step" and closed):
+        if updated == 0:
+            print(f"ℹ️ No pending trades to update for {strategy_name} (Account {account_id})")
 
 def load_strategy_configs(script_dir):
     """

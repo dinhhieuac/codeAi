@@ -159,13 +159,23 @@ def index():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
     # --- ADVANCED STATS PER STRATEGY ---
-    # Auto-detect all strategies from database
+    # Auto-detect all strategies from orders + grid_pending_orders (để Grid_Step xuất hiện cả khi chưa có lệnh đóng)
     cur.execute("SELECT DISTINCT strategy_name FROM orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
-    strategies = [row['strategy_name'] for row in cur.fetchall()]
-    
+    strategies = list({row['strategy_name'] for row in cur.fetchall()})
+    try:
+        cur.execute("SELECT DISTINCT strategy_name FROM grid_pending_orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
+        for row in cur.fetchall():
+            if row['strategy_name'] not in strategies:
+                strategies.append(row['strategy_name'])
+    except sqlite3.OperationalError:
+        pass  # Bảng grid_pending_orders có thể chưa tồn tại (DB khác tab)
+
     # Optional: Load display order from config file (if exists)
-    # This allows custom ordering without hardcoding in code
     display_order_config = load_display_order_config()
+    # Đảm bảo strategy trong display_order (vd Grid_Step) luôn có trong list để hiển thị
+    for name in (display_order_config or []):
+        if name and name not in strategies:
+            strategies.append(name)
     
     bot_stats = []
     
@@ -185,8 +195,6 @@ def index():
         s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
         
         s_total = len(s_orders)
-        if s_total == 0: continue
-        
         s_wins = [o for o in s_orders if o['profit'] > 0]
         s_losses = [o for o in s_orders if o['profit'] < 0]
         
@@ -195,45 +203,38 @@ def index():
         s_net_profit = sum([o['profit'] for o in s_orders])
         
         s_avg_win = (s_gross_profit / len(s_wins)) if s_wins else 0.0
-        s_avg_loss = (s_gross_loss / len(s_losses)) if s_losses else 0.0 # Positive number for display
+        s_avg_loss = (s_gross_loss / len(s_losses)) if s_losses else 0.0
         
         pf = (s_gross_profit / s_gross_loss) if s_gross_loss > 0 else 99.9
-        win_rate = (len(s_wins) / s_total) * 100
+        win_rate = (len(s_wins) / s_total) * 100 if s_total > 0 else 0.0
         
         # Auto-format strategy name for display
         display_name = format_strategy_name(strat)
         
         bot_stats.append({
-            "raw_name": strat, # Added for template filtering
+            "raw_name": strat,
             "name": display_name,
             "trades": s_total,
             "win_rate": win_rate,
             "pf": pf,
             "avg_win": s_avg_win,
-            "avg_loss": -s_avg_loss, # Make negative for display
+            "avg_loss": -s_avg_loss,
             "net_profit": s_net_profit,
-            "chart_data": [] # Placeholder
+            "chart_data": []
         })
         
         # Calculate Equity Curve for this strategy
-        # Sort orders ascending by time for chart
         chart_orders = sorted(s_orders, key=lambda x: x['open_time'])
         equity = 0
         points = []
         for o in chart_orders:
             equity += o['profit']
-            points.append({
-                'x': o['open_time'],
-                'y': equity
-            })
-        
-        # Update the last added bot_stats entry with chart data
+            points.append({'x': o['open_time'], 'y': equity})
         bot_stats[-1]['chart_data'] = points
         
-        # Calculate Daily PNL Calendar for this strategy (always last 30 days)
+        # Daily PNL Calendar for this strategy
         s_orders_30d = [o for o in orders_30d if o['strategy_name'] == strat]
-        daily_pnl = process_daily_pnl(s_orders_30d)
-        bot_stats[-1]['daily_pnl'] = daily_pnl
+        bot_stats[-1]['daily_pnl'] = process_daily_pnl(s_orders_30d)
 
         # Win/Loss by hour (Vietnam time) for this bot
         bot_stats[-1]['hourly_win_loss'] = process_hourly_stats(s_orders)

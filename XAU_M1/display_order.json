@@ -6,7 +6,8 @@
         "Strategy_1_Trend_HA_V11",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR",
-        "Strategy_5_Filter_First"
+        "Strategy_5_Filter_First",
+        "Grid_Step"
     ],
     "description": "Custom display order for strategies in dashboard. If a strategy is not in this list, it will be sorted by net profit. You can add new strategies here to control their display order."
 }

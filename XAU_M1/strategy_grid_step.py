@@ -7,11 +7,71 @@ Không dùng indicator (EMA, ADX, RSI, Heiken Ashi...).
 import MetaTrader5 as mt5
 import time
 import sys
+import sqlite3
+import os
 sys.path.append('..')
 from db import Database
 from utils import load_config, connect_mt5, send_telegram, get_mt5_error_message
 
 db = Database()
+
+
+def check_grid_step_db():
+    """Kiểm tra dữ liệu Grid Step trong DB (grid_pending_orders, orders). Chạy: python strategy_grid_step.py --check-db"""
+    path = db.db_path
+    print(f"\n{'='*60}")
+    print(f"[DB] path: {path}")
+    print(f"     Ton tai: {os.path.exists(path)}")
+    if not os.path.exists(path):
+        print("     File DB khong ton tai.")
+        return
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Bảng grid_pending_orders
+    try:
+        cur.execute("SELECT COUNT(*) FROM grid_pending_orders WHERE strategy_name = 'Grid_Step'")
+        n = cur.fetchone()[0]
+        cur.execute("""
+            SELECT status, COUNT(*) as c FROM grid_pending_orders WHERE strategy_name = 'Grid_Step'
+            GROUP BY status
+        """)
+        by_status = {row['status']: row['c'] for row in cur.fetchall()}
+        print(f"\n[grid_pending_orders] Grid_Step: {n} dong")
+        for st, c in by_status.items():
+            print(f"   - {st}: {c}")
+        cur.execute("""
+            SELECT ticket, order_type, price, status, position_ticket, placed_at, filled_at
+            FROM grid_pending_orders WHERE strategy_name = 'Grid_Step'
+            ORDER BY placed_at DESC LIMIT 5
+        """)
+        rows = cur.fetchall()
+        if rows:
+            print("   Moi nhat (toi da 5):")
+            for r in rows:
+                print(f"     ticket={r['ticket']} {r['order_type']} @ {r['price']} status={r['status']} position_ticket={r['position_ticket']} placed={r['placed_at']}")
+    except sqlite3.OperationalError as e:
+        print(f"\n[grid_pending_orders] Bang chua co hoac loi: {e}")
+
+    # Bảng orders (Grid_Step)
+    try:
+        cur.execute("SELECT COUNT(*) FROM orders WHERE strategy_name = 'Grid_Step'")
+        n_ord = cur.fetchone()[0]
+        cur.execute("""
+            SELECT ticket, order_type, volume, open_price, sl, tp, profit, open_time, comment
+            FROM orders WHERE strategy_name = 'Grid_Step' ORDER BY open_time DESC LIMIT 5
+        """)
+        rows_ord = cur.fetchall()
+        print(f"\n[orders] Grid_Step: {n_ord} dong")
+        if rows_ord:
+            for r in rows_ord:
+                print(f"     ticket={r['ticket']} {r['order_type']} vol={r['volume']} price={r['open_price']} profit={r['profit']} time={r['open_time']}")
+    except sqlite3.OperationalError as e:
+        print(f"\n[orders] {e}")
+
+    conn.close()
+    print(f"{'='*60}\n")
 
 
 def get_grid_anchor_price(symbol, magic):
@@ -42,17 +102,18 @@ def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0):
     return len(orders)
 
 
-def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0):
+def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0, sl_tp_price=5.0, info=None):
     """Kiểm tra lệnh chờ trong DB: nếu ticket không còn trong MT5 orders → khớp hoặc hủy; cập nhật status.
-    Khi lệnh khớp → ghi vào bảng orders để Dashboard hiển thị."""
+    Khi lệnh khớp → ghi vào bảng orders với SL/TP đúng (entry ± sl_tp_price), không dùng 0 từ position."""
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic)}
     positions = mt5.positions_get(symbol=symbol, magic=magic) or []
-    info = mt5.symbol_info(symbol)
+    info = info or mt5.symbol_info(symbol)
     digits = getattr(info, "digits", 2) if info else 2
     pos_by_price = {}
     for p in positions:
         key = round(float(p.price_open), digits)
         pos_by_price[key] = p
+    step = float(sl_tp_price)
     for row in db.get_grid_pending_by_status(strategy_name, symbol, "PENDING"):
         ticket, order_type, price = row["ticket"], row["order_type"], row["price"]
         if ticket in pending_tickets:
@@ -62,12 +123,17 @@ def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_i
         pos = pos_by_price.get(price_key)
         if pos:
             db.update_grid_pending_status(ticket, "FILLED", position_ticket=pos.ticket)
-            # Ghi vào orders để DashBoardMain hiển thị (chỉ khi chưa có)
+            # SL/TP chuẩn: entry ± 5 (giá). Dùng giá đúng thay vì pos.sl/pos.tp có thể 0.
+            entry = float(pos.price_open)
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                sl, tp = round(entry - step, digits), round(entry + step, digits)
+            else:
+                sl, tp = round(entry + step, digits), round(entry - step, digits)
             if not db.order_exists(pos.ticket):
                 db.log_order(
                     pos.ticket, strategy_name, symbol,
                     "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL",
-                    float(pos.volume), float(pos.price_open), float(pos.sl or 0), float(pos.tp or 0),
+                    float(pos.volume), entry, sl, tp,
                     "GridStep", account_id
                 )
             print(f"✅ Grid lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
@@ -90,6 +156,33 @@ def total_profit(symbol, magic):
     if not positions:
         return 0.0
     return sum(p.profit + p.swap + getattr(p, 'commission', 0) for p in positions)
+
+
+def ensure_position_sl_tp(symbol, magic, sl_tp_price, info):
+    """Đặt lại SL/TP = 5 (giá) cho position nếu đang 0 (broker không kế thừa từ lệnh chờ)."""
+    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
+    step = float(sl_tp_price)
+    for pos in positions:
+        entry = float(pos.price_open)
+        sl, tp = float(pos.sl or 0), float(pos.tp or 0)
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            want_sl = round(entry - step, info.digits)
+            want_tp = round(entry + step, info.digits)
+        else:
+            want_sl = round(entry + step, info.digits)
+            want_tp = round(entry - step, info.digits)
+        if abs(sl - want_sl) > 0.001 or abs(tp - want_tp) > 0.001:
+            r = mt5.order_send({
+                "action": mt5.TRADE_ACTION_SLTP,
+                "symbol": symbol,
+                "position": pos.ticket,
+                "sl": want_sl,
+                "tp": want_tp,
+            })
+            if r and r.retcode == mt5.TRADE_RETCODE_DONE:
+                print(f"   SL/TP set: pos {pos.ticket} -> SL={want_sl}, TP={want_tp}")
+            elif r:
+                print(f"   SL/TP fail pos {pos.ticket}: {r.retcode} {r.comment}")
 
 
 def close_all_positions(symbol, magic):
@@ -117,23 +210,32 @@ def strategy_grid_step_logic(config, error_count=0):
     volume = config['volume']
     magic = config['magic']
     params = config.get('parameters', {})
+    # step: cấu hình 1 giá trị dùng chung cho grid và SL/TP (vd 3, 5, 6, 7...). Có thể ghi đè bằng grid_step_price / sl_tp_price.
+    step_cfg = params.get('step', 5)
+    step_default = float(step_cfg) if step_cfg is not None else 5.0
     min_distance_points = params.get('min_distance_points', 5)
     max_positions = config.get('max_positions', 5)
     target_profit = params.get('target_profit', 50.0)       # Basket TP (currency)
     spread_max = params.get('spread_max', 0.5)
-    # SL/TP cố định theo giá (mặc định 5). Không tự động dời SL (no trailing).
-    sl_tp_price = params.get('sl_tp_price', 5.0)
+    sl_tp_price = params.get('sl_tp_price')
+    if sl_tp_price is not None:
+        sl_tp_price = float(sl_tp_price)
+    else:
+        sl_tp_price = step_default
 
     info = mt5.symbol_info(symbol)
     if not info:
         return error_count, 0
-    # Bước grid theo GIÁ (VD XAU: 5.0 → mức 5150, 5155, 5160, 5165...). Dùng grid_step_price (price) hoặc grid_step_points*point.
+    # Bước grid theo GIÁ (VD step=5 → 5150, 5155, 5160...). Ưu tiên grid_step_price, không có thì dùng step, cuối cùng grid_step_points*point.
     grid_step_price = params.get('grid_step_price')
     if grid_step_price is not None:
         grid_step_price = float(grid_step_price)
     else:
-        grid_step_points = params.get('grid_step_points', 500)
-        grid_step_price = grid_step_points * info.point
+        grid_step_points = params.get('grid_step_points')
+        if grid_step_points is not None:
+            grid_step_price = grid_step_points * info.point
+        else:
+            grid_step_price = step_default
     # XAU min lot = 0.01
     volume_min = getattr(info, 'volume_min', 0.01)
     volume_step = getattr(info, 'volume_step', 0.01)
@@ -149,8 +251,11 @@ def strategy_grid_step_logic(config, error_count=0):
     positions = list(positions or [])
     pendings = get_pending_orders(symbol, magic)
 
-    # Cập nhật status lệnh chờ trong DB: khớp (FILLED) hoặc hủy (CANCELLED)
-    sync_grid_pending_status(symbol, magic, "Grid_Step", config.get('account'))
+    # Cập nhật status lệnh chờ trong DB: khớp (FILLED) hoặc hủy (CANCELLED); ghi orders với SL/TP đúng
+    sync_grid_pending_status(symbol, magic, "Grid_Step", config.get('account'), sl_tp_price, info)
+
+    # Đặt lại SL/TP = 5 (giá) cho position nếu broker không kế thừa từ lệnh chờ (SL/TP đang 0)
+    ensure_position_sl_tp(symbol, magic, sl_tp_price, info)
 
     # 2. Basket Take Profit
     profit = total_profit(symbol, magic)
@@ -276,6 +381,10 @@ def strategy_grid_step_logic(config, error_count=0):
 
 if __name__ == "__main__":
     import os
+    if len(sys.argv) > 1 and sys.argv[1].strip() == "--check-db":
+        check_grid_step_db()
+        sys.exit(0)
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "configs", "config_grid_step.json")
     config = load_config(config_path)

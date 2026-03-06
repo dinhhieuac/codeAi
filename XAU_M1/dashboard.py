@@ -116,10 +116,17 @@ def index():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
     # --- ADVANCED STATS PER STRATEGY ---
-    # Auto-detect all strategies from database
+    # Auto-detect all strategies from orders + grid_pending_orders (để Grid_Step xuất hiện cả khi chưa có lệnh đóng)
     cur.execute("SELECT DISTINCT strategy_name FROM orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
-    strategies = [row['strategy_name'] for row in cur.fetchall()]
-    
+    strategies = list({row['strategy_name'] for row in cur.fetchall()})
+    try:
+        cur.execute("SELECT DISTINCT strategy_name FROM grid_pending_orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
+        for row in cur.fetchall():
+            if row['strategy_name'] not in strategies:
+                strategies.append(row['strategy_name'])
+    except sqlite3.OperationalError:
+        pass  # Bảng grid_pending_orders có thể chưa tồn tại
+
     # Optional: Load display order from config file (if exists)
     # This allows custom ordering without hardcoding in code
     display_order_config = load_display_order_config()
@@ -142,8 +149,6 @@ def index():
         s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
         
         s_total = len(s_orders)
-        if s_total == 0: continue
-        
         s_wins = [o for o in s_orders if o['profit'] > 0]
         s_losses = [o for o in s_orders if o['profit'] < 0]
         
@@ -155,7 +160,7 @@ def index():
         s_avg_loss = (s_gross_loss / len(s_losses)) if s_losses else 0.0 # Positive number for display
         
         pf = (s_gross_profit / s_gross_loss) if s_gross_loss > 0 else 99.9
-        win_rate = (len(s_wins) / s_total) * 100
+        win_rate = (len(s_wins) / s_total) * 100 if s_total > 0 else 0.0
         
         # Auto-format strategy name for display
         display_name = format_strategy_name(strat)
