@@ -13,6 +13,7 @@
         "step": 5,
         "min_distance_points": 5,
         "target_profit": 50.0,
-        "spread_max": 0.5
+        "spread_max": 0.5,
+        "cooldown_minutes": 0
     }
 }

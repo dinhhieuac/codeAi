@@ -3,17 +3,80 @@ Grid Step Trading Bot - Theo tài liệu grid_step_trading_bot_strategy.md
 Đặt 2 lệnh chờ: BUY STOP trên giá, SELL STOP dưới giá.
 Khi 1 lệnh kích hoạt → hủy lệnh còn lại, dịch grid, đặt cặp mới.
 Không dùng indicator (EMA, ADX, RSI, Heiken Ashi...).
+Có cooldown mức grid để giảm whipsaw sideways.
 """
 import MetaTrader5 as mt5
 import time
 import sys
 import sqlite3
 import os
+import json
+from datetime import datetime, timedelta
 sys.path.append('..')
 from db import Database
 from utils import load_config, connect_mt5, send_telegram, get_mt5_error_message
 
 db = Database()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown.json")
+
+
+def load_cooldown_levels(cooldown_minutes):
+    """Trả về dict level_key -> timestamp (chỉ các mức còn trong thời gian cooldown)."""
+    if cooldown_minutes <= 0:
+        return {}
+    if not os.path.exists(COOLDOWN_FILE):
+        return {}
+    try:
+        with open(COOLDOWN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+    levels = data.get("levels", {})
+    now = datetime.utcnow()
+    cutoff = now - timedelta(minutes=cooldown_minutes)
+    result = {}
+    for level_key, ts_str in levels.items():
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            if ts.tzinfo:
+                ts = ts.replace(tzinfo=None)  # so sánh với naive utc
+            if ts > cutoff:
+                result[level_key] = ts_str
+        except (ValueError, TypeError):
+            pass
+    return result
+
+
+def save_cooldown_levels(level_keys_to_add):
+    """Ghi thêm các mức level (với thời gian hiện tại) vào file cooldown."""
+    if not level_keys_to_add:
+        return
+    now = datetime.utcnow().isoformat() + "Z"
+    data = {"levels": {}}
+    if os.path.exists(COOLDOWN_FILE):
+        try:
+            with open(COOLDOWN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    levels = data.get("levels", {})
+    for key in level_keys_to_add:
+        levels[str(key)] = now
+    data["levels"] = levels
+    try:
+        with open(COOLDOWN_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except IOError:
+        pass
+
+
+def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2):
+    """Kiểm tra mức giá price có đang trong cooldown không."""
+    if cooldown_minutes <= 0:
+        return False
+    key = str(round(float(price), digits))
+    return key in levels_dict
 
 
 def check_grid_step_db():
@@ -321,6 +384,16 @@ def strategy_grid_step_logic(config, error_count=0):
         if abs(p.price_open - buy_price) < min_distance or abs(p.price_open - sell_price) < min_distance:
             return error_count, 0
 
+    # Cooldown grid level: không trade lại cùng mức trong X phút (giảm whipsaw sideways)
+    cooldown_minutes = params.get('cooldown_minutes', 0)
+    if cooldown_minutes > 0:
+        cooldown_levels = load_cooldown_levels(cooldown_minutes)
+        if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, info.digits) or is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, info.digits):
+            if not hasattr(strategy_grid_step_logic, "_last_cooldown_log") or strategy_grid_step_logic._last_cooldown_log != (buy_price, sell_price):
+                print(f"⏸️ Cooldown: mức {buy_price}/{sell_price} vừa dùng trong {cooldown_minutes} phút, bỏ qua đặt lệnh.")
+                strategy_grid_step_logic._last_cooldown_log = (buy_price, sell_price)
+            return error_count, 0
+
     # SL/TP = sl_tp_price (mặc định 5 giá). Không trailing, không breakeven.
     step = float(sl_tp_price)
     filling = mt5.ORDER_FILLING_FOK
@@ -365,6 +438,8 @@ def strategy_grid_step_logic(config, error_count=0):
 
     if r1.retcode == mt5.TRADE_RETCODE_DONE and r2.retcode == mt5.TRADE_RETCODE_DONE:
         print(f"✅ Grid: BUY_STOP @ {buy_price:.2f}, SELL_STOP @ {sell_price:.2f} | ref={ref}")
+        if cooldown_minutes > 0:
+            save_cooldown_levels([buy_price, sell_price])
         acc = config.get('account')
         db.log_grid_pending(r1.order, "Grid_Step", symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         db.log_grid_pending(r2.order, "Grid_Step", symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
