@@ -7,6 +7,7 @@
     "Strategy_3_PA_Volume": "configs/config_3.json",
     "Strategy_4_UT_Bot": "configs/config_4.json",
     "Strategy_5_Filter_First": "configs/config_5.json",
+    "Grid_Step": "configs/config_grid_step.json",
     "description": "Mapping of strategy names to their config files. Add new strategies here when you create a new bot. The path is relative to the XAU_M1 directory."
 }
 

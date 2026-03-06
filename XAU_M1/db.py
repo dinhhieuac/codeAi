@@ -116,6 +116,15 @@ class Database:
         conn.commit()
         conn.close()
 
+    def order_exists(self, ticket):
+        """Kiểm tra order đã tồn tại trong bảng orders chưa."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM orders WHERE ticket = ?", (ticket,))
+        exists = cursor.fetchone() is not None
+        conn.close()
+        return exists
+
     def log_order(self, ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment="", account_id=0):
         """Log an executed order"""
         conn = sqlite3.connect(self.db_path)

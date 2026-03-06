@@ -43,7 +43,8 @@ def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0):
 
 
 def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0):
-    """Kiểm tra lệnh chờ trong DB: nếu ticket không còn trong MT5 orders → khớp hoặc hủy; cập nhật status."""
+    """Kiểm tra lệnh chờ trong DB: nếu ticket không còn trong MT5 orders → khớp hoặc hủy; cập nhật status.
+    Khi lệnh khớp → ghi vào bảng orders để Dashboard hiển thị."""
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic)}
     positions = mt5.positions_get(symbol=symbol, magic=magic) or []
     info = mt5.symbol_info(symbol)
@@ -61,6 +62,14 @@ def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_i
         pos = pos_by_price.get(price_key)
         if pos:
             db.update_grid_pending_status(ticket, "FILLED", position_ticket=pos.ticket)
+            # Ghi vào orders để DashBoardMain hiển thị (chỉ khi chưa có)
+            if not db.order_exists(pos.ticket):
+                db.log_order(
+                    pos.ticket, strategy_name, symbol,
+                    "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL",
+                    float(pos.volume), float(pos.price_open), float(pos.sl or 0), float(pos.tp or 0),
+                    "GridStep", account_id
+                )
             print(f"✅ Grid lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
         else:
             db.update_grid_pending_status(ticket, "CANCELLED")
