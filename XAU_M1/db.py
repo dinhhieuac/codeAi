@@ -54,6 +54,25 @@ class Database:
                 account_id INTEGER DEFAULT 0
             )
         ''')
+
+        # Lệnh chờ Grid Step: BUY_STOP / SELL_STOP, cập nhật status khi khớp hoặc hủy
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS grid_pending_orders (
+                ticket INTEGER PRIMARY KEY,
+                strategy_name TEXT,
+                symbol TEXT,
+                order_type TEXT,
+                price REAL,
+                sl REAL,
+                tp REAL,
+                volume REAL,
+                status TEXT DEFAULT 'PENDING',
+                position_ticket INTEGER,
+                placed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                filled_at DATETIME,
+                account_id INTEGER DEFAULT 0
+            )
+        ''')
         
         conn.commit()
         conn.close()
@@ -123,3 +142,40 @@ class Database:
         
         conn.commit()
         conn.close()
+
+    def log_grid_pending(self, ticket, strategy_name, symbol, order_type, price, sl, tp, volume, account_id=0):
+        """Lưu lệnh chờ BUY_STOP / SELL_STOP (status PENDING)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO grid_pending_orders
+            (ticket, strategy_name, symbol, order_type, price, sl, tp, volume, status, account_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+        ''', (ticket, strategy_name, symbol, order_type, price, sl, tp, volume, account_id))
+        conn.commit()
+        conn.close()
+
+    def update_grid_pending_status(self, ticket, status, position_ticket=None):
+        """Cập nhật status: FILLED (khi khớp) hoặc CANCELLED (khi hủy)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE grid_pending_orders
+            SET status = ?, position_ticket = ?,
+                filled_at = CASE WHEN ? = 'FILLED' THEN datetime('now') ELSE filled_at END
+            WHERE ticket = ?
+        ''', (status, position_ticket or 0, status, ticket))
+        conn.commit()
+        conn.close()
+
+    def get_grid_pending_by_status(self, strategy_name, symbol, status='PENDING'):
+        """Lấy danh sách lệnh chờ theo status (để kiểm tra và cập nhật)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT ticket, order_type, price FROM grid_pending_orders
+            WHERE strategy_name = ? AND symbol = ? AND status = ?
+        ''', (strategy_name, symbol, status))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"ticket": r[0], "order_type": r[1], "price": r[2]} for r in rows]
