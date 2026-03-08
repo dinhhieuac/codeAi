@@ -24,6 +24,9 @@ Step có thể cấu hình **3, 5, 6, 7...** (đơn vị giá, VD với XAU: 5 =
 | **sl_tp_price** | (Tùy chọn) Ghi đè khoảng SL/TP riêng | Nếu không set → dùng `step` |
 | **grid_step_points** | (Tùy chọn) Bước grid theo point: `grid_step_points * point` | Chỉ dùng khi không có `step` / `grid_step_price` |
 | **cooldown_minutes** | (Tùy chọn) Không đặt lại cùng mức grid trong X phút; 0 = tắt | 0 |
+| **consecutive_loss_pause_enabled** | Bật/tắt tạm dừng khi N lệnh thua liên tiếp (true/false) | true |
+| **consecutive_loss_count** | Số lệnh thua liên tiếp để kích hoạt (hủy lệnh chờ + tạm dừng) | 2 |
+| **consecutive_loss_pause_minutes** | Số phút tạm dừng (tính từ giờ đóng lệnh thua cuối) | 5 |
 | **steps** | (Tùy chọn) **Nhiều step chạy cùng lúc** — mảng giá trị, VD `[2, 3, 4, 5, 6, 7]` | Nếu không set → dùng 1 step từ `step` |
 
 ### Chạy nhiều step cùng lúc
@@ -123,6 +126,14 @@ Step ở đây là `sl_tp_price` (hoặc `step` nếu không set). Bot **không*
 | **Basket Take Profit** | Khi tổng lợi nổi ≥ `target_profit` (VD: 50) → đóng tất cả, hủy pending. |
 | **Spread Protection** | Không giao dịch khi spread (giá) > `spread_max`; grid step (giá) phải ≥ spread. |
 | **Cooldown grid level** | (Tùy chọn) Không đặt lệnh lại tại cùng mức trong X phút; giảm whipsaw sideways. |
+| **Consecutive loss pause** | (Tùy chọn) Bật/tắt + cấu hình: khi có N lệnh thua liên tiếp → hủy hết lệnh chờ, tạm dừng X phút (tính từ giờ đóng lệnh thua cuối). |
+
+### Tạm dừng khi N lệnh thua liên tiếp (on/off + chỉnh số lệnh + thời gian dừng)
+
+- **consecutive_loss_pause_enabled** (mặc định true): Bật/ tắt tính năng. `false` = không kiểm tra, không tạm dừng.
+- **consecutive_loss_count** (mặc định 2): Số lệnh thua liên tiếp trong history (bảng `orders`) để kích hoạt: hủy hết BUY STOP/SELL STOP và tạm dừng.
+- **consecutive_loss_pause_minutes** (mặc định 5): Số phút tạm dừng đặt lệnh mới. Thời gian tính từ **giờ đóng lệnh thua cuối** (giờ server).
+- Trạng thái pause lưu trong file `grid_pause.json` (hoặc `grid_pause_btc.json` với bot BTC). Hết thời gian thì bot tự đặt lệnh lại.
 
 ---
 

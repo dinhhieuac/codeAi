@@ -29,25 +29,34 @@ def _get_closed_positions_from_history(config, days_back=90):
         if not pid:
             continue
         if pid not in by_position:
-            by_position[pid] = {'in': None, 'out_profit': 0.0, 'out_price': 0.0}
+            by_position[pid] = {'in': None, 'out_profit': 0.0, 'out_price': 0.0, 'out_time': None}
         if d.entry == mt5.DEAL_ENTRY_IN:
             by_position[pid]['in'] = d
         elif d.entry == mt5.DEAL_ENTRY_OUT:
             by_position[pid]['out_profit'] += getattr(d, 'profit', 0) + getattr(d, 'swap', 0) + getattr(d, 'commission', 0)
             by_position[pid]['out_price'] = getattr(d, 'price', 0)
+            by_position[pid]['out_time'] = getattr(d, 'time', None)  # Unix timestamp (giờ server)
     result = {}
     for pid, v in by_position.items():
         if v['out_profit'] != 0 or v['out_price'] != 0:
             din = v['in']
-            # deal.type: DEAL_TYPE_BUY=0, DEAL_TYPE_SELL=1
             is_buy = din and getattr(din, 'type', 1) == getattr(mt5, 'DEAL_TYPE_BUY', 0)
+            # close_time: từ deal OUT (giờ server) -> ISO string cho DB
+            out_ts = v.get('out_time')
+            close_time_str = None
+            if out_ts:
+                try:
+                    close_time_str = datetime.utcfromtimestamp(out_ts).strftime('%Y-%m-%d %H:%M:%S')
+                except (TypeError, OSError):
+                    pass
             result[pid] = (
                 v['out_profit'],
                 v['out_price'],
                 getattr(din, 'symbol', '') if din else '',
                 getattr(din, 'volume', 0) if din else 0,
                 mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
-                getattr(din, 'price', 0) if din else 0
+                getattr(din, 'price', 0) if din else 0,
+                close_time_str
             )
     return result
 
@@ -83,17 +92,20 @@ def update_trades_for_strategy(db, config, strategy_name):
     updated = 0
     for ticket in tickets_pending:
         if ticket in closed:
-            profit, close_price, _, _, _, _ = closed[ticket]
-            db.update_order_profit(ticket, close_price, profit)
+            row = closed[ticket]
+            profit, close_price = row[0], row[1]
+            close_time = row[6] if len(row) > 6 else None
+            db.update_order_profit(ticket, close_price, profit, close_time)
             print(f"✅ Updated trade {ticket}: Profit=${profit:.2f}")
             updated += 1
 
     # 4. Grid_Step: đồng bộ từ history — position đã đóng nhưng chưa có trong orders thì insert (backfill)
-    # SL/TP chuẩn = entry ± step (step từ config: step hoặc sl_tp_price, mặc định 5)
     if strategy_name == "Grid_Step" and closed:
         p = config.get("parameters", {})
         step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
-        for position_id, (profit, close_price, symbol, volume, order_type, open_price) in closed.items():
+        for position_id, row in closed.items():
+            profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+            close_time = row[6] if len(row) > 6 else None
             if not db.order_exists(position_id):
                 order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
                 op = float(open_price)
@@ -103,7 +115,7 @@ def update_trades_for_strategy(db, config, strategy_name):
                     sl, tp = op + step, op - step
                 db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
                              float(volume), op, sl, tp, "GridStep", account_id)
-                db.update_order_profit(position_id, close_price, profit)
+                db.update_order_profit(position_id, close_price, profit, close_time)
                 print(f"✅ Backfill Grid_Step position {position_id}: Profit=${profit:.2f}")
                 updated += 1
 

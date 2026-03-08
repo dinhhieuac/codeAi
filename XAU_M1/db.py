@@ -88,6 +88,9 @@ class Database:
         if 'account_id' not in columns:
             print("📦 Migrating DB: Adding account_id to orders table...")
             cursor.execute("ALTER TABLE orders ADD COLUMN account_id INTEGER DEFAULT 0")
+        if 'close_time' not in columns:
+            print("📦 Migrating DB: Adding close_time to orders table...")
+            cursor.execute("ALTER TABLE orders ADD COLUMN close_time DATETIME")
             
         # Check signals table
         cursor.execute("PRAGMA table_info(signals)")
@@ -138,17 +141,22 @@ class Database:
         conn.commit()
         conn.close()
     
-    def update_order_profit(self, ticket, close_price, profit):
-        """Update closed order with profit"""
+    def update_order_profit(self, ticket, close_price, profit, close_time=None):
+        """Update closed order with profit and close_time (giờ đóng lệnh, dùng cho pause tính từ lệnh thua cuối)."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE orders 
-            SET close_price = ?, profit = ? 
-            WHERE ticket = ?
-        ''', (close_price, profit, ticket))
-        
+        if close_time is not None:
+            cursor.execute('''
+                UPDATE orders 
+                SET close_price = ?, profit = ?, close_time = ?
+                WHERE ticket = ?
+            ''', (close_price, profit, close_time, ticket))
+        else:
+            cursor.execute('''
+                UPDATE orders 
+                SET close_price = ?, profit = ?
+                WHERE ticket = ?
+            ''', (close_price, profit, ticket))
         conn.commit()
         conn.close()
 
@@ -188,3 +196,25 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
         return [{"ticket": r[0], "order_type": r[1], "price": r[2]} for r in rows]
+
+    def get_last_closed_orders(self, strategy_name, limit=10, account_id=None):
+        """Lấy các lệnh đã đóng gần nhất (profit IS NOT NULL), sắp theo thời gian đóng (close_time hoặc open_time) DESC."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        # Ưu tiên close_time (giờ server đóng lệnh) để tính pause từ lệnh thua cuối
+        order_col = "COALESCE(close_time, open_time) DESC"
+        if account_id is not None:
+            cursor.execute(f'''
+                SELECT profit, open_time, close_time FROM orders
+                WHERE strategy_name = ? AND profit IS NOT NULL AND account_id = ?
+                ORDER BY {order_col} LIMIT ?
+            ''', (strategy_name, account_id, limit))
+        else:
+            cursor.execute(f'''
+                SELECT profit, open_time, close_time FROM orders
+                WHERE strategy_name = ? AND profit IS NOT NULL
+                ORDER BY {order_col} LIMIT ?
+            ''', (strategy_name, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"profit": r[0], "open_time": r[1], "close_time": r[2]} for r in rows]
