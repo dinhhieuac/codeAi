@@ -80,7 +80,8 @@ def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2, step=No
     return key in levels_dict
 
 
-def load_pause_state(clean_expired=True):
+def load_pause_state(clean_expired=True, now_utc=None):
+    """now_utc: dùng giờ MT5 (hoặc None) để so sánh hết hạn pause."""
     if not os.path.exists(PAUSE_FILE):
         return {}
     try:
@@ -90,7 +91,9 @@ def load_pause_state(clean_expired=True):
         return {}
     if not clean_expired or not state:
         return state
-    now = datetime.now(timezone.utc)
+    now = now_utc if now_utc is not None else datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     to_remove = []
     for name, until in state.items():
         try:
@@ -116,19 +119,52 @@ def save_pause_state(pauses_dict):
         pass
 
 
-def is_paused(strategy_name):
-    state = load_pause_state()
+def get_mt5_time_utc(symbol):
+    """Lấy giờ hiện tại của MT5 (server) dạng datetime UTC."""
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.utcfromtimestamp(tick.time).replace(tzinfo=timezone.utc)
+    except (TypeError, OSError):
+        return datetime.now(timezone.utc)
+
+
+def is_paused(strategy_name, now_utc=None):
+    """now_utc = giờ MT5 để so sánh: nếu (MT5 now - lệnh thua cuối) > pause_min thì cho giao dịch lại."""
+    state = load_pause_state(now_utc=now_utc)
     until = state.get(strategy_name)
     if not until:
         return False
     try:
         until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
+        now = now_utc if now_utc is not None else datetime.now(timezone.utc)
         if until_dt.tzinfo is None:
             until_dt = until_dt.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
         return now < until_dt
     except (ValueError, TypeError):
         return False
+
+
+def get_pause_remaining(strategy_name, now_utc=None):
+    """Trả về thời gian chờ còn lại (timedelta) hoặc None. Để hiển thị 'còn lại X phút Y giây'."""
+    state = load_pause_state(now_utc=now_utc)
+    until = state.get(strategy_name)
+    if not until:
+        return None
+    try:
+        until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        now = now_utc if now_utc is not None else datetime.now(timezone.utc)
+        if until_dt.tzinfo is None:
+            until_dt = until_dt.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        remaining = until_dt - now
+        return remaining if remaining.total_seconds() > 0 else None
+    except (ValueError, TypeError):
+        return None
 
 
 def set_paused(strategy_name, pause_minutes, from_time=None):
@@ -169,7 +205,7 @@ def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_lo
 
 def sync_closed_orders_from_mt5(config, strategy_name=None):
     """Đồng bộ lệnh đã đóng từ MT5 history vào bảng orders (profit, close_time). Dùng chung logic từ grid_step_common."""
-    closed = get_closed_from_mt5_history(config, days_back=2)
+    closed = get_closed_from_mt5_history(config, days_back=1)
     if not closed:
         return 0
     sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step")
@@ -439,30 +475,75 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         return 0, 0
 
     if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
-        if is_paused(strategy_name):
+        mt5_now = get_mt5_time_utc(symbol)
+        if is_paused(strategy_name, now_utc=mt5_now):
             if not hasattr(strategy_grid_step_logic, "_last_pause_log") or strategy_grid_step_logic._last_pause_log != strategy_name:
-                print(f"⏸️ [{strategy_name}] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối).")
+                print(f"⏸️ [{strategy_name}] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối, theo giờ MT5).")
                 strategy_grid_step_logic._last_pause_log = strategy_name
+            remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
+            if remaining is not None:
+                mins = int(remaining.total_seconds() // 60)
+                secs = int(remaining.total_seconds() % 60)
+                print(f"⏸️ [{strategy_name}] Thời gian chờ còn lại: {mins} phút {secs} giây")
             return error_count, 0
-        did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get('account'), consecutive_loss_count, consecutive_loss_pause_minutes)
-        if did_pause:
-            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
-            set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
-            print(f"⏸️ [{strategy_name}] {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối).")
-            msg = f"⏸️ Grid Step BTC tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp.\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
-            send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
-            return error_count, 0
-
-    # Trước khi đặt BUY_STOP/SELL_STOP: kiểm tra N lệnh đóng gần nhất của cặp từ MT5 history (dùng chung grid_step_common)
-    if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
-        if not is_paused(strategy_name):
-            profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=7)
-            if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
+        # Kiểm tra từ MT5 history theo cặp (mỗi vòng lặp)
+        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1)
+        if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
+            last_close_dt = None
+            if last_close_time_str:
+                try:
+                    last_close_dt = datetime.strptime(last_close_time_str.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+            if last_close_dt is not None:
+                until_dt = last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes)
+                if mt5_now >= until_dt:
+                    pass
+                else:
+                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                    set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
+                    print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
+                    msg = f"⏸️ Grid Step BTC tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp ({symbol}).\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
+                    send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
+                    return error_count, 0
+            else:
                 n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
                 set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
                 print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
                 msg = f"⏸️ Grid Step BTC tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp ({symbol}).\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
                 send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
+                return error_count, 0
+        did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get('account'), consecutive_loss_count, consecutive_loss_pause_minutes)
+        if did_pause:
+            last_close_dt = None
+            if last_close_time:
+                if isinstance(last_close_time, str):
+                    try:
+                        last_close_dt = datetime.strptime(last_close_time.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        try:
+                            last_close_dt = datetime.fromisoformat(last_close_time.replace("Z", "+00:00"))
+                            if last_close_dt.tzinfo is None:
+                                last_close_dt = last_close_dt.replace(tzinfo=timezone.utc)
+                        except (ValueError, TypeError):
+                            pass
+            if last_close_dt is not None:
+                until_dt = last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes)
+                if mt5_now >= until_dt:
+                    pass
+                else:
+                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                    set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
+                    print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối).")
+                    msg = f"⏸️ Grid Step BTC tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp.\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
+                    send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
+                    return error_count, 0
+            else:
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
+                print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối).")
+                msg = f"⏸️ Grid Step BTC tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp.\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
+                send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
                 return error_count, 0
 
     tick = mt5.symbol_info_tick(symbol)
