@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.append('..')
 from db import Database
 from utils import load_config, connect_mt5, send_telegram, get_mt5_error_message
+from grid_step_common import get_last_n_closed_profits_by_symbol, get_closed_from_mt5_history
 
 db = Database()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -172,6 +173,31 @@ def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_lo
         last_close_time = first_n[0].get("close_time")
         return True, last_close_time
     return False, None
+
+
+def sync_closed_orders_from_mt5(config, strategy_name=None):
+    """Đồng bộ lệnh đã đóng từ MT5 history vào bảng orders (profit, close_time). Giúp kiểm tra consecutive loss ngay trong bot.
+    strategy_name: nếu None thì dùng config.get('strategy_name','Grid_Step'); khi dùng steps thì gọi sync cho từng 'Grid_Step_{step}'."""
+    closed = get_closed_from_mt5_history(config, days_back=2)
+    if not closed:
+        return 0
+    sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step")
+    account_id = config.get("account", 0)
+    conn = sqlite3.connect(db.db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?",
+        (sn, account_id),
+    )
+    tickets_pending = {row[0] for row in cursor.fetchall()}
+    conn.close()
+    updated = 0
+    for ticket in tickets_pending:
+        if ticket in closed:
+            profit, close_price, close_time = closed[ticket]
+            db.update_order_profit(ticket, close_price, profit, close_time)
+            updated += 1
+    return updated
 
 
 def check_grid_step_db():
@@ -456,6 +482,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
             print(f"⏸️ [{strategy_name}] {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút (từ giờ đóng lệnh thua cuối).")
+            msg = f"⏸️ Grid Step tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp.\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
+            send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
             return error_count, 0
 
     # 3. Spread protection: so sánh theo GIÁ (price), tránh nhầm point (XAU point=0.001 → 252 points = 0.252)
@@ -521,6 +549,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 print(f"⏸️ Cooldown step={step_filter}: mức {buy_price}/{sell_price} trong {cooldown_minutes} phút, bỏ qua.")
                 strategy_grid_step_logic._last_cooldown_log = _log_key
             return error_count, 0
+
+    # Trước khi đặt BUY_STOP/SELL_STOP: kiểm tra N lệnh đóng gần nhất của cặp từ MT5 history (không phụ thuộc DB)
+    if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
+        if not is_paused(strategy_name):
+            profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=7)
+            if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
+                print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
+                msg = f"⏸️ Grid Step tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp ({symbol}).\nĐã hủy {n_cancelled} lệnh chờ (BUY STOP/SELL STOP).\nTạm dừng {consecutive_loss_pause_minutes} phút (tính từ giờ đóng lệnh thua cuối)."
+                send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
+                return error_count, 0
 
     # SL/TP = sl_tp_price (bằng step cho kênh này). Không trailing.
     step_val = float(sl_tp_price)
@@ -604,10 +644,18 @@ if __name__ == "__main__":
         else:
             steps_list = None  # legacy: 1 step từ "step", gọi logic với step=None
         label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
+        consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
         print(f"✅ Grid Step Bot - Started ({label})")
         loop_count = 0
         try:
             while True:
+                # Đồng bộ lệnh đã đóng từ MT5 vào DB (profit, close_time) cho đúng strategy_name của từng step
+                if consecutive_loss_pause_enabled:
+                    if steps_list is not None:
+                        for step_val in steps_list:
+                            sync_closed_orders_from_mt5(config, strategy_name=f"Grid_Step_{step_val}")
+                    else:
+                        sync_closed_orders_from_mt5(config, strategy_name="Grid_Step")
                 if steps_list is not None:
                     for step_val in steps_list:
                         consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=step_val)
