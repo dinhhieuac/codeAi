@@ -1,0 +1,22 @@
+{
+    "account": 463080275,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial17",
+    "mt5_path": "C:\\Program Files\\M8\\terminal64.exe",
+    "symbol": "BTCUSD",
+    "volume": 0.01,
+    "magic": 100011,
+    "max_positions": 5,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "270589269",
+    "parameters": {
+        "steps": [200],
+        "min_distance_points": 5,
+        "target_profit": 50.0,
+        "spread_max": 15.0,
+        "cooldown_minutes": 0,
+        "consecutive_loss_pause_enabled": true,
+        "consecutive_loss_count": 2,
+        "consecutive_loss_pause_minutes": 5
+    }
+}
