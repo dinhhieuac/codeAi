@@ -120,14 +120,18 @@ def save_pause_state(pauses_dict):
 
 
 def get_mt5_time_utc(symbol):
-    """Lấy giờ hiện tại của MT5 (server) dạng datetime UTC."""
+    """Lấy giờ 'hiện tại' cho so sánh pause. tick.time = thời điểm tick cuối, có thể cũ -> nếu lệch > 60s so với PC thì dùng utcnow()."""
+    utc_now = datetime.now(timezone.utc)
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
-        return datetime.now(timezone.utc)
+        return utc_now
     try:
-        return datetime.utcfromtimestamp(tick.time).replace(tzinfo=timezone.utc)
+        tick_utc = datetime.utcfromtimestamp(tick.time).replace(tzinfo=timezone.utc)
+        if (utc_now - tick_utc).total_seconds() > 60:
+            return utc_now
+        return tick_utc
     except (TypeError, OSError):
-        return datetime.now(timezone.utc)
+        return utc_now
 
 
 def is_paused(strategy_name, now_utc=None):
