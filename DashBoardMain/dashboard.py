@@ -50,9 +50,15 @@ def _load_databases_config():
 DB_MAP, DEFAULT_DB_KEY = _load_databases_config()
 print(f"📦 Dashboard tabs: {list(DB_MAP.keys())}, default={DEFAULT_DB_KEY}")
 
+def _reload_databases_config():
+    """Reload config.json into global DB_MAP, DEFAULT_DB_KEY (để thêm tab mới không cần restart)."""
+    global DB_MAP, DEFAULT_DB_KEY
+    DB_MAP, DEFAULT_DB_KEY = _load_databases_config()
+
 @app.before_request
 def _set_request_db():
-    """Set current DB for this request from ?db= key."""
+    """Reload config rồi set current DB for this request from ?db= key."""
+    _reload_databases_config()
     key = request.args.get('db', '').strip() or DEFAULT_DB_KEY
     if key not in DB_MAP:
         key = DEFAULT_DB_KEY
@@ -159,7 +165,7 @@ def index():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
     # --- ADVANCED STATS PER STRATEGY ---
-    # Auto-detect all strategies from orders + grid_pending_orders (để Grid_Step xuất hiện cả khi chưa có lệnh đóng)
+    # Chỉ hiển thị strategy có data: từ orders hoặc grid_pending_orders
     cur.execute("SELECT DISTINCT strategy_name FROM orders WHERE strategy_name IS NOT NULL AND strategy_name != ''")
     strategies = list({row['strategy_name'] for row in cur.fetchall()})
     try:
@@ -170,13 +176,9 @@ def index():
     except sqlite3.OperationalError:
         pass  # Bảng grid_pending_orders có thể chưa tồn tại (DB khác tab)
 
-    # Optional: Load display order from config file (if exists)
+    # Optional: thứ tự hiển thị strategy (chỉ sort, không thêm strategy không có data)
     display_order_config = load_display_order_config()
-    # Đảm bảo strategy trong display_order (vd Grid_Step) luôn có trong list để hiển thị
-    for name in (display_order_config or []):
-        if name and name not in strategies:
-            strategies.append(name)
-    
+
     bot_stats = []
     
     # Get last 30 days data for Daily PNL Calendar (independent of filter)
