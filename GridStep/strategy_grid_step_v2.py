@@ -388,11 +388,17 @@ def get_pending_orders(symbol, magic, step=None):
     return orders
 
 
-def cancel_all_pending(symbol, magic, strategy_name="Grid_V2_Step", account_id=0, step=None):
+def cancel_all_pending(symbol, magic, strategy_name="Grid_V2_Step", account_id=0, step=None, reason=""):
     orders = get_pending_orders(symbol, magic, step)
+    step_label = step if step is not None else "single"
+    if orders:
+        tickets = [o.ticket for o in orders]
+        print(f"🔄 [CANCEL] step={step_label} | lý do: {reason or 'không ghi'} | sẽ hủy {len(orders)} lệnh: {tickets}")
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
         db.update_grid_pending_status(o.ticket, "CANCELLED")
+    if orders:
+        print(f"✅ [SAU CANCEL] đã hủy {len(orders)} lệnh: tickets={tickets}")
     return len(orders)
 
 
@@ -547,7 +553,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         _step_label = step_filter if step_filter is not None else "single"
         print(f"✅ [BASKET TP V2] step={_step_label} Profit {profit:.2f} >= {target_profit}, đóng tất cả.")
         close_all_positions(symbol, magic, step_filter)
-        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Basket TP đạt target, đóng hết position và hủy lệnh chờ")
         msg = f"✅ Grid Step V2 {step}: Basket TP hit. Profit={profit:.2f} | Closed all."
         send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
         return 0, 0
@@ -577,13 +583,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 if mt5_now >= until_dt:
                     pass
                 else:
-                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None, reason="Consecutive loss pause (history): hủy lệnh chờ trước khi tạm dừng")
                     set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
                     print(f"⏸️ [{strategy_name}] (history) {consecutive_loss_count} lệnh thua liên tiếp → hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
                     send_telegram(f"⏸️ Grid Step V2 tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
                     return error_count, 0
             else:
-                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None, reason="Consecutive loss pause (history, no time): hủy lệnh chờ")
                 set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
                 send_telegram(f"⏸️ Grid Step V2 tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
@@ -606,12 +612,12 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 if mt5_now >= until_dt:
                     pass
                 else:
-                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None, reason="Consecutive loss pause (DB): hủy lệnh chờ trước khi tạm dừng")
                     set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
                     send_telegram(f"⏸️ Grid Step V2 tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get('telegram_token'), config.get('telegram_chat_id'))
                     return error_count, 0
             else:
-                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None, reason="Consecutive loss pause (DB, no time): hủy lệnh chờ")
                 set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
                 return error_count, 0
 
@@ -633,6 +639,29 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if len(pendings) == 2:
         return error_count, 0
 
+    # V2: Đang có position + pending: nếu lệnh chờ trùng với mong muốn (ref từ position) → không hủy, không đặt lại
+    if len(positions) > 0 and len(pendings) > 0:
+        current_price_pos = get_grid_anchor_price(symbol, magic, step_filter)
+        ref_pos = round(round(current_price_pos / grid_step_price) * grid_step_price, info.digits)
+        buy_price_pos = round(ref_pos + grid_step_price, info.digits)
+        sell_price_pos = round(ref_pos - grid_step_price, info.digits)
+        bid = float(tick.bid) if tick else None
+        ask = float(tick.ask) if tick else None
+        buy_locked_pos = is_reentry_locked(strategy_name, symbol, step_val, "BUY", buy_price_pos, bid, ask, digits)
+        sell_locked_pos = is_reentry_locked(strategy_name, symbol, step_val, "SELL", sell_price_pos, bid, ask, digits)
+        expected_set = set()
+        if not buy_locked_pos:
+            expected_set.add((mt5.ORDER_TYPE_BUY_STOP, buy_price_pos))
+        if not sell_locked_pos:
+            expected_set.add((mt5.ORDER_TYPE_SELL_STOP, sell_price_pos))
+        actual_set = set()
+        for o in pendings:
+            pr = round(float(getattr(o, "price", 0) or getattr(o, "price_open", 0)), info.digits)
+            actual_set.add((o.type, pr))
+        if expected_set == actual_set:
+            print(f"⏭️ [BỎ QUA] step={step_filter} | có {len(positions)} position, lệnh chờ trùng mong muốn (ref={ref_pos}) → không hủy, không đặt lại")
+            return error_count, 0
+
     # V2: Đã có đúng 1 lệnh chờ và chỉ một phía bị khóa re-entry → không hủy/đặt lại, tránh spam
     if len(pendings) == 1 and len(positions) == 0:
         current_price_tmp = get_grid_anchor_price(symbol, magic, step_filter)
@@ -646,14 +675,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         sell_locked_tmp = is_reentry_locked(strategy_name, symbol, step_val, "SELL", sell_price_tmp, bid, ask, digits)
         # Chỉ một phía được phép đặt (một bên khóa) → đã có 1 lệnh chờ là đủ, không đặt lại
         if buy_locked_tmp != sell_locked_tmp:
+            the_one = pendings[0]
+            ptype = "BUY_STOP" if getattr(the_one, "type", None) == mt5.ORDER_TYPE_BUY_STOP else "SELL_STOP"
+            pprice = getattr(the_one, "price", None) or getattr(the_one, "price_open", None)
+            print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), một phía khóa re-entry → không hủy, không đặt lại")
             return error_count, 0
 
     if positions:
-        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Có position đang mở → hủy hết lệnh chờ, ref tính từ position")
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
         if pendings:
-            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Chuẩn bị đặt lại grid (ref mới) → hủy lệnh chờ cũ")
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
     ref = round(current_price / grid_step_price) * grid_step_price
@@ -724,6 +757,17 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     tp_sell = sell_price - step_val_f
     _step_label = step_filter if step_filter is not None else step_val
 
+    # Log quyết định đặt lệnh: lý do và sẽ đặt gì
+    will_buy = not buy_locked
+    will_sell = not sell_locked
+    action_desc = []
+    if will_buy:
+        action_desc.append("BUY_STOP")
+    if will_sell:
+        action_desc.append("SELL_STOP")
+    reason_desc = f"ref={ref} buy_price={buy_price} sell_price={sell_price} | BUY_locked={buy_locked} SELL_locked={sell_locked}"
+    print(f"📋 [QUYẾT ĐỊNH ĐẶT LỆNH] step={_step_label} | {reason_desc} → sẽ đặt: {', '.join(action_desc) or 'không (cả hai bị khóa)'}")
+
     r1 = None
     r2 = None
     if not buy_locked:
@@ -732,11 +776,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
 
     if not buy_locked and not sell_locked:
-        print(f"📤 [V2 step={_step_label}] BUY_STOP @ {buy_price}, SELL_STOP @ {sell_price}")
+        print(f"📤 [V2 step={_step_label}] gửi: BUY_STOP @ {buy_price}, SELL_STOP @ {sell_price}")
     elif not buy_locked:
-        print(f"📤 [V2 step={_step_label}] BUY_STOP @ {buy_price} (SELL bị khóa)")
+        print(f"📤 [V2 step={_step_label}] gửi: BUY_STOP @ {buy_price} (SELL bị khóa re-entry)")
     else:
-        print(f"📤 [V2 step={_step_label}] SELL_STOP @ {sell_price} (BUY bị khóa)")
+        print(f"📤 [V2 step={_step_label}] gửi: SELL_STOP @ {sell_price} (BUY bị khóa re-entry)")
 
     if r1 is None and r2 is None:
         return error_count, 0
@@ -767,7 +811,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 to_save.append(sell_price)
             if to_save:
                 save_cooldown_levels(to_save, step_filter)
-        print(f"✅ Grid V2 step={_step_label}: đã đặt {done_count} lệnh | ref={ref}")
+        # Log sau khi đặt lệnh: ticket và giá từng lệnh
+        parts = []
+        if not buy_locked and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
+            parts.append(f"BUY_STOP ticket={r1.order} @ {buy_price}")
+        if not sell_locked and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
+            parts.append(f"SELL_STOP ticket={r2.order} @ {sell_price}")
+        print(f"✅ [SAU ĐẶT LỆNH] step={_step_label} | đã đặt {done_count} lệnh: {' | '.join(parts)} | ref={ref}")
         return 0, 0
 
     if not buy_locked and r1 is not None and r1.retcode != mt5.TRADE_RETCODE_DONE:
