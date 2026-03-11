@@ -662,7 +662,9 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             print(f"⏭️ [BỎ QUA] step={step_filter} | có {len(positions)} position, lệnh chờ trùng mong muốn (ref={ref_pos}) → không hủy, không đặt lại")
             return error_count, 0
 
-    # V2: Đã có đúng 1 lệnh chờ và chỉ một phía bị khóa re-entry → không hủy/đặt lại, tránh spam
+    # V2: Đã có đúng 1 lệnh chờ, 0 position: hoặc bỏ qua (một phía khóa), hoặc chỉ đặt thêm lệnh còn thiếu (tránh hủy rồi đặt lại cùng giá)
+    add_missing_order_only = None  # "BUY" | "SELL" | None
+    ref_tmp_save = None
     if len(pendings) == 1 and len(positions) == 0:
         current_price_tmp = get_grid_anchor_price(symbol, magic, step_filter)
         ref_tmp = round(current_price_tmp / grid_step_price) * grid_step_price
@@ -680,14 +682,25 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             pprice = getattr(the_one, "price", None) or getattr(the_one, "price_open", None)
             print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), một phía khóa re-entry → không hủy, không đặt lại")
             return error_count, 0
+        # Cả hai phía đều mở khóa: nếu lệnh chờ hiện có trùng 1 trong 2 mong muốn → không hủy, chỉ đặt thêm lệnh còn thiếu
+        if not buy_locked_tmp and not sell_locked_tmp:
+            the_one = pendings[0]
+            pr = round(float(getattr(the_one, "price", 0) or getattr(the_one, "price_open", 0)), info.digits)
+            is_buy = getattr(the_one, "type", None) == mt5.ORDER_TYPE_BUY_STOP
+            if is_buy and abs(pr - buy_price_tmp) < 0.001:
+                add_missing_order_only = "SELL"
+                ref_tmp_save = ref_tmp
+            elif not is_buy and abs(pr - sell_price_tmp) < 0.001:
+                add_missing_order_only = "BUY"
+                ref_tmp_save = ref_tmp
 
     if positions:
         cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Có position đang mở → hủy hết lệnh chờ, ref tính từ position")
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
-        if pendings:
+        if pendings and not add_missing_order_only:
             cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Chuẩn bị đặt lại grid (ref mới) → hủy lệnh chờ cũ")
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
+        current_price = ref_tmp_save if add_missing_order_only else get_grid_anchor_price(symbol, magic, step_filter)
 
     ref = round(current_price / grid_step_price) * grid_step_price
     ref = round(ref, info.digits)
@@ -758,24 +771,40 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     _step_label = step_filter if step_filter is not None else step_val
 
     # Log quyết định đặt lệnh: lý do và sẽ đặt gì
-    will_buy = not buy_locked
-    will_sell = not sell_locked
+    if add_missing_order_only:
+        will_buy = add_missing_order_only == "BUY"
+        will_sell = add_missing_order_only == "SELL"
+    else:
+        will_buy = not buy_locked
+        will_sell = not sell_locked
     action_desc = []
     if will_buy:
         action_desc.append("BUY_STOP")
     if will_sell:
         action_desc.append("SELL_STOP")
     reason_desc = f"ref={ref} buy_price={buy_price} sell_price={sell_price} | BUY_locked={buy_locked} SELL_locked={sell_locked}"
-    print(f"📋 [QUYẾT ĐỊNH ĐẶT LỆNH] step={_step_label} | {reason_desc} → sẽ đặt: {', '.join(action_desc) or 'không (cả hai bị khóa)'}")
+    if add_missing_order_only:
+        print(f"📋 [QUYẾT ĐỊNH ĐẶT LỆNH] step={_step_label} | {reason_desc} → chỉ đặt thêm {add_missing_order_only} (đã có lệnh kia, không hủy)")
+    else:
+        print(f"📋 [QUYẾT ĐỊNH ĐẶT LỆNH] step={_step_label} | {reason_desc} → sẽ đặt: {', '.join(action_desc) or 'không (cả hai bị khóa)'}")
 
     r1 = None
     r2 = None
-    if not buy_locked:
+    if add_missing_order_only == "BUY":
         r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
-    if not sell_locked:
+    elif add_missing_order_only == "SELL":
         r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
+    else:
+        if not buy_locked:
+            r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
+        if not sell_locked:
+            r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
 
-    if not buy_locked and not sell_locked:
+    if add_missing_order_only == "BUY":
+        print(f"📤 [V2 step={_step_label}] gửi thêm: BUY_STOP @ {buy_price} (đã có SELL, không hủy)")
+    elif add_missing_order_only == "SELL":
+        print(f"📤 [V2 step={_step_label}] gửi thêm: SELL_STOP @ {sell_price} (đã có BUY, không hủy)")
+    elif not buy_locked and not sell_locked:
         print(f"📤 [V2 step={_step_label}] gửi: BUY_STOP @ {buy_price}, SELL_STOP @ {sell_price}")
     elif not buy_locked:
         print(f"📤 [V2 step={_step_label}] gửi: BUY_STOP @ {buy_price} (SELL bị khóa re-entry)")
@@ -784,46 +813,46 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     if r1 is None and r2 is None:
         return error_count, 0
-    if not buy_locked and r1 is None:
+    if will_buy and r1 is None:
         err = mt5.last_error()
         print(f"❌ BUY_STOP order_send lỗi: {err}")
         return error_count + 1, getattr(err, 'code', 0)
-    if not sell_locked and r2 is None:
+    if will_sell and r2 is None:
         err = mt5.last_error()
         print(f"❌ SELL_STOP order_send lỗi: {err}")
         return error_count + 1, getattr(err, 'code', 0)
 
     acc = config.get('account')
     done_count = 0
-    if not buy_locked and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
+    if will_buy and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
         done_count += 1
         db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
-    if not sell_locked and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
+    if will_sell and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
         done_count += 1
         db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
 
     if done_count > 0:
         if cooldown_minutes > 0:
             to_save = []
-            if not buy_locked and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
+            if will_buy and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
                 to_save.append(buy_price)
-            if not sell_locked and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
+            if will_sell and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
                 to_save.append(sell_price)
             if to_save:
                 save_cooldown_levels(to_save, step_filter)
         # Log sau khi đặt lệnh: ticket và giá từng lệnh
         parts = []
-        if not buy_locked and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
+        if will_buy and r1 is not None and r1.retcode == mt5.TRADE_RETCODE_DONE:
             parts.append(f"BUY_STOP ticket={r1.order} @ {buy_price}")
-        if not sell_locked and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
+        if will_sell and r2 is not None and r2.retcode == mt5.TRADE_RETCODE_DONE:
             parts.append(f"SELL_STOP ticket={r2.order} @ {sell_price}")
         print(f"✅ [SAU ĐẶT LỆNH] step={_step_label} | đã đặt {done_count} lệnh: {' | '.join(parts)} | ref={ref}")
         return 0, 0
 
-    if not buy_locked and r1 is not None and r1.retcode != mt5.TRADE_RETCODE_DONE:
+    if will_buy and r1 is not None and r1.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
         return error_count + 1, r1.retcode
-    if not sell_locked and r2 is not None and r2.retcode != mt5.TRADE_RETCODE_DONE:
+    if will_sell and r2 is not None and r2.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
         return error_count + 1, r2.retcode
     return error_count, 0
