@@ -1,0 +1,52 @@
+{
+  "locks": [
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5185.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5195.0,
+      "active": false,
+      "created_at": "2026-03-11T07:41:05.326040Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 5195.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 5185.0,
+      "active": true,
+      "created_at": "2026-03-11T08:01:54.893675Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5190.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5200.0,
+      "active": true,
+      "created_at": "2026-03-11T08:04:47.719396Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5185.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5195.0,
+      "active": true,
+      "created_at": "2026-03-11T08:04:47.720394Z",
+      "reason": "SL"
+    }
+  ]
+}

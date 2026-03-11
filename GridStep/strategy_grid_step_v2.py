@@ -633,6 +633,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if len(pendings) == 2:
         return error_count, 0
 
+    # V2: Đã có đúng 1 lệnh chờ và chỉ một phía bị khóa re-entry → không hủy/đặt lại, tránh spam
+    if len(pendings) == 1 and len(positions) == 0:
+        current_price_tmp = get_grid_anchor_price(symbol, magic, step_filter)
+        ref_tmp = round(current_price_tmp / grid_step_price) * grid_step_price
+        ref_tmp = round(ref_tmp, info.digits)
+        buy_price_tmp = round(ref_tmp + grid_step_price, info.digits)
+        sell_price_tmp = round(ref_tmp - grid_step_price, info.digits)
+        bid = float(tick.bid) if tick else None
+        ask = float(tick.ask) if tick else None
+        buy_locked_tmp = is_reentry_locked(strategy_name, symbol, step_val, "BUY", buy_price_tmp, bid, ask, digits)
+        sell_locked_tmp = is_reentry_locked(strategy_name, symbol, step_val, "SELL", sell_price_tmp, bid, ask, digits)
+        # Chỉ một phía được phép đặt (một bên khóa) → đã có 1 lệnh chờ là đủ, không đặt lại
+        if buy_locked_tmp != sell_locked_tmp:
+            return error_count, 0
+
     if positions:
         cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
