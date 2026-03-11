@@ -44,7 +44,7 @@
       "entry_price": 5185.0,
       "unlock_rule": "ask_gte",
       "unlock_price": 5195.0,
-      "active": true,
+      "active": false,
       "created_at": "2026-03-11T08:04:47.720394Z",
       "reason": "SL"
     },
@@ -58,6 +58,30 @@
       "unlock_price": 5190.0,
       "active": true,
       "created_at": "2026-03-11T08:43:44.145856Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5185.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5195.0,
+      "active": false,
+      "created_at": "2026-03-11T09:34:02.413355Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5185.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5195.0,
+      "active": true,
+      "created_at": "2026-03-11T09:34:03.431245Z",
       "reason": "SL"
     }
   ]
