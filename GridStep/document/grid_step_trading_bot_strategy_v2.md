@@ -13,9 +13,10 @@
 
 | Script | Config | File re-entry lock | File cooldown / pause |
 |--------|--------|--------------------|------------------------|
-| **strategy_grid_step_v2.py** | configs/config_grid_step.json | grid_reentry_locks_v2.json | Dùng chung grid_cooldown.json, grid_pause.json |
+| **strategy_grid_step_v2.py** | configs/config_grid_step_v2.json | grid_reentry_locks_v2.json | Dùng chung grid_cooldown.json, grid_pause.json |
 
-Chạy: `python strategy_grid_step_v2.py` (cùng DB và config với bản gốc nếu muốn).
+- Trong DB (bảng `orders`, `grid_pending_orders`): **strategy_name** = `Grid_V2_Step` (legacy 1 step) hoặc `Grid_V2_Step_5`, `Grid_V2_Step_200`, ... (khi dùng `steps`) để phân biệt với V1 (`Grid_Step`, `Grid_Step_5`, ...).
+- Chạy: `python strategy_grid_step_v2.py`.
 
 ---
 
@@ -138,9 +139,9 @@ Giống bản gốc, thêm một lớp V2:
 
 ## 8. Cơ sở dữ liệu & file (V2)
 
-- **grid_pending_orders**, **orders**: Giống bản gốc (cùng DB).
+- **grid_pending_orders**, **orders**: Cùng DB với bản gốc; **strategy_name** ghi là `Grid_V2_Step` hoặc `Grid_V2_Step_{step}` (vd `Grid_V2_Step_5`) để dashboard và báo cáo tách bạch với V1 (`Grid_Step`, `Grid_Step_5`, ...).
 - **grid_reentry_locks_v2.json**: Danh sách re-entry lock (strategy_name, symbol, step, side, entry_price, unlock_rule, unlock_price, active, created_at, reason). File nằm cùng thư mục script.
-- **grid_cooldown.json**, **grid_pause.json**: V2 dùng chung với bản gốc khi chạy cùng symbol/config.
+- **grid_cooldown.json**, **grid_pause.json**: V2 dùng chung với bản gốc (pause/cooldown lưu theo strategy_name nên Grid_V2_Step_5 và Grid_Step_5 tách nhau).
 
 ---
 

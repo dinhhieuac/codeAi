@@ -337,7 +337,7 @@ def sync_closed_orders_from_mt5(config, strategy_name=None):
     closed = get_closed_from_mt5_history(config, days_back=1)
     if not closed:
         return 0
-    sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step")
+    sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_V2_Step")
     account_id = config.get("account", 0)
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
@@ -388,7 +388,7 @@ def get_pending_orders(symbol, magic, step=None):
     return orders
 
 
-def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0, step=None):
+def cancel_all_pending(symbol, magic, strategy_name="Grid_V2_Step", account_id=0, step=None):
     orders = get_pending_orders(symbol, magic, step)
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
@@ -396,7 +396,7 @@ def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0, s
     return len(orders)
 
 
-def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0, sl_tp_price=5.0, info=None, step=None):
+def sync_grid_pending_status(symbol, magic, strategy_name="Grid_V2_Step", account_id=0, sl_tp_price=5.0, info=None, step=None):
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
     positions = get_positions_for_step(symbol, magic, step)
     info = info or mt5.symbol_info(symbol)
@@ -501,14 +501,14 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         step_val = float(params.get('step', 5) or 5)
         grid_step_price = step_val
         sl_tp_price = step_val
-        strategy_name = "Grid_Step"
+        strategy_name = "Grid_V2_Step"
         step_filter = None
     else:
         step = float(step)
         step_val = step
         grid_step_price = step
         sl_tp_price = step
-        strategy_name = f"Grid_Step_{step}"
+        strategy_name = f"Grid_V2_Step_{step}"
         step_filter = step
     min_distance_points = params.get('min_distance_points', 5)
     max_positions = config.get('max_positions', 5)
@@ -793,9 +793,9 @@ if __name__ == "__main__":
                 if consecutive_loss_pause_enabled:
                     if steps_list is not None:
                         for step_val in steps_list:
-                            sync_closed_orders_from_mt5(config, strategy_name=f"Grid_Step_{step_val}")
+                            sync_closed_orders_from_mt5(config, strategy_name=f"Grid_V2_Step_{step_val}")
                     else:
-                        sync_closed_orders_from_mt5(config, strategy_name="Grid_Step")
+                        sync_closed_orders_from_mt5(config, strategy_name="Grid_V2_Step")
                 if steps_list is not None:
                     for step_val in steps_list:
                         consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=step_val)
