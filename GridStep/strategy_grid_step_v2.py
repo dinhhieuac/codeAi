@@ -770,7 +770,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "configs", "config_grid_step.json")
+    config_path = os.path.join(script_dir, "configs", "config_grid_step_v2.json")
     config = load_config(config_path)
 
     consecutive_errors = 0
