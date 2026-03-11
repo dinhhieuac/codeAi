@@ -99,25 +99,32 @@ def update_trades_for_strategy(db, config, strategy_name):
             print(f"✅ Updated trade {ticket}: Profit=${profit:.2f}")
             updated += 1
 
-    # 4. Grid_Step: đồng bộ từ history — position đã đóng nhưng chưa có trong orders thì insert (backfill)
+    # 4. Grid_Step: đồng bộ từ history — position đã đóng nhưng chưa có trong orders thì insert (backfill).
+    # Khi config có "steps" (vd [5], [200]) thì bot chính đã ghi đúng Grid_Step_5.0 / Grid_Step_200.0;
+    # không backfill với "Grid_Step" để tránh tạo bản ghi sai strategy_name.
     if strategy_name == "Grid_Step" and closed:
-        p = config.get("parameters", {})
-        step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
-        for position_id, row in closed.items():
-            profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
-            close_time = row[6] if len(row) > 6 else None
-            if not db.order_exists(position_id):
-                order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
-                op = float(open_price)
-                if order_type == mt5.ORDER_TYPE_BUY:
-                    sl, tp = op - step, op + step
-                else:
-                    sl, tp = op + step, op - step
-                db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
-                             float(volume), op, sl, tp, "GridStep", account_id)
-                db.update_order_profit(position_id, close_price, profit, close_time)
-                print(f"✅ Backfill Grid_Step position {position_id}: Profit=${profit:.2f}")
-                updated += 1
+        steps = config.get("parameters", {}).get("steps")
+        if steps is not None and len(steps) > 0:
+            # Đang dùng multi-step: không backfill với "Grid_Step", tránh ghi nhận sai trong dashboard.
+            pass
+        else:
+            p = config.get("parameters", {})
+            step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+            for position_id, row in closed.items():
+                profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+                close_time = row[6] if len(row) > 6 else None
+                if not db.order_exists(position_id):
+                    order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                    op = float(open_price)
+                    if order_type == mt5.ORDER_TYPE_BUY:
+                        sl, tp = op - step, op + step
+                    else:
+                        sl, tp = op + step, op - step
+                    db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                                 float(volume), op, sl, tp, "GridStep", account_id)
+                    db.update_order_profit(position_id, close_price, profit, close_time)
+                    print(f"✅ Backfill Grid_Step position {position_id}: Profit=${profit:.2f}")
+                    updated += 1
 
     conn.close()
     if not tickets_pending and not (strategy_name == "Grid_Step" and closed):
