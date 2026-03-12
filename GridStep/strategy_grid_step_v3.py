@@ -740,20 +740,52 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if len(positions) >= max_positions:
         return error_count, 0
 
-    # Ref: có position -> anchor từ position (Checklist §2: không cancel_all_pending vì có position). Flat -> ref_override hoặc mid. Checklist §4: bỏ try_set_ref_shift_from_recent_sl.
+    # Ref: có position -> anchor từ position. Flat -> ref_override hoặc ổn định ref từ pending (tránh đổi ref mỗi tick khiến hủy/đặt lại liên tục, lệnh không khớp).
+    def _order_price(ord):
+        return float(getattr(ord, "price_open", 0) or getattr(ord, "price", 0))
+
     if positions:
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
+        ref = round(current_price / grid_step_price) * grid_step_price
+        ref = round(ref, digits)
+        buy_price = round(ref + grid_step_price, digits)
+        sell_price = round(ref - grid_step_price, digits)
     else:
         ref_override_val, used_override = compute_ref_override_and_use(strategy_name, step_val, digits)
         if used_override:
-            current_price = ref_override_val
+            ref = round(ref_override_val / grid_step_price) * grid_step_price
+            ref = round(ref, digits)
+            buy_price = round(ref + grid_step_price, digits)
+            sell_price = round(ref - grid_step_price, digits)
+        elif pendings:
+            # Đã có pending: giữ ref từ pending, không lấy mid mỗi tick → tránh hủy/đặt lại liên tục, cho phép lệnh khớp
+            ref_from_pending = None
+            for o in pendings:
+                op = _order_price(o)
+                if op <= 0:
+                    continue
+                if o.type == mt5.ORDER_TYPE_BUY_STOP:
+                    ref_from_pending = round(op - grid_step_price, digits)
+                    break
+                if o.type == mt5.ORDER_TYPE_SELL_STOP:
+                    ref_from_pending = round(op + grid_step_price, digits)
+                    break
+            if ref_from_pending is not None:
+                ref = ref_from_pending
+                buy_price = round(ref + grid_step_price, digits)
+                sell_price = round(ref - grid_step_price, digits)
+            else:
+                current_price = get_grid_anchor_price(symbol, magic, step_filter)
+                ref = round(current_price / grid_step_price) * grid_step_price
+                ref = round(ref, digits)
+                buy_price = round(ref + grid_step_price, digits)
+                sell_price = round(ref - grid_step_price, digits)
         else:
             current_price = get_grid_anchor_price(symbol, magic, step_filter)
-
-    ref = round(current_price / grid_step_price) * grid_step_price
-    ref = round(ref, digits)
-    buy_price = round(ref + grid_step_price, digits)
-    sell_price = round(ref - grid_step_price, digits)
+            ref = round(current_price / grid_step_price) * grid_step_price
+            ref = round(ref, digits)
+            buy_price = round(ref + grid_step_price, digits)
+            sell_price = round(ref - grid_step_price, digits)
 
     # Checklist §11: Thứ tự đúng spec — zone lock → min distance → re-entry block → cooldown
     buy_allowed = True
@@ -796,19 +828,20 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     # Doc §5.6: Chỉ hủy pending khi có lý do rõ ràng (không còn hợp lệ / mức khác / bị block), không hủy vì thiếu cặp
     for o in pendings:
+        op = _order_price(o)
         if o.type == mt5.ORDER_TYPE_BUY_STOP:
-            if not buy_allowed or abs(float(o.price) - buy_price) > 0.01:
+            if not buy_allowed or abs(op - buy_price) > 0.01:
                 mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
                 db.update_grid_pending_status(o.ticket, "CANCELLED")
         else:
-            if not sell_allowed or abs(float(o.price) - sell_price) > 0.01:
+            if not sell_allowed or abs(op - sell_price) > 0.01:
                 mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
                 db.update_grid_pending_status(o.ticket, "CANCELLED")
 
     # Doc §5.7: Kiểm tra đã có pending đúng mức đó chưa. Checklist §10: sau hủy pending phải refresh pendings (đã có ở trên).
     pendings = get_pending_orders(symbol, magic, step_filter)
-    has_buy_pending = any(o.type == mt5.ORDER_TYPE_BUY_STOP and abs(float(o.price) - buy_price) < 0.01 for o in pendings)
-    has_sell_pending = any(o.type == mt5.ORDER_TYPE_SELL_STOP and abs(float(o.price) - sell_price) < 0.01 for o in pendings)
+    has_buy_pending = any(o.type == mt5.ORDER_TYPE_BUY_STOP and abs(_order_price(o) - buy_price) < 0.01 for o in pendings)
+    has_sell_pending = any(o.type == mt5.ORDER_TYPE_SELL_STOP and abs(_order_price(o) - sell_price) < 0.01 for o in pendings)
     if not buy_allowed and buy_reason:
         print(f"   [{strategy_name}] BUY @ {buy_price} blocked: {', '.join(buy_reason)}")
     if not sell_allowed and sell_reason:

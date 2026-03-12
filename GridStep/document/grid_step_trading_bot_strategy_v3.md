@@ -6,6 +6,8 @@ Tài liệu này là bản đặc tả chiến lược **sau khi tinh gọn** đ
 2. **Sau SL, dịch `ref` khỏi vùng vừa thua, không neo lại bằng `mid` ngay**
 3. **Pause step khi phát hiện mẫu chop trong vài lệnh gần nhất**
 
+Tài liệu bổ sung chi tiết luồng vào lệnh và state: **grid_step_entry_flow_summary.md**.
+
 Mục tiêu của bản tinh gọn là:
 
 - giữ nguyên bản chất **Grid Step thuần cơ học**
@@ -273,22 +275,26 @@ Khuyến nghị:
 
 ## 4.1. Lớp 1 — Re-entry lock sau SL
 
-Khi một lệnh đóng do SL:
+Khi một lệnh đóng do SL (và chưa được xử lý — xem dedupe bên dưới):
 
-- tạo block theo `strategy_name + step + side + entry_price`
+- tạo block theo `strategy_name + symbol + step + side + entry_price`
+- **Dedupe**: không thêm block mới nếu đã tồn tại block active cùng (strategy_name, symbol, step, side, entry_price)
 - block chỉ cấm:
   - đúng chiều vừa thua
   - đúng mức entry vừa thua
+  - đúng symbol và step (tránh block ảnh hưởng sai step/symbol)
+
+Kiểm tra block: `is_reentry_blocked(strategy_name, symbol, step_val, side, price)` — so khớp đủ strategy_name, symbol, step, side, entry_price.
 
 Ví dụ:
 
-- BUY 5005 bị SL -> block `BUY:5005`
+- BUY 5005 bị SL -> block `BUY:5005` (cùng symbol, step)
 - SELL 4995 bị SL -> block `SELL:4995`
 
 Điều kiện mở khóa mặc định:
 
-- BUY block mở khi giá đi xuống thêm 1 step dưới SL
-- SELL block mở khi giá đi lên thêm 1 step trên SL
+- BUY block mở khi `bid <= unlock_price` (unlock_price = SL - step)
+- SELL block mở khi `ask >= unlock_price` (unlock_price = SL + step)
 
 Mục tiêu:
 
@@ -301,12 +307,12 @@ Mục tiêu:
 Khi step vừa có lệnh đóng do SL và hiện tại **không còn position mở**:
 
 - không dùng `mid` để dựng grid kế tiếp
-- dùng `ref_override`
+- dùng `ref_override` tính từ **`last_stopout_sl`** đã lưu trong state (khi ghi nhận stop-out):
 
-Khuyến nghị dùng mode mạnh:
+  - BUY bị SL → `ref_override = last_stopout_sl - step`
+  - SELL bị SL → `ref_override = last_stopout_sl + step`
 
-- BUY bị SL -> `ref_override = SL - step`
-- SELL bị SL -> `ref_override = SL + step`
+State ref shift lưu: `last_stopout_side`, `last_stopout_entry`, `last_stopout_sl`, `last_stopout_time`, `pending_ref_shift`, `last_processed_stopout_ticket`. Khi dùng xong `ref_override` chỉ reset `pending_ref_shift = false`, giữ lại `last_processed_stopout_ticket` để tránh xử lý lặp cùng một stop-out.
 
 Mục tiêu:
 
@@ -346,17 +352,20 @@ Flow khuyến nghị cho `strategy_grid_step_logic()` sau khi tinh gọn.
 - sync closed orders từ MT5 vào DB
 - cập nhật `profit`, `close_time`, `close reason` nếu có
 
-## Bước 3. Ghi nhận stop-out mới
+## Bước 3. Ghi nhận stop-out mới (chỉ xử lý 1 lần mỗi lệnh SL)
 
-Nếu phát hiện lệnh vừa đóng do SL:
+Nếu phát hiện lệnh vừa đóng do SL **và** ticket đó **chưa** nằm trong `last_processed_stopout_ticket`:
 
-- tạo re-entry block
+- tạo re-entry block (và dedupe: không thêm nếu đã có block active cùng strategy_name, symbol, step, side, entry_price)
 - set state `pending_ref_shift = true`
 - lưu:
   - `last_stopout_side`
   - `last_stopout_entry`
   - `last_stopout_sl`
   - `last_stopout_time`
+  - **`last_processed_stopout_ticket`** (để vòng sau không xử lý lặp cùng một stop-out)
+
+Một lệnh SL chỉ sinh ra **một** re-entry block và **một** lần `pending_ref_shift = true`.
 
 ## Bước 4. Kiểm tra pause hiện tại
 
@@ -400,7 +409,12 @@ thì:
 - notify
 - return
 
-## Bước 8. Spread protection
+## Bước 8. Spread protection và bảo vệ tick
+
+Nếu `tick = mt5.symbol_info_tick(symbol)` là `None`:
+
+- không gọi `refresh_reentry_blocks` (tránh crash)
+- return sớm
 
 Nếu spread không hợp lệ:
 
@@ -420,12 +434,18 @@ Nếu số position mở >= `max_positions`:
 
 - `anchor = giá mở position mới nhất`
 - `ref = round(anchor / step) * step`
+- **Không** hủy toàn bộ pending chỉ vì đang có position; chỉ hủy từng pending không còn hợp lệ.
 
 ### Nếu flat và `pending_ref_shift = true`
 
-- dùng `ref_override`
+- đọc `last_stopout_sl` từ state (đã lưu khi ghi nhận stop-out)
+- **ref_override** tính từ `last_stopout_sl`:
+  - BUY SL → `ref_override = last_stopout_sl - step`
+  - SELL SL → `ref_override = last_stopout_sl + step`
 - không dùng `mid`
-- sau khi sử dụng xong, reset `pending_ref_shift = false`
+- sau khi sử dụng xong, reset `pending_ref_shift = false` (giữ lại `last_processed_stopout_ticket`)
+
+Ref shift **chỉ** được set từ bước “Ghi nhận stop-out mới”, không dùng hàm bổ sung đọc SL từ history (logic đơn giản, tránh arm lặp).
 
 ### Nếu flat bình thường
 
@@ -439,41 +459,43 @@ Nếu số position mở >= `max_positions`:
 
 ## Bước 12. Kiểm tra hợp lệ từng phía riêng biệt
 
+**Thứ tự check** (bắt buộc): zone lock → min distance → re-entry block → cooldown.
+
 ### Với BUY
 
 Check lần lượt:
 
-- zone lock
-- min distance
-- re-entry block BUY
-- cooldown phụ nếu còn dùng
-- spread vẫn hợp lệ
+1. zone lock (đã có position BUY tại mức buy_price?)
+2. min distance (pending quá gần position đang mở?)
+3. re-entry block BUY (so khớp strategy_name, **symbol**, **step**, side, entry_price)
+4. cooldown phụ nếu còn dùng
 
-Nếu pass -> `buy_allowed = true`
+Ghi nhận lý do từ chối (`buy_reason`) và **log** khi BUY bị block: `[strategy_name] BUY @ price blocked: reason1, reason2`.
 
 ### Với SELL
 
 Check lần lượt:
 
-- zone lock
-- min distance
-- re-entry block SELL
-- cooldown phụ nếu còn dùng
-- spread vẫn hợp lệ
+1. zone lock
+2. min distance
+3. re-entry block SELL (so khớp strategy_name, symbol, step, side, entry_price)
+4. cooldown phụ
 
-Nếu pass -> `sell_allowed = true`
+Ghi nhận `sell_reason` và log khi SELL bị block.
 
 ## Bước 13. Quản lý pending hiện có
 
-Không còn rule “không đủ cặp thì cancel hết”.
+Không còn rule “không đủ cặp thì cancel hết”. **Không** hủy toàn bộ pending chỉ vì đang có position.
 
-Chỉ hủy pending khi:
+Chỉ hủy từng pending khi:
 
 - step pause
 - basket TP
-- pending cũ không còn hợp lệ
+- pending cũ không còn hợp lệ (sai mức grid mới, bị block, step pause)
 - pending cũ cần thay bởi mức mới sau stop-out
-- phía đối diện đã fill và cấu trúc grid đã đổi
+- phía đối diện đã fill và mức cũ không còn hợp lệ
+
+Sau bất kỳ thao tác hủy pending hàng loạt: **refresh** lại danh sách `pendings` từ MT5/DB trước khi kiểm tra `has_buy_pending` / `has_sell_pending`.
 
 ## Bước 14. Đặt các pending hợp lệ
 
@@ -488,10 +510,12 @@ Bot được phép ở một trong ba trạng thái:
 
 ## Bước 15. Refresh unlock cho re-entry blocks
 
-Ở cuối vòng hoặc đầu vòng kế tiếp:
+Ở cuối vòng (chỉ khi `tick is not None`):
 
-- kiểm tra giá hiện tại
+- kiểm tra giá hiện tại (bid, ask)
 - block nào đủ điều kiện mở khóa thì set inactive
+- BUY block: unlock khi `bid <= unlock_price` (unlock_price = SL - step)
+- SELL block: unlock khi `ask >= unlock_price` (unlock_price = SL + step)
 
 ---
 
@@ -537,13 +561,44 @@ Tức là:
 ### Trường hợp sau stop-out
 
 - flat, vừa stop-out -> không dùng mid ngay
-- dùng `ref_override`
+- dùng `ref_override` tính từ **last_stopout_sl** đã lưu: BUY SL → `ref_override = last_stopout_sl - step`, SELL SL → `ref_override = last_stopout_sl + step`
 
 Điều này tạo ra **trí nhớ ngắn hạn sau SL**.
 
 ---
 
-# 8. Cấu hình khuyến nghị
+# 8. State và quy ước triển khai
+
+## 8.1. Naming thống nhất
+
+- **strategy_name (DB, state)**: `Grid_3_Step` (single step) hoặc `Grid_3_Step_{step}` (multi-step).
+- **Comment MT5**: cùng chuẩn — `Grid_3_Step` / `Grid_3_Step_{step}` để log, dashboard và tài liệu đồng bộ.
+
+## 8.2. Pause state (file pause)
+
+Hỗ trợ hai dạng value cho mỗi step:
+
+- **Dạng cũ**: chuỗi ISO thời gian hết pause, ví dụ `"2026-03-12T10:45:00"`.
+- **Dạng mới**: object `{ "paused_until": "…", "reason": "chop_detected", "meta": { … } }`. Đọc `paused_until` hoặc `until` để so thời gian.
+
+Backward compatible với file pause cũ.
+
+## 8.3. Xác định lệnh đóng do SL (hit SL)
+
+Không hard-code tolerance cố định cho mọi symbol. Dùng ngưỡng theo symbol, ví dụ:
+
+- `sl_tolerance = max(point * 20, 0.02)` (hoặc config riêng)
+- So sánh: `abs(close_price - sl) <= sl_tolerance`
+
+Giúp XAU, BTC và các market khác dùng chung logic ổn định hơn.
+
+## 8.4. Ref shift state — đọc một lần
+
+Trong cùng một vòng logic, chỉ gọi `get_ref_shift_state(strategy_name)` một lần (ví dụ khi “Ghi nhận stop-out”), lưu vào biến local và tái sử dụng (dedupe ticket, kiểm tra pending_ref_shift, v.v.).
+
+---
+
+# 9. Cấu hình khuyến nghị
 
 ```json
 {
@@ -563,12 +618,12 @@ Tức là:
   "reentry_unlock_steps": 1,
 
   "post_sl_ref_shift_enabled": true,
-  "post_sl_ref_shift_mode": "from_sl",
-  "post_sl_ref_shift_steps": 1,
 
   "chop_pause_enabled": true,
   "chop_window_trades": 4,
   "chop_loss_count": 3,
   "chop_band_steps": 2,
-  "chop_pause_minutes": 15
+  "chop_pause_minutes": 15,
+  "chop_require_closed_count_exact": true
 }
+```

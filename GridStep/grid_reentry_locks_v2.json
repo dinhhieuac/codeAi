@@ -215,6 +215,18 @@
       "active": true,
       "created_at": "2026-03-12T03:17:07.081010Z",
       "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5150.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 5160.0,
+      "active": true,
+      "created_at": "2026-03-12T06:23:56.316908Z",
+      "reason": "SL"
     }
   ]
 }
