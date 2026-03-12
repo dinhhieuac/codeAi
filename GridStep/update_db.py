@@ -150,8 +150,32 @@ def update_trades_for_strategy(db, config, strategy_name):
                     print(f"✅ Backfill Grid_21_Step position {position_id}: Profit=${profit:.2f}")
                     updated += 1
 
+    # 4c. Grid_22_Step: tương tự — khi config có "steps" thì không backfill với "Grid_22_Step".
+    if strategy_name == "Grid_22_Step" and closed:
+        steps = config.get("parameters", {}).get("steps")
+        if steps is not None and len(steps) > 0:
+            pass
+        else:
+            p = config.get("parameters", {})
+            step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+            for position_id, row in closed.items():
+                profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+                close_time = row[6] if len(row) > 6 else None
+                if not db.order_exists(position_id):
+                    order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                    op = float(open_price)
+                    if order_type == mt5.ORDER_TYPE_BUY:
+                        sl, tp = op - step, op + step
+                    else:
+                        sl, tp = op + step, op - step
+                    db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                                 float(volume), op, sl, tp, "Grid22", account_id)
+                    db.update_order_profit(position_id, close_price, profit, close_time)
+                    print(f"✅ Backfill Grid_22_Step position {position_id}: Profit=${profit:.2f}")
+                    updated += 1
+
     conn.close()
-    if not tickets_pending and not (strategy_name == "Grid_Step" and closed) and not (strategy_name == "Grid_21_Step" and closed):
+    if not tickets_pending and not (strategy_name == "Grid_Step" and closed) and not (strategy_name == "Grid_21_Step" and closed) and not (strategy_name == "Grid_22_Step" and closed):
         if updated == 0:
             print(f"ℹ️ No pending trades to update for {strategy_name} (Account {account_id})")
 

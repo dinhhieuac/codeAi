@@ -218,3 +218,24 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
         return [{"profit": r[0], "open_time": r[1], "close_time": r[2]} for r in rows]
+
+    def get_last_closed_orders_with_entry(self, strategy_name, limit=10, account_id=None):
+        """Lấy các lệnh đã đóng gần nhất kèm open_price (entry), dùng cho chop detection."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        order_col = "COALESCE(close_time, open_time) DESC"
+        if account_id is not None:
+            cursor.execute(f'''
+                SELECT profit, open_price, close_time FROM orders
+                WHERE strategy_name = ? AND profit IS NOT NULL AND account_id = ?
+                ORDER BY {order_col} LIMIT ?
+            ''', (strategy_name, account_id, limit))
+        else:
+            cursor.execute(f'''
+                SELECT profit, open_price, close_time FROM orders
+                WHERE strategy_name = ? AND profit IS NOT NULL
+                ORDER BY {order_col} LIMIT ?
+            ''', (strategy_name, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"profit": r[0], "open_price": r[1], "close_time": r[2]} for r in rows]
