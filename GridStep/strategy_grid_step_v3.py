@@ -202,9 +202,27 @@ def compute_ref_override_and_use(strategy_name, step_val, digits):
     return ref_override, True
 
 # --- Chop pause (Lớp 3) ---
+def _parse_close_time(close_time_val):
+    """Parse close_time từ DB (str hoặc None) thành datetime UTC-aware hoặc None."""
+    if close_time_val is None:
+        return None
+    s = close_time_val if isinstance(close_time_val, str) else str(close_time_val)
+    s = s.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        try:
+            dt = datetime.strptime(s.replace("+00:00", "").strip(), "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def check_chop_and_pause(strategy_name, account_id, step_val, chop_window_trades, chop_loss_count,
-                          chop_band_steps, chop_pause_minutes, require_exact):
-    """Doc §2.4a: filter đúng strategy_name (+ account_id); không lấy chung theo symbol toàn cục."""
+                          chop_band_steps, chop_pause_minutes, require_exact, now_utc=None, chop_max_age_minutes=None):
+    """Doc §2.4a: filter đúng strategy_name (+ account_id). chop_max_age_minutes: chỉ coi là chop nếu lệnh đóng gần nhất trong X phút (tránh hết pause lại bật pause ngay)."""
     if chop_pause_minutes <= 0 or chop_window_trades <= 0 or chop_loss_count <= 0:
         return False, None
     rows = db.get_last_closed_orders_with_entry(strategy_name, limit=chop_window_trades + 2, account_id=account_id)
@@ -213,6 +231,16 @@ def check_chop_and_pause(strategy_name, account_id, step_val, chop_window_trades
     if len(rows) < chop_window_trades:
         return False, None
     window = rows[:chop_window_trades]
+    # Lệnh đóng gần nhất (mới nhất) thắng thì không chop pause — tránh pause khi vừa có lệnh thắng
+    if (window[0].get("profit") or 0) >= 0:
+        return False, None
+    # Chỉ trigger chop nếu mẫu còn "mới": lệnh đóng gần nhất trong chop_max_age_minutes (tránh vừa hết countdown lại pause lại)
+    if now_utc is not None and chop_max_age_minutes is not None and chop_max_age_minutes > 0:
+        last_close = _parse_close_time(window[0].get("close_time"))
+        if last_close is not None:
+            now = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+            if (now - last_close).total_seconds() > chop_max_age_minutes * 60:
+                return False, None
     loss_count = sum(1 for r in window if (r.get("profit") or 0) < 0)
     if loss_count < chop_loss_count:
         return False, None
@@ -745,10 +773,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 strategy_grid_step_logic._last_pause_log_ts = _now_ts
             return error_count, 0
         if chop_pause_enabled and chop_pause_minutes > 0:
+            # chop_max_age: chỉ coi là chop nếu lệnh đóng gần nhất trong (pause + 10) phút → tránh vừa hết pause lại kích pause lại
+            chop_max_age = chop_pause_minutes + 10
             did_chop, chop_close_time = check_chop_and_pause(
                 strategy_name, account_id, step_val,
                 chop_window_trades, chop_loss_count, chop_band_steps,
-                chop_pause_minutes, chop_require_closed_count_exact
+                chop_pause_minutes, chop_require_closed_count_exact,
+                now_utc=mt5_now, chop_max_age_minutes=chop_max_age,
             )
             if did_chop:
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
@@ -798,14 +829,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     # Spread. Checklist §5: bảo vệ tick is None (tránh crash khi refresh_reentry_blocks)
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
+        print(f"   [{strategy_name}] Không đặt lệnh: tick=None (MT5 không trả giá).")
         return error_count, 0
     spread_price = (tick.ask - tick.bid)
     if spread_price > spread_max:
+        print(f"   [{strategy_name}] Không đặt lệnh: spread {spread_price:.4f} > spread_max {spread_max}.")
         return error_count, 0
     if grid_step_price < spread_price:
+        print(f"   [{strategy_name}] Không đặt lệnh: step {grid_step_price} < spread {spread_price:.4f}.")
         return error_count, 0
 
     if len(positions) >= max_positions:
+        print(f"   [{strategy_name}] Không đặt lệnh: đủ max_positions ({len(positions)} >= {max_positions}).")
         return error_count, 0
 
     # Ref: có position -> anchor từ position. Flat -> ref_override hoặc ổn định ref từ pending (tránh đổi ref mỗi tick khiến hủy/đặt lại liên tục, lệnh không khớp).
@@ -976,6 +1011,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     _step_label = step_filter if step_filter is not None else step_val
     if placed > 0:
         print(f"✅ [{strategy_name}] step={_step_label}: placed {placed} pending(s) | ref={ref} buy_allowed={buy_allowed} sell_allowed={sell_allowed}")
+    else:
+        # Log tại sao không đặt BUY_STOP / SELL_STOP
+        buy_why = "đã có pending" if has_buy_pending else (f"blocked ({', '.join(buy_reason)})" if buy_reason else "allowed")
+        sell_why = "đã có pending" if has_sell_pending else (f"blocked ({', '.join(sell_reason)})" if sell_reason else "allowed")
+        print(f"   [{strategy_name}] Không đặt lệnh: ref={ref} buy_price={buy_price} sell_price={sell_price} | BUY_STOP: {buy_why} | SELL_STOP: {sell_why}")
     return 0, 0
 
 

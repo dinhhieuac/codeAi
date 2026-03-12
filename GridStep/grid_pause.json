@@ -1,12 +1,1 @@
-{
-  "Grid_3_Step_5.0": {
-    "paused_until": "2026-03-12T09:45:06Z",
-    "reason": "chop_detected",
-    "meta": {
-      "window_trades": 4,
-      "loss_count": 3,
-      "band_steps": 2,
-      "chop_close_time": "2026-03-12 08:20:25"
-    }
-  }
-}
+{}
