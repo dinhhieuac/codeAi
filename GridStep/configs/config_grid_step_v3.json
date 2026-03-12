@@ -1,0 +1,31 @@
+{
+    "account": 413487983,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial6",
+    "mt5_path": "C:\\Program Files\\M9\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100003,
+    "max_positions": 5,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "270589269",
+    "parameters": {
+        "steps": [5],
+        "min_distance_points": 5,
+        "target_profit": 50.0,
+        "spread_max": 0.5,
+        "cooldown_minutes": 0,
+        "consecutive_loss_pause_enabled": true,
+        "consecutive_loss_count": 3,
+        "consecutive_loss_pause_minutes": 10,
+        "reentry_lock_enabled": true,
+        "reentry_unlock_steps": 1,
+        "post_sl_ref_shift_enabled": true,
+        "chop_pause_enabled": true,
+        "chop_window_trades": 4,
+        "chop_loss_count": 3,
+        "chop_band_steps": 2,
+        "chop_pause_minutes": 15,
+        "chop_require_closed_count_exact": true
+    }
+}
