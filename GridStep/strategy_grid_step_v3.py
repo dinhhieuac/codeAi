@@ -146,9 +146,13 @@ def get_ref_shift_state(strategy_name):
     raw = _load_ref_shift_raw()
     return raw.get(strategy_name)
 
+PROCESSED_STOPOUT_MAX = 50
+
+
 def set_ref_shift_state(strategy_name, step_val, last_stopout_side, last_stopout_entry, pending_ref_shift,
-                        last_stopout_sl=None, last_stopout_time=None, last_processed_stopout_ticket=None):
-    """Lưu state ref shift. Doc §1.4, §7.2. last_processed_stopout_ticket: tránh xử lý lặp cùng một stop-out. Giữ lại last_processed_stopout_ticket cũ nếu không truyền mới."""
+                        last_stopout_sl=None, last_stopout_time=None, last_processed_stopout_ticket=None,
+                        processed_stopout_tickets=None):
+    """Lưu state ref shift. processed_stopout_tickets: list ticket đã xử lý (giới hạn PROCESSED_STOPOUT_MAX) để không xử lý lặp."""
     raw = _load_ref_shift_raw()
     prev = raw.get(strategy_name) or {}
     raw[strategy_name] = {
@@ -161,8 +165,12 @@ def set_ref_shift_state(strategy_name, step_val, last_stopout_side, last_stopout
         raw[strategy_name]["last_stopout_sl"] = last_stopout_sl
     if last_stopout_time is not None:
         raw[strategy_name]["last_stopout_time"] = last_stopout_time
-    if last_processed_stopout_ticket is not None:
+    if processed_stopout_tickets is not None:
+        raw[strategy_name]["processed_stopout_tickets"] = list(processed_stopout_tickets)[-PROCESSED_STOPOUT_MAX:]
+    elif last_processed_stopout_ticket is not None:
         raw[strategy_name]["last_processed_stopout_ticket"] = last_processed_stopout_ticket
+    elif prev.get("processed_stopout_tickets") is not None:
+        raw[strategy_name]["processed_stopout_tickets"] = prev["processed_stopout_tickets"]
     elif prev.get("last_processed_stopout_ticket") is not None:
         raw[strategy_name]["last_processed_stopout_ticket"] = prev["last_processed_stopout_ticket"]
     _save_ref_shift(raw)
@@ -372,7 +380,8 @@ def get_pause_remaining(strategy_name, now_utc=None):
     except (ValueError, TypeError):
         return None
 
-def set_paused(strategy_name, pause_minutes, from_time=None):
+def set_paused(strategy_name, pause_minutes, from_time=None, reason=None, meta=None):
+    """Ghi pause. reason/meta: lưu dạng object {paused_until, reason, meta} để log/debug (chop_detected, consecutive_loss, ...)."""
     state = load_pause_state()
     if from_time is not None:
         if isinstance(from_time, str):
@@ -389,7 +398,14 @@ def set_paused(strategy_name, pause_minutes, from_time=None):
     else:
         until_dt = datetime.now(timezone.utc) + timedelta(minutes=pause_minutes)
     until = until_dt.isoformat().replace("+00:00", "Z")
-    state[strategy_name] = until
+    if reason is not None or meta is not None:
+        state[strategy_name] = {
+            "paused_until": until,
+            "reason": reason if reason is not None else "",
+            "meta": meta if meta is not None else {},
+        }
+    else:
+        state[strategy_name] = until
     save_pause_state(state)
 
 def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, pause_minutes):
@@ -645,33 +661,49 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     sync_grid_pending_status(symbol, magic, strategy_name, account_id, sl_tp_price, info, step_filter)
     ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step_filter)
 
-    # 1.4 Ghi nhận stop-out mới từ DB (re-entry block + ref_shift). Checklist §1: chỉ xử lý 1 lần mỗi stop-out (last_processed_stopout_ticket)
-    ref_state = get_ref_shift_state(strategy_name)
+    # 1.4 Ghi nhận stop-out mới từ DB. Patch: xử lý tất cả stop-out chưa processed (limit=10), dùng processed_stopout_tickets.
+    ref_state = get_ref_shift_state(strategy_name) or {}
     if reentry_lock_enabled or post_sl_ref_shift_enabled:
-        rows = db.get_last_closed_orders_with_sl(strategy_name, limit=1, account_id=account_id)
-        if rows:
-            r = rows[0]
+        rows = db.get_last_closed_orders_with_sl(strategy_name, limit=10, account_id=account_id)
+        processed_tickets = list(ref_state.get("processed_stopout_tickets") or [])
+        if not processed_tickets and ref_state.get("last_processed_stopout_ticket") is not None:
+            processed_tickets = [ref_state["last_processed_stopout_ticket"]]
+        for r in rows:
             stopout_ticket = r.get("ticket")
-            if ref_state and stopout_ticket is not None and ref_state.get("last_processed_stopout_ticket") == stopout_ticket:
-                pass
-            elif (r.get("profit") or 0) < 0:
-                close_price = r.get("close_price")
-                sl = r.get("sl")
-                sl_tolerance = _sl_hit_tolerance(info)
-                if close_price is not None and sl is not None and abs(float(close_price) - float(sl)) <= sl_tolerance:
-                    order_type = (r.get("order_type") or "").upper()
-                    side = "BUY" if "BUY" in order_type else "SELL"
-                    entry = float(r.get("open_price") or 0)
-                    sl_price = float(sl)
-                    close_time = r.get("close_time")
-                    if reentry_lock_enabled:
-                        add_reentry_block(strategy_name, symbol, step_val, side, entry, sl_price, reason="SL")
-                    if post_sl_ref_shift_enabled:
-                        set_ref_shift_state(
-                            strategy_name, step_val, side, entry, True,
-                            last_stopout_sl=sl_price, last_stopout_time=close_time,
-                            last_processed_stopout_ticket=stopout_ticket
-                        )
+            if stopout_ticket is None or stopout_ticket in processed_tickets:
+                continue
+            if (r.get("profit") or 0) >= 0:
+                continue
+            close_price = r.get("close_price")
+            sl = r.get("sl")
+            sl_tolerance = _sl_hit_tolerance(info)
+            if close_price is None or sl is None or abs(float(close_price) - float(sl)) > sl_tolerance:
+                continue
+            order_type = (r.get("order_type") or "").upper()
+            side = "BUY" if "BUY" in order_type else "SELL"
+            entry = float(r.get("open_price") or 0)
+            sl_price = float(sl)
+            close_time = r.get("close_time")
+            if reentry_lock_enabled:
+                add_reentry_block(strategy_name, symbol, step_val, side, entry, sl_price, reason="SL")
+            processed_tickets.append(stopout_ticket)
+            processed_tickets = processed_tickets[-PROCESSED_STOPOUT_MAX:]
+            if post_sl_ref_shift_enabled:
+                set_ref_shift_state(
+                    strategy_name, step_val, side, entry, True,
+                    last_stopout_sl=sl_price, last_stopout_time=close_time,
+                    processed_stopout_tickets=processed_tickets
+                )
+            else:
+                ref_state = get_ref_shift_state(strategy_name) or {}
+                set_ref_shift_state(
+                    strategy_name, step_val,
+                    ref_state.get("last_stopout_side", ""), ref_state.get("last_stopout_entry", 0),
+                    ref_state.get("pending_ref_shift", False),
+                    last_stopout_sl=ref_state.get("last_stopout_sl"),
+                    last_stopout_time=ref_state.get("last_stopout_time"),
+                    processed_stopout_tickets=processed_tickets
+                )
 
     # Basket TP
     profit = total_profit(symbol, magic, step_filter)
@@ -699,7 +731,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             )
             if did_chop:
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
-                set_paused(strategy_name, chop_pause_minutes, from_time=chop_close_time)
+                set_paused(
+                    strategy_name, chop_pause_minutes, from_time=chop_close_time,
+                    reason="chop_detected",
+                    meta={"window_trades": chop_window_trades, "loss_count": chop_loss_count, "band_steps": chop_band_steps},
+                )
                 print(f"⏸️ [{strategy_name}] Chop Pause → tạm dừng {chop_pause_minutes} phút.")
                 send_telegram(f"⏸️ [{strategy_name}] Chop Pause.", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
@@ -718,13 +754,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     pass
             if last_close_dt is None or mt5_now < last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes):
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
-                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
+                set_paused(
+                    strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str,
+                    reason="consecutive_loss",
+                    meta={"count": consecutive_loss_count},
+                )
                 send_telegram(f"⏸️ [Grid_3_Step] Tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes)
         if did_pause:
             cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
-            set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
+            set_paused(
+                strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time,
+                reason="consecutive_loss",
+                meta={"count": consecutive_loss_count},
+            )
             return error_count, 0
 
     # Spread. Checklist §5: bảo vệ tick is None (tránh crash khi refresh_reentry_blocks)
