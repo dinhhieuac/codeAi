@@ -733,9 +733,16 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if consecutive_loss_pause_enabled or chop_pause_enabled:
         mt5_now = get_mt5_time_utc(symbol)
         if is_paused(strategy_name, now_utc=mt5_now):
-            if not hasattr(strategy_grid_step_logic, "_last_pause_v3") or strategy_grid_step_logic._last_pause_v3 != strategy_name:
-                print(f"⏸️ [{strategy_name}] Đang tạm dừng.")
+            remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
+            remain_str = _format_pause_remaining(remaining) if remaining else "?"
+            # In lần đầu khi vào pause, sau đó mỗi ~60s in lại thời gian còn lại để user thấy countdown
+            _now_ts = mt5_now.timestamp() if hasattr(mt5_now, "timestamp") else time.time()
+            _last_log = getattr(strategy_grid_step_logic, "_last_pause_log_ts", 0)
+            _first = not hasattr(strategy_grid_step_logic, "_last_pause_v3") or strategy_grid_step_logic._last_pause_v3 != strategy_name
+            if _first or (_now_ts - _last_log) >= 60:
+                print(f"⏸️ [{strategy_name}] Đang tạm dừng (còn {remain_str}).")
                 strategy_grid_step_logic._last_pause_v3 = strategy_name
+                strategy_grid_step_logic._last_pause_log_ts = _now_ts
             return error_count, 0
         if chop_pause_enabled and chop_pause_minutes > 0:
             did_chop, chop_close_time = check_chop_and_pause(
