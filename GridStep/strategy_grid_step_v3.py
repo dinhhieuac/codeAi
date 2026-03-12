@@ -380,6 +380,18 @@ def get_pause_remaining(strategy_name, now_utc=None):
     except (ValueError, TypeError):
         return None
 
+
+def _format_pause_remaining(remaining):
+    """Format timedelta thành chuỗi 'X phút' hoặc 'X phút Y giây'."""
+    if remaining is None or remaining.total_seconds() <= 0:
+        return ""
+    total = int(remaining.total_seconds())
+    mins, secs = total // 60, total % 60
+    if secs == 0:
+        return f"{mins} phút"
+    return f"{mins} phút {secs} giây"
+
+
 def set_paused(strategy_name, pause_minutes, from_time=None, reason=None, meta=None):
     """Ghi pause. reason/meta: lưu dạng object {paused_until, reason, meta} để log/debug (chop_detected, consecutive_loss, ...)."""
     state = load_pause_state()
@@ -736,8 +748,10 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     reason="chop_detected",
                     meta={"window_trades": chop_window_trades, "loss_count": chop_loss_count, "band_steps": chop_band_steps},
                 )
-                print(f"⏸️ [{strategy_name}] Chop Pause → tạm dừng {chop_pause_minutes} phút.")
-                send_telegram(f"⏸️ [{strategy_name}] Chop Pause.", config.get("telegram_token"), config.get("telegram_chat_id"))
+                remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
+                remain_str = _format_pause_remaining(remaining) if remaining else f"{chop_pause_minutes} phút"
+                print(f"⏸️ [{strategy_name}] Chop Pause → tạm dừng {chop_pause_minutes} phút (còn {remain_str}).")
+                send_telegram(f"⏸️ [{strategy_name}] Chop Pause. Còn {remain_str}.", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
 
     if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
