@@ -27,6 +27,15 @@ PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause.json")
 REF_SHIFT_FILE = os.path.join(SCRIPT_DIR, "grid_ref_shift_v3.json")
 REENTRY_FILE = os.path.join(SCRIPT_DIR, "grid_reentry_v3.json")
 
+
+def _sl_hit_tolerance(info, default=0.02):
+    """Checklist §14: ngưỡng xác định hit SL theo symbol (point/spread), không hard-code 0.02 cho mọi market."""
+    if not info:
+        return default
+    point = getattr(info, "point", 0.01) or 0.01
+    return max(float(point) * 20, default)
+
+
 # --- Re-entry lock (Lớp 1) ---
 def _load_reentry_raw():
     if not os.path.exists(REENTRY_FILE):
@@ -45,19 +54,31 @@ def _save_reentry(state_by_strategy):
         pass
 
 def add_reentry_block(strategy_name, symbol, step_val, side, entry_price, sl_price, reason="SL"):
-    """Thêm block: không đặt lại cùng chiều + cùng mức entry sau SL.
-    Block gắn strategy_name, symbol, step, side, entry_price (doc §4.5, §7.1)."""
+    """Thêm block: không đặt lại cùng chiều + cùng mức entry sau SL. Checklist §13: dedupe — không thêm nếu đã có block active cùng key."""
     raw = _load_reentry_raw()
     blocks = raw.get(strategy_name, [])
-    sl_f = round(float(sl_price), 4)
+    entry_f = round(float(entry_price), 4)
+    side_upper = side.upper()
     step_f = float(step_val)
+    for b in blocks:
+        if not b.get("active", True):
+            continue
+        if b.get("side", "").upper() != side_upper:
+            continue
+        if b.get("symbol") != symbol:
+            continue
+        if abs(float(b.get("step", 0)) - step_f) > 0.001:
+            continue
+        if abs(float(b.get("entry_price", 0)) - entry_f) <= 0.01:
+            return
+    sl_f = round(float(sl_price), 4)
     blocks.append({
         "symbol": symbol,
         "step": step_f,
-        "side": side.upper(),
-        "entry_price": round(float(entry_price), 4),
+        "side": side_upper,
+        "entry_price": entry_f,
         "sl_price": sl_f,
-        "unlock_price": round(sl_f - step_f, 4) if side.upper() == "BUY" else round(sl_f + step_f, 4),
+        "unlock_price": round(sl_f - step_f, 4) if side_upper == "BUY" else round(sl_f + step_f, 4),
         "active": True,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "reason": reason,
@@ -65,14 +86,19 @@ def add_reentry_block(strategy_name, symbol, step_val, side, entry_price, sl_pri
     raw[strategy_name] = blocks
     _save_reentry(raw)
 
-def is_reentry_blocked(strategy_name, side, price, tolerance=0.01):
-    """Kiểm tra có bị block re-entry cho (side, price) không. Doc §4.5: buy_price chỉ so block BUY, sell_price chỉ so block SELL."""
+def is_reentry_blocked(strategy_name, symbol, step_val, side, price, tolerance=0.01):
+    """Checklist §8: so khớp strategy_name, symbol, step, side, entry_price. buy_price chỉ so block BUY, sell_price chỉ SELL."""
     raw = _load_reentry_raw()
     blocks = raw.get(strategy_name, [])
+    step_f = float(step_val)
     for b in blocks:
         if not b.get("active", True):
             continue
         if b.get("side", "").upper() != side.upper():
+            continue
+        if b.get("symbol") != symbol:
+            continue
+        if abs(float(b.get("step", 0)) - step_f) > 0.001:
             continue
         if abs(float(b.get("entry_price", 0)) - float(price)) <= tolerance:
             return True
@@ -121,9 +147,10 @@ def get_ref_shift_state(strategy_name):
     return raw.get(strategy_name)
 
 def set_ref_shift_state(strategy_name, step_val, last_stopout_side, last_stopout_entry, pending_ref_shift,
-                        last_stopout_sl=None, last_stopout_time=None):
-    """Lưu state ref shift. Doc §1.4, §7.2: last_stopout_side, last_stopout_entry, last_stopout_sl, last_stopout_time, pending_ref_shift."""
+                        last_stopout_sl=None, last_stopout_time=None, last_processed_stopout_ticket=None):
+    """Lưu state ref shift. Doc §1.4, §7.2. last_processed_stopout_ticket: tránh xử lý lặp cùng một stop-out. Giữ lại last_processed_stopout_ticket cũ nếu không truyền mới."""
     raw = _load_ref_shift_raw()
+    prev = raw.get(strategy_name) or {}
     raw[strategy_name] = {
         "step": step_val,
         "last_stopout_side": last_stopout_side,
@@ -134,57 +161,37 @@ def set_ref_shift_state(strategy_name, step_val, last_stopout_side, last_stopout
         raw[strategy_name]["last_stopout_sl"] = last_stopout_sl
     if last_stopout_time is not None:
         raw[strategy_name]["last_stopout_time"] = last_stopout_time
+    if last_processed_stopout_ticket is not None:
+        raw[strategy_name]["last_processed_stopout_ticket"] = last_processed_stopout_ticket
+    elif prev.get("last_processed_stopout_ticket") is not None:
+        raw[strategy_name]["last_processed_stopout_ticket"] = prev["last_processed_stopout_ticket"]
     _save_ref_shift(raw)
 
 def compute_ref_override_and_use(strategy_name, step_val, digits):
-    """Dùng ref_override khi flat và pending_ref_shift. Doc V3: ref_override = SL - step (BUY) hoặc SL + step (SELL)."""
+    """Dùng ref_override khi flat và pending_ref_shift. Checklist §3: dùng last_stopout_sl đã lưu.
+    BUY SL -> ref_override = last_stopout_sl - step; SELL SL -> ref_override = last_stopout_sl + step."""
     state = get_ref_shift_state(strategy_name)
-    if state and state.get("pending_ref_shift"):
-        side = state.get("last_stopout_side", "").upper()
-        entry = float(state.get("last_stopout_entry", 0))
-        step_f = float(step_val)
-        if side == "BUY":
-            sl_price = entry - step_f
-            ref_override = round(sl_price - step_f, digits)
-        else:
-            sl_price = entry + step_f
-            ref_override = round(sl_price + step_f, digits)
-        set_ref_shift_state(strategy_name, step_val, state["last_stopout_side"], state["last_stopout_entry"], False)
-        return ref_override, True
-    return None, False
-
-def try_set_ref_shift_from_recent_sl(strategy_name, account_id, step_val, digits, within_minutes=2):
-    """Nếu có lệnh đóng do SL gần đây (từ DB) thì set ref_shift state."""
-    if get_ref_shift_state(strategy_name) and get_ref_shift_state(strategy_name).get("pending_ref_shift"):
-        return None
-    rows = db.get_last_closed_orders_with_sl(strategy_name, limit=1, account_id=account_id)
-    if not rows:
-        return None
-    r = rows[0]
-    if (r.get("profit") or 0) >= 0:
-        return None
-    close_price = r.get("close_price")
-    sl = r.get("sl")
-    if close_price is None or sl is None:
-        return None
-    try:
-        close_price = float(close_price)
-        sl = float(sl)
-    except (TypeError, ValueError):
-        return None
-    if abs(close_price - sl) > 0.02:
-        return None
-    order_type = (r.get("order_type") or "").upper()
-    side = "BUY" if "BUY" in order_type else "SELL"
-    entry = float(r.get("open_price") or 0)
-    set_ref_shift_state(
-        strategy_name, step_val, side, entry, True,
-        last_stopout_sl=sl, last_stopout_time=r.get("close_time")
-    )
+    if not state or not state.get("pending_ref_shift"):
+        return None, False
+    side = state.get("last_stopout_side", "").upper()
     step_f = float(step_val)
+    sl_stored = state.get("last_stopout_sl")
+    if sl_stored is not None:
+        try:
+            sl_price = float(sl_stored)
+        except (TypeError, ValueError):
+            sl_price = None
+    else:
+        sl_price = None
+    if sl_price is None:
+        entry = float(state.get("last_stopout_entry", 0))
+        sl_price = entry - step_f if side == "BUY" else entry + step_f
     if side == "BUY":
-        return round(entry - 2 * step_f, digits)
-    return round(entry + 2 * step_f, digits)
+        ref_override = round(sl_price - step_f, digits)
+    else:
+        ref_override = round(sl_price + step_f, digits)
+    set_ref_shift_state(strategy_name, step_val, state["last_stopout_side"], state["last_stopout_entry"], False)
+    return ref_override, True
 
 # --- Chop pause (Lớp 3) ---
 def check_chop_and_pause(strategy_name, account_id, step_val, chop_window_trades, chop_loss_count,
@@ -266,7 +273,19 @@ def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2, step=No
         key = f"{key}_{step}"
     return key in levels_dict
 
+def _pause_until_from_value(val):
+    """Checklist §7: đọc cả dạng cũ (chuỗi ISO) và dạng mới (object có paused_until, reason, meta)."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        return val.get("paused_until") or val.get("until")
+    return None
+
+
 def load_pause_state(clean_expired=True, now_utc=None):
+    """Checklist §7: hỗ trợ cả value là string ISO và object {paused_until, reason, meta}."""
     if not os.path.exists(PAUSE_FILE):
         return {}
     try:
@@ -280,8 +299,12 @@ def load_pause_state(clean_expired=True, now_utc=None):
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     to_remove = []
-    for name, until in state.items():
+    for name, val in state.items():
+        until = _pause_until_from_value(val)
         try:
+            if until is None:
+                to_remove.append(name)
+                continue
             until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
             if until_dt.tzinfo is None:
                 until_dt = until_dt.replace(tzinfo=timezone.utc)
@@ -317,7 +340,8 @@ def get_mt5_time_utc(symbol):
 
 def is_paused(strategy_name, now_utc=None):
     state = load_pause_state(now_utc=now_utc)
-    until = state.get(strategy_name)
+    val = state.get(strategy_name)
+    until = _pause_until_from_value(val)
     if not until:
         return False
     try:
@@ -333,7 +357,7 @@ def is_paused(strategy_name, now_utc=None):
 
 def get_pause_remaining(strategy_name, now_utc=None):
     state = load_pause_state(now_utc=now_utc)
-    until = state.get(strategy_name)
+    until = _pause_until_from_value(state.get(strategy_name))
     if not until:
         return None
     try:
@@ -436,7 +460,8 @@ def check_grid_step_db():
     print(f"{'='*60}\n")
 
 def _comment_for_step(step):
-    return "Grid3" if step is None else f"Grid3_{step}"
+    """Checklist §6: thống nhất với strategy_name — Grid_3_Step / Grid_3_Step_{step}."""
+    return "Grid_3_Step" if step is None else f"Grid_3_Step_{step}"
 
 def get_positions_for_step(symbol, magic, step):
     positions = mt5.positions_get(symbol=symbol, magic=magic) or []
@@ -498,9 +523,9 @@ def sync_grid_pending_status(symbol, magic, strategy_name="Grid_3_Step", account
                     pos.ticket, strategy_name, symbol,
                     "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL",
                     float(pos.volume), entry, sl, tp,
-                    "Grid3", account_id
+                    _comment_for_step(step), account_id
                 )
-            print(f"✅ Grid 3 lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
+            print(f"✅ [{strategy_name}] lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
         else:
             db.update_grid_pending_status(ticket, "CANCELLED")
 
@@ -620,15 +645,20 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     sync_grid_pending_status(symbol, magic, strategy_name, account_id, sl_tp_price, info, step_filter)
     ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step_filter)
 
-    # 1.4 Ghi nhận stop-out mới từ DB (re-entry block + ref_shift). Doc §1.4: tạo block, set pending_ref_shift, lưu last_stopout_*
+    # 1.4 Ghi nhận stop-out mới từ DB (re-entry block + ref_shift). Checklist §1: chỉ xử lý 1 lần mỗi stop-out (last_processed_stopout_ticket)
+    ref_state = get_ref_shift_state(strategy_name)
     if reentry_lock_enabled or post_sl_ref_shift_enabled:
         rows = db.get_last_closed_orders_with_sl(strategy_name, limit=1, account_id=account_id)
         if rows:
             r = rows[0]
-            if (r.get("profit") or 0) < 0:
+            stopout_ticket = r.get("ticket")
+            if ref_state and stopout_ticket is not None and ref_state.get("last_processed_stopout_ticket") == stopout_ticket:
+                pass
+            elif (r.get("profit") or 0) < 0:
                 close_price = r.get("close_price")
                 sl = r.get("sl")
-                if close_price is not None and sl is not None and abs(float(close_price) - float(sl)) <= 0.02:
+                sl_tolerance = _sl_hit_tolerance(info)
+                if close_price is not None and sl is not None and abs(float(close_price) - float(sl)) <= sl_tolerance:
                     order_type = (r.get("order_type") or "").upper()
                     side = "BUY" if "BUY" in order_type else "SELL"
                     entry = float(r.get("open_price") or 0)
@@ -637,11 +667,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     if reentry_lock_enabled:
                         add_reentry_block(strategy_name, symbol, step_val, side, entry, sl_price, reason="SL")
                     if post_sl_ref_shift_enabled:
-                        if not (get_ref_shift_state(strategy_name) and get_ref_shift_state(strategy_name).get("pending_ref_shift")):
-                            set_ref_shift_state(
-                                strategy_name, step_val, side, entry, True,
-                                last_stopout_sl=sl_price, last_stopout_time=close_time
-                            )
+                        set_ref_shift_state(
+                            strategy_name, step_val, side, entry, True,
+                            last_stopout_sl=sl_price, last_stopout_time=close_time,
+                            last_processed_stopout_ticket=stopout_ticket
+                        )
 
     # Basket TP
     profit = total_profit(symbol, magic, step_filter)
@@ -650,7 +680,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"✅ [BASKET TP V3] step={_step_label} Profit {profit:.2f} >= {target_profit}, đóng tất cả.")
         close_all_positions(symbol, magic, step_filter)
         cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
-        send_telegram(f"✅ Grid 3 Step: Basket TP hit. Profit={profit:.2f}", config.get('telegram_token'), config.get('telegram_chat_id'))
+        send_telegram(f"✅ [Grid_3_Step] Basket TP hit. Profit={profit:.2f}", config.get('telegram_token'), config.get('telegram_chat_id'))
         return 0, 0
 
     # Pause check
@@ -671,7 +701,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
                 set_paused(strategy_name, chop_pause_minutes, from_time=chop_close_time)
                 print(f"⏸️ [{strategy_name}] Chop Pause → tạm dừng {chop_pause_minutes} phút.")
-                send_telegram(f"⏸️ Grid 3 [{strategy_name}] Chop Pause.", config.get("telegram_token"), config.get("telegram_chat_id"))
+                send_telegram(f"⏸️ [{strategy_name}] Chop Pause.", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
 
     if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
@@ -689,7 +719,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             if last_close_dt is None or mt5_now < last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes):
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
                 set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
-                send_telegram(f"⏸️ Grid 3 tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
+                send_telegram(f"⏸️ [Grid_3_Step] Tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes)
         if did_pause:
@@ -697,9 +727,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
             return error_count, 0
 
-    # Spread
+    # Spread. Checklist §5: bảo vệ tick is None (tránh crash khi refresh_reentry_blocks)
     tick = mt5.symbol_info_tick(symbol)
-    spread_price = (tick.ask - tick.bid) if tick else 0.0
+    if tick is None:
+        return error_count, 0
+    spread_price = (tick.ask - tick.bid)
     if spread_price > spread_max:
         return error_count, 0
     if grid_step_price < spread_price:
@@ -708,57 +740,59 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if len(positions) >= max_positions:
         return error_count, 0
 
-    # Ref: có position -> anchor từ position; flat -> ref_override hoặc mid
+    # Ref: có position -> anchor từ position (Checklist §2: không cancel_all_pending vì có position). Flat -> ref_override hoặc mid. Checklist §4: bỏ try_set_ref_shift_from_recent_sl.
     if positions:
-        cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
         ref_override_val, used_override = compute_ref_override_and_use(strategy_name, step_val, digits)
         if used_override:
             current_price = ref_override_val
         else:
-            ref_from_sl = try_set_ref_shift_from_recent_sl(strategy_name, account_id, step_val, digits, within_minutes=2) if post_sl_ref_shift_enabled else None
-            if ref_from_sl is not None:
-                current_price = ref_from_sl
-                st = get_ref_shift_state(strategy_name)
-                if st:
-                    set_ref_shift_state(strategy_name, step_val, st["last_stopout_side"], st["last_stopout_entry"], False)
-            else:
-                current_price = get_grid_anchor_price(symbol, magic, step_filter)
+            current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
     ref = round(current_price / grid_step_price) * grid_step_price
     ref = round(ref, digits)
     buy_price = round(ref + grid_step_price, digits)
     sell_price = round(ref - grid_step_price, digits)
 
-    # Doc §4, §6: Thứ tự ưu tiên zone lock → min distance → re-entry block → cooldown
+    # Checklist §11: Thứ tự đúng spec — zone lock → min distance → re-entry block → cooldown
     buy_allowed = True
+    buy_reason = []
     if position_at_level(positions, buy_price, point):
         buy_allowed = False
-    if buy_allowed and reentry_lock_enabled and is_reentry_blocked(strategy_name, "BUY", buy_price):
-        buy_allowed = False
+        buy_reason.append("zone_lock")
     for p in positions:
         if abs(p.price_open - buy_price) < min_distance:
             buy_allowed = False
+            buy_reason.append("min_distance")
             break
+    if buy_allowed and reentry_lock_enabled and is_reentry_blocked(strategy_name, symbol, step_val, "BUY", buy_price):
+        buy_allowed = False
+        buy_reason.append("reentry_block")
     if cooldown_minutes > 0:
         cooldown_levels = load_cooldown_levels(cooldown_minutes)
         if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, digits, step_filter):
             buy_allowed = False
+            buy_reason.append("cooldown")
 
     sell_allowed = True
+    sell_reason = []
     if position_at_level(positions, sell_price, point):
         sell_allowed = False
-    if sell_allowed and reentry_lock_enabled and is_reentry_blocked(strategy_name, "SELL", sell_price):
-        sell_allowed = False
+        sell_reason.append("zone_lock")
     for p in positions:
         if abs(p.price_open - sell_price) < min_distance:
             sell_allowed = False
+            sell_reason.append("min_distance")
             break
+    if sell_allowed and reentry_lock_enabled and is_reentry_blocked(strategy_name, symbol, step_val, "SELL", sell_price):
+        sell_allowed = False
+        sell_reason.append("reentry_block")
     if cooldown_minutes > 0:
         cooldown_levels = load_cooldown_levels(cooldown_minutes)
         if is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, digits, step_filter):
             sell_allowed = False
+            sell_reason.append("cooldown")
 
     # Doc §5.6: Chỉ hủy pending khi có lý do rõ ràng (không còn hợp lệ / mức khác / bị block), không hủy vì thiếu cặp
     for o in pendings:
@@ -771,15 +805,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
                 db.update_grid_pending_status(o.ticket, "CANCELLED")
 
-    # Doc §5.7: Kiểm tra đã có pending đúng mức đó chưa; nếu có thì không đặt lại (tránh spam và ghi DB trùng)
+    # Doc §5.7: Kiểm tra đã có pending đúng mức đó chưa. Checklist §10: sau hủy pending phải refresh pendings (đã có ở trên).
     pendings = get_pending_orders(symbol, magic, step_filter)
     has_buy_pending = any(o.type == mt5.ORDER_TYPE_BUY_STOP and abs(float(o.price) - buy_price) < 0.01 for o in pendings)
     has_sell_pending = any(o.type == mt5.ORDER_TYPE_SELL_STOP and abs(float(o.price) - sell_price) < 0.01 for o in pendings)
+    if not buy_allowed and buy_reason:
+        print(f"   [{strategy_name}] BUY @ {buy_price} blocked: {', '.join(buy_reason)}")
+    if not sell_allowed and sell_reason:
+        print(f"   [{strategy_name}] SELL @ {sell_price} blocked: {', '.join(sell_reason)}")
     if buy_allowed and has_buy_pending and sell_allowed and has_sell_pending:
-        refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
+        if tick is not None:
+            refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
         return error_count, 0
     if not buy_allowed and not sell_allowed:
-        refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
+        if tick is not None:
+            refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
         return error_count, 0
 
     step_val_f = float(sl_tp_price)
@@ -830,10 +870,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
             return error_count + 1, r2.retcode
 
-    refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
+    if tick is not None:
+        refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
     _step_label = step_filter if step_filter is not None else step_val
     if placed > 0:
-        print(f"✅ Grid 3 step={_step_label}: placed {placed} pending(s) | ref={ref} buy_allowed={buy_allowed} sell_allowed={sell_allowed}")
+        print(f"✅ [{strategy_name}] step={_step_label}: placed {placed} pending(s) | ref={ref} buy_allowed={buy_allowed} sell_allowed={sell_allowed}")
     return 0, 0
 
 
@@ -858,7 +899,7 @@ if __name__ == "__main__":
         else:
             steps_list = None
         label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
-        print(f"✅ Grid Step Bot V3 (re-entry lock + ref shift + chop) - Started ({label})")
+        print(f"✅ [Grid_3_Step] Bot started ({label})")
         loop_count = 0
         try:
             while True:
@@ -882,11 +923,11 @@ if __name__ == "__main__":
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
                     steps_info = steps_list if steps_list else "1"
-                    print(f"🔄 Grid 3 | Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
+                    print(f"🔄 [Grid_3_Step] Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
 
                 if consecutive_errors >= 5:
                     error_msg = get_mt5_error_message(last_error_code)
-                    msg = f"⚠️ [Grid 3] 5 lỗi liên tiếp. Last: {error_msg}. Tạm dừng 2 phút..."
+                    msg = f"⚠️ [Grid_3_Step] 5 lỗi liên tiếp. Last: {error_msg}. Tạm dừng 2 phút..."
                     print(msg)
                     send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
                     time.sleep(120)
@@ -895,5 +936,5 @@ if __name__ == "__main__":
 
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("🛑 Grid Step Bot V3 Stopped")
+            print("🛑 [Grid_3_Step] Bot stopped")
             mt5.shutdown()

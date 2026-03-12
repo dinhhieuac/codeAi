@@ -247,19 +247,19 @@ class Database:
         order_col = "COALESCE(close_time, open_time) DESC"
         if account_id is not None:
             cursor.execute(f'''
-                SELECT profit, open_price, close_price, sl, close_time, order_type FROM orders
+                SELECT ticket, profit, open_price, close_price, sl, close_time, order_type FROM orders
                 WHERE strategy_name = ? AND profit IS NOT NULL AND account_id = ?
                 ORDER BY {order_col} LIMIT ?
             ''', (strategy_name, account_id, limit))
         else:
             cursor.execute(f'''
-                SELECT profit, open_price, close_price, sl, close_time, order_type FROM orders
+                SELECT ticket, profit, open_price, close_price, sl, close_time, order_type FROM orders
                 WHERE strategy_name = ? AND profit IS NOT NULL
                 ORDER BY {order_col} LIMIT ?
             ''', (strategy_name, limit))
         rows = cursor.fetchall()
         conn.close()
         return [
-            {"profit": r[0], "open_price": r[1], "close_price": r[2], "sl": r[3], "close_time": r[4], "order_type": r[5]}
+            {"ticket": r[0], "profit": r[1], "open_price": r[2], "close_price": r[3], "sl": r[4], "close_time": r[5], "order_type": r[6]}
             for r in rows
         ]
