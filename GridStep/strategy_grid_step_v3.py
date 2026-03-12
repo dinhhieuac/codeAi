@@ -406,6 +406,8 @@ def set_paused(strategy_name, pause_minutes, from_time=None, reason=None, meta=N
                     from_time = datetime.now(timezone.utc)
             if from_time.tzinfo is None:
                 from_time = from_time.replace(tzinfo=timezone.utc)
+        elif isinstance(from_time, datetime) and from_time.tzinfo is None:
+            from_time = from_time.replace(tzinfo=timezone.utc)
         until_dt = from_time + timedelta(minutes=pause_minutes)
     else:
         until_dt = datetime.now(timezone.utc) + timedelta(minutes=pause_minutes)
@@ -743,10 +745,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             )
             if did_chop:
                 cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
+                # Pause từ thời điểm hiện tại (mt5_now), không từ chop_close_time, để paused_until luôn trong tương lai và is_paused() đúng
                 set_paused(
-                    strategy_name, chop_pause_minutes, from_time=chop_close_time,
+                    strategy_name, chop_pause_minutes, from_time=mt5_now,
                     reason="chop_detected",
-                    meta={"window_trades": chop_window_trades, "loss_count": chop_loss_count, "band_steps": chop_band_steps},
+                    meta={"window_trades": chop_window_trades, "loss_count": chop_loss_count, "band_steps": chop_band_steps, "chop_close_time": chop_close_time},
                 )
                 remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
                 remain_str = _format_pause_remaining(remaining) if remaining else f"{chop_pause_minutes} phút"

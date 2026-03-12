@@ -84,6 +84,17 @@ def is_level_in_cooldown(levels_dict, price, cooldown_minutes, digits=2, step=No
     return key in levels_dict
 
 
+def _pause_until_from_value(val):
+    """Đọc cả dạng cũ (chuỗi ISO) và dạng mới từ V3 (object có paused_until, reason, meta)."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        return val.get("paused_until") or val.get("until")
+    return None
+
+
 def load_pause_state(clean_expired=True, now_utc=None):
     """Đọc trạng thái tạm dừng (strategy_name -> paused_until ISO). Nếu clean_expired=True thì xóa mục hết hạn.
     now_utc: dùng giờ MT5 (hoặc None = datetime.now(timezone.utc)) để so sánh."""
@@ -100,8 +111,12 @@ def load_pause_state(clean_expired=True, now_utc=None):
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     to_remove = []
-    for name, until in state.items():
+    for name, val in state.items():
+        until = _pause_until_from_value(val)
         try:
+            if until is None:
+                to_remove.append(name)
+                continue
             until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
             if until_dt.tzinfo is None:
                 until_dt = until_dt.replace(tzinfo=timezone.utc)
@@ -145,7 +160,7 @@ def get_mt5_time_utc(symbol):
 def is_paused(strategy_name, now_utc=None):
     """Kiểm tra strategy (step) có đang trong thời gian tạm dừng không. now_utc = giờ MT5 (nếu có) để so sánh."""
     state = load_pause_state(now_utc=now_utc)
-    until = state.get(strategy_name)
+    until = _pause_until_from_value(state.get(strategy_name))
     if not until:
         return False
     try:
@@ -163,7 +178,7 @@ def is_paused(strategy_name, now_utc=None):
 def get_pause_remaining(strategy_name, now_utc=None):
     """Trả về thời gian chờ còn lại (timedelta) hoặc None nếu không đang pause. Dùng để hiển thị 'còn lại X phút Y giây'."""
     state = load_pause_state(now_utc=now_utc)
-    until = state.get(strategy_name)
+    until = _pause_until_from_value(state.get(strategy_name))
     if not until:
         return None
     try:
