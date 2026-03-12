@@ -451,12 +451,16 @@ def set_paused(strategy_name, pause_minutes, from_time=None, reason=None, meta=N
     save_pause_state(state)
 
 def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, pause_minutes):
+    """Chỉ pause khi N lệnh đóng gần nhất đều thua. Lệnh cuối (mới nhất) thắng thì không pause."""
     if pause_minutes <= 0 or consecutive_loss_count <= 0:
         return False, None
     rows = db.get_last_closed_orders(strategy_name, limit=consecutive_loss_count + 2, account_id=account_id)
     if len(rows) < consecutive_loss_count:
         return False, None
     first_n = rows[:consecutive_loss_count]
+    # Lệnh đóng gần nhất thắng thì không coi là consecutive loss
+    if (first_n[0].get("profit") or 0) >= 0:
+        return False, None
     if all((r["profit"] or 0) < 0 for r in first_n):
         return True, first_n[0].get("close_time")
     return False, None
@@ -814,9 +818,15 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     reason="consecutive_loss",
                     meta={"count": consecutive_loss_count},
                 )
+                print(f"   [{strategy_name}] Không đặt lệnh: consecutive loss pause (từ history MT5, {consecutive_loss_count} lệnh thua).")
                 send_telegram(f"⏸️ [Grid_3_Step] Tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp).", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
-        did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes)
+        # Lệnh mới nhất từ MT5 đang thắng thì không kiểm tra DB (tránh DB chưa sync → pause nhầm)
+        if profits and len(profits) > 0 and (profits[0] or 0) >= 0:
+            did_pause = False
+            last_close_time = None
+        else:
+            did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes)
         if did_pause:
             cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
             set_paused(
@@ -824,6 +834,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 reason="consecutive_loss",
                 meta={"count": consecutive_loss_count},
             )
+            print(f"   [{strategy_name}] Không đặt lệnh: consecutive loss pause (từ DB, {consecutive_loss_count} lệnh thua).")
             return error_count, 0
 
     # Spread. Checklist §5: bảo vệ tick is None (tránh crash khi refresh_reentry_blocks)
@@ -952,10 +963,17 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if buy_allowed and has_buy_pending and sell_allowed and has_sell_pending:
         if tick is not None:
             refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
+        # Log khi không đặt vì đã có đủ 2 pending (user hỏi "tại sao ko đặt")
+        _now_ts = time.time()
+        _last = getattr(strategy_grid_step_logic, "_last_no_place_log_ts", 0)
+        if _now_ts - _last >= 30:
+            print(f"   [{strategy_name}] Không đặt lệnh: đã có đủ 2 pending | ref={ref} BUY_STOP @ {buy_price} SELL_STOP @ {sell_price}")
+            strategy_grid_step_logic._last_no_place_log_ts = _now_ts
         return error_count, 0
     if not buy_allowed and not sell_allowed:
         if tick is not None:
             refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)
+        print(f"   [{strategy_name}] Không đặt lệnh: cả BUY và SELL bị chặn (ref={ref} buy={buy_price} sell={sell_price}).")
         return error_count, 0
 
     step_val_f = float(sl_tp_price)
