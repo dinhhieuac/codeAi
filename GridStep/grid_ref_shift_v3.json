@@ -1,0 +1,13 @@
+{
+  "Grid_3_Step_5.0": {
+    "step": 5.0,
+    "last_stopout_side": "SELL",
+    "last_stopout_entry": 5175.0,
+    "pending_ref_shift": true,
+    "last_stopout_sl": 5180.0,
+    "last_stopout_time": "2026-03-12 11:30:31",
+    "processed_stopout_tickets": [
+      2752794383
+    ]
+  }
+}

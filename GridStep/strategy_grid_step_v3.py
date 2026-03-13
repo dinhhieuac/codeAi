@@ -450,8 +450,9 @@ def set_paused(strategy_name, pause_minutes, from_time=None, reason=None, meta=N
         state[strategy_name] = until
     save_pause_state(state)
 
-def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, pause_minutes):
-    """Chỉ pause khi N lệnh đóng gần nhất đều thua. Lệnh cuối (mới nhất) thắng thì không pause."""
+def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, pause_minutes, now_utc=None):
+    """Chỉ pause khi N lệnh đóng gần nhất đều thua VÀ lệnh thua cuối còn 'mới' (trong vòng pause_minutes).
+    Nếu lệnh thua cuối đã quá lâu (qua pause_minutes) thì không pause nữa — cho phép đặt lệnh lại."""
     if pause_minutes <= 0 or consecutive_loss_count <= 0:
         return False, None
     rows = db.get_last_closed_orders(strategy_name, limit=consecutive_loss_count + 2, account_id=account_id)
@@ -461,9 +462,16 @@ def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_lo
     # Lệnh đóng gần nhất thắng thì không coi là consecutive loss
     if (first_n[0].get("profit") or 0) >= 0:
         return False, None
-    if all((r["profit"] or 0) < 0 for r in first_n):
-        return True, first_n[0].get("close_time")
-    return False, None
+    if not all((r.get("profit") or 0) < 0 for r in first_n):
+        return False, None
+    # Lệnh thua cuối đã quá lâu (qua pause_minutes) thì không pause — tránh bot không bao giờ mở lệnh lại
+    if now_utc is not None and pause_minutes > 0:
+        last_close = _parse_close_time(first_n[0].get("close_time"))
+        if last_close is not None:
+            now = now_utc if getattr(now_utc, "tzinfo", None) else now_utc.replace(tzinfo=timezone.utc)
+            if (now - last_close).total_seconds() > pause_minutes * 60:
+                return False, None
+    return True, first_n[0].get("close_time")
 
 def sync_closed_orders_from_mt5(config, strategy_name=None):
     closed = get_closed_from_mt5_history(config, days_back=1)
@@ -826,7 +834,9 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             did_pause = False
             last_close_time = None
         else:
-            did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes)
+            did_pause, last_close_time = check_consecutive_losses_and_pause(
+                strategy_name, account_id, consecutive_loss_count, consecutive_loss_pause_minutes, now_utc=mt5_now
+            )
         if did_pause:
             cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
             set_paused(
