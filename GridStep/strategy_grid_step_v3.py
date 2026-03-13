@@ -1012,27 +1012,37 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     sl_sell = sell_price + step_val_f
     tp_sell = sell_price - step_val_f
 
+    # MT5: BUY_STOP phải có price > ask, SELL_STOP phải có price < bid; không thì 10015 Invalid price
+    ask = float(tick.ask) if tick else 0
+    bid = float(tick.bid) if tick else 0
+
     placed = 0
     if buy_allowed and not has_buy_pending:
-        r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
-        if r1 and r1.retcode == mt5.TRADE_RETCODE_DONE:
-            db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, account_id)
-            placed += 1
-            if cooldown_minutes > 0:
-                save_cooldown_levels([buy_price], step_filter)
-        elif r1:
-            print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
-            return error_count + 1, r1.retcode
+        if bid > 0 and buy_price <= ask:
+            print(f"   [{strategy_name}] BUY_STOP skip: price {buy_price} <= ask {ask} (Invalid price).")
+        else:
+            r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
+            if r1 and r1.retcode == mt5.TRADE_RETCODE_DONE:
+                db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, account_id)
+                placed += 1
+                if cooldown_minutes > 0:
+                    save_cooldown_levels([buy_price], step_filter)
+            elif r1:
+                print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
+                return error_count + 1, r1.retcode
     if sell_allowed and not has_sell_pending:
-        r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
-        if r2 and r2.retcode == mt5.TRADE_RETCODE_DONE:
-            db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, account_id)
-            placed += 1
-            if cooldown_minutes > 0:
-                save_cooldown_levels([sell_price], step_filter)
-        elif r2:
-            print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
-            return error_count + 1, r2.retcode
+        if bid > 0 and sell_price >= bid:
+            print(f"   [{strategy_name}] SELL_STOP skip: price {sell_price} >= bid {bid} (Invalid price).")
+        else:
+            r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
+            if r2 and r2.retcode == mt5.TRADE_RETCODE_DONE:
+                db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, account_id)
+                placed += 1
+                if cooldown_minutes > 0:
+                    save_cooldown_levels([sell_price], step_filter)
+            elif r2:
+                print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
+                return error_count + 1, r2.retcode
 
     if tick is not None:
         refresh_reentry_blocks(strategy_name, tick.bid, tick.ask, step_val, reentry_unlock_steps)

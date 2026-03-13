@@ -10,6 +10,28 @@
       "active": true,
       "created_at": "2026-03-12T11:30:32.321737Z",
       "reason": "SL"
+    },
+    {
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 5115.0,
+      "sl_price": 5120.0,
+      "unlock_price": 5125.0,
+      "active": true,
+      "created_at": "2026-03-13T02:25:24.791809Z",
+      "reason": "SL"
+    },
+    {
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 5120.0,
+      "sl_price": 5115.0,
+      "unlock_price": 5110.0,
+      "active": true,
+      "created_at": "2026-03-13T02:46:17.717485Z",
+      "reason": "SL"
     }
   ]
 }
