@@ -6,7 +6,7 @@ import MetaTrader5 as mt5
 from datetime import datetime, timedelta
 
 # Bật log debug cho consecutive loss / history. Set False để tắt.
-DEBUG_HISTORY = True
+DEBUG_HISTORY = False
 
 
 def get_last_n_closed_profits_by_symbol(symbol, magic, n, days_back=1):

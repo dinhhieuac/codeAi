@@ -733,21 +733,23 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             symbol=symbol,
             step=step_val,
         )
+        print(f"[WHIPSAW] Tính điểm step={step_filter} | buy_level={buy_level} sell_level={sell_level} | "
+              f"lịch sử đóng={len(closed_orders)} lệnh | threshold={whipsaw_threshold}")
         skip_buy, buy_score, buy_comp = should_skip_for_whipsaw(
             step_val, "BUY", buy_level, now_utc, closed_orders, threshold=whipsaw_threshold, weights=whipsaw_weights
         )
         skip_sell, sell_score, sell_comp = should_skip_for_whipsaw(
             step_val, "SELL", sell_level, now_utc, closed_orders, threshold=whipsaw_threshold, weights=whipsaw_weights
         )
-        # Log theo §25: chi tiết thành phần score từng phía, một dòng per side
+        # Log công thức: WhipsawScore = 3*R_same30 + 3*L_same120 - 1*W_same120 + 1*L_zone60 - 3*W_zone60 + 3*C2
         if buy_comp:
-            print(f"[WHIPSAW] step={step_filter} side=BUY level={buy_level} score={buy_score} "
-                  f"R_same30={buy_comp.get('R_same30')} L_same120={buy_comp.get('L_same120')} W_same120={buy_comp.get('W_same120')} "
-                  f"L_zone60={buy_comp.get('L_zone60')} W_zone60={buy_comp.get('W_zone60')} C2={buy_comp.get('C2')} skip={skip_buy}")
+            r, l120, w120, lz, wz, c2 = buy_comp.get('R_same30', 0), buy_comp.get('L_same120', 0), buy_comp.get('W_same120', 0), buy_comp.get('L_zone60', 0), buy_comp.get('W_zone60', 0), buy_comp.get('C2', 0)
+            calc = f"3*{r}+3*{l120}-1*{w120}+1*{lz}-3*{wz}+3*{c2}"
+            print(f"[WHIPSAW] BUY  level={buy_level} score={buy_score} = {calc} | skip={skip_buy}")
         if sell_comp:
-            print(f"[WHIPSAW] step={step_filter} side=SELL level={sell_level} score={sell_score} "
-                  f"R_same30={sell_comp.get('R_same30')} L_same120={sell_comp.get('L_same120')} W_same120={sell_comp.get('W_same120')} "
-                  f"L_zone60={sell_comp.get('L_zone60')} W_zone60={sell_comp.get('W_zone60')} C2={sell_comp.get('C2')} skip={skip_sell}")
+            r, l120, w120, lz, wz, c2 = sell_comp.get('R_same30', 0), sell_comp.get('L_same120', 0), sell_comp.get('W_same120', 0), sell_comp.get('L_zone60', 0), sell_comp.get('W_zone60', 0), sell_comp.get('C2', 0)
+            calc = f"3*{r}+3*{l120}-1*{w120}+1*{lz}-3*{wz}+3*{c2}"
+            print(f"[WHIPSAW] SELL level={sell_level} score={sell_score} = {calc} | skip={skip_sell}")
         if whipsaw_dry_run:
             skip_buy = skip_sell = False
         if skip_buy and skip_sell:
