@@ -618,18 +618,43 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     print(f"⏸️ [{strategy_name}] (history) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
                     send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
                     return error_count, 0
-            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
-            set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
-            print(f"⏸️ [{strategy_name}] (history) {consecutive_loss_count} lệnh thua liên tiếp → tạm dừng {consecutive_loss_pause_minutes} phút.")
-            send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
-            return error_count, 0
+                # Đã quá consecutive_loss_pause_minutes từ lệnh thua cuối → không pause, giao dịch bình thường
+            else:
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
+                print(f"⏸️ [{strategy_name}] (history) {consecutive_loss_count} lệnh thua liên tiếp → tạm dừng {consecutive_loss_pause_minutes} phút (không xác định được giờ đóng).")
+                send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
+                return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get('account'), consecutive_loss_count, consecutive_loss_pause_minutes)
         if did_pause:
-            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
-            set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
-            print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → tạm dừng {consecutive_loss_pause_minutes} phút.")
-            send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get('telegram_token'), config.get('telegram_chat_id'))
-            return error_count, 0
+            last_close_dt = None
+            if last_close_time:
+                if isinstance(last_close_time, str):
+                    try:
+                        last_close_dt = datetime.strptime(last_close_time.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        try:
+                            last_close_dt = datetime.fromisoformat(last_close_time.replace("Z", "+00:00"))
+                            if last_close_dt.tzinfo is None:
+                                last_close_dt = last_close_dt.replace(tzinfo=timezone.utc)
+                        except (ValueError, TypeError):
+                            pass
+            if last_close_dt is not None:
+                until_dt = last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes)
+                if mt5_now >= until_dt:
+                    pass
+                else:
+                    n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                    set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
+                    print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → tạm dừng {consecutive_loss_pause_minutes} phút.")
+                    send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get('telegram_token'), config.get('telegram_chat_id'))
+                    return error_count, 0
+            else:
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
+                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
+                print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → tạm dừng {consecutive_loss_pause_minutes} phút.")
+                send_telegram(f"⏸️ Grid Step v4 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get('telegram_token'), config.get('telegram_chat_id'))
+                return error_count, 0
 
     tick = mt5.symbol_info_tick(symbol)
     spread_price = (tick.ask - tick.bid) if tick else 0.0

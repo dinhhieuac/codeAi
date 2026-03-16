@@ -6,6 +6,8 @@
         "XAU_M1_V2": "../XAU_M1_V2/trades.db",
         "EUR_M1_REAL": "../EUR_M1_REAL/trades.db",
         "GRID_STEP": "../GridStep/trades.db",
+        "GRID_STEP_v4": "../GridStep/trades_V4.db",
+
         "EURUSD_M1_REAL_TUYEN": "../EURUSD_M1_REAL_TUYEN/trades.db"
     },
     "default": "XAU_M1",

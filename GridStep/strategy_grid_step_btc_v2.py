@@ -4,11 +4,17 @@ Cùng logic: BUY STOP / SELL STOP, nhiều step, cooldown, pause khi N lệnh th
 Thêm lớp lọc Anti-Whipsaw theo document/Anti-Whipsaw.md: tính WhipsawScore, skip lệnh nếu score >= threshold.
 Dùng config riêng (config_grid_step_btc_v2.json) và file cooldown/pause riêng (grid_cooldown_btc_v2.json, grid_pause_btc_v2.json).
 """
+import sys
+import os
+# Fix Windows console: in UTF-8 de tranh loi Unicode khi in emoji/tieng Viet
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 import MetaTrader5 as mt5
 import time
-import sys
 import sqlite3
-import os
 import json
 from datetime import datetime, timedelta, timezone
 sys.path.append('..')
