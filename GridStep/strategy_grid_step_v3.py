@@ -986,6 +986,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"   [{strategy_name}] Không đặt lệnh: cả BUY và SELL bị chặn (ref={ref} buy={buy_price} sell={sell_price}).")
         return error_count, 0
 
+    # MT5: BUY_STOP phải price > ask, SELL_STOP phải price < bid. Nếu ref cũ khiến không đặt được (giá đã vượt) → hủy pending, vòng sau tính ref mới để không kẹt 1 lệnh.
+    ask = float(tick.ask) if tick else 0
+    bid = float(tick.bid) if tick else 0
+    buy_invalid = buy_allowed and not has_buy_pending and (ask > 0 and buy_price <= ask)
+    sell_invalid = sell_allowed and not has_sell_pending and (bid > 0 and sell_price >= bid)
+    if buy_invalid or sell_invalid:
+        n = cancel_all_pending(symbol, magic, strategy_name, account_id, step_filter)
+        if n > 0:
+            reason = "BUY_STOP <= ask" if buy_invalid else "SELL_STOP >= bid"
+            print(f"   [{strategy_name}] Hủy {n} pending (ref cũ không hợp lệ: {reason}) → vòng sau đặt lại ref mới.")
+        return error_count, 0
+
     step_val_f = float(sl_tp_price)
     filling = mt5.ORDER_FILLING_FOK
     if info.filling_mode & 2:
@@ -1011,10 +1023,6 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     tp_buy = buy_price + step_val_f
     sl_sell = sell_price + step_val_f
     tp_sell = sell_price - step_val_f
-
-    # MT5: BUY_STOP phải có price > ask, SELL_STOP phải có price < bid; không thì 10015 Invalid price
-    ask = float(tick.ask) if tick else 0
-    bid = float(tick.bid) if tick else 0
 
     placed = 0
     if buy_allowed and not has_buy_pending:
