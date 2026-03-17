@@ -19,10 +19,10 @@
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
         "chop_pause_enabled": true,
-        "chop_window_trades": 4,
-        "chop_loss_count": 3,
-        "chop_band_steps": 2,
+        "chop_window_trades": 3,
+        "chop_loss_count": 2,
+        "chop_band_steps": 1,
         "chop_pause_minutes": 15,
-        "chop_require_closed_count_exact": true
+        "chop_require_closed_count_exact": false
     }
 }
