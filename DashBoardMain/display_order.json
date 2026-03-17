@@ -4,7 +4,12 @@
         "Strategy_1_Trend_HA_V11",
         "Strategy_1_Trend_HA_V2",
         "Strategy_5_Filter_First",
-        "Grid_Step"
+        "Grid_Step",
+        "Grid_Step_200",
+        "Grid_Step_200.0",
+        "Grid_Step_BTC_V2",
+        "Grid_Step_BTC_V2_200",
+        "Grid_Step_BTC_V2_200.0"
     ],
     "description": "Thứ tự hiển thị strategy trên dashboard. Để trống [] thì xếp theo lợi nhuận. Thêm tên strategy vào list để tùy chỉnh thứ tự."
 }

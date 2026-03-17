@@ -111,8 +111,11 @@ def index():
             cutoff_date, end_str, filter_label = parsed
             cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
             current_filter = 'range'
+            # Dùng COALESCE(close_time, open_time) để gồm cả lệnh mở cũ nhưng đóng trong khoảng (vd Grid Step)
             cur.execute(
-                "SELECT * FROM orders WHERE open_time >= ? AND open_time <= ? ORDER BY open_time DESC",
+                """SELECT * FROM orders
+                   WHERE COALESCE(close_time, open_time) >= ? AND COALESCE(close_time, open_time) <= ?
+                   ORDER BY COALESCE(close_time, open_time) DESC""",
                 (cutoff_str, end_str)
             )
             orders = cur.fetchall()
@@ -152,7 +155,13 @@ def index():
             current_filter = days_param
         
         cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-        cur.execute("SELECT * FROM orders WHERE open_time >= ? ORDER BY open_time DESC", (cutoff_str,))
+        # Dùng COALESCE(close_time, open_time) để gồm lệnh đóng gần đây dù mở từ trước (vd Grid Step)
+        cur.execute(
+            """SELECT * FROM orders
+               WHERE COALESCE(close_time, open_time) >= ?
+               ORDER BY COALESCE(close_time, open_time) DESC""",
+            (cutoff_str,)
+        )
         orders = cur.fetchall()
         cur.execute("SELECT * FROM signals WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 50", (cutoff_str,))
         signals = cur.fetchall()
@@ -188,8 +197,13 @@ def index():
     cutoff_date_30d = start_date_vn_30d - timedelta(hours=7)
     cutoff_str_30d = cutoff_date_30d.strftime("%Y-%m-%d %H:%M:%S")
     
-    # Fetch orders for last 30 days for Daily PNL
-    cur.execute("SELECT * FROM orders WHERE open_time >= ? AND profit IS NOT NULL ORDER BY open_time DESC", (cutoff_str_30d,))
+    # Fetch orders for last 30 days for Daily PNL (theo ngày đóng nếu có, để PNL đúng ngày)
+    cur.execute(
+        """SELECT * FROM orders
+           WHERE COALESCE(close_time, open_time) >= ? AND profit IS NOT NULL
+           ORDER BY COALESCE(close_time, open_time) DESC""",
+        (cutoff_str_30d,)
+    )
     orders_30d = cur.fetchall()
     
     for strat in strategies:
@@ -944,7 +958,7 @@ def export_orders():
         if parsed:
             cutoff_utc, end_str, _ = parsed
             cutoff_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
-            date_filter = "o.open_time >= ? AND o.open_time <= ?"
+            date_filter = "COALESCE(o.close_time, o.open_time) >= ? AND COALESCE(o.close_time, o.open_time) <= ?"
             params = [cutoff_str, end_str]
         else:
             from_date_param = ''
@@ -963,7 +977,7 @@ def export_orders():
                 days = 36500
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
-        date_filter = "o.open_time >= ?"
+        date_filter = "COALESCE(o.close_time, o.open_time) >= ?"
         params = [cutoff_str]
     
     base_query = """
@@ -989,7 +1003,7 @@ def export_orders():
         base_query += " AND o.strategy_name = ?"
         params.append(strategy_param)
     
-    base_query += " ORDER BY o.open_time DESC"
+    base_query += " ORDER BY COALESCE(o.close_time, o.open_time) DESC"
     
     cur.execute(base_query, tuple(params))
     orders = cur.fetchall()

@@ -328,8 +328,27 @@ def get_pause_remaining(strategy_name, now_utc=None):
         return None
 
 
+def _log_pause_remaining(strategy_name, now_utc=None):
+    """In thời gian chờ còn lại; chỉ in khi số phút thay đổi để tránh spam (1 dòng/phút)."""
+    remaining = get_pause_remaining(strategy_name, now_utc=now_utc)
+    if remaining is not None:
+        mins = int(remaining.total_seconds() // 60)
+        secs = int(remaining.total_seconds() % 60)
+        key = (strategy_name, mins)
+        if not hasattr(_log_pause_remaining, "_last_min") or _log_pause_remaining._last_min != key:
+            _log_pause_remaining._last_min = key
+            print(f"   ⏱️ Thời gian chờ còn lại: {mins} phút {secs} giây")
+    else:
+        if not hasattr(_log_pause_remaining, "_last_none") or _log_pause_remaining._last_none != strategy_name:
+            _log_pause_remaining._last_none = strategy_name
+            print(f"   ⏱️ Thời gian chờ còn lại: (không xác định)")
+
+
 def set_paused(strategy_name, pause_minutes, from_time=None):
     state = load_pause_state()
+    now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     if from_time is not None:
         if isinstance(from_time, str):
             try:
@@ -338,12 +357,15 @@ def set_paused(strategy_name, pause_minutes, from_time=None):
                 try:
                     from_time = datetime.fromisoformat(from_time.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
-                    from_time = datetime.now(timezone.utc)
+                    from_time = now
             if from_time.tzinfo is None:
                 from_time = from_time.replace(tzinfo=timezone.utc)
         until_dt = from_time + timedelta(minutes=pause_minutes)
+        # Nếu until_dt đã qua (lệnh đóng lâu rồi mới vào đây) → pause 5 phút kể từ bây giờ, tránh bị clean_expired xóa ngay
+        if until_dt <= now:
+            until_dt = now + timedelta(minutes=pause_minutes)
     else:
-        until_dt = datetime.now(timezone.utc) + timedelta(minutes=pause_minutes)
+        until_dt = now + timedelta(minutes=pause_minutes)
     until = until_dt.isoformat().replace("+00:00", "Z")
     state[strategy_name] = until
     save_pause_state(state)
@@ -366,7 +388,7 @@ def sync_closed_orders_from_mt5(config, strategy_name=None):
     closed = get_closed_from_mt5_history(config, days_back=1)
     if not closed:
         return 0
-    sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step")
+    sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step_BTC_V2")
     account_id = config.get("account", 0)
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
@@ -471,7 +493,7 @@ def get_pending_orders(symbol, magic, step=None):
     return orders
 
 
-def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0, step=None):
+def cancel_all_pending(symbol, magic, strategy_name="Grid_Step_BTC_V2", account_id=0, step=None):
     orders = get_pending_orders(symbol, magic, step)
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
@@ -479,7 +501,7 @@ def cancel_all_pending(symbol, magic, strategy_name="Grid_Step", account_id=0, s
     return len(orders)
 
 
-def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step", account_id=0, sl_tp_price=5.0, info=None, step=None):
+def sync_grid_pending_status(symbol, magic, strategy_name="Grid_Step_BTC_V2", account_id=0, sl_tp_price=5.0, info=None, step=None):
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
     positions = get_positions_for_step(symbol, magic, step)
     info = info or mt5.symbol_info(symbol)
@@ -579,18 +601,19 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     volume = config['volume']
     magic = config['magic']
     params = config.get('parameters', {})
+    # V2: dùng strategy_name khác bot BTC v1 để phân biệt trên dashboard (Grid_Step_BTC_V2 / Grid_Step_BTC_V2_200.0)
     if step is None:
         step_val = float(params.get('step', 5) or 5)
         grid_step_price = step_val
         sl_tp_price = step_val
-        strategy_name = "Grid_Step"
+        strategy_name = "Grid_Step_BTC_V2"
         step_filter = None
     else:
         step = float(step)
         step_val = step
         grid_step_price = step
         sl_tp_price = step
-        strategy_name = f"Grid_Step_{step}"
+        strategy_name = f"Grid_Step_BTC_V2_{step}"
         step_filter = step
     min_distance_points = params.get('min_distance_points', 5)
     max_positions = config.get('max_positions', 5)
@@ -641,11 +664,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             if not hasattr(strategy_grid_step_logic, "_last_pause_log") or strategy_grid_step_logic._last_pause_log != strategy_name:
                 print(f"⏸️ [{strategy_name}] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút.")
                 strategy_grid_step_logic._last_pause_log = strategy_name
-            remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
-            if remaining is not None:
-                mins = int(remaining.total_seconds() // 60)
-                secs = int(remaining.total_seconds() % 60)
-                print(f"⏸️ [{strategy_name}] Thời gian chờ còn lại: {mins} phút {secs} giây")
+            # In thời gian còn lại mỗi vòng để dễ kiểm tra bot có bị kẹt ở đây không
+            _log_pause_remaining(strategy_name, mt5_now)
             return error_count, 0
         profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1)
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
@@ -661,19 +681,24 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
                     set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
                     print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
+                    _log_pause_remaining(strategy_name, mt5_now)
                     msg = f"⏸️ Grid Step BTC v2 tạm dừng giao dịch\nLý do: {consecutive_loss_count} lệnh thua liên tiếp ({symbol}).\nTạm dừng {consecutive_loss_pause_minutes} phút."
                     send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
                     return error_count, 0
-            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
-            set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
-            print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
-            send_telegram(f"⏸️ Grid Step BTC v2 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
-            return error_count, 0
+                # Đã hết cửa pause (mt5_now >= until_dt) → không set pause lại, tiếp tục giao dịch
+            else:
+                n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step=None)
+                set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
+                print(f"⏸️ [{strategy_name}] (history {symbol}) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
+                _log_pause_remaining(strategy_name, mt5_now)
+                send_telegram(f"⏸️ Grid Step BTC v2 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
+                return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get('account'), consecutive_loss_count, consecutive_loss_pause_minutes)
         if did_pause:
             n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None)
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
             print(f"⏸️ [{strategy_name}] (DB) {consecutive_loss_count} lệnh thua liên tiếp → đã hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
+            _log_pause_remaining(strategy_name, mt5_now)
             send_telegram(f"⏸️ Grid Step BTC v2 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get('telegram_token'), config.get('telegram_chat_id'))
             return error_count, 0
 
@@ -692,21 +717,68 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     if len(positions) >= max_positions:
         return error_count, 0
-    if len(pendings) == 2:
-        return error_count, 0
 
-    if positions:
-        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
-    else:
-        if pendings:
-            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
-
+    # Tính ref mong muốn để kiểm tra 2 lệnh chờ có trùng không (tránh hủy/đặt lại liên tục cùng giá)
+    current_price = get_grid_anchor_price(symbol, magic, step_filter)
     ref = round(current_price / grid_step_price) * grid_step_price
     ref = round(ref, info.digits)
     buy_price = round(ref + grid_step_price, info.digits)
     sell_price = round(ref - grid_step_price, info.digits)
+
+    # Cooldown sau khi đặt: nếu 0 position và < 2 pendings (MT5 có thể chưa trả về đủ) → không đặt lại trùng
+    _cooldown_sec = 30 if len(pendings) == 0 else 15  # 0 pendings: chờ lâu hơn để MT5 cập nhật
+    if len(positions) == 0 and len(pendings) < 2:
+        _key = (round(float(step_filter), 5), round(ref, 5))
+        _place_state = getattr(strategy_grid_step_logic, "_last_place_btc_v2", None)
+        if _place_state is not None:
+            _saved_key = _place_state.get("key")
+            if _saved_key is not None:
+                _saved_key = (round(float(_saved_key[0]), 5), round(float(_saved_key[1]), 5))
+            if _saved_key == _key:
+                elapsed = time.time() - _place_state.get("ts", 0)
+                if elapsed < _cooldown_sec:
+                    if not getattr(strategy_grid_step_logic, "_last_cooldown_place_log", None) or time.time() - strategy_grid_step_logic._last_cooldown_place_log > 5:
+                        print(f"⏸️ Cooldown đặt lệnh: vừa đặt ref={ref} step={step_filter}, còn {max(0, _cooldown_sec - elapsed):.0f}s (pendings={len(pendings)}) → bỏ qua.")
+                        strategy_grid_step_logic._last_cooldown_place_log = time.time()
+                    return error_count, 0
+
+    if len(pendings) == 2:
+        actual_set = set()
+        for o in pendings:
+            pr = round(float(getattr(o, "price", 0) or getattr(o, "price_open", 0)), info.digits)
+            if getattr(o, "type", None) == mt5.ORDER_TYPE_BUY_STOP:
+                actual_set.add(("BUY", pr))
+            else:
+                actual_set.add(("SELL", pr))
+        expected_set = {("BUY", buy_price), ("SELL", sell_price)}
+        if actual_set == expected_set:
+            return error_count, 0
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+
+    add_missing_only = None  # "BUY" | "SELL" | None
+    if positions:
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+        current_price = get_grid_anchor_price(symbol, magic, step_filter)
+        ref = round(current_price / grid_step_price) * grid_step_price
+        ref = round(ref, info.digits)
+        buy_price = round(ref + grid_step_price, info.digits)
+        sell_price = round(ref - grid_step_price, info.digits)
+    elif len(pendings) == 1:
+        # Chỉ có 1 lệnh chờ: nếu đúng ref hiện tại thì chỉ đặt thêm 1 lệnh còn thiếu, KHÔNG hủy (tránh đóng mở liên tục cùng giá)
+        one = pendings[0]
+        pr = round(float(getattr(one, "price", 0) or getattr(one, "price_open", 0)), info.digits)
+        is_buy = getattr(one, "type", None) == mt5.ORDER_TYPE_BUY_STOP
+        if is_buy and abs(pr - buy_price) <= 0.01:
+            add_missing_only = "SELL"
+        elif not is_buy and abs(pr - sell_price) <= 0.01:
+            add_missing_only = "BUY"
+        if add_missing_only is None:
+            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+            current_price = get_grid_anchor_price(symbol, magic, step_filter)
+            ref = round(current_price / grid_step_price) * grid_step_price
+            ref = round(ref, info.digits)
+            buy_price = round(ref + grid_step_price, info.digits)
+            sell_price = round(ref - grid_step_price, info.digits)
 
     if position_at_level(positions, buy_price, point):
         return error_count, 0
@@ -790,46 +862,50 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     _step_label = step_filter if step_filter is not None else step_val
     r1, r2 = None, None
-    if not skip_buy:
-        print(f"📤 [BTC v2 step={_step_label}] BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy})")
+    place_buy = not skip_buy and (add_missing_only is None or add_missing_only == "BUY")
+    place_sell = not skip_sell and (add_missing_only is None or add_missing_only == "SELL")
+    if place_buy:
+        print(f"📤 [BTC v2 step={_step_label}] BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy})" + (" (chỉ đặt thêm, đã có SELL)" if add_missing_only == "BUY" else ""))
         r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
-    if not skip_sell:
-        print(f"📤 [BTC v2 step={_step_label}] SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
+    if place_sell:
+        print(f"📤 [BTC v2 step={_step_label}] SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})" + (" (chỉ đặt thêm, đã có BUY)" if add_missing_only == "SELL" else ""))
         r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
 
-    if skip_buy and skip_sell:
+    if not place_buy and not place_sell:
         return error_count, 0
 
-    if not skip_buy and r1 is None:
+    if place_buy and r1 is None:
         err = mt5.last_error()
         print(f"❌ BUY_STOP order_send lỗi: {err}")
         return error_count + 1, getattr(err, 'code', 0)
-    if not skip_buy and r1 is not None and r1.retcode != mt5.TRADE_RETCODE_DONE:
+    if place_buy and r1 is not None and r1.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
         return error_count + 1, r1.retcode
-    if not skip_sell and r2 is None:
+    if place_sell and r2 is None:
         err = mt5.last_error()
         print(f"❌ SELL_STOP order_send lỗi: {err}")
         return error_count + 1, getattr(err, 'code', 0)
-    if not skip_sell and r2 is not None and r2.retcode != mt5.TRADE_RETCODE_DONE:
+    if place_sell and r2 is not None and r2.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
         return error_count + 1, r2.retcode
 
     placed_any = False
-    if not skip_buy and r1 and r1.retcode == mt5.TRADE_RETCODE_DONE:
+    if place_buy and r1 and r1.retcode == mt5.TRADE_RETCODE_DONE:
         print(f"✅ Grid BTC v2 step={_step_label}: BUY_STOP @ {buy_price:.2f} | ref={ref}")
         if cooldown_minutes > 0:
             save_cooldown_levels([buy_price], step_filter)
         acc = config.get('account')
         db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         placed_any = True
-    if not skip_sell and r2 and r2.retcode == mt5.TRADE_RETCODE_DONE:
+    if place_sell and r2 and r2.retcode == mt5.TRADE_RETCODE_DONE:
         print(f"✅ Grid BTC v2 step={_step_label}: SELL_STOP @ {sell_price:.2f} | ref={ref}")
         if cooldown_minutes > 0:
             save_cooldown_levels([sell_price], step_filter)
         acc = config.get('account')
         db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
         placed_any = True
+    if placed_any:
+        strategy_grid_step_logic._last_place_btc_v2 = {"key": (round(float(step_filter), 5), round(ref, 5)), "ts": time.time()}
 
     return 0, 0
 
@@ -864,9 +940,9 @@ if __name__ == "__main__":
                 if params.get("consecutive_loss_pause_enabled", True):
                     if steps_list is not None:
                         for step_val in steps_list:
-                            sync_closed_orders_from_mt5(config, strategy_name=f"Grid_Step_{step_val}")
+                            sync_closed_orders_from_mt5(config, strategy_name=f"Grid_Step_BTC_V2_{step_val}")
                     else:
-                        sync_closed_orders_from_mt5(config, strategy_name="Grid_Step")
+                        sync_closed_orders_from_mt5(config, strategy_name="Grid_Step_BTC_V2")
                 if steps_list is not None:
                     for step_val in steps_list:
                         consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=step_val)

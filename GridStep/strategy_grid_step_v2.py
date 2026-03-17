@@ -651,11 +651,30 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     if len(positions) >= max_positions:
         return error_count, 0
+
+    # V2: Đã có 2 lệnh chờ — chỉ bỏ qua nếu trùng ref mong muốn (tránh hủy/đặt lại liên tục cùng giá)
+    ref_already_set = False
     if len(pendings) == 2:
-        return error_count, 0
+        current_price_tmp = get_grid_anchor_price(symbol, magic, step_filter)
+        ref_tmp = round(round(current_price_tmp / grid_step_price) * grid_step_price, info.digits)
+        buy_want = round(ref_tmp + grid_step_price, info.digits)
+        sell_want = round(ref_tmp - grid_step_price, info.digits)
+        actual_set = set()
+        for o in pendings:
+            pr = round(float(getattr(o, "price", 0) or getattr(o, "price_open", 0)), info.digits)
+            actual_set.add((o.type, pr))
+        expected_set = {(mt5.ORDER_TYPE_BUY_STOP, buy_want), (mt5.ORDER_TYPE_SELL_STOP, sell_want)}
+        if actual_set == expected_set:
+            return error_count, 0
+        # 2 lệnh chờ nhưng không trùng ref → hủy và đặt lại (rơi xuống dưới)
+        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="2 lệnh chờ không trùng ref mong muốn, hủy để đặt lại")
+        ref = ref_tmp
+        buy_price = buy_want
+        sell_price = sell_want
+        ref_already_set = True
 
     # V2: Đang có position + pending: nếu lệnh chờ trùng với mong muốn (ref từ position) → không hủy, không đặt lại
-    if len(positions) > 0 and len(pendings) > 0:
+    if not ref_already_set and len(positions) > 0 and len(pendings) > 0:
         current_price_pos = get_grid_anchor_price(symbol, magic, step_filter)
         ref_pos = round(round(current_price_pos / grid_step_price) * grid_step_price, info.digits)
         buy_price_pos = round(ref_pos + grid_step_price, info.digits)
@@ -697,12 +716,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             pprice = getattr(the_one, "price", None) or getattr(the_one, "price_open", None)
             print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), một phía khóa re-entry → không hủy, không đặt lại")
             return error_count, 0
-        # Cả hai phía đều khóa → không đặt được lệnh mới, giữ nguyên lệnh chờ hiện có, không hủy
+        # Cả hai phía đều khóa → không đặt được lệnh mới; hủy lệnh chờ đơn lẻ để tránh kẹt (vòng sau ref/giá đổi có thể mở khóa và đặt lại)
         if buy_locked_tmp and sell_locked_tmp:
             the_one = pendings[0]
             ptype = "BUY_STOP" if getattr(the_one, "type", None) == mt5.ORDER_TYPE_BUY_STOP else "SELL_STOP"
             pprice = getattr(the_one, "price", None) or getattr(the_one, "price_open", None)
-            print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), cả hai phía khóa re-entry → không hủy, không đặt lại")
+            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Cả hai phía khóa re-entry, hủy lệnh chờ đơn để tránh kẹt")
+            print(f"⏭️ [V2 step={step_filter}] đã có 1 lệnh chờ ({ptype} @ {pprice}), cả hai phía khóa re-entry → đã hủy {n_cancelled} lệnh (vòng sau sẽ đặt lại khi mở khóa)")
             return error_count, 0
         # Cả hai phía đều mở khóa: nếu lệnh chờ hiện có trùng 1 trong 2 mong muốn → không hủy, chỉ đặt thêm lệnh còn thiếu
         if not buy_locked_tmp and not sell_locked_tmp:
@@ -716,18 +736,19 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 add_missing_order_only = "BUY"
                 ref_tmp_save = ref_tmp
 
-    if positions:
-        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Có position đang mở → hủy hết lệnh chờ, ref tính từ position")
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
-    else:
-        if pendings and not add_missing_order_only:
-            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Chuẩn bị đặt lại grid (ref mới) → hủy lệnh chờ cũ")
-        current_price = ref_tmp_save if add_missing_order_only else get_grid_anchor_price(symbol, magic, step_filter)
+    if not ref_already_set:
+        if positions:
+            cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Có position đang mở → hủy hết lệnh chờ, ref tính từ position")
+            current_price = get_grid_anchor_price(symbol, magic, step_filter)
+        else:
+            if pendings and not add_missing_order_only:
+                cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="Chuẩn bị đặt lại grid (ref mới) → hủy lệnh chờ cũ")
+            current_price = ref_tmp_save if add_missing_order_only else get_grid_anchor_price(symbol, magic, step_filter)
 
-    ref = round(current_price / grid_step_price) * grid_step_price
-    ref = round(ref, info.digits)
-    buy_price = round(ref + grid_step_price, info.digits)
-    sell_price = round(ref - grid_step_price, info.digits)
+        ref = round(current_price / grid_step_price) * grid_step_price
+        ref = round(ref, info.digits)
+        buy_price = round(ref + grid_step_price, info.digits)
+        sell_price = round(ref - grid_step_price, info.digits)
 
     if position_at_level(positions, buy_price, point):
         return error_count, 0

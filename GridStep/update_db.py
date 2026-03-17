@@ -80,8 +80,8 @@ def update_trades_for_strategy(db, config, strategy_name):
 
     # 2. Lấy deals đã đóng từ history (theo khoảng thời gian, tránh history_deals_get(position=ticket) trả về None)
     closed = _get_closed_positions_from_history(config, days_back=90)
-    if not closed and strategy_name == "Grid_Step":
-        print(f"ℹ️ No closed deals in history for magic {magic} (Grid_Step)")
+    if not closed and (strategy_name == "Grid_Step" or strategy_name.startswith("Grid_Step_BTC")):
+        print(f"ℹ️ No closed deals in history for magic {magic} ({strategy_name})")
 
     # 3. Orders trong DB có profit IS NULL
     conn = sqlite3.connect(db.db_path)
@@ -198,8 +198,17 @@ def update_trades_for_strategy(db, config, strategy_name):
                     print(f"✅ Backfill Grid_3_Step position {position_id}: Profit=${profit:.2f}")
                     updated += 1
 
+    # 4e. Grid_Step_BTC_V2_*: không backfill (bot đã ghi đúng strategy_name khi mở lệnh), chỉ update profit/close_time.
+
     conn.close()
-    if not tickets_pending and not (strategy_name == "Grid_Step" and closed) and not (strategy_name == "Grid_21_Step" and closed) and not (strategy_name == "Grid_22_Step" and closed) and not (strategy_name == "Grid_3_Step" and closed):
+    _skip_msg = (
+        (strategy_name == "Grid_Step" and closed)
+        or (strategy_name == "Grid_21_Step" and closed)
+        or (strategy_name == "Grid_22_Step" and closed)
+        or (strategy_name == "Grid_3_Step" and closed)
+        or (strategy_name.startswith("Grid_Step_BTC_V2") and closed)
+    )
+    if not tickets_pending and not _skip_msg:
         if updated == 0:
             print(f"ℹ️ No pending trades to update for {strategy_name} (Account {account_id})")
 
@@ -299,18 +308,48 @@ def main():
     from datetime import datetime
     
     for strat_name, config_file in strategies.items():
-        if os.path.exists(config_file):
-            print(f"\n--- Processing {strat_name} ---")
-            config = load_config(config_file)
-            update_trades_for_strategy(db, config, strat_name)
-        else:
+        if not os.path.exists(config_file):
             print(f"⚠️ Config not found: {config_file} (skipping {strat_name})")
+            continue
+        config = load_config(config_file)
+        # Grid Step BTC (v1): config có "steps" [200] → update từng strategy_name Grid_Step_200.0, ...
+        if strat_name == "Grid_Step_BTC":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid Step BTC) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_Step")
+        # Grid Step BTC V2: config có "steps" [200] → update từng strategy_name Grid_Step_BTC_V2_200.0, ...
+        elif strat_name == "Grid_Step_BTC_V2":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_Step_BTC_V2_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid Step BTC V2) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_Step_BTC_V2")
+        else:
+            print(f"\n--- Processing {strat_name} ---")
+            update_trades_for_strategy(db, config, strat_name)
 
     print("\n✅ Update Complete!")
     mt5.shutdown()
 
 if __name__ == "__main__":
-    while True:
-        main()
-        print("Sleeping for 600 seconds...") 
-        time.sleep(600)
+    try:
+        while True:
+            main()
+            print("Sleeping for 600 seconds...")
+            time.sleep(600)
+    except KeyboardInterrupt:
+        print("\n🛑 update_db stopped by user (Ctrl+C)")
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass

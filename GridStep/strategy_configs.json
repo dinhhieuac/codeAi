@@ -8,6 +8,8 @@
     "Strategy_4_UT_Bot": "configs/config_4.json",
     "Strategy_5_Filter_First": "configs/config_5.json",
     "Grid_Step": "configs/config_grid_step.json",
+    "Grid_Step_BTC": "configs/config_grid_step_btc.json",
+    "Grid_Step_BTC_V2": "configs/config_grid_step_btc_v2.json",
     "Grid_21_Step": "configs/config_grid_step_v21.json",
     "Grid_22_Step": "configs/config_grid_step_v22.json",
     "Grid_3_Step": "configs/config_grid_step_v3.json",
