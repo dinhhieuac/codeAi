@@ -823,9 +823,11 @@ if __name__ == "__main__":
                     mag = config["magic"]
                     mt5_time = get_mt5_time_utc(sym)
                     time_str = mt5_time.strftime("%Y-%m-%d %H:%M") if hasattr(mt5_time, "strftime") else ""
-                    pos = mt5.positions_get(symbol=sym, magic=mag) or []
-                    ords = mt5.orders_get(symbol=sym) or []
-                    ords = [o for o in ords if o.magic == mag]
+                    # Chỉ đếm position/pending của bot V11 (comment bắt đầu GridStep_V11), tránh lẫn V12/bot khác
+                    _all_pos = mt5.positions_get(symbol=sym, magic=mag) or []
+                    pos = [p for p in _all_pos if (getattr(p, "comment", "") or "").startswith("GridStep_V11")]
+                    _all_ords = mt5.orders_get(symbol=sym) or []
+                    ords = [o for o in _all_ords if o.magic == mag and (getattr(o, "comment", "") or "").startswith("GridStep_V11")]
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
                     steps_info = steps_list if steps_list else "1"

@@ -1054,9 +1054,12 @@ if __name__ == "__main__":
                 if loop_count % 30 == 0:
                     sym = config["symbol"]
                     mag = config["magic"]
-                    pos = mt5.positions_get(symbol=sym, magic=mag) or []
-                    ords = mt5.orders_get(symbol=sym) or []
-                    ords = [o for o in ords if o.magic == mag]
+                    # Chỉ đếm position/pending của bot V12 (comment bắt đầu GridStep_V12/...), tránh lẫn V11/bot khác
+                    _v12_prefix = (params.get("strategy_name") or STRATEGY_NAME_V12).replace("Grid_Step_", "GridStep_")
+                    _all_pos = mt5.positions_get(symbol=sym, magic=mag) or []
+                    pos = [p for p in _all_pos if (getattr(p, "comment", "") or "").startswith(_v12_prefix)]
+                    _all_ords = mt5.orders_get(symbol=sym) or []
+                    ords = [o for o in _all_ords if o.magic == mag and (getattr(o, "comment", "") or "").startswith(_v12_prefix)]
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
                     print(f"🔄 Grid V12 | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
