@@ -33,7 +33,7 @@ Trong config đặt `"rule_start_step_enabled": false`. Khi đó step = `step_ba
 
 ## 2. Tư duy lõi (không lọc theo giờ)
 
-Quan trọng không phải “đang ở giờ nào”, mà là:
+Quan trọng không phải "đang ở giờ nào", mà là:
 
 - Giá đang ở **mép range** hay **giữa range**
 - Giá đã lệch đủ xa khỏi **vùng cân bằng** (EMA50 M15) chưa
@@ -53,6 +53,8 @@ Rule V12 **không dùng time filter** (các key `hours_off`, `hours_on_strong`, 
 
 Logic thực hiện trong `sync_grid_pending_status`: khi phát hiện một lệnh trong DB ở trạng thái PENDING nhưng đã khớp trên MT5 (có position tương ứng), cập nhật DB sang FILLED và **gọi hủy toàn bộ lệnh chờ còn lại** của strategy đó.  
 **Chỉ hủy lệnh của bot V12:** mọi thao tác lệnh chờ/position đều lọc theo `comment = "GridStep_V12"` (và magic), nên không cancel hay đụng đến pending của bot khác.
+
+SL/TP: lệnh chờ đặt với SL/TP = entry ± step; khi khớp, **giữ nguyên SL/TP** như trên lệnh pending, bot không cập nhật lại SL/TP trên position.
 
 ---
 
@@ -240,7 +242,7 @@ Tất cả nằm trong thư mục chứa `strategy_grid_step_v12.py`.
 
 ## 12. Tóm tắt rule (bản ngắn)
 
-- **Lệnh chờ:** Chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại.
+- **Lệnh chờ:** Chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại. SL/TP giữ nguyên như trên lệnh pending, bot không update SL/TP trên position.
 - **Hard Block:** Giá giữa range; breakout mạnh; trend mạnh (3 nến cùng màu + EMA50 dốc cùng hướng); chưa hết cooldown; ATR quá nóng.
 - **EntryScore:** A=range (+2/+1), B=EMA (+1/+1), C=hụt lực (max +2), D=vol (+1/0/-1), E=mean-reversion (max +2).
 - **Start:** Score ≥ 6 (config `entry_score_start`); 4–5 = probe (hiện tại không start); ≤3 = không start.

@@ -801,32 +801,6 @@ def total_profit(symbol, magic, step=None):
     return sum(p.profit + p.swap + getattr(p, 'commission', 0) for p in positions)
 
 
-def ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step=None):
-    positions = get_positions_for_step(symbol, magic, step)
-    step_val = float(sl_tp_price)
-    for pos in positions:
-        entry = float(pos.price_open)
-        sl, tp = float(pos.sl or 0), float(pos.tp or 0)
-        if pos.type == mt5.ORDER_TYPE_BUY:
-            want_sl = round(entry - step_val, info.digits)
-            want_tp = round(entry + step_val, info.digits)
-        else:
-            want_sl = round(entry + step_val, info.digits)
-            want_tp = round(entry - step_val, info.digits)
-        if abs(sl - want_sl) > 0.001 or abs(tp - want_tp) > 0.001:
-            r = mt5.order_send({
-                "action": mt5.TRADE_ACTION_SLTP,
-                "symbol": symbol,
-                "position": pos.ticket,
-                "sl": want_sl,
-                "tp": want_tp,
-            })
-            if r and r.retcode == mt5.TRADE_RETCODE_DONE:
-                print(f"   SL/TP set: pos {pos.ticket} -> SL={want_sl}, TP={want_tp}")
-            elif r:
-                print(f"   SL/TP fail pos {pos.ticket}: {r.retcode} {r.comment}")
-
-
 def close_all_positions(symbol, magic, step=None):
     positions = get_positions_for_step(symbol, magic, step)
     for p in positions:
@@ -895,7 +869,6 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         log_info = {}
 
     sync_grid_pending_status(symbol, magic, strategy_name, config.get("account"), sl_tp_price, info, step_filter)
-    ensure_position_sl_tp(symbol, magic, sl_tp_price, info, step_filter)
 
     # Basket TP
     profit = total_profit(symbol, magic, step_filter)
