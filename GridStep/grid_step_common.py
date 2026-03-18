@@ -9,8 +9,9 @@ from datetime import datetime, timedelta
 DEBUG_HISTORY = False
 
 
-def get_last_n_closed_profits_by_symbol(symbol, magic, n, days_back=1):
+def get_last_n_closed_profits_by_symbol(symbol, magic, n, days_back=1, comment_prefix=None):
     """Lấy N lệnh đóng gần nhất của cặp (symbol) + magic từ MT5 history (chỉ 1 ngày gần nhất).
+    Nếu comment_prefix được truyền (vd. 'GridStep_V11', 'GridStep_V12'), chỉ tính các deal có comment bắt đầu bằng prefix đó — tránh lẫn lệnh của bot khác.
     Trả về (list_profit, last_close_time_str). list_profit sắp từ mới nhất → cũ. last_close_time_str theo UTC (để tính pause)."""
     # Dùng now() (local/PC) để khoảng lấy history khớp với ngày hiển thị trên MT5 terminal
     to_date = datetime.now()
@@ -19,7 +20,7 @@ def get_last_n_closed_profits_by_symbol(symbol, magic, n, days_back=1):
     if deals is None:
         deals = mt5.history_deals_get(from_date, to_date, group="*")
     if DEBUG_HISTORY:
-        print(f"[GridStep:history] get_last_n_closed_profits_by_symbol symbol={symbol} magic={magic} n={n} days_back={days_back}")
+        print(f"[GridStep:history] get_last_n_closed_profits_by_symbol symbol={symbol} magic={magic} n={n} days_back={days_back} comment_prefix={comment_prefix!r}")
         print(f"[GridStep:history]   history_deals_get: {len(deals) if deals else 0} deals (from {from_date} to {to_date} local)")
     if not deals:
         if DEBUG_HISTORY:
@@ -31,6 +32,10 @@ def get_last_n_closed_profits_by_symbol(symbol, magic, n, days_back=1):
             continue
         if getattr(d, "symbol", "") != symbol:
             continue
+        if comment_prefix is not None:
+            c = (getattr(d, "comment", "") or "").strip()
+            if not c.startswith(comment_prefix):
+                continue
         pid = getattr(d, "position_id", None) or getattr(d, "position", None)
         if not pid:
             continue

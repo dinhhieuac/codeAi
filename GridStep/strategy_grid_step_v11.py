@@ -577,8 +577,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 secs = int(remaining.total_seconds() % 60)
                 print(f"⏸️ [{strategy_name}] Thời gian chờ còn lại: {mins} phút {secs} giây")
             return error_count, 0
-        # Kiểm tra từ MT5 history theo cặp (mỗi vòng lặp) -> nếu N lệnh thua liên tiếp thì hủy hết lệnh chờ và pause
-        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1)
+        # Kiểm tra từ MT5 history theo cặp (mỗi vòng lặp) -> nếu N lệnh thua liên tiếp thì hủy hết lệnh chờ và pause (chỉ tính lệnh của bot V11: comment_prefix GridStep_V11)
+        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix="GridStep_V11")
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
             # Chỉ pause nếu lệnh thua cuối chưa quá 5 phút; nếu đã quá 5 phút thì cho giao dịch bình thường
             last_close_dt = None

@@ -886,10 +886,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         mt5_now = get_mt5_time_utc(symbol)
         if is_paused(strategy_name, now_utc=mt5_now):
             if not hasattr(strategy_grid_step_logic, "_last_pause_log_v12") or strategy_grid_step_logic._last_pause_log_v12 != strategy_name:
-                print(f"⏸️ [V12] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút.")
+                remaining = get_pause_remaining(strategy_name, now_utc=mt5_now)
+                remaining_min = max(1, int((remaining.total_seconds() + 59) // 60)) if remaining else consecutive_loss_pause_minutes
+                print(f"⏸️ [V12] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút (còn {remaining_min} phút).")
                 strategy_grid_step_logic._last_pause_log_v12 = strategy_name
             return error_count, 0
-        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1)
+        comment_prefix = (strategy_name or STRATEGY_NAME_V12).replace("Grid_Step_", "GridStep_")
+        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix=comment_prefix)
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
             last_close_dt = None
             if last_close_time_str:
