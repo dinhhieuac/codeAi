@@ -15,7 +15,7 @@
         "target_profit": 50.0,
         "spread_max": 0.5,
         "cooldown_minutes": 0,
-        "consecutive_loss_pause_enabled": true,
+        "consecutive_loss_pause_enabled": false,
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5
     }

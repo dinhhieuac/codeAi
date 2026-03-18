@@ -709,13 +709,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         ask = float(tick.ask) if tick else None
         buy_locked_tmp = is_reentry_locked(strategy_name, symbol, step_val, "BUY", buy_price_tmp, bid, ask, digits)
         sell_locked_tmp = is_reentry_locked(strategy_name, symbol, step_val, "SELL", sell_price_tmp, bid, ask, digits)
-        # Chỉ một phía được phép đặt (một bên khóa) → đã có 1 lệnh chờ là đủ, không đặt lại
+        # Chỉ một phía được phép đặt (một bên khóa): chỉ bỏ qua nếu lệnh chờ đang ở ĐÚNG mức ref hiện tại; nếu lệnh ở mức cũ (xa giá) → hủy và đặt lại cặp mới để không kẹt
         if buy_locked_tmp != sell_locked_tmp:
             the_one = pendings[0]
             ptype = "BUY_STOP" if getattr(the_one, "type", None) == mt5.ORDER_TYPE_BUY_STOP else "SELL_STOP"
             pprice = getattr(the_one, "price", None) or getattr(the_one, "price_open", None)
-            print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), một phía khóa re-entry → không hủy, không đặt lại")
-            return error_count, 0
+            pr = round(float(pprice or 0), info.digits)
+            # Lệnh chờ có trùng mức ref hiện tại không? (cho phép lệch tối đa 0.5 step)
+            tol = max(0.01, float(grid_step_price) * 0.5)
+            at_current_ref = (ptype == "BUY_STOP" and abs(pr - buy_price_tmp) <= tol) or (ptype == "SELL_STOP" and abs(pr - sell_price_tmp) <= tol)
+            if at_current_ref:
+                print(f"⏭️ [BỎ QUA] step={step_filter} | đã có 1 lệnh chờ ({ptype} @ {pprice}), một phía khóa re-entry → không hủy, không đặt lại")
+                return error_count, 0
+            # Lệnh chờ ở mức cũ (xa ref) → hủy và đặt lại cặp tại ref mới, tránh kẹt chờ giá về mức cũ
+            n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter, reason="1 lệnh chờ ở mức cũ, một phía khóa re-entry → hủy để đặt lại ref mới")
+            print(f"⏭️ [V2 step={step_filter}] 1 lệnh chờ ({ptype} @ {pprice}) ở mức cũ (ref hiện tại buy={buy_price_tmp} sell={sell_price_tmp}) → đã hủy {n_cancelled} lệnh, sẽ đặt lại cặp mới")
         # Cả hai phía đều khóa → không đặt được lệnh mới; hủy lệnh chờ đơn lẻ để tránh kẹt (vòng sau ref/giá đổi có thể mở khóa và đặt lại)
         if buy_locked_tmp and sell_locked_tmp:
             the_one = pendings[0]

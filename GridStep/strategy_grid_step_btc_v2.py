@@ -725,6 +725,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 send_telegram(f"⏸️ Grid Step BTC v2 tạm dừng {consecutive_loss_pause_minutes} phút.", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get('account'), consecutive_loss_count, consecutive_loss_pause_minutes)
+        # Chỉ set pause khi lệnh thua cuối còn "mới" (trong vòng pause_minutes+1 phút). Tránh: hết pause → check DB vẫn thấy 2 lệnh thua cũ → set pause lại → kẹt vô hạn
+        if did_pause and last_close_time:
+            try:
+                close_dt = datetime.strptime(last_close_time.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                try:
+                    close_dt = datetime.fromisoformat(last_close_time.replace("Z", "+00:00"))
+                    if close_dt.tzinfo is None:
+                        close_dt = close_dt.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    close_dt = None
+            if close_dt is not None:
+                age_seconds = (mt5_now - close_dt).total_seconds() if mt5_now.tzinfo else (datetime.now(timezone.utc) - close_dt).total_seconds()
+                if age_seconds > (consecutive_loss_pause_minutes + 1) * 60:
+                    did_pause = False
         if did_pause:
             n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step=None, reason="Pause do lệnh thua liên tiếp (DB)")
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
