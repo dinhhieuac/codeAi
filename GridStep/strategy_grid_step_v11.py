@@ -361,10 +361,8 @@ def _comment_for_step(step):
 
 
 def get_positions_for_step(symbol, magic, step):
-    """Lấy positions thuộc một step (filter theo comment). step=None = tất cả (backward compat)."""
+    """Chỉ lấy positions của bot V11: lọc theo symbol, magic và comment (GridStep_V11). Tránh đụng bot khác."""
     positions = mt5.positions_get(symbol=symbol, magic=magic) or []
-    if step is None:
-        return list(positions)
     comment = _comment_for_step(step)
     return [p for p in positions if getattr(p, "comment", "") == comment]
 
@@ -380,20 +378,19 @@ def get_grid_anchor_price(symbol, magic, step=None):
 
 
 def get_pending_orders(symbol, magic, step=None):
-    """Lấy danh sách lệnh chờ (pending). step=None = tất cả; step=N chỉ lấy comment GridStep_N."""
+    """Chỉ lấy lệnh chờ của bot V11: lọc theo symbol, magic và comment (GridStep_V11). Tránh cancel/đụng bot khác."""
     orders = mt5.orders_get(symbol=symbol)
     if not orders:
         return []
     orders = [o for o in orders if o.magic == magic]
-    if step is not None:
-        comment = _comment_for_step(step)
-        orders = [o for o in orders if getattr(o, "comment", "") == comment]
+    comment = _comment_for_step(step)
+    orders = [o for o in orders if getattr(o, "comment", "") == comment]
     return orders
 
 
 def cancel_all_pending(symbol, magic, strategy_name="Grid_Step_V11", account_id=0, step=None):
-    """Hủy lệnh chờ của strategy (hoặc chỉ lệnh của step nếu step != None); cập nhật DB = CANCELLED."""
-    orders = get_pending_orders(symbol, magic, step)
+    """Hủy chỉ lệnh chờ của bot V11 (đã lọc theo comment GridStep_V11 trong get_pending_orders)."""
+    orders = get_pending_orders(symbol, magic, step)  # đã lọc theo comment → chỉ bot V11
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
         db.update_grid_pending_status(o.ticket, "CANCELLED")

@@ -45,6 +45,17 @@ Rule V12 **không dùng time filter** (các key `hours_off`, `hours_on_strong`, 
 
 ---
 
+## 2.1. Rule lệnh chờ (chỉ 1 BUY STOP + 1 SELL STOP)
+
+- Bot **chỉ duy trì tối đa 1 lệnh BUY STOP và 1 lệnh SELL STOP** tại mỗi thời điểm.
+- **Khi có một lệnh khớp** (thành position), bot **hủy ngay** lệnh pending còn lại (bên kia).
+- Trên vòng lặp tiếp theo, bot đặt lại cặp lệnh chờ mới quanh giá neo (anchor) từ position vừa mở.
+
+Logic thực hiện trong `sync_grid_pending_status`: khi phát hiện một lệnh trong DB ở trạng thái PENDING nhưng đã khớp trên MT5 (có position tương ứng), cập nhật DB sang FILLED và **gọi hủy toàn bộ lệnh chờ còn lại** của strategy đó.  
+**Chỉ hủy lệnh của bot V12:** mọi thao tác lệnh chờ/position đều lọc theo `comment = "GridStep_V12"` (và magic), nên không cancel hay đụng đến pending của bot khác.
+
+---
+
 ## 3. Biến đầu vào / Context
 
 Bot tự lấy từ MT5:
@@ -229,6 +240,7 @@ Tất cả nằm trong thư mục chứa `strategy_grid_step_v12.py`.
 
 ## 12. Tóm tắt rule (bản ngắn)
 
+- **Lệnh chờ:** Chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại.
 - **Hard Block:** Giá giữa range; breakout mạnh; trend mạnh (3 nến cùng màu + EMA50 dốc cùng hướng); chưa hết cooldown; ATR quá nóng.
 - **EntryScore:** A=range (+2/+1), B=EMA (+1/+1), C=hụt lực (max +2), D=vol (+1/0/-1), E=mean-reversion (max +2).
 - **Start:** Score ≥ 6 (config `entry_score_start`); 4–5 = probe (hiện tại không start); ≤3 = không start.

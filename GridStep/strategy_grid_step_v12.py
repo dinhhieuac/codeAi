@@ -1,6 +1,7 @@
 """
 Grid Step Trading Bot V12 - Rule Start không dùng Time Filter (theo rule mới).
 Clone từ strategy_grid_step.py, config riêng (config_grid_step_v12.json).
+- Lệnh chờ: chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại.
 - Không lọc theo giờ: chỉ dùng vị trí start, trạng thái thị trường, biến động.
 - Hard Block: giá giữa range, breakout mạnh, trend mạnh (3 nến cùng màu + EMA50 dốc cùng hướng), cooldown sau exit, ATR quá nóng.
 - Entry Score: A=range, B=EMA, C=hụt lực (max 2), D=volatility, E=mean-reversion (max 2) → start khi score >= 6.
@@ -701,9 +702,8 @@ def _comment_for_step(step):
 
 
 def get_positions_for_step(symbol, magic, step):
+    """Chỉ lấy positions của bot V12: lọc theo symbol, magic và comment (GridStep_V12)."""
     positions = mt5.positions_get(symbol=symbol, magic=magic) or []
-    if step is None:
-        return list(positions)
     comment = _comment_for_step(step)
     return [p for p in positions if getattr(p, "comment", "") == comment]
 
@@ -718,20 +718,21 @@ def get_grid_anchor_price(symbol, magic, step=None):
 
 
 def get_pending_orders(symbol, magic, step=None):
+    """Chỉ lấy lệnh chờ của bot V12: lọc theo symbol, magic và comment (GridStep_V12). Tránh cancel/đụng bot khác."""
     orders = mt5.orders_get(symbol=symbol)
     if not orders:
         return []
     orders = [o for o in orders if o.magic == magic]
-    if step is not None:
-        comment = _comment_for_step(step)
-        orders = [o for o in orders if getattr(o, "comment", "") == comment]
+    comment = _comment_for_step(step)
+    orders = [o for o in orders if getattr(o, "comment", "") == comment]
     return orders
 
 
 def cancel_all_pending(symbol, magic, strategy_name=None, account_id=0, step=None):
+    """Hủy chỉ lệnh chờ của bot V12 (đã lọc theo comment GridStep_V12 trong get_pending_orders)."""
     if strategy_name is None:
         strategy_name = STRATEGY_NAME_V12
-    orders = get_pending_orders(symbol, magic, step)
+    orders = get_pending_orders(symbol, magic, step)  # đã lọc theo comment → chỉ bot V12
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
         db.update_grid_pending_status(o.ticket, "CANCELLED")
@@ -739,6 +740,7 @@ def cancel_all_pending(symbol, magic, strategy_name=None, account_id=0, step=Non
 
 
 def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl_tp_price=5.0, info=None, step=None):
+    """Đồng bộ status lệnh chờ với MT5. Rule: chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại."""
     if strategy_name is None:
         strategy_name = STRATEGY_NAME_V12
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
@@ -750,6 +752,7 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
         key = round(float(p.price_open), digits)
         pos_by_price[key] = p
     step_val = float(sl_tp_price)
+    filled_this_sync = False
     for row in db.get_grid_pending_by_status(strategy_name, symbol, "PENDING"):
         ticket, order_type, price = row["ticket"], row["order_type"], row["price"]
         if ticket in pending_tickets:
@@ -758,6 +761,7 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
         pos = pos_by_price.get(price_key)
         if pos:
             db.update_grid_pending_status(ticket, "FILLED", position_ticket=pos.ticket)
+            filled_this_sync = True
             entry = float(pos.price_open)
             if pos.type == mt5.ORDER_TYPE_BUY:
                 sl, tp = round(entry - step_val, digits), round(entry + step_val, digits)
@@ -774,6 +778,11 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
             print(f"✅ Grid V12 lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
         else:
             db.update_grid_pending_status(ticket, "CANCELLED")
+    # Rule: khi có lệnh vừa khớp → hủy ngay lệnh chờ còn lại (chỉ giữ tối đa 1 BUY STOP + 1 SELL STOP)
+    if filled_this_sync:
+        n = cancel_all_pending(symbol, magic, strategy_name, account_id, step)
+        if n > 0:
+            print(f"   [V12] Đã hủy {n} lệnh chờ còn lại (rule: 1 BUY STOP + 1 SELL STOP, khi khớp hủy bên kia).")
     return
 
 
@@ -934,6 +943,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         return error_count, 0
     if len(positions) >= max_positions:
         return error_count, 0
+    # Rule: chỉ tối đa 1 BUY STOP + 1 SELL STOP; khi đã có 2 lệnh chờ thì chờ một bên khớp (sync sẽ hủy bên còn lại)
     if len(pendings) == 2:
         return error_count, 0
 
