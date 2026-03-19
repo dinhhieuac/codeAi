@@ -306,6 +306,7 @@ def load_last_exit_time():
 
 
 def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_loss_count, pause_minutes):
+    """Chỉ đếm lệnh của bot này: DB lọc theo strategy_name + account_id (không lấy lệnh bot khác)."""
     if pause_minutes <= 0 or consecutive_loss_count <= 0:
         return False, None
     rows = db.get_last_closed_orders(strategy_name, limit=consecutive_loss_count + 2, account_id=account_id)
@@ -891,6 +892,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 print(f"⏸️ [V12] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút (còn {remaining_min} phút).")
                 strategy_grid_step_logic._last_pause_log_v12 = strategy_name
             return error_count, 0
+        # Chỉ lấy lệnh của bot: MT5 history lọc theo comment_prefix (GridStep_V12/...), không lẫn bot khác
         comment_prefix = (strategy_name or STRATEGY_NAME_V12).replace("Grid_Step_", "GridStep_")
         profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix=comment_prefix)
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
@@ -907,6 +909,26 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 send_telegram(f"⏸️ Grid Step V12 tạm dừng: {consecutive_loss_count} lệnh thua liên tiếp.", config.get("telegram_token"), config.get("telegram_chat_id"))
                 return error_count, 0
         did_pause, last_close_time = check_consecutive_losses_and_pause(strategy_name, config.get("account"), consecutive_loss_count, consecutive_loss_pause_minutes)
+        # Chỉ set pause khi lệnh thua cuối còn "mới" (trong vòng pause_minutes+1 phút). Tránh: hết pause → check DB vẫn thấy 2 lệnh thua cũ → set pause lại → kẹt vô hạn
+        if did_pause:
+            if not last_close_time:
+                did_pause = False  # DB không có close_time → coi như cũ, không pause lại
+            else:
+                try:
+                    close_dt = datetime.strptime(last_close_time.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    try:
+                        close_dt = datetime.fromisoformat(last_close_time.replace("Z", "+00:00"))
+                        if close_dt.tzinfo is None:
+                            close_dt = close_dt.replace(tzinfo=timezone.utc)
+                    except (ValueError, TypeError):
+                        close_dt = None
+                if close_dt is None:
+                    did_pause = False  # không parse được → không pause lại
+                else:
+                    age_seconds = (mt5_now - close_dt).total_seconds() if mt5_now.tzinfo else (datetime.now(timezone.utc) - close_dt).total_seconds()
+                    if age_seconds > (consecutive_loss_pause_minutes + 1) * 60:
+                        did_pause = False
         if did_pause:
             n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)

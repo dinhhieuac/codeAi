@@ -4,6 +4,7 @@ import json
 import requests
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
 
 def load_config(config_path):
     """Load configuration from JSON file"""
@@ -373,3 +374,224 @@ def get_mt5_error_message(error_code):
     }
     msg = error_map.get(error_code, "Unknown Error")
     return f"{error_code} ({msg})"
+
+
+# ---------------------------------------------------------------------------
+# Grid Step – Lấy/đặt lệnh chỉ của bot (symbol + magic + comment), tái sử dụng
+# ---------------------------------------------------------------------------
+
+def get_positions_bot(symbol, magic, comment=None):
+    """
+    Lấy danh sách position đang mở chỉ của bot này.
+    Lọc theo symbol, magic; nếu comment không None thì chỉ giữ position có comment khớp exact.
+    Tránh lấy position của bot khác (magic/comment khác).
+    """
+    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
+    if comment is not None:
+        positions = [p for p in positions if (getattr(p, "comment", "") or "").strip() == comment]
+    return positions
+
+
+def get_pending_orders_bot(symbol, magic, comment=None):
+    """
+    Lấy danh sách lệnh chờ (pending) chỉ của bot này.
+    Lọc theo symbol, magic; nếu comment không None thì chỉ giữ order có comment khớp exact.
+    Tránh lấy/hủy nhầm lệnh của bot khác.
+    """
+    orders = mt5.orders_get(symbol=symbol)
+    if not orders:
+        return []
+    orders = [o for o in orders if o.magic == magic]
+    if comment is not None:
+        orders = [o for o in orders if (getattr(o, "comment", "") or "").strip() == comment]
+    return orders
+
+
+def place_pending_order(symbol, volume, order_type, price, sl, tp, magic, comment, digits=None, type_filling=None):
+    """
+    Đặt 1 lệnh chờ BUY_STOP hoặc SELL_STOP. Chỉ của bot: dùng magic + comment để sau này lọc.
+    order_type: mt5.ORDER_TYPE_BUY_STOP hoặc mt5.ORDER_TYPE_SELL_STOP.
+    digits: số chữ số thập phân (nếu None lấy từ symbol_info).
+    type_filling: mt5.ORDER_FILLING_IOC / FOK / RETURN (None = tự chọn theo symbol).
+    Trả về kết quả mt5.order_send (hoặc None nếu lỗi).
+    """
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return None
+    if digits is None:
+        digits = getattr(info, "digits", 2)
+    if type_filling is None:
+        type_filling = mt5.ORDER_FILLING_FOK
+        if getattr(info, "filling_mode", 0) & 2:
+            type_filling = mt5.ORDER_FILLING_IOC
+    req = {
+        "action": mt5.TRADE_ACTION_PENDING,
+        "symbol": symbol,
+        "volume": float(volume),
+        "type": order_type,
+        "price": round(float(price), digits),
+        "sl": round(float(sl), digits) if sl else 0.0,
+        "tp": round(float(tp), digits) if tp else 0.0,
+        "magic": magic,
+        "comment": (comment or "").strip(),
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": type_filling,
+    }
+    return mt5.order_send(req)
+
+
+def place_buy_stop(symbol, volume, price, sl, tp, magic, comment, digits=None, type_filling=None):
+    """Đặt lệnh BUY_STOP. Chỉ của bot (magic + comment). Trả về result của order_send."""
+    return place_pending_order(
+        symbol, volume, mt5.ORDER_TYPE_BUY_STOP, price, sl, tp, magic, comment,
+        digits=digits, type_filling=type_filling
+    )
+
+
+def place_sell_stop(symbol, volume, price, sl, tp, magic, comment, digits=None, type_filling=None):
+    """Đặt lệnh SELL_STOP. Chỉ của bot (magic + comment). Trả về result của order_send."""
+    return place_pending_order(
+        symbol, volume, mt5.ORDER_TYPE_SELL_STOP, price, sl, tp, magic, comment,
+        digits=digits, type_filling=type_filling
+    )
+
+
+def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=None):
+    """
+    Lấy N lệnh đóng gần nhất chỉ của bot: symbol + magic; nếu comment_prefix có thì chỉ deal có comment bắt đầu bằng prefix.
+    Trả về (list_profit, last_close_time_str). list_profit từ mới → cũ. last_close_time_str UTC "YYYY-MM-DD HH:MM:SS".
+    """
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days_back)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    if not deals:
+        return [], None
+    by_position = {}
+    for d in deals:
+        if getattr(d, "magic", 0) != magic:
+            continue
+        if getattr(d, "symbol", "") != symbol:
+            continue
+        if comment_prefix is not None:
+            c = (getattr(d, "comment", "") or "").strip()
+            if not c.startswith(comment_prefix):
+                continue
+        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {"out_profit": 0.0, "out_time": None}
+        if d.entry == mt5.DEAL_ENTRY_OUT:
+            by_position[pid]["out_profit"] += (
+                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
+            )
+            by_position[pid]["out_time"] = getattr(d, "time", None)
+    positions = []
+    for pid, v in by_position.items():
+        if v["out_time"] is None:
+            continue
+        positions.append((v["out_profit"], v["out_time"]))
+    positions.sort(key=lambda x: x[1], reverse=True)
+    first_n = positions[:n]
+    profits = [p[0] for p in first_n]
+    last_close_time_str = None
+    if first_n:
+        try:
+            ts = first_n[0][1]
+            last_close_time_str = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, OSError):
+            pass
+    return profits, last_close_time_str
+
+
+def get_closed_deals_bot(symbol, magic, days_back=1, comment_prefix=None):
+    """
+    Lấy các position đã đóng chỉ của bot: symbol + magic; nếu comment_prefix có thì chỉ deal có comment bắt đầu bằng prefix.
+    Trả về dict position_id -> (profit, close_price, close_time_str).
+    """
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days_back)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    if not deals:
+        return {}
+    by_position = {}
+    for d in deals:
+        if getattr(d, "magic", 0) != magic:
+            continue
+        if getattr(d, "symbol", "") != symbol:
+            continue
+        if comment_prefix is not None:
+            c = (getattr(d, "comment", "") or "").strip()
+            if not c.startswith(comment_prefix):
+                continue
+        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {"out_profit": 0.0, "out_price": 0.0, "out_time": None}
+        if d.entry == mt5.DEAL_ENTRY_OUT:
+            by_position[pid]["out_profit"] += (
+                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
+            )
+            by_position[pid]["out_price"] = getattr(d, "price", 0)
+            by_position[pid]["out_time"] = getattr(d, "time", None)
+    result = {}
+    for pid, v in by_position.items():
+        if v["out_profit"] != 0 or v["out_price"] != 0:
+            out_ts = v.get("out_time")
+            close_time_str = None
+            if out_ts:
+                try:
+                    close_time_str = datetime.utcfromtimestamp(out_ts).strftime("%Y-%m-%d %H:%M:%S")
+                except (TypeError, OSError):
+                    pass
+            result[pid] = (v["out_profit"], v["out_price"], close_time_str)
+    return result
+
+
+def cancel_pending_orders_bot(symbol, magic, comment=None):
+    """
+    Hủy tất cả lệnh chờ chỉ của bot (symbol + magic + comment nếu có).
+    Trả về số lệnh đã hủy.
+    """
+    orders = get_pending_orders_bot(symbol, magic, comment=comment)
+    for o in orders:
+        mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
+    return len(orders)
+
+
+def close_positions_bot(symbol, magic, comment=None, type_filling=None):
+    """
+    Đóng tất cả position đang mở chỉ của bot (symbol + magic + comment nếu có).
+    Trả về số position đã gửi lệnh đóng.
+    """
+    positions = get_positions_bot(symbol, magic, comment=comment)
+    if type_filling is None:
+        info = mt5.symbol_info(symbol)
+        type_filling = mt5.ORDER_FILLING_IOC
+        if info and getattr(info, "filling_mode", 0) & 2:
+            type_filling = mt5.ORDER_FILLING_IOC
+    closed = 0
+    for p in positions:
+        tick = mt5.symbol_info_tick(symbol)
+        if not tick:
+            continue
+        price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
+        r = mt5.order_send({
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": p.volume,
+            "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+            "position": p.ticket,
+            "price": price,
+            "magic": magic,
+            "comment": "Close_Bot",
+            "type_filling": type_filling,
+        })
+        if r and r.retcode == mt5.TRADE_RETCODE_DONE:
+            closed += 1
+    return closed
