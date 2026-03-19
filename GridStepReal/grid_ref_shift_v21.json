@@ -1,0 +1,8 @@
+{
+  "Grid_21_Step_5.0": {
+    "step": 5.0,
+    "last_stopout_side": "SELL",
+    "last_stopout_entry": 5005.0,
+    "pending_ref_shift": false
+  }
+}

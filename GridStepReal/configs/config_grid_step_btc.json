@@ -1,27 +1,22 @@
 {
-    "account": 413520538,
+    "account": 213341144,
     "password": "@Dinhhieu273",
-    "server": "Exness-MT5Trial6",
-    "mt5_path": "C:\\Program Files\\M13\\terminal64.exe",
-    "symbol": "XAUUSDm",
+    "server": "Exness-MT5Real28",
+    "mt5_path": "C:\\Program Files\\M15\\terminal64.exe",
+    "symbol": "BTCUSDm",
     "volume": 0.01,
     "magic": 100011,
     "max_positions": 5,
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
     "telegram_chat_id": "270589269",
     "parameters": {
-        "steps": [5],
+        "steps": [200],
         "min_distance_points": 5,
         "target_profit": 50.0,
-        "spread_max": 0.5,
+        "spread_max": 20.0,
         "cooldown_minutes": 0,
         "consecutive_loss_pause_enabled": true,
         "consecutive_loss_count": 2,
-        "consecutive_loss_pause_minutes": 5,
-        "trading_hours": [
-            {"start": "10:00", "end": "11:59"},
-            {"start": "14:00", "end": "14:59"},
-            {"start": "17:00", "end": "18:59"}
-        ]
+        "consecutive_loss_pause_minutes": 5
     }
 }

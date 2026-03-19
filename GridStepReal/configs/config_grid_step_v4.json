@@ -1,11 +1,11 @@
 {
-    "account": 413520538,
+    "account": 413509042,
     "password": "@Dinhhieu273",
     "server": "Exness-MT5Trial6",
     "mt5_path": "C:\\Program Files\\M13\\terminal64.exe",
-    "symbol": "XAUUSDm",
+    "symbol": "XAUUSD",
     "volume": 0.01,
-    "magic": 100011,
+    "magic": 100014,
     "max_positions": 5,
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
     "telegram_chat_id": "270589269",
@@ -18,10 +18,17 @@
         "consecutive_loss_pause_enabled": true,
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
-        "trading_hours": [
-            {"start": "10:00", "end": "11:59"},
-            {"start": "14:00", "end": "14:59"},
-            {"start": "17:00", "end": "18:59"}
-        ]
+        "whipsaw_filter_enabled": true,
+        "whipsaw_filter_dry_run": true,
+        "whipsaw_threshold": 5,
+        "whipsaw_same_window_minutes": 120,
+        "whipsaw_zone_window_minutes": 60,
+        "whipsaw_recent_same_loss_minutes": 30,
+        "whipsaw_weight_recent_same_loss": 3,
+        "whipsaw_weight_same_loss": 3,
+        "whipsaw_weight_same_win": 1,
+        "whipsaw_weight_zone_loss": 1,
+        "whipsaw_weight_zone_win": 3,
+        "whipsaw_weight_last_two_losses": 3
     }
 }
