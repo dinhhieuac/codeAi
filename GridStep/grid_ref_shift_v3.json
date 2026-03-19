@@ -1,11 +1,12 @@
 {
   "Grid_3_Step_5.0": {
     "step": 5.0,
-    "last_stopout_side": "SELL",
-    "last_stopout_entry": 4835.0,
-    "pending_ref_shift": false,
+    "last_stopout_side": "BUY",
+    "last_stopout_entry": 4860.0,
+    "pending_ref_shift": true,
+    "last_stopout_sl": 4855.0,
+    "last_stopout_time": "2026-03-19 02:58:29",
     "processed_stopout_tickets": [
-      2770160968,
       2771169988,
       2771285973,
       2771457451,
@@ -54,7 +55,8 @@
       2787431761,
       2787509356,
       2787661897,
-      2787957063
+      2787957063,
+      2788454281
     ]
   }
 }

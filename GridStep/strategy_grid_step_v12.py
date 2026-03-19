@@ -17,8 +17,11 @@ import json
 from datetime import datetime, timedelta, timezone
 sys.path.append('..')
 from db import Database
-from utils import load_config, connect_mt5, send_telegram, get_mt5_error_message
-from grid_step_common import get_last_n_closed_profits_by_symbol, get_closed_from_mt5_history
+from utils import (
+    load_config, connect_mt5, send_telegram, get_mt5_error_message,
+    get_positions_bot, get_pending_orders_bot, place_buy_stop, place_sell_stop,
+    get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
+)
 
 db = Database()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -320,7 +323,7 @@ def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_lo
 
 
 def sync_closed_orders_from_mt5(config, strategy_name=None):
-    closed = get_closed_from_mt5_history(config, days_back=1)
+    closed = get_closed_deals_bot(config["symbol"], config["magic"], days_back=1, comment_prefix=(strategy_name or STRATEGY_NAME_V12).replace("Grid_Step_", "GridStep_"))
     if not closed:
         return 0
     sn = strategy_name if strategy_name is not None else config.get("parameters", {}).get("strategy_name", STRATEGY_NAME_V12)
@@ -704,9 +707,7 @@ def _comment_for_step(step):
 
 def get_positions_for_step(symbol, magic, step):
     """Chỉ lấy positions của bot V12: lọc theo symbol, magic và comment (GridStep_V12)."""
-    positions = mt5.positions_get(symbol=symbol, magic=magic) or []
-    comment = _comment_for_step(step)
-    return [p for p in positions if getattr(p, "comment", "") == comment]
+    return get_positions_bot(symbol, magic, comment=_comment_for_step(step))
 
 
 def get_grid_anchor_price(symbol, magic, step=None):
@@ -720,20 +721,14 @@ def get_grid_anchor_price(symbol, magic, step=None):
 
 def get_pending_orders(symbol, magic, step=None):
     """Chỉ lấy lệnh chờ của bot V12: lọc theo symbol, magic và comment (GridStep_V12). Tránh cancel/đụng bot khác."""
-    orders = mt5.orders_get(symbol=symbol)
-    if not orders:
-        return []
-    orders = [o for o in orders if o.magic == magic]
-    comment = _comment_for_step(step)
-    orders = [o for o in orders if getattr(o, "comment", "") == comment]
-    return orders
+    return get_pending_orders_bot(symbol, magic, comment=_comment_for_step(step))
 
 
 def cancel_all_pending(symbol, magic, strategy_name=None, account_id=0, step=None):
     """Hủy chỉ lệnh chờ của bot V12 (đã lọc theo comment GridStep_V12 trong get_pending_orders)."""
     if strategy_name is None:
         strategy_name = STRATEGY_NAME_V12
-    orders = get_pending_orders(symbol, magic, step)  # đã lọc theo comment → chỉ bot V12
+    orders = get_pending_orders_bot(symbol, magic, comment=_comment_for_step(step))
     for o in orders:
         mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
         db.update_grid_pending_status(o.ticket, "CANCELLED")
@@ -803,22 +798,7 @@ def total_profit(symbol, magic, step=None):
 
 
 def close_all_positions(symbol, magic, step=None):
-    positions = get_positions_for_step(symbol, magic, step)
-    for p in positions:
-        tick = mt5.symbol_info_tick(symbol)
-        price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
-        mt5.order_send({
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
-            "volume": p.volume,
-            "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-            "position": p.ticket,
-            "price": price,
-            "magic": magic,
-            "comment": "Grid_Basket_TP",
-            "type_filling": mt5.ORDER_FILLING_IOC,
-        })
-    return len(positions)
+    return close_positions_bot(symbol, magic, comment=_comment_for_step(step))
 
 
 def strategy_grid_step_logic(config, error_count=0, step=None):
@@ -894,7 +874,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             return error_count, 0
         # Chỉ lấy lệnh của bot: MT5 history lọc theo comment_prefix (GridStep_V12/...), không lẫn bot khác
         comment_prefix = (strategy_name or STRATEGY_NAME_V12).replace("Grid_Step_", "GridStep_")
-        profits, last_close_time_str = get_last_n_closed_profits_by_symbol(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix=comment_prefix)
+        profits, last_close_time_str = get_last_n_closed_profits_bot(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix=comment_prefix)
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
             last_close_dt = None
             if last_close_time_str:
@@ -1002,30 +982,15 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     if info.filling_mode & 2:
         filling = mt5.ORDER_FILLING_IOC
 
-    def place_pending(order_type, price, sl, tp):
-        req = {
-            "action": mt5.TRADE_ACTION_PENDING,
-            "symbol": symbol,
-            "volume": volume,
-            "type": order_type,
-            "price": round(price, info.digits),
-            "sl": round(sl, info.digits) if sl else 0.0,
-            "tp": round(tp, info.digits) if tp else 0.0,
-            "magic": magic,
-            "comment": _comment_for_step(step_filter),
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
-        return mt5.order_send(req)
-
+    comment = _comment_for_step(step_filter)
     sl_buy = buy_price - step_val
     tp_buy = buy_price + step_val
     sl_sell = sell_price + step_val
     tp_sell = sell_price - step_val
 
     print(f"📤 [V12] Step(tính được)={grid_step_price:.3f} | BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy}) | SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
-    r1 = place_pending(mt5.ORDER_TYPE_BUY_STOP, buy_price, sl_buy, tp_buy)
-    r2 = place_pending(mt5.ORDER_TYPE_SELL_STOP, sell_price, sl_sell, tp_sell)
+    r1 = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
+    r2 = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
 
     if r1 is None:
         err = mt5.last_error()
