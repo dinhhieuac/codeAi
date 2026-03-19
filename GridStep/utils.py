@@ -376,6 +376,25 @@ def get_mt5_error_message(error_code):
     return f"{error_code} ({msg})"
 
 
+def check_autotrading_allowed():
+    """
+    Kiểm tra MT5 có bật AutoTrading (Algo Trading) không.
+    Trả về True nếu được phép đặt lệnh, False nếu đang tắt (sẽ bị lỗi 10027).
+    In cảnh báo ra console nếu đang tắt.
+    """
+    try:
+        ti = mt5.terminal_info()
+        if ti is None:
+            return True  # Không lấy được thì không chặn
+        allowed = getattr(ti, "trade_allowed", True)
+        if not allowed:
+            print("⚠️ AutoTrading đang TẮT trong MT5 → Lệnh sẽ bị từ chối (10027).")
+            print("   → Mở MT5, bật nút 'Algo Trading' / 'AutoTrading' trên toolbar (màu xanh = bật).")
+        return bool(allowed)
+    except Exception:
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Grid Step – Lấy/đặt lệnh chỉ của bot (symbol + magic + comment), tái sử dụng
 # ---------------------------------------------------------------------------

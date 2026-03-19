@@ -21,6 +21,7 @@ from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, place_buy_stop, place_sell_stop,
     get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
+    check_autotrading_allowed,
 )
 
 db = Database()
@@ -1020,11 +1021,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
         return 0, 0
+    _hint_10027 = " → Bật nút 'Algo Trading' trong MT5 để cho phép đặt lệnh."
     if r1.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
+        msg = f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}"
+        if r1.retcode == 10027:
+            msg += _hint_10027
+        print(msg)
         return error_count + 1, r1.retcode
     if r2.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
+        msg = f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}"
+        if r2.retcode == 10027:
+            msg += _hint_10027
+        print(msg)
         return error_count + 1, r2.retcode
     return error_count, 0
 
@@ -1040,6 +1048,7 @@ if __name__ == "__main__":
 
     consecutive_errors = 0
     if config and connect_mt5(config):
+        check_autotrading_allowed()  # Cảnh báo nếu AutoTrading tắt trong MT5 (lỗi 10027)
         params = config.get("parameters", {})
         rule_enabled = params.get("rule_start_step_enabled", True)
         print(f"✅ Grid Step V12 Bot - Started | Rule XAU: {'ON' if rule_enabled else 'OFF'}")

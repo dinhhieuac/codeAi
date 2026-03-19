@@ -13,6 +13,10 @@
     "Grid_21_Step": "configs/config_grid_step_v21.json",
     "Grid_22_Step": "configs/config_grid_step_v22.json",
     "Grid_3_Step": "configs/config_grid_step_v3.json",
-    "description": "Mapping of strategy names to their config files. Add new strategies here when you create a new bot. The path is relative to the XAU_M1 directory."
+    "Grid_Step_V2": "configs/config_grid_step_v2.json",
+    "Grid_Step_V4": "configs/config_grid_step_v4.json",
+    "Grid_Step_V11": "configs/config_grid_step_v11.json",
+    "Grid_Step_V12": "configs/config_grid_step_v12.json",
+    "description": "Mapping of strategy names to their config files. Add new strategies here when you create a new bot. The path is relative to the GridStep directory."
 }
 

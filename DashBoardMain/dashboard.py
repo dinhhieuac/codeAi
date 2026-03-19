@@ -5,6 +5,8 @@ import sqlite3
 import os
 import csv
 import io
+import subprocess
+import sys
 
 # Use absolute path for templates folder
 dashboard_dir = os.path.dirname(os.path.abspath(__file__))
@@ -942,6 +944,40 @@ def analyze_signal(signal_id):
         })
     
     return jsonify(analysis)
+
+
+@app.route('/api/sync_mt5', methods=['POST'])
+def api_sync_mt5():
+    """Chạy sync lệnh đã đóng từ MT5 vào DB đang xem (cùng file DB của tab hiện tại)."""
+    db_path = getattr(g, '_db_path', None)
+    if not db_path or not os.path.exists(db_path):
+        return jsonify({'ok': False, 'message': 'DB path not set or file not found', 'log': ''}), 400
+    # GridStep/update_db.py cần chạy từ thư mục GridStep để import db, utils, configs
+    dashboard_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(dashboard_dir)
+    grid_step_dir = os.path.join(repo_root, 'GridStep')
+    update_script = os.path.join(grid_step_dir, 'update_db.py')
+    if not os.path.isfile(update_script):
+        return jsonify({'ok': False, 'message': 'GridStep/update_db.py not found', 'log': ''}), 404
+    db_path_abs = os.path.normpath(os.path.abspath(db_path))
+    try:
+        r = subprocess.run(
+            [sys.executable, 'update_db.py', '--db', db_path_abs, '--once'],
+            cwd=grid_step_dir,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+        )
+        log = (r.stdout or '') + (r.stderr or '')
+        if r.returncode != 0:
+            return jsonify({'ok': False, 'message': f'Sync exited with code {r.returncode}', 'log': log}), 200
+        return jsonify({'ok': True, 'message': 'Sync completed', 'log': log})
+    except subprocess.TimeoutExpired:
+        return jsonify({'ok': False, 'message': 'Sync timeout (120s)', 'log': ''}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e), 'log': ''}), 200
+
 
 @app.route('/api/export_orders')
 def export_orders():

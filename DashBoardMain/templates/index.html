@@ -126,6 +126,9 @@
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
             <h3 class="mb-0">{{ filter_label }} <span class="badge bg-secondary">{{ current_db }}</span></h3>
             <div class="d-flex flex-wrap align-items-center gap-2">
+                <button type="button" class="btn btn-outline-success btn-sm" id="btnSyncMt5" title="Đồng bộ lệnh đã đóng từ MT5 vào DB (cập nhật profit/close_time)">
+                    <i class="fas fa-sync-alt"></i> Sync from MT5
+                </button>
                 <div class="btn-group" role="group">
                     <a href="/?db={{ current_db }}&days=1" class="btn btn-outline-primary {% if current_filter == '1' %}active{% endif %}">1 Day</a>
                     <a href="/?db={{ current_db }}&days=3" class="btn btn-outline-primary {% if current_filter == '3' %}active{% endif %}">3 Days</a>
@@ -1239,6 +1242,32 @@
             }
         });
         }) ();
+    </script>
+    <script>
+        (function() {
+            var btn = document.getElementById('btnSyncMt5');
+            if (!btn) return;
+            btn.addEventListener('click', function() {
+                var origHtml = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Syncing...';
+                fetch('/api/sync_mt5', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                        var msg = data.ok ? 'Sync xong. Đang tải lại trang.' : ('Lỗi: ' + (data.message || 'Unknown'));
+                        if (data.log) msg += '\n\n' + data.log;
+                        alert(msg);
+                        if (data.ok) window.location.reload();
+                    })
+                    .catch(function(e) {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                        alert('Lỗi: ' + e.message);
+                    });
+            });
+        })();
     </script>
 </body>
 
