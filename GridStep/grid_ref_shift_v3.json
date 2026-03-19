@@ -3,9 +3,7 @@
     "step": 5.0,
     "last_stopout_side": "BUY",
     "last_stopout_entry": 4860.0,
-    "pending_ref_shift": true,
-    "last_stopout_sl": 4855.0,
-    "last_stopout_time": "2026-03-19 02:58:29",
+    "pending_ref_shift": false,
     "processed_stopout_tickets": [
       2771169988,
       2771285973,

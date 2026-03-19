@@ -87,17 +87,6 @@
       "active": true,
       "created_at": "2026-03-18T22:57:59.190494Z",
       "reason": "SL"
-    },
-    {
-      "symbol": "XAUUSD",
-      "step": 5.0,
-      "side": "BUY",
-      "entry_price": 4860.0,
-      "sl_price": 4855.0,
-      "unlock_price": 4850.0,
-      "active": true,
-      "created_at": "2026-03-19T02:58:30.933459Z",
-      "reason": "SL"
     }
   ]
 }

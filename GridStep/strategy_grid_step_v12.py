@@ -482,13 +482,25 @@ def rule_v12_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit_minut
     # Block 1: Giá đang ở giữa range
     if mid_low < price < mid_high:
         return True, "price_mid_range"
-    # Block 2: Breakout mạnh
-    if ctx["range_m5_current"] > 1.8 * ctx["atr_m5"]:
+    # Block 2: Breakout mạnh (range nến M5 hiện tại > ratio * ATR M5). ratio=0 để tắt block; không cấu hình = 1.8 (mặc định).
+    block_breakout_m5_ratio = params.get("block_breakout_m5_ratio")
+    if block_breakout_m5_ratio is None:
+        block_breakout_m5_ratio = 1.8
+    if float(block_breakout_m5_ratio) > 0 and ctx["range_m5_current"] > float(block_breakout_m5_ratio) * ctx["atr_m5"]:
         return True, "breakout_m5"
-    if sum3_body > 3.0 * step_base:
+    # Block 2b: Tổng thân 3 nến M15 > ratio * step_base. ratio=0 để tắt; không cấu hình = 3.0 (mặc định).
+    block_breakout_3bars_ratio = params.get("block_breakout_3bars_ratio")
+    if block_breakout_3bars_ratio is None:
+        block_breakout_3bars_ratio = 3.0
+    if float(block_breakout_3bars_ratio) > 0 and sum3_body > float(block_breakout_3bars_ratio) * step_base:
         return True, "breakout_3bars"
-    if price >= ctx["range_high_3h"] + 0.5 * step_base or price <= ctx["range_low_3h"] - 0.5 * step_base:
-        return True, "breakout_range"
+    # Block 2c: Giá vượt ra ngoài range 3h (trên high + margin*step hoặc dưới low - margin*step). margin=0 để tắt; không cấu hình = 0.5.
+    block_breakout_range_margin = params.get("block_breakout_range_margin")
+    if block_breakout_range_margin is None:
+        block_breakout_range_margin = 0.5
+    if float(block_breakout_range_margin) > 0:
+        if price >= ctx["range_high_3h"] + float(block_breakout_range_margin) * step_base or price <= ctx["range_low_3h"] - float(block_breakout_range_margin) * step_base:
+            return True, "breakout_range"
     # Block 3: Trend mạnh - 3 nến M15 cùng màu + tổng thân > 2.5*step_base + EMA50 dốc cùng hướng
     if len(ctx["last3_m15"]) >= 3 and sum3_body > 2.5 * step_base:
         same_color_up = all(b["close"] >= b["open"] for b in ctx["last3_m15"])
