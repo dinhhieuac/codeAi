@@ -11,6 +11,33 @@ def load_config(filepath):
     with open(filepath, 'r') as f:
         return json.load(f)
 
+
+def _strategy_name_variants(strategy_name):
+    """
+    Bot có thể ghi DB là Grid_Step_5 hoặc Grid_Step_5.0 — trả về danh sách tên để query pending.
+    """
+    if not strategy_name:
+        return [strategy_name]
+    out = [strategy_name]
+    if "_" not in strategy_name:
+        return out
+    last = strategy_name.rsplit("_", 1)[-1]
+    try:
+        v = float(last)
+        prefix = strategy_name.rsplit("_", 1)[0]
+        out.append(f"{prefix}_{int(v)}")
+        out.append(f"{prefix}_{v}")
+    except (ValueError, TypeError):
+        pass
+    # unique, giữ thứ tự
+    seen = set()
+    uniq = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
 def _get_closed_positions_from_history(config, days_back=90, debug=False):
     """Lấy danh sách position đã đóng từ MT5 history (theo magic), trả về dict position_id (int) -> (profit, close_price, symbol, volume, type, open_price, close_time_str)."""
     # Dùng local time để khớp với MT5 terminal (broker/server time thường gần local)
@@ -108,9 +135,12 @@ def update_trades_for_strategy(db, config, strategy_name):
     # Thử account_id từ config trước; nếu không có thì thử account_id=0 (bản ghi cũ có thể thiếu account_id)
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
+    name_variants = _strategy_name_variants(strategy_name)
+    placeholders = ",".join("?" * len(name_variants))
     cursor.execute(
-        "SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND (account_id = ? OR account_id = 0)",
-        (strategy_name, account_id)
+        f"SELECT DISTINCT ticket FROM orders WHERE strategy_name IN ({placeholders}) "
+        "AND profit IS NULL AND (account_id = ? OR account_id = 0)",
+        (*name_variants, account_id)
     )
     tickets_pending = [row[0] for row in cursor.fetchall()]
     # Chuẩn hóa ticket sang int để khớp với key trong closed (position_id)
@@ -120,7 +150,7 @@ def update_trades_for_strategy(db, config, strategy_name):
             tickets_pending_int.append(int(t))
         except (TypeError, ValueError):
             tickets_pending_int.append(t)
-    print(f"   [debug] Pending in DB: {len(tickets_pending_int)} (strategy={strategy_name}, account={account_id})")
+    print(f"   [debug] Pending in DB: {len(tickets_pending_int)} (strategy={strategy_name} variants={name_variants}, account={account_id})")
 
     updated = 0
     for ticket in tickets_pending_int:
@@ -231,7 +261,55 @@ def update_trades_for_strategy(db, config, strategy_name):
                     print(f"✅ Backfill Grid_3_Step position {position_id}: Profit=${profit:.2f}")
                     updated += 1
 
-    # 4e. Grid_Step_BTC_V2_*: không backfill (bot đã ghi đúng strategy_name khi mở lệnh), chỉ update profit/close_time.
+    # 4e. Grid_V2_Step (strategy_grid_step_v2.py): khi không có steps trong config thì strategy_name = Grid_V2_Step
+    if strategy_name == "Grid_V2_Step" and closed:
+        steps = config.get("parameters", {}).get("steps")
+        if steps is not None and len(steps) > 0:
+            pass
+        else:
+            p = config.get("parameters", {})
+            step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+            for position_id, row in closed.items():
+                profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+                close_time = row[6] if len(row) > 6 else None
+                if not db.order_exists(position_id):
+                    order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                    op = float(open_price)
+                    if order_type == mt5.ORDER_TYPE_BUY:
+                        sl, tp = op - step, op + step
+                    else:
+                        sl, tp = op + step, op - step
+                    db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                                 float(volume), op, sl, tp, "GridV2", account_id)
+                    db.update_order_profit(position_id, close_price, profit, close_time)
+                    print(f"✅ Backfill Grid_V2_Step position {position_id}: Profit=${profit:.2f}")
+                    updated += 1
+
+    # 4f. Grid_Step_V11: khi không có steps → strategy_name = Grid_Step_V11 (có steps thì bot ghi Grid_Step_V11_5.0 — chỉ update, không backfill tên gốc)
+    if strategy_name == "Grid_Step_V11" and closed:
+        steps = config.get("parameters", {}).get("steps")
+        if steps is not None and len(steps) > 0:
+            pass
+        else:
+            p = config.get("parameters", {})
+            step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+            for position_id, row in closed.items():
+                profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+                close_time = row[6] if len(row) > 6 else None
+                if not db.order_exists(position_id):
+                    order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                    op = float(open_price)
+                    if order_type == mt5.ORDER_TYPE_BUY:
+                        sl, tp = op - step, op + step
+                    else:
+                        sl, tp = op + step, op - step
+                    db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                                 float(volume), op, sl, tp, "GridStepV11", account_id)
+                    db.update_order_profit(position_id, close_price, profit, close_time)
+                    print(f"✅ Backfill Grid_Step_V11 position {position_id}: Profit=${profit:.2f}")
+                    updated += 1
+
+    # 4g. Grid_Step_BTC_V2_*: không backfill (bot đã ghi đúng strategy_name khi mở lệnh), chỉ update profit/close_time.
 
     conn.close()
     _skip_msg = (
@@ -239,6 +317,8 @@ def update_trades_for_strategy(db, config, strategy_name):
         or (strategy_name == "Grid_21_Step" and closed)
         or (strategy_name == "Grid_22_Step" and closed)
         or (strategy_name == "Grid_3_Step" and closed)
+        or (strategy_name == "Grid_V2_Step" and closed)
+        or (strategy_name == "Grid_Step_V11" and closed)
         or (strategy_name.startswith("Grid_Step_BTC_V2") and closed)
     )
     if not tickets_pending_int and not _skip_msg:
@@ -393,6 +473,50 @@ def main(db_path=None):
             else:
                 print(f"\n--- Processing {strat_name} ---")
                 update_trades_for_strategy(db, config, "Grid_Step_BTC_V2")
+        # Grid_Step (base): bot dùng parameters.steps → ghi DB Grid_Step_5.0, Grid_Step_200.0, ...
+        elif strat_name == "Grid_Step":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid Step) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_Step")
+        # Grid_3_Step: bot ghi Grid_3_Step_5.0 khi có steps
+        elif strat_name == "Grid_3_Step":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_3_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid 3 Step) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_3_Step")
+        # strategy_configs key là Grid_Step_V2; bot thực tế ghi Grid_V2_Step / Grid_V2_Step_5.0
+        elif strat_name == "Grid_Step_V2":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_V2_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid V2 Step) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing Grid_V2_Step ---")
+                update_trades_for_strategy(db, config, "Grid_V2_Step")
+        # Grid_Step_V11 (strategy_grid_step_v11.py): có steps → ghi DB Grid_Step_V11_5.0, ...
+        elif strat_name == "Grid_Step_V11":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_Step_V11_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid Step V11) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_Step_V11")
         elif strat_name == "Grid_21_Step":
             steps = config.get("parameters", {}).get("steps")
             if steps is not None and len(steps) > 0:

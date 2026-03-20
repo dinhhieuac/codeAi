@@ -11,37 +11,56 @@ def load_config(filepath):
     with open(filepath, 'r') as f:
         return json.load(f)
 
-def _get_closed_positions_from_history(config, days_back=90):
-    """Lấy danh sách position đã đóng từ MT5 history (theo magic), trả về dict position_id -> (profit, close_price, symbol, volume, type, open_price)."""
-    from_date = datetime.utcnow() - timedelta(days=days_back)
-    to_date = datetime.utcnow()
+def _get_closed_positions_from_history(config, days_back=90, debug=False):
+    """Lấy danh sách position đã đóng từ MT5 history (theo magic), trả về dict position_id (int) -> (profit, close_price, symbol, volume, type, open_price, close_time_str)."""
+    # Dùng local time để khớp với MT5 terminal (broker/server time thường gần local)
+    now = datetime.now()
+    from_date = now - timedelta(days=days_back)
+    to_date = now
     magic = config.get('magic', 0)
     deals = mt5.history_deals_get(from_date, to_date)
     if deals is None:
         deals = mt5.history_deals_get(from_date, to_date, group="*")
     if not deals:
+        if debug:
+            print(f"   [debug] history_deals_get: 0 deals (magic={magic})")
         return {}
+    n_total = len(deals)
     by_position = {}
+    entry_out = getattr(mt5, 'DEAL_ENTRY_OUT', 1)
+    entry_in = getattr(mt5, 'DEAL_ENTRY_IN', 0)
+    entry_inout = getattr(mt5, 'DEAL_ENTRY_INOUT', 4)
     for d in deals:
-        if getattr(d, 'magic', 0) != magic:
+        d_magic = getattr(d, 'magic', 0)
+        if d_magic != magic:
             continue
         pid = getattr(d, 'position_id', None) or getattr(d, 'position', None)
-        if not pid:
+        if pid is None:
+            continue
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
             continue
         if pid not in by_position:
             by_position[pid] = {'in': None, 'out_profit': 0.0, 'out_price': 0.0, 'out_time': None}
-        if d.entry == mt5.DEAL_ENTRY_IN:
+        d_entry = getattr(d, 'entry', None)
+        if d_entry == entry_in:
             by_position[pid]['in'] = d
-        elif d.entry == mt5.DEAL_ENTRY_OUT:
+        elif d_entry == entry_out:
             by_position[pid]['out_profit'] += getattr(d, 'profit', 0) + getattr(d, 'swap', 0) + getattr(d, 'commission', 0)
             by_position[pid]['out_price'] = getattr(d, 'price', 0)
-            by_position[pid]['out_time'] = getattr(d, 'time', None)  # Unix timestamp (giờ server)
+            by_position[pid]['out_time'] = getattr(d, 'time', None)
+        elif d_entry == entry_inout:
+            by_position[pid]['in'] = d
+            by_position[pid]['out_profit'] += getattr(d, 'profit', 0) + getattr(d, 'swap', 0) + getattr(d, 'commission', 0)
+            by_position[pid]['out_price'] = getattr(d, 'price', 0)
+            by_position[pid]['out_time'] = getattr(d, 'time', None)
+    n_with_magic = sum(1 for d in deals if getattr(d, 'magic', 0) == magic)
     result = {}
     for pid, v in by_position.items():
         if v['out_profit'] != 0 or v['out_price'] != 0:
             din = v['in']
             is_buy = din and getattr(din, 'type', 1) == getattr(mt5, 'DEAL_TYPE_BUY', 0)
-            # close_time: từ deal OUT (giờ server) -> ISO string cho DB
             out_ts = v.get('out_time')
             close_time_str = None
             if out_ts:
@@ -49,7 +68,7 @@ def _get_closed_positions_from_history(config, days_back=90):
                     close_time_str = datetime.utcfromtimestamp(out_ts).strftime('%Y-%m-%d %H:%M:%S')
                 except (TypeError, OSError):
                     pass
-            result[pid] = (
+            result[int(pid)] = (
                 v['out_profit'],
                 v['out_price'],
                 getattr(din, 'symbol', '') if din else '',
@@ -58,6 +77,8 @@ def _get_closed_positions_from_history(config, days_back=90):
                 getattr(din, 'price', 0) if din else 0,
                 close_time_str
             )
+    if debug:
+        print(f"   [debug] Deals: total={n_total}, magic={magic} -> {n_with_magic}, closed positions={len(result)}")
     return result
 
 
@@ -75,22 +96,34 @@ def update_trades_for_strategy(db, config, strategy_name):
         print(f"⚠️ CRITICAL: Account Mismatch! Configured: {config['account']} but Active: {current_account.login}")
         return
 
-    account_id = config['account']
+    account_id = int(config.get('account', 0))
     magic = config.get('magic', 0)
 
     # 2. Lấy deals đã đóng từ history (theo khoảng thời gian, tránh history_deals_get(position=ticket) trả về None)
-    closed = _get_closed_positions_from_history(config, days_back=90)
+    closed = _get_closed_positions_from_history(config, days_back=90, debug=True)
     if not closed and (strategy_name == "Grid_Step" or strategy_name.startswith("Grid_Step_BTC")):
         print(f"ℹ️ No closed deals in history for magic {magic} ({strategy_name})")
 
-    # 3. Orders trong DB có profit IS NULL
+    # 3. Orders trong DB có profit IS NULL (match bằng int để khớp với position_id từ MT5)
+    # Thử account_id từ config trước; nếu không có thì thử account_id=0 (bản ghi cũ có thể thiếu account_id)
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?", (strategy_name, account_id))
+    cursor.execute(
+        "SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND (account_id = ? OR account_id = 0)",
+        (strategy_name, account_id)
+    )
     tickets_pending = [row[0] for row in cursor.fetchall()]
+    # Chuẩn hóa ticket sang int để khớp với key trong closed (position_id)
+    tickets_pending_int = []
+    for t in tickets_pending:
+        try:
+            tickets_pending_int.append(int(t))
+        except (TypeError, ValueError):
+            tickets_pending_int.append(t)
+    print(f"   [debug] Pending in DB: {len(tickets_pending_int)} (strategy={strategy_name}, account={account_id})")
 
     updated = 0
-    for ticket in tickets_pending:
+    for ticket in tickets_pending_int:
         if ticket in closed:
             row = closed[ticket]
             profit, close_price = row[0], row[1]
@@ -208,9 +241,11 @@ def update_trades_for_strategy(db, config, strategy_name):
         or (strategy_name == "Grid_3_Step" and closed)
         or (strategy_name.startswith("Grid_Step_BTC_V2") and closed)
     )
-    if not tickets_pending and not _skip_msg:
+    if not tickets_pending_int and not _skip_msg:
         if updated == 0:
             print(f"ℹ️ No pending trades to update for {strategy_name} (Account {account_id})")
+    elif updated > 0:
+        print(f"   → Updated {updated} trade(s) for {strategy_name}")
 
 def load_strategy_configs(script_dir):
     """
@@ -251,11 +286,32 @@ def load_strategy_configs(script_dir):
                     # Check if there's a 'version' or 'description' field that might contain strategy name
                     strategy_name = None
                     
-                    # Method 1: Check if config has a 'strategy_name' field
-                    if 'strategy_name' in config:
-                        strategy_name = config['strategy_name']
-                    # Method 2: Try to infer from filename (e.g., config_1_v2.json -> Strategy_1_Trend_HA_V2)
-                    elif filename.startswith("config_1"):
+                    # Method 1: Top-level or parameters.strategy_name (Grid Step V12, V11, ...)
+                    strategy_name = config.get('strategy_name') or config.get("parameters", {}).get("strategy_name")
+                    # Method 2: Infer from filename for Grid Step
+                    if not strategy_name and filename.startswith("config_grid_step"):
+                        if "v12" in filename.lower():
+                            strategy_name = "Grid_Step_V12"
+                        elif "v11" in filename.lower():
+                            strategy_name = "Grid_Step_V11"
+                        elif "v22" in filename.lower():
+                            strategy_name = "Grid_22_Step"
+                        elif "v21" in filename.lower():
+                            strategy_name = "Grid_21_Step"
+                        elif "v4" in filename.lower():
+                            strategy_name = "Grid_Step_V4"
+                        elif "v3" in filename.lower():
+                            strategy_name = "Grid_3_Step"
+                        elif "v2" in filename.lower() and "btc" not in filename.lower():
+                            strategy_name = "Grid_Step_V2"
+                        elif "btc_v2" in filename.lower() or "btc_v2" in filename:
+                            strategy_name = "Grid_Step_BTC_V2"
+                        elif "btc" in filename.lower():
+                            strategy_name = "Grid_Step_BTC"
+                        else:
+                            strategy_name = "Grid_Step"
+                    # Method 3: Other strategy configs (config_1, config_2, ...)
+                    elif not strategy_name and filename.startswith("config_1"):
                         if "v2.1" in filename.lower() or "v2_1" in filename.lower():
                             strategy_name = "Strategy_1_Trend_HA_V2.1"
                         elif "v11" in filename.lower():
@@ -264,13 +320,13 @@ def load_strategy_configs(script_dir):
                             strategy_name = "Strategy_1_Trend_HA_V2"
                         else:
                             strategy_name = "Strategy_1_Trend_HA"
-                    elif filename.startswith("config_2"):
+                    elif not strategy_name and filename.startswith("config_2"):
                         strategy_name = "Strategy_2_EMA_ATR"
-                    elif filename.startswith("config_3"):
+                    elif not strategy_name and filename.startswith("config_3"):
                         strategy_name = "Strategy_3_PA_Volume"
-                    elif filename.startswith("config_4"):
+                    elif not strategy_name and filename.startswith("config_4"):
                         strategy_name = "Strategy_4_UT_Bot"
-                    elif filename.startswith("config_5"):
+                    elif not strategy_name and filename.startswith("config_5"):
                         strategy_name = "Strategy_5_Filter_First"
                     
                     if strategy_name:
@@ -295,12 +351,15 @@ def load_strategy_configs(script_dir):
     
     return strategies
 
-def main():
-    # Pass None so db.py uses the internal absolute path logic
-    db = Database(None)
-    
+def main(db_path=None):
+    """Chạy sync MT5 -> DB. db_path: đường dẫn trades.db (None = dùng mặc định GridStep/trades.db)."""
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    if db_path is None:
+        db_path = os.path.join(script_dir, "trades.db")
+    db_path = os.path.normpath(os.path.abspath(db_path))
+    print(f"📂 Using DB: {db_path}")
+    db = Database(db_path)
     
     # Auto-load strategy configs mapping
     strategies = load_strategy_configs(script_dir)
@@ -334,6 +393,26 @@ def main():
             else:
                 print(f"\n--- Processing {strat_name} ---")
                 update_trades_for_strategy(db, config, "Grid_Step_BTC_V2")
+        elif strat_name == "Grid_21_Step":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_21_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid 21 Step) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_21_Step")
+        elif strat_name == "Grid_22_Step":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_22_Step_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid 22 Step) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing {strat_name} ---")
+                update_trades_for_strategy(db, config, "Grid_22_Step")
         else:
             print(f"\n--- Processing {strat_name} ---")
             update_trades_for_strategy(db, config, strat_name)
@@ -342,11 +421,22 @@ def main():
     mt5.shutdown()
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Sync closed trades from MT5 to DB")
+    parser.add_argument("--db", type=str, default=None, help="Path to trades.db (default: GridStep/trades.db)")
+    parser.add_argument("--once", action="store_true", help="Run once and exit (no loop)")
+    args = parser.parse_args()
+    db_path = args.db
+    if os.environ.get("TRADES_DB_PATH"):
+        db_path = db_path or os.environ.get("TRADES_DB_PATH")
     try:
-        while True:
-            main()
-            print("Sleeping for 600 seconds...")
-            time.sleep(600)
+        if args.once:
+            main(db_path=db_path)
+        else:
+            while True:
+                main(db_path=db_path)
+                print("Sleeping for 600 seconds...")
+                time.sleep(600)
     except KeyboardInterrupt:
         print("\n🛑 update_db stopped by user (Ctrl+C)")
         try:
