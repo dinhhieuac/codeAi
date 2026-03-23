@@ -17,6 +17,7 @@
     "Grid_Step_V4": "configs/config_grid_step_v4.json",
     "Grid_Step_V11": "configs/config_grid_step_v11.json",
     "Grid_Step_V12": "configs/config_grid_step_v12.json",
+    "Grid_Step_V121": "configs/config_grid_step_v121.json",
     "description": "Mapping of strategy names to their config files. Add new strategies here when you create a new bot. The path is relative to the GridStep directory."
 }
 

@@ -1,0 +1,54 @@
+{
+    "account": 272968624,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial14",
+    "mt5_path": "C:\\Program Files\\M2\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100121,
+    "max_positions": 5,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "270589269",
+    "parameters": {
+        "strategy_name": "Grid_Step_V121",
+        "hours_off": [
+            {"start": "08:00", "end": "09:59"},
+            {"start": "13:00", "end": "13:59"},
+            {"start": "15:00", "end": "16:59"},
+            {"start": "19:00", "end": "19:59"},
+            {"start": "22:00", "end": "22:59"}
+        ],
+        "hours_on_strong": [
+            {"start": "10:00", "end": "11:59"},
+            {"start": "14:00", "end": "14:59"},
+            {"start": "17:00", "end": "18:59"}
+        ],
+        "hours_on_weak": [
+            {"start": "02:00", "end": "02:59"},
+            {"start": "23:00", "end": "23:59"}
+        ],
+        "rule_start_step_enabled": true,
+        "step_base": 5,
+        "k_atr": 1.0,
+        "step_min": 4,
+        "step_max": 9,
+        "cooldown_after_exit_minutes": 20,
+        "lookback_range_hours": 3,
+        "atr_period_m5": 20,
+        "ema_period_m15": 50,
+        "median_atr_lookback": 50,
+        "entry_score_start": 6,
+        "entry_score_probe": 5,
+        "block_breakout_m5_ratio": 1.8,
+        "block_breakout_3bars_ratio": 3.0,
+        "block_breakout_range_margin": 0.5,
+        "min_distance_points": 5,
+        "target_profit": 50.0,
+        "basket_stop_loss_usd": 100.0,
+        "spread_max": 0.5,
+        "cooldown_minutes": 0,
+        "consecutive_loss_pause_enabled": true,
+        "consecutive_loss_count": 2,
+        "consecutive_loss_pause_minutes": 5
+    }
+}

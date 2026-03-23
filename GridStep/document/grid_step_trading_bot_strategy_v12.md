@@ -79,7 +79,8 @@ Bot tự lấy từ MT5:
 
 ## 4. Hard Block
 
-Chỉ cần **1 điều kiện** thỏa → `ALLOW_START = false`, không tính Entry Score.
+Chỉ cần **1 điều kiện** thỏa → `ALLOW_START = false`.  
+Lưu ý: code vẫn tính `EntryScore` để log/debug khi bị block, nhưng **không dùng score để cho phép vào lệnh**.
 
 ### Block 1: Giá đang ở giữa range
 
@@ -110,6 +111,13 @@ Nếu `mid_low < price < mid_high` → **Không start** (reason: `price_mid_rang
 
 - `atr_m5 > 1.5 * median_atr_m5`  
 → **Không start** (reason: `atr_quá_nóng`).
+
+---
+
+## 4.1. Ghi chú runtime quan trọng (đọc từ code hiện tại)
+
+- Sau `sync_grid_pending_status`, biến `pendings` trong loop hiện tại **chưa refresh ngay**. Vì vậy có thể có 1 vòng lặp dùng snapshot pending cũ trước khi vòng sau đồng bộ lại.
+- Bot hiện **không pre-check** điều kiện giá pending theo tick (`BUY_STOP > ask`, `SELL_STOP < bid`) trước khi gửi MT5; khi thị trường chạy nhanh có thể gặp `retcode 10015 Invalid price`.
 
 ---
 
@@ -229,6 +237,14 @@ Tất cả nằm trong thư mục chứa `strategy_grid_step_v12.py`.
 - **EntryScore:** `EntryScore=X (A=... B=... C=... D=... E=...)` với A=range, B=EMA, C=hụt lực, D=volatility, E=mean-reversion.
 - **Step:** `Step(tính được)=...` kèm `step_raw`, `atr_m5`, `ratio`, `adj`, `[min, max]`.
 - **Block:** Khi không start in lý do: `price_mid_range`, `breakout_m5`, `breakout_3bars`, `breakout_range`, `trend_strong`, `cooldown_after_exit`, `atr_quá_nóng`, `score_low`, `score_probe`, `score_below_start`, `no_data`.
+
+---
+
+## 10.1. Kết quả review code (strategy_grid_step_v12.py)
+
+- **High:** Có khả năng gặp `Invalid price` khi đặt pending vì chưa kiểm tra hợp lệ giá so với `ask/bid` trước `place_buy_stop`/`place_sell_stop`.
+- **Medium:** Snapshot `pendings` không refresh ngay sau `sync_grid_pending_status`, có thể gây hành vi "chờ sai 1 nhịp" ở đúng vòng vừa fill/hủy.
+- **Low:** `hours_off`, `hours_on_strong`, `hours_on_weak` đang có trong code/config nhưng không tham gia quyết định vào lệnh (đúng theo rule “không time filter”), dễ gây hiểu nhầm nếu nhìn config mà kỳ vọng có tác dụng.
 
 ---
 
