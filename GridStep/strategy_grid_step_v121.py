@@ -659,38 +659,222 @@ def rule_v121_dynamic_step(ctx, params):
     return step_val, detail
 
 
+def _rule_v121_block_debug_log(ctx, params):
+    """Số liệu MT5 + ngưỡng config cho từng hard block (để log, tránh nhầm giữa breakout_m5 vs breakout_3bars)."""
+    step_base_cfg = float(params.get("step_base", 5))
+    out = {"step_base_for_blocks": step_base_cfg}
+    if ctx is None:
+        return out
+
+    # Block 2 — breakout M5
+    r_m5 = params.get("block_breakout_m5_ratio")
+    if r_m5 is None:
+        r_m5 = 1.8
+    r_m5 = float(r_m5)
+    out["block_breakout_m5_ratio"] = r_m5
+    atr = float(ctx.get("atr_m5") or 0)
+    out["mt5_range_m5_current"] = ctx.get("range_m5_current")
+    out["mt5_atr_m5"] = ctx.get("atr_m5")
+    if r_m5 > 0 and atr > 0:
+        out["breakout_m5_threshold"] = r_m5 * atr
+
+    # Block 2b — tổng thân 3 nến M15 đã đóng vs ratio * step_base (config), KHÔNG dùng step động
+    r3 = params.get("block_breakout_3bars_ratio")
+    if r3 is None:
+        r3 = 3.0
+    r3 = float(r3)
+    out["block_breakout_3bars_ratio"] = r3
+    last3 = ctx.get("last3_m15") or []
+    sum3_body = sum(abs(b["close"] - b["open"]) for b in last3)
+    out["mt5_sum3_body_m15"] = sum3_body
+    if r3 > 0:
+        out["breakout_3bars_threshold"] = r3 * step_base_cfg
+
+    # Block 2c — range 3h
+    rm = params.get("block_breakout_range_margin")
+    if rm is None:
+        rm = 0.5
+    rm = float(rm)
+    out["block_breakout_range_margin"] = rm
+    if rm > 0:
+        out["mt5_price_rule"] = ctx.get("price")
+        out["breakout_range_high_line"] = ctx["range_high_3h"] + rm * step_base_cfg
+        out["breakout_range_low_line"] = ctx["range_low_3h"] - rm * step_base_cfg
+
+    # Block 5 — ATR nóng
+    med = ctx.get("median_atr_m5") or ctx.get("atr_m5")
+    out["median_atr_m5"] = med
+    if med:
+        out["atr_hot_threshold"] = 1.5 * float(med)
+
+    return out
+
+
+def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, cooldown_after_exit, score, entry_score_start, entry_score_probe):
+    """
+    Liệt kê điều kiện khiến không allow_start: cooldown → hard blocks (độc lập) → ngưỡng EntryScore.
+    Chỉ dùng phần score khi không có hard block nào kích hoạt.
+    """
+    if cooldown_after_exit > 0 and last_exit_dt and rule_v121_check_cooldown_exit(last_exit_dt, now_utc, cooldown_after_exit):
+        return ["cooldown sau exit (basket TP/SL): chưa đủ thời gian chờ so với last_exit_time"]
+    if ctx is None:
+        return ["no_data: thiếu dữ liệu nến M5/M15 hoặc ATR"]
+
+    ret = []
+    range_size_3h = ctx["range_high_3h"] - ctx["range_low_3h"]
+    if range_size_3h <= 0:
+        range_size_3h = step_base
+    price = ctx["price"]
+    mid_low = ctx["range_low_3h"] + range_size_3h * 0.33
+    mid_high = ctx["range_low_3h"] + range_size_3h * 0.67
+    if mid_low < price < mid_high:
+        ret.append("price_mid_range: giá trong 33–67% range 3h (không start)")
+
+    block_breakout_m5_ratio = params.get("block_breakout_m5_ratio")
+    if block_breakout_m5_ratio is None:
+        block_breakout_m5_ratio = 1.8
+    if float(block_breakout_m5_ratio) > 0 and ctx["range_m5_current"] > float(block_breakout_m5_ratio) * ctx["atr_m5"]:
+        thr = float(block_breakout_m5_ratio) * ctx["atr_m5"]
+        ret.append(f"breakout_m5: range_m5 {ctx['range_m5_current']:.3f} > ngưỡng {thr:.3f} (ratio×ATR)")
+
+    sum3_body = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
+    block_breakout_3bars_ratio = params.get("block_breakout_3bars_ratio")
+    if block_breakout_3bars_ratio is None:
+        block_breakout_3bars_ratio = 3.0
+    thr3 = float(block_breakout_3bars_ratio) * step_base
+    if float(block_breakout_3bars_ratio) > 0 and sum3_body > thr3:
+        ret.append(f"breakout_3bars: tổng |thân| 3 nến M15 {sum3_body:.3f} > {thr3:.3f} (ratio×step_base config)")
+
+    block_breakout_range_margin = params.get("block_breakout_range_margin")
+    if block_breakout_range_margin is None:
+        block_breakout_range_margin = 0.5
+    if float(block_breakout_range_margin) > 0:
+        hi = ctx["range_high_3h"] + float(block_breakout_range_margin) * step_base
+        lo = ctx["range_low_3h"] - float(block_breakout_range_margin) * step_base
+        if price >= hi or price <= lo:
+            ret.append(f"breakout_range: giá {price:.3f} ngoài [low−margin×step, high+margin×step] (3h)")
+
+    if len(ctx["last3_m15"]) >= 3 and sum3_body > 2.5 * step_base:
+        same_color_up = all(b["close"] >= b["open"] for b in ctx["last3_m15"])
+        same_color_down = all(b["close"] <= b["open"] for b in ctx["last3_m15"])
+        slope = ctx.get("ema50_slope")
+        slope_ok = False
+        if slope is not None and abs(slope) > step_base * 0.03:
+            if same_color_up and slope > 0:
+                slope_ok = True
+            elif same_color_down and slope < 0:
+                slope_ok = True
+        if (same_color_up or same_color_down) and slope_ok:
+            ret.append("trend_strong: 3 nến M15 cùng màu + EMA50 dốc cùng hướng + tổng thân > 2.5×step_base")
+
+    med = ctx.get("median_atr_m5") or ctx["atr_m5"]
+    if med and ctx["atr_m5"] > 1.5 * med:
+        ret.append(f"atr_quá_nóng: atr_m5 {ctx['atr_m5']:.3f} > 1.5×median {1.5 * float(med):.3f}")
+
+    if ret:
+        return ret
+
+    if score <= 3:
+        return [f"score_low: EntryScore={score} (≤3, không start)"]
+    if score < entry_score_probe:
+        return [f"score quá thấp: EntryScore={score} (< entry_score_probe={entry_score_probe})"]
+    if score < entry_score_start:
+        return [f"score_probe: EntryScore={score} (≥{entry_score_probe} nhưng < entry_score_start={entry_score_start})"]
+    return []
+
+
+def _merge_log_info(base, ctx, params, last_exit_dt=None, now_utc=None, cooldown_after_exit=20, step_base=5.0, score=0, entry_score_start=6, entry_score_probe=5):
+    m = _rule_v121_block_debug_log(ctx, params)
+    out = dict(base)
+    out.update(m)
+    out["unsatisfied_conditions"] = _rule_v121_unsatisfied_list(
+        ctx, last_exit_dt, step_base, params, now_utc, cooldown_after_exit,
+        score, entry_score_start, entry_score_probe,
+    )
+    return out
+
+
+def _format_v121_block_reason_detail(block_reason, log_info):
+    """Một dòng giải thích ngắn theo đúng block đang active (không lẫn M5 khi block là 3bars)."""
+    if not block_reason or not log_info:
+        return ""
+    br = block_reason
+    if br == "breakout_m5":
+        return (
+            f" | [breakout_m5] ratio={log_info.get('block_breakout_m5_ratio')} "
+            f"range_m5={log_info.get('mt5_range_m5_current')} atr_m5={log_info.get('mt5_atr_m5')} "
+            f"ngưỡng={log_info.get('breakout_m5_threshold')}"
+        )
+    if br == "breakout_3bars":
+        return (
+            f" | [breakout_3bars] ratio={log_info.get('block_breakout_3bars_ratio')} "
+            f"* step_base={log_info.get('step_base_for_blocks')} → ngưỡng={log_info.get('breakout_3bars_threshold')} "
+            f"| MT5 sum(|thân|) 3 nến M15={log_info.get('mt5_sum3_body_m15')} "
+            f"(block nếu sum > ngưỡng; khác step động trong log Step(tính được))"
+        )
+    if br == "breakout_range":
+        return (
+            f" | [breakout_range] margin={log_info.get('block_breakout_range_margin')} "
+            f"price={log_info.get('mt5_price_rule')} high_line={log_info.get('breakout_range_high_line')} "
+            f"low_line={log_info.get('breakout_range_low_line')}"
+        )
+    if br == "trend_strong":
+        return f" | [trend_strong] sum3_body_m15={log_info.get('mt5_sum3_body_m15')} (xem rule trong code)"
+    if br == "atr_quá_nóng":
+        return (
+            f" | [atr_quá_nóng] atr_m5={log_info.get('mt5_atr_m5')} median={log_info.get('median_atr_m5')} "
+            f"ngưỡng_1.5xmedian={log_info.get('atr_hot_threshold')}"
+        )
+    if br == "price_mid_range":
+        return " | [price_mid_range] giá trong 33–67% range 3h"
+    return ""
+
+
 def rule_v121_allow_start_and_step(symbol, price, params, now_utc):
     """
     Trả về (allow_start, step_value, entry_score, block_reason, log_info).
-    log_info = dict với score_breakdown (A,B,C,D,E), step_detail (step_raw, atr_m5, ratio, adj...) để log chi tiết.
+    log_info = dict với score_breakdown (A,B,C,D,E), step_detail, unsatisfied_conditions, ...
     """
     step_base = float(params.get("step_base", 5))
     cooldown_after_exit = int(params.get("cooldown_after_exit_minutes", 20))
     entry_score_start = int(params.get("entry_score_start", 6))
     entry_score_probe = int(params.get("entry_score_probe", 5))
     empty_log = {"score_breakdown": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}, "step_detail": {}}
+    last_exit_dt = load_last_exit_time()
+
+    def _mi(base, ctx, sc):
+        return _merge_log_info(
+            base, ctx, params,
+            last_exit_dt=last_exit_dt,
+            now_utc=now_utc,
+            cooldown_after_exit=cooldown_after_exit,
+            step_base=step_base,
+            score=sc,
+            entry_score_start=entry_score_start,
+            entry_score_probe=entry_score_probe,
+        )
+
     ctx = rule_v121_fetch_context(symbol, params)
     if ctx is None:
-        return False, step_base, 0, "no_data", empty_log
+        return False, step_base, 0, "no_data", _mi(empty_log, None, 0)
     ctx["price"] = price
-    last_exit_dt = load_last_exit_time()
     blocked, reason = rule_v121_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit, params, now_utc)
     if rule_v121_check_cooldown_exit(last_exit_dt, now_utc, cooldown_after_exit):
-        return False, step_base, 0, "cooldown_after_exit", empty_log
+        return False, step_base, 0, "cooldown_after_exit", _mi(empty_log, ctx, 0)
     if blocked:
         score, breakdown = rule_v121_entry_score(ctx, now_utc, step_base, params)
         step_val, step_detail = rule_v121_dynamic_step(ctx, params)
-        return False, step_val, score, reason, {"score_breakdown": breakdown, "step_detail": step_detail}
+        return False, step_val, score, reason, _mi({"score_breakdown": breakdown, "step_detail": step_detail}, ctx, score)
     score, breakdown = rule_v121_entry_score(ctx, now_utc, step_base, params)
     if score <= 3:
         step_val, step_detail = rule_v121_dynamic_step(ctx, params)
-        return False, step_val, score, "score_low", {"score_breakdown": breakdown, "step_detail": step_detail}
+        return False, step_val, score, "score_low", _mi({"score_breakdown": breakdown, "step_detail": step_detail}, ctx, score)
     step_val, step_detail = rule_v121_dynamic_step(ctx, params)
     if score >= entry_score_start:
-        return True, step_val, score, "", {"score_breakdown": breakdown, "step_detail": step_detail}
+        return True, step_val, score, "", _mi({"score_breakdown": breakdown, "step_detail": step_detail}, ctx, score)
     if score >= entry_score_probe:
-        return False, step_val, score, "score_probe", {"score_breakdown": breakdown, "step_detail": step_detail}
-    return False, step_val, score, "score_below_start", {"score_breakdown": breakdown, "step_detail": step_detail}
+        return False, step_val, score, "score_probe", _mi({"score_breakdown": breakdown, "step_detail": step_detail}, ctx, score)
+    return False, step_val, score, "score_below_start", _mi({"score_breakdown": breakdown, "step_detail": step_detail}, ctx, score)
 
 
 def check_grid_step_v121_db():
@@ -966,10 +1150,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         if sd:
             step_str += f" | step_raw={sd.get('step_raw', 0):.3f} atr_m5={sd.get('atr_m5', 0):.3f} ratio={sd.get('ratio', 0):.2f} {sd.get('adj','')} [min={sd.get('step_min',0):.1f} max={sd.get('step_max',0):.1f}]"
         time_str = f"Giờ={ts}({time_src})"
+        block_detail = _format_v121_block_reason_detail(block_reason, log_info)
+        unsat = log_info.get("unsatisfied_conditions") or []
+        unsat_line = ""
+        if unsat:
+            unsat_line = "\n   📋 Chưa thỏa mãn: " + " | ".join(unsat)
         if not allow_start:
-            print(f"⏸️ [V121] {time_str} | {score_str} | {step_str} | Block: {block_reason} (cần >={params.get('entry_score_start', 6)})")
+            print(
+                f"⏸️ [V121] {time_str} | {score_str} | {step_str} | "
+                f"Block: {block_reason} (cần EntryScore>={params.get('entry_score_start', 6)}){block_detail}{unsat_line}"
+            )
         else:
-            print(f"📊 [V121] {time_str} | {score_str} | {step_str} | allow_start={allow_start}")
+            print(f"📊 [V121] {time_str} | {score_str} | {step_str} | allow_start={allow_start}{block_detail}{unsat_line}")
 
     # V121: re-check Hard Block + Entry Score trước mọi lần re-arm (không chỉ lúc flat). Không đủ điều kiện → hủy pending, không đặt lại.
     if rule_enabled and not allow_start:

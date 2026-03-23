@@ -39,7 +39,7 @@
         "median_atr_lookback": 50,
         "entry_score_start": 6,
         "entry_score_probe": 5,
-        "block_breakout_m5_ratio": 1.8,
+        "block_breakout_m5_ratio": 2.5,
         "block_breakout_3bars_ratio": 3.0,
         "block_breakout_range_margin": 0.5,
         "min_distance_points": 5,
