@@ -227,6 +227,30 @@
       "active": true,
       "created_at": "2026-03-18T13:16:59.245228Z",
       "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4695.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4685.0,
+      "active": true,
+      "created_at": "2026-03-23T02:56:48.734192Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4660.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4650.0,
+      "active": true,
+      "created_at": "2026-03-23T02:56:48.736182Z",
+      "reason": "SL"
     }
   ]
 }

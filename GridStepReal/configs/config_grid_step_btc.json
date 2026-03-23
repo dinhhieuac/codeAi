@@ -4,7 +4,7 @@
     "server": "Exness-MT5Real25",
     "mt5_path": "C:\\Program Files\\M15\\terminal64.exe",
     "symbol": "BTCUSDc",
-    "volume": 0.1,
+    "volume": 0.05,
     "magic": 100011,
     "max_positions": 5,
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",

@@ -1,9 +1,9 @@
 {
-    "account": 413520538,
+    "account": 183677261,
     "password": "@Dinhhieu273",
-    "server": "Exness-MT5Trial6",
-    "mt5_path": "C:\\Program Files\\M13\\terminal64.exe",
-    "symbol": "XAUUSDm",
+    "server": "Exness-MT5Real25",
+    "mt5_path": "C:\\Program Files\\M15\\terminal64.exe",
+    "symbol": "XAUUSDc",
     "volume": 0.01,
     "magic": 100012,
     "max_positions": 5,
@@ -48,6 +48,6 @@
         "cooldown_minutes": 0,
         "consecutive_loss_pause_enabled": true,
         "consecutive_loss_count": 2,
-        "consecutive_loss_pause_minutes": 5
+        "consecutive_loss_pause_minutes": 3
     }
 }
