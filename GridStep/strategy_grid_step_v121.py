@@ -7,7 +7,7 @@ Grid Step Trading Bot V121 — clone từ V12 + theo document/v121.md:
 - V12.1 execution (parameters.v121_execution_enabled, mặc định true khi rule bật): một pending theo bias
   (mép range 67/33% + xác nhận wick nến M5), giá STOP từ low/high nến M5 ± buffer; rule/bias dùng mid thị trường;
   step SL/TP trong nhánh này = buffer-based clamp; grid legacy 2 pending vẫn ref quanh anchor.
-  V12.1: pending được recheck cập nhật theo mỗi nến M5 đóng (M15 chỉ bối cảnh); cập nhật giá chỉ khi |new-old| >= max(0.25*ExecutionStep, 2*point).
+  V12.1: M5 chỉ là nhịp đánh giá; sau đặt/sửa pending đóng băng tối thiểu 1 nến M5; chỉ MODIFY khi |entry| >= max(0.5*buffer, 0.25*ExecutionStep).
 Cooldown/pause riêng: grid_cooldown_v121.json, grid_pause_v121.json, last_exit_time_v121.json.
 parameters.lookback_range_hours: độ dài cửa sổ (giờ) để lấy high/low trên M15 cho range box (mặc định 3).
 """
@@ -396,10 +396,11 @@ def _v121_pending_implied_bias(pending_order):
     return None
 
 
-def _v121_pending_update_threshold_price(step_val, point, params):
-    frac = float(params.get("v121_pending_update_step_fraction", 0.25))
-    min_pts = int(params.get("v121_pending_update_min_points", 2))
-    return max(frac * float(step_val), min_pts * float(point))
+def _v121_pending_move_min_delta(buf, step_val, params):
+    """Ngưỡng tối thiểu để được MODIFY entry: max(0.5*buffer, 0.25*ExecutionStep) — rule 26.4."""
+    bfrac = float(params.get("v121_pending_update_buffer_fraction", 0.5))
+    sfrac = float(params.get("v121_pending_update_step_fraction", 0.25))
+    return max(bfrac * float(buf), sfrac * float(step_val))
 
 
 def _v121_clear_execution_armed_state():
@@ -407,6 +408,7 @@ def _v121_clear_execution_armed_state():
     strategy_grid_step_logic._v121_armed_bias = None
     strategy_grid_step_logic._v121_armed_params_sig = None
     strategy_grid_step_logic._v121_last_processed_m5_close_ts = None
+    strategy_grid_step_logic._v121_pending_placed_m5_ts = None
 
 
 def _v121_tp_leg_price(step_val, spread_tp_adj, min_leg_floor):
@@ -1559,6 +1561,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         if pend_cur and params.get("v121_pending_recheck_on_m5", True):
             if getattr(strategy_grid_step_logic, "_v121_armed_bias", None) is None:
                 strategy_grid_step_logic._v121_armed_bias = _v121_pending_implied_bias(pend_cur[0])
+                if getattr(strategy_grid_step_logic, "_v121_pending_placed_m5_ts", None) is None:
+                    strategy_grid_step_logic._v121_pending_placed_m5_ts = m5_close_ts
             armed_sig = getattr(strategy_grid_step_logic, "_v121_armed_params_sig", None)
             if armed_sig is None:
                 strategy_grid_step_logic._v121_armed_params_sig = cur_fp
@@ -1584,15 +1588,25 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     strategy_grid_step_logic._v121_armed_params_sig = None
                     print("🔄 [V121 V12.1] Loại lệnh chờ không khớp bias → hủy.")
             if pend_cur:
-                # Một pending một chiều: cập nhật SL/TP (và giá STOP nếu lệch >= ngưỡng) bằng MODIFY, không hủy+đặt.
+                # Rule 26: chưa qua đủ 1 nến M5 sau đặt/sửa → không MODIFY (M5 chỉ là nhịp đánh giá).
+                placed_m5 = getattr(strategy_grid_step_logic, "_v121_pending_placed_m5_ts", None)
+                if placed_m5 is not None and m5_close_ts <= int(placed_m5):
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
                 ord0 = pend_cur[0]
                 new_entry = sell_price if bias == "SELL" else buy_price
                 old_entry = float(ord0.price_open)
-                thr = _v121_pending_update_threshold_price(step_val, point, params)
+                thr_move = _v121_pending_move_min_delta(buf, step_val, params)
                 diff = abs(new_entry - old_entry)
+                if diff < thr_move:
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
                 tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
-                move_px = diff >= thr
-                use_px = round(new_entry if move_px else old_entry, digits)
+                use_px = round(new_entry, digits)
                 if bias == "SELL":
                     if bid > 0 and use_px >= (bid - min_pending_gap):
                         print(
@@ -1629,11 +1643,12 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 )
                 if rmod is not None and rmod.retcode == mt5.TRADE_RETCODE_DONE:
                     db.log_grid_pending(int(_tik), strategy_name, symbol, otype, use_px, nsl, ntp, volume, acc)
-                    action = "dời giá + SL/TP" if move_px else "SL/TP"
                     print(
-                        f"🔧 [V121 V12.1] MODIFY {otype} #{_tik} ({action}): px={use_px} SL={nsl} TP={ntp}"
+                        f"🔧 [V121 V12.1] MODIFY {otype} #{_tik} (Δentry≥{round(thr_move, digits)}): "
+                        f"px={use_px} SL={nsl} TP={ntp}"
                     )
                     strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_pending_placed_m5_ts = m5_close_ts
                     strategy_grid_step_logic._v121_armed_bias = bias
                     strategy_grid_step_logic._v121_armed_params_sig = cur_fp
                     return 0, 0
@@ -1643,6 +1658,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 pend_cur = get_pending_orders(symbol, magic, step_filter)
                 strategy_grid_step_logic._v121_armed_bias = None
                 strategy_grid_step_logic._v121_armed_params_sig = None
+                strategy_grid_step_logic._v121_pending_placed_m5_ts = None
 
         if bias == "SELL":
             if bid > 0 and sell_price >= (bid - min_pending_gap):
@@ -1680,6 +1696,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             db.log_grid_pending(r.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
             print(f"✅ Grid V121 V12.1: SELL_STOP @ {sell_price:.2f}")
             strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+            strategy_grid_step_logic._v121_pending_placed_m5_ts = m5_close_ts
             strategy_grid_step_logic._v121_armed_bias = bias
             strategy_grid_step_logic._v121_armed_params_sig = cur_fp
             return 0, 0
@@ -1719,6 +1736,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         db.log_grid_pending(r.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         print(f"✅ Grid V121 V12.1: BUY_STOP @ {buy_price:.2f}")
         strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+        strategy_grid_step_logic._v121_pending_placed_m5_ts = m5_close_ts
         strategy_grid_step_logic._v121_armed_bias = bias
         strategy_grid_step_logic._v121_armed_params_sig = cur_fp
         return 0, 0
