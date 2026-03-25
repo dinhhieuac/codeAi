@@ -43,6 +43,7 @@
         "block_breakout_m5_ratio": 2.5,
         "block_breakout_3bars_ratio": 3.0,
         "block_breakout_range_margin": 0.5,
+        "block_breakout_range_pct": 0.20,
         "min_distance_points": 5,
         "target_profit": 50.0,
         "basket_stop_loss_usd": 100.0,

@@ -486,6 +486,30 @@ def rule_v121_fetch_context(symbol, params):
     }
 
 
+def _v121_breakout_range_hi_lo(ctx, step_base, params):
+    """
+    Buffer = max(margin * step_base, pct * range_3h). Tắt khi margin<=0 và pct<=0.
+    Trả về (enabled, hi, lo, breakout_buffer, margin, pct, range_size_3h) hoặc (False, None, None, 0, ...).
+    """
+    margin = params.get("block_breakout_range_margin")
+    if margin is None:
+        margin = 0.5
+    margin = float(margin)
+    pct = params.get("block_breakout_range_pct")
+    if pct is None:
+        pct = 0.20
+    pct = float(pct)
+    if margin <= 0 and pct <= 0:
+        return False, None, None, 0.0, margin, pct, 0.0
+    range_size_3h = float(ctx["range_high_3h"] - ctx["range_low_3h"])
+    if range_size_3h <= 0:
+        range_size_3h = float(step_base)
+    breakout_buffer = max(margin * float(step_base), pct * range_size_3h)
+    hi = float(ctx["range_high_3h"]) + breakout_buffer
+    lo = float(ctx["range_low_3h"]) - breakout_buffer
+    return True, hi, lo, breakout_buffer, margin, pct, range_size_3h
+
+
 def rule_v121_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit_minutes, params, now_utc=None):
     """Rule mới không dùng time filter. Hard Block: giá giữa range, breakout, trend mạnh (+ EMA dốc cùng hướng), cooldown (caller), ATR quá nóng."""
     range_size_3h = ctx["range_high_3h"] - ctx["range_low_3h"]
@@ -518,12 +542,10 @@ def rule_v121_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit_minu
         and sum3_body_m5 > float(block_breakout_3bars_ratio) * step_base
     ):
         return True, "breakout_3bars"
-    # Block 2c: Giá vượt ra ngoài range 3h (trên high + margin*step hoặc dưới low - margin*step). margin=0 để tắt; không cấu hình = 0.5.
-    block_breakout_range_margin = params.get("block_breakout_range_margin")
-    if block_breakout_range_margin is None:
-        block_breakout_range_margin = 0.5
-    if float(block_breakout_range_margin) > 0:
-        if price >= ctx["range_high_3h"] + float(block_breakout_range_margin) * step_base or price <= ctx["range_low_3h"] - float(block_breakout_range_margin) * step_base:
+    # Block 2c: breakout_range — buffer = max(margin×step_base, pct×range_3h); tắt khi margin<=0 và pct<=0.
+    br_en, hi_br, lo_br, _buf_br, _m_br, _p_br, _rs_br = _v121_breakout_range_hi_lo(ctx, step_base, params)
+    if br_en and hi_br is not None and lo_br is not None:
+        if price >= hi_br or price <= lo_br:
             return True, "breakout_range"
     # Block 3: Trend mạnh - 3 nến M15 cùng màu + tổng thân > 2.5*step_base + EMA50 dốc cùng hướng
     if len(ctx["last3_m15"]) >= 3 and sum3_body > 2.5 * step_base:
@@ -773,14 +795,12 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
     if float(block_breakout_3bars_ratio) > 0 and len(last3_m5) >= 3 and sum3_body_m5 > thr3:
         ret.append(f"breakout_3bars: tổng |thân| 3 nến M5 {sum3_body_m5:.3f} > {thr3:.3f} (ratio×step_base config)")
 
-    block_breakout_range_margin = params.get("block_breakout_range_margin")
-    if block_breakout_range_margin is None:
-        block_breakout_range_margin = 0.5
-    if float(block_breakout_range_margin) > 0:
-        hi = ctx["range_high_3h"] + float(block_breakout_range_margin) * step_base
-        lo = ctx["range_low_3h"] - float(block_breakout_range_margin) * step_base
-        if price >= hi or price <= lo:
-            ret.append(f"breakout_range: giá {price:.3f} ngoài [low−margin×step, high+margin×step] (3h)")
+    br_en, hi, lo, buf_u, _m_u, _p_u, _rs_u = _v121_breakout_range_hi_lo(ctx, step_base, params)
+    if br_en and hi is not None and (price >= hi or price <= lo):
+        ret.append(
+            f"breakout_range: giá {price:.3f} ngoài [lo−buffer, hi+buffer] (3h) "
+            f"buffer=max(margin×step,pct×range_3h)={buf_u:.3f}"
+        )
 
     sum3_body_m15 = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
     if len(ctx["last3_m15"]) >= 3 and sum3_body_m15 > 2.5 * step_base:
@@ -844,6 +864,8 @@ def _format_v121_block_reason_detail(block_reason, log_info):
     if br == "breakout_range":
         return (
             f" | [breakout_range] margin={log_info.get('block_breakout_range_margin')} "
+            f"pct={log_info.get('block_breakout_range_pct')} "
+            f"buffer={log_info.get('breakout_range_buffer')} range_3h={log_info.get('breakout_range_range_size_3h')} "
             f"price={log_info.get('mt5_price_rule')} high_line={log_info.get('breakout_range_high_line')} "
             f"low_line={log_info.get('breakout_range_low_line')}"
         )
@@ -1297,13 +1319,30 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         unsat_line = ""
         if unsat:
             unsat_line = "\n   📋 Chưa thỏa mãn: " + " | ".join(unsat)
+        min_sc = int(params.get("entry_score_start", 6))
         if not allow_start:
-            print(
-                f"⏸️ [V121] {time_str} | {score_str} | {step_str} | "
-                f"Block: {block_reason} (cần EntryScore>={params.get('entry_score_start', 6)}){block_detail}{unsat_line}"
-            )
+            # Gộp log block: dòng 1 = score + PrecheckStep; dòng 2 = Block + chi tiết (tránh wrap cắt "EntryScore")
+            head = f"⏸️ [V121] {time_str} | {score_str} | {step_str}"
+            block_line = f"   Block: {block_reason} | min_score>={min_sc}{block_detail}"
+            full_text = f"{head}\n{block_line}{unsat_line}"
+            # Tránh spam cùng trạng thái mỗi giây (hai tick giá lệch nhẹ vẫn in một lần trong cửa sổ throttle)
+            throttle_sec = float(params.get("block_log_throttle_seconds", 25))
+            sig = (strategy_name, block_reason, entry_score, round(ps, 2))
+            now_m = time.monotonic()
+            prev = getattr(strategy_grid_step_logic, "_v121_block_log_sig", None)
+            if (
+                throttle_sec > 0
+                and prev is not None
+                and prev[0] == sig
+                and (now_m - prev[1]) < throttle_sec
+            ):
+                pass
+            else:
+                print(full_text)
+                strategy_grid_step_logic._v121_block_log_sig = (sig, now_m)
         else:
             print(f"📊 [V121] {time_str} | {score_str} | {step_str} | allow_start={allow_start}{block_detail}{unsat_line}")
+            strategy_grid_step_logic._v121_block_log_sig = None
 
     # V121: re-check Hard Block + Entry Score trước mọi lần re-arm (không chỉ lúc flat). Không đủ điều kiện → hủy pending, không đặt lại.
     if rule_enabled and not allow_start:
