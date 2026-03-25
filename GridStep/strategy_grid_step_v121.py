@@ -566,13 +566,17 @@ def rule_v121_entry_score(ctx, now_utc, step_base, params):
         range_size = step_base
     top_zone = ctx["range_low_3h"] + range_size * 0.67
     bottom_zone = ctx["range_low_3h"] + range_size * 0.33
+    rh, rl = ctx["range_high_3h"], ctx["range_low_3h"]
     price = ctx["price"]
+    # Chỉ tính mép khi giá còn trong biên 3h (tránh +điểm khi đã breakout — trùng breakout_range block)
+    in_upper_third = top_zone <= price <= rh
+    in_lower_third = rl <= price <= bottom_zone
 
     # A - Vị trí trong range (mép +2, rất sát mép +1)
-    if price >= top_zone or price <= bottom_zone:
+    if in_upper_third or in_lower_third:
         score += 2
         breakdown["A"] = 2
-    if price >= ctx["range_low_3h"] + range_size * 0.85 or price <= ctx["range_low_3h"] + range_size * 0.15:
+    if (rl + range_size * 0.85 <= price <= rh) or (rl <= price <= rl + range_size * 0.15):
         score += 1
         breakdown["A"] += 1
     # B - Độ lệch khỏi EMA50 M15 (>= 1 step +1, >= 1.5 step +1)
@@ -612,7 +616,7 @@ def rule_v121_entry_score(ctx, now_utc, step_base, params):
         breakdown["D"] = -1
     # E - Cấu trúc mean-reversion (max 2): giá chạm mép quay đầu, giá lệch EMA không mở rộng
     e_score = 0
-    if (price >= top_zone or price <= bottom_zone):
+    if in_upper_third or in_lower_third:
         for bar in ctx["last3_m15"][:1]:
             total = bar["high"] - bar["low"]
             if total <= 0:
@@ -659,7 +663,10 @@ def rule_v121_dynamic_step(ctx, params):
     # Chỉnh Step theo cấu trúc: trend nhẹ => nới step, sideway đẹp => thu step
     range_size = ctx["range_high_3h"] - ctx["range_low_3h"] or step_base
     price = ctx["price"]
-    at_edge = price >= ctx["range_low_3h"] + range_size * 0.67 or price <= ctx["range_low_3h"] + range_size * 0.33
+    rl, rh = ctx["range_low_3h"], ctx["range_high_3h"]
+    t67 = rl + range_size * 0.67
+    b33 = rl + range_size * 0.33
+    at_edge = (t67 <= price <= rh) or (rl <= price <= b33)
     last3 = ctx.get("last3_m15") or []
     same_up = len(last3) >= 3 and all(b["close"] >= b["open"] for b in last3)
     same_down = len(last3) >= 3 and all(b["close"] <= b["open"] for b in last3)
@@ -832,7 +839,7 @@ def _format_v121_block_reason_detail(block_reason, log_info):
             f" | [breakout_3bars] ratio={log_info.get('block_breakout_3bars_ratio')} "
             f"* step_base={log_info.get('step_base_for_blocks')} → ngưỡng={log_info.get('breakout_3bars_threshold')} "
             f"| MT5 sum(|thân|) 3 nến M5={log_info.get('mt5_sum3_body_m5')} "
-            f"(block nếu sum > ngưỡng; khác step động trong log Step(tính được))"
+            f"(block nếu sum > ngưỡng; khác PrecheckStep trong log rule)"
         )
     if br == "breakout_range":
         return (
@@ -1048,9 +1055,10 @@ def v121_bias_from_range_and_m5(ctx, step_base):
     bullish_m5 = c > o
     sell_confirm = bearish_m5 and upper_wick >= body * 0.5
     buy_confirm = bullish_m5 and lower_wick >= body * 0.5
-    if price >= top_zone and sell_confirm:
+    rh, rl = ctx["range_high_3h"], ctx["range_low_3h"]
+    if top_zone <= price <= rh and sell_confirm:
         return "SELL"
-    if price <= bottom_zone and buy_confirm:
+    if rl <= price <= bottom_zone and buy_confirm:
         return "BUY"
     return None
 
@@ -1263,7 +1271,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         if len(pendings) == 2:
             return error_count, 0
 
-    # Log chi tiết điểm và step (mỗi vòng khi có log_info từ rule). Kèm giờ đang dùng (server MT5 hoặc local UTC).
+    # Log chi tiết điểm và PrecheckStep (rule/block/start; khác ExecutionStep buffer-based trong nhánh V12.1).
     if rule_enabled and log_info:
         b = log_info.get("score_breakdown") or {}
         sd = log_info.get("step_detail") or {}
@@ -1272,9 +1280,17 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         except Exception:
             ts = "?"
         score_str = f"EntryScore={entry_score} (A={b.get('A',0)} B={b.get('B',0)} C={b.get('C',0)} D={b.get('D',0)} E={b.get('E',0)})"
-        step_str = f"Step(tính được)={grid_step_price:.3f}"
+        ps = grid_step_price
         if sd:
-            step_str += f" | step_raw={sd.get('step_raw', 0):.3f} atr_m5={sd.get('atr_m5', 0):.3f} ratio={sd.get('ratio', 0):.2f} {sd.get('adj','')} [min={sd.get('step_min',0):.1f} max={sd.get('step_max',0):.1f}]"
+            adj_part = (sd.get("adj", "") or "").strip()
+            adj_suffix = f" {adj_part}" if adj_part else ""
+            step_str = (
+                f"PrecheckStep={ps:.3f} | step_raw={sd.get('step_raw', ps):.3f} "
+                f"atr_m5={sd.get('atr_m5', 0):.3f} ratio={sd.get('ratio', 1.0):.2f}{adj_suffix} "
+                f"[min={sd.get('step_min', 0)} max={sd.get('step_max', 0)}]"
+            )
+        else:
+            step_str = f"PrecheckStep={ps:.3f}"
         time_str = f"Giờ={ts}({time_src})"
         block_detail = _format_v121_block_reason_detail(block_reason, log_info)
         unsat = log_info.get("unsatisfied_conditions") or []
@@ -1343,14 +1359,16 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         grid_step_price = step_val
         sl_tp_price = step_val
         if step_val < spread_price:
-            print(f"⏸️ [V121 V12.1] Step buffer-based {step_val:.3f} < spread {spread_price:.3f}.")
+            print(
+                f"⏸️ [V121 V12.1] ExecutionStep (buffer-based) {step_val:.3f} < spread {spread_price:.3f}."
+            )
             return error_count, 0
         print(
-            f"📏 [V121 V12.1 Step] atr={step_detail_v121['atr_m5']} "
+            f"📏 [V121 V12.1 ExecutionStep] atr={step_detail_v121['atr_m5']} "
             f"range_3h={step_detail_v121['range_3h']} "
             f"buffer={step_detail_v121['buffer']} raw={step_detail_v121['raw']} "
             f"clamp=[{step_detail_v121['step_min']},{step_detail_v121['step_max']}] "
-            f"-> step={step_val}"
+            f"-> ExecutionStep={step_val}"
         )
         filling = mt5.ORDER_FILLING_IOC if (info.filling_mode & 2) else mt5.ORDER_FILLING_FOK
         comment = _comment_for_step(step_filter)
@@ -1468,7 +1486,10 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"⏸️ [V121] SELL_STOP skip: price {sell_price} >= bid {bid} (Invalid price).")
         return error_count, 0
 
-    print(f"📤 [V121] Step(tính được)={grid_step_price:.3f} | BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy}) | SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
+    print(
+        f"📤 [V121] PrecheckStep={grid_step_price:.3f} | BUY_STOP @ {buy_price} (SL={sl_buy}, TP={tp_buy}) | "
+        f"SELL_STOP @ {sell_price} (SL={sl_sell}, TP={tp_sell})"
+    )
     r1 = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
     r2 = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
 
