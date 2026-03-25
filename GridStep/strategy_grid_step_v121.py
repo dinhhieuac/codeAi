@@ -395,7 +395,7 @@ def _median(arr):
 
 
 def rule_v121_fetch_context(symbol, params):
-    """Lấy toàn bộ dữ liệu cần cho rule: atr_m5, atr_m15, ema50_m15, range_3h, last3 M15, M5 current/prev bar.
+    """Lấy toàn bộ dữ liệu cần cho rule: atr_m5, atr_m15, ema50_m15, range_3h, last3 M15, last3 M5 (breakout_3bars), M5 current/prev bar.
     Trả về dict hoặc None nếu thiếu dữ liệu."""
     atr_period_m5 = params.get("atr_period_m5", 20)
     ema_period_m15 = params.get("ema_period_m15", 50)
@@ -433,7 +433,7 @@ def rule_v121_fetch_context(symbol, params):
         return None
     range_high_3h = max(float(rates_m15[i]["high"]) for i in range(1, 1 + n_range))
     range_low_3h = min(float(rates_m15[i]["low"]) for i in range(1, 1 + n_range))
-    # 3 nến M15 gần nhất đã đóng: index 1, 2, 3
+    # 3 nến M15 gần nhất đã đóng: index 1, 2, 3 (trend_strong, score…)
     last3_m15 = []
     for i in range(1, min(4, len(rates_m15))):
         last3_m15.append({
@@ -441,6 +441,15 @@ def rule_v121_fetch_context(symbol, params):
             "high": float(rates_m15[i]["high"]),
             "low": float(rates_m15[i]["low"]),
             "close": float(rates_m15[i]["close"]),
+        })
+    # 3 nến M5 đã đóng gần nhất: index 1, 2, 3 (breakout_3bars)
+    last3_m5 = []
+    for i in range(1, min(4, len(rates_m5))):
+        last3_m5.append({
+            "open": float(rates_m5[i]["open"]),
+            "high": float(rates_m5[i]["high"]),
+            "low": float(rates_m5[i]["low"]),
+            "close": float(rates_m5[i]["close"]),
         })
     # Median ATR M5 lookback (để so sánh volatility)
     atr_lookback = params.get("median_atr_lookback", 50)
@@ -466,6 +475,7 @@ def rule_v121_fetch_context(symbol, params):
         "range_high_3h": range_high_3h,
         "range_low_3h": range_low_3h,
         "last3_m15": last3_m15,
+        "last3_m5": last3_m5,
         "range_m5_current": range_m5_current,
         "range_m5_prev": range_m5_prev,
         "rates_m5": rates_m5,
@@ -481,6 +491,7 @@ def rule_v121_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit_minu
     price = ctx["price"]
     mid_low = ctx["range_low_3h"] + range_size_3h * 0.33
     mid_high = ctx["range_low_3h"] + range_size_3h * 0.67
+    # Tổng thân 3 nến M15 (trend_strong); breakout_3bars dùng last3_m5 — xem Block 2b
     sum3_body = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
 
     # Block 1: Giá đang ở giữa range
@@ -492,11 +503,17 @@ def rule_v121_hard_blocks(ctx, last_exit_dt, step_base, cooldown_after_exit_minu
         block_breakout_m5_ratio = 1.8
     if float(block_breakout_m5_ratio) > 0 and ctx["range_m5_current"] > float(block_breakout_m5_ratio) * ctx["atr_m5"]:
         return True, "breakout_m5"
-    # Block 2b: Tổng thân 3 nến M15 > ratio * step_base. ratio=0 để tắt; không cấu hình = 3.0 (mặc định).
+    # Block 2b: Tổng thân 3 nến M5 đã đóng > ratio * step_base. ratio=0 để tắt; không cấu hình = 3.0 (mặc định).
+    last3_m5 = ctx.get("last3_m5") or []
+    sum3_body_m5 = sum(abs(b["close"] - b["open"]) for b in last3_m5)
     block_breakout_3bars_ratio = params.get("block_breakout_3bars_ratio")
     if block_breakout_3bars_ratio is None:
         block_breakout_3bars_ratio = 3.0
-    if float(block_breakout_3bars_ratio) > 0 and sum3_body > float(block_breakout_3bars_ratio) * step_base:
+    if (
+        float(block_breakout_3bars_ratio) > 0
+        and len(last3_m5) >= 3
+        and sum3_body_m5 > float(block_breakout_3bars_ratio) * step_base
+    ):
         return True, "breakout_3bars"
     # Block 2c: Giá vượt ra ngoài range 3h (trên high + margin*step hoặc dưới low - margin*step). margin=0 để tắt; không cấu hình = 0.5.
     block_breakout_range_margin = params.get("block_breakout_range_margin")
@@ -678,15 +695,15 @@ def _rule_v121_block_debug_log(ctx, params):
     if r_m5 > 0 and atr > 0:
         out["breakout_m5_threshold"] = r_m5 * atr
 
-    # Block 2b — tổng thân 3 nến M15 đã đóng vs ratio * step_base (config), KHÔNG dùng step động
+    # Block 2b — tổng thân 3 nến M5 đã đóng vs ratio * step_base (config), KHÔNG dùng step động
     r3 = params.get("block_breakout_3bars_ratio")
     if r3 is None:
         r3 = 3.0
     r3 = float(r3)
     out["block_breakout_3bars_ratio"] = r3
-    last3 = ctx.get("last3_m15") or []
-    sum3_body = sum(abs(b["close"] - b["open"]) for b in last3)
-    out["mt5_sum3_body_m15"] = sum3_body
+    last3_m5 = ctx.get("last3_m5") or []
+    sum3_body_m5 = sum(abs(b["close"] - b["open"]) for b in last3_m5)
+    out["mt5_sum3_body_m5"] = sum3_body_m5
     if r3 > 0:
         out["breakout_3bars_threshold"] = r3 * step_base_cfg
 
@@ -737,13 +754,14 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
         thr = float(block_breakout_m5_ratio) * ctx["atr_m5"]
         ret.append(f"breakout_m5: range_m5 {ctx['range_m5_current']:.3f} > ngưỡng {thr:.3f} (ratio×ATR)")
 
-    sum3_body = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
+    last3_m5 = ctx.get("last3_m5") or []
+    sum3_body_m5 = sum(abs(b["close"] - b["open"]) for b in last3_m5)
     block_breakout_3bars_ratio = params.get("block_breakout_3bars_ratio")
     if block_breakout_3bars_ratio is None:
         block_breakout_3bars_ratio = 3.0
     thr3 = float(block_breakout_3bars_ratio) * step_base
-    if float(block_breakout_3bars_ratio) > 0 and sum3_body > thr3:
-        ret.append(f"breakout_3bars: tổng |thân| 3 nến M15 {sum3_body:.3f} > {thr3:.3f} (ratio×step_base config)")
+    if float(block_breakout_3bars_ratio) > 0 and len(last3_m5) >= 3 and sum3_body_m5 > thr3:
+        ret.append(f"breakout_3bars: tổng |thân| 3 nến M5 {sum3_body_m5:.3f} > {thr3:.3f} (ratio×step_base config)")
 
     block_breakout_range_margin = params.get("block_breakout_range_margin")
     if block_breakout_range_margin is None:
@@ -754,7 +772,8 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
         if price >= hi or price <= lo:
             ret.append(f"breakout_range: giá {price:.3f} ngoài [low−margin×step, high+margin×step] (3h)")
 
-    if len(ctx["last3_m15"]) >= 3 and sum3_body > 2.5 * step_base:
+    sum3_body_m15 = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
+    if len(ctx["last3_m15"]) >= 3 and sum3_body_m15 > 2.5 * step_base:
         same_color_up = all(b["close"] >= b["open"] for b in ctx["last3_m15"])
         same_color_down = all(b["close"] <= b["open"] for b in ctx["last3_m15"])
         slope = ctx.get("ema50_slope")
@@ -765,7 +784,7 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
             elif same_color_down and slope < 0:
                 slope_ok = True
         if (same_color_up or same_color_down) and slope_ok:
-            ret.append("trend_strong: 3 nến M15 cùng màu + EMA50 dốc cùng hướng + tổng thân > 2.5×step_base")
+            ret.append("trend_strong: 3 nến M15 cùng màu + EMA50 dốc cùng hướng + tổng |thân| M15 > 2.5×step_base")
 
     med = ctx.get("median_atr_m5") or ctx["atr_m5"]
     if med and ctx["atr_m5"] > 1.5 * med:
@@ -809,7 +828,7 @@ def _format_v121_block_reason_detail(block_reason, log_info):
         return (
             f" | [breakout_3bars] ratio={log_info.get('block_breakout_3bars_ratio')} "
             f"* step_base={log_info.get('step_base_for_blocks')} → ngưỡng={log_info.get('breakout_3bars_threshold')} "
-            f"| MT5 sum(|thân|) 3 nến M15={log_info.get('mt5_sum3_body_m15')} "
+            f"| MT5 sum(|thân|) 3 nến M5={log_info.get('mt5_sum3_body_m5')} "
             f"(block nếu sum > ngưỡng; khác step động trong log Step(tính được))"
         )
     if br == "breakout_range":
@@ -819,7 +838,7 @@ def _format_v121_block_reason_detail(block_reason, log_info):
             f"low_line={log_info.get('breakout_range_low_line')}"
         )
     if br == "trend_strong":
-        return f" | [trend_strong] sum3_body_m15={log_info.get('mt5_sum3_body_m15')} (xem rule trong code)"
+        return " | [trend_strong] 3 nến M15 + EMA slope (xem rule trong code)"
     if br == "atr_quá_nóng":
         return (
             f" | [atr_quá_nóng] atr_m5={log_info.get('mt5_atr_m5')} median={log_info.get('median_atr_m5')} "

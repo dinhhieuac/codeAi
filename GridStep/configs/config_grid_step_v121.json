@@ -28,7 +28,7 @@
             {"start": "23:00", "end": "23:59"}
         ],
         "rule_start_step_enabled": true,
-        "step_base": 5,
+        "step_base": 15,
         "k_atr": 1.0,
         "step_min": 4,
         "step_max": 9,
