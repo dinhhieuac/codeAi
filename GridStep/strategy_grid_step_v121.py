@@ -418,30 +418,6 @@ def _v121_lookback_m15_bars(params):
     return max(1, int(round(_v121_lookback_range_hours(params) * 4)))
 
 
-def _v121_mt5_server_tz():
-    """Timezone cố định offset của broker/terminal: UTC + terminal_info.time_zone (giây). Khớp trục giờ chart khi để Server."""
-    ti = mt5.terminal_info()
-    sec = int(getattr(ti, "time_zone", 0) or 0) if ti is not None else 0
-    return timezone(timedelta(seconds=sec))
-
-
-def _v121_format_bar_open_ts(ts: int) -> str:
-    """Hiển thị thời điểm mở nến: giờ server (theo MT5) trước, UTC sau — cùng một instant, khác nhãn."""
-    ts = int(ts)
-    utc_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    srv_tz = _v121_mt5_server_tz()
-    srv_dt = utc_dt.astimezone(srv_tz)
-    off = srv_tz.utcoffset(srv_dt)
-    osec = int(off.total_seconds()) if off else 0
-    if osec % 3600 == 0 and osec != 0:
-        olab = f"GMT{osec // 3600:+d}"
-    elif osec == 0:
-        olab = "GMT+0"
-    else:
-        olab = f"GMT{osec:+d}s"
-    return f"{srv_dt.strftime('%Y-%m-%d %H:%M')} {olab} srv · {utc_dt.strftime('%Y-%m-%d %H:%M')} UTC"
-
-
 def rule_v121_fetch_context(symbol, params):
     """Lấy toàn bộ dữ liệu cần cho rule: atr_m5, atr_m15, ema50_m15, range box M15 (độ dài lookback_range_hours), last3 M15, last3 M5 (breakout_3bars), M5 current/prev bar.
     Trả về dict hoặc None nếu thiếu dữ liệu."""
@@ -464,11 +440,7 @@ def rule_v121_fetch_context(symbol, params):
         return None
     range_m5_current = high_m5[-1] - low_m5[-1] if len(high_m5) and high_m5[-1] != low_m5[-1] else 0.0
     range_m5_prev = high_m5[-2] - low_m5[-2] if len(high_m5) > 1 else 0.0
-    # M15
     close_m15 = [float(r["close"]) for r in rates_m15]
-    open_m15 = [float(r["open"]) for r in rates_m15]
-    high_m15 = [float(r["high"]) for r in rates_m15]
-    low_m15 = [float(r["low"]) for r in rates_m15]
     # EMA50 M15: close_m15 đã cũ→mới (đúng thứ tự MT5), không đảo [::-1]
     close_m15_old_to_new = close_m15
     ema50_m15 = _ema(close_m15_old_to_new, ema_period_m15)
@@ -481,23 +453,6 @@ def rule_v121_fetch_context(symbol, params):
         return None
     range_high_3h = max(float(rates_m15[-1 - i]["high"]) for i in range(1, 1 + n_range))
     range_low_3h = min(float(rates_m15[-1 - i]["low"]) for i in range(1, 1 + n_range))
-    # mt5_pos i = «cách 1-based từ nến hiện tại»: 1 = vừa đóng (numpy index -2)
-    range_m15_box_bars = []
-    for i in range(1, 1 + n_range):
-        r = rates_m15[-1 - i]
-        ts = int(r["time"])
-        tstr = _v121_format_bar_open_ts(ts)
-        range_m15_box_bars.append({
-            "mt5_pos": i,
-            "ts": ts,
-            "t": tstr,
-            "o": round(float(r["open"]), 2),
-            "h": round(float(r["high"]), 2),
-            "l": round(float(r["low"]), 2),
-            "c": round(float(r["close"]), 2),
-        })
-    # Luôn sắp theo thời gian mở nến tăng dần (cũ → mới), tránh nhầm khi in
-    range_m15_box_bars_chrono = sorted(range_m15_box_bars, key=lambda b: b["ts"])
     last3_m15 = []
     for i in range(1, min(4, len(rates_m15))):
         r = rates_m15[-1 - i]
@@ -539,7 +494,6 @@ def rule_v121_fetch_context(symbol, params):
         "ema50_slope": ema50_slope,
         "lookback_range_hours": lh_cfg,
         "lookback_m15_bars": lookback_m15_bars,
-        "range_m15_box_bars": range_m15_box_bars_chrono,
         "range_high_3h": range_high_3h,
         "range_low_3h": range_low_3h,
         "last3_m15": last3_m15,
@@ -549,23 +503,6 @@ def rule_v121_fetch_context(symbol, params):
         "rates_m5": rates_m5,
         "median_atr_m5": median_atr_m5,
     }
-
-
-def _v121_format_range_m15_box_lines(box_bars):
-    """Chuỗi log nhiều dòng: nến M15 cấu thành range box (đã sắp cũ→mới theo time)."""
-    if not box_bars:
-        return ""
-    lines = [
-        "   📈 M15 range box (đã đóng, cũ→mới; giờ mở nến = MT5 server + UTC; mt5_pos=1..N = từ vừa đóng lùi, numpy=-1-N)",
-    ]
-    for seq, b in enumerate(box_bars, start=1):
-        lines.append(
-            f"      #{seq} mt5_pos={b['mt5_pos']} {b['t']} O={b['o']} H={b['h']} L={b['l']} C={b['c']}"
-        )
-    mn = min(x["l"] for x in box_bars)
-    mx = max(x["h"] for x in box_bars)
-    lines.append(f"      → min(low)={mn} max(high)={mx} (trùng range_low_3h / range_high_3h)")
-    return "\n".join(lines)
 
 
 def _v121_breakout_range_hi_lo(ctx, step_base, params):
@@ -800,10 +737,6 @@ def _rule_v121_block_debug_log(ctx, params):
     }
     if ctx is None:
         return out
-
-    box = ctx.get("range_m15_box_bars")
-    if box:
-        out["range_m15_box_lines"] = _v121_format_range_m15_box_lines(box)
 
     # Block 2 — breakout M5
     r_m5 = params.get("block_breakout_m5_ratio")
@@ -1423,12 +1356,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             # Gộp log block: dòng 1 = score + PrecheckStep; dòng 2 = Block + chi tiết (tránh wrap cắt "EntryScore")
             head = f"⏸️ [V121] {time_str} | {score_str} | {step_str}"
             block_line = f"   Block: {block_reason} | min_score>={min_sc}{block_detail}"
-            box_extra = log_info.get("range_m15_box_lines")
-            if box_extra:
-                box_extra = "\n" + box_extra
-            else:
-                box_extra = ""
-            full_text = f"{head}\n{block_line}{unsat_line}{box_extra}"
+            full_text = f"{head}\n{block_line}{unsat_line}"
             # Tránh spam cùng trạng thái mỗi giây (hai tick giá lệch nhẹ vẫn in một lần trong cửa sổ throttle)
             throttle_sec = float(params.get("block_log_throttle_seconds", 25))
             sig = (strategy_name, block_reason, entry_score, round(ps, 2))
