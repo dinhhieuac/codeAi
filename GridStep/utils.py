@@ -475,6 +475,32 @@ def place_sell_stop(symbol, volume, price, sl, tp, magic, comment, digits=None, 
     )
 
 
+def modify_pending_stop(symbol, order_ticket, price, sl, tp, digits=None, type_filling=None):
+    """
+    Sửa giá / SL / TP lệnh chờ (BUY_STOP / SELL_STOP). TRADE_ACTION_MODIFY.
+    Trả về kết quả order_send hoặc None.
+    """
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return None
+    if digits is None:
+        digits = getattr(info, "digits", 2)
+    if type_filling is None:
+        type_filling = mt5.ORDER_FILLING_FOK
+        if getattr(info, "filling_mode", 0) & 2:
+            type_filling = mt5.ORDER_FILLING_IOC
+    req = {
+        "action": mt5.TRADE_ACTION_MODIFY,
+        "order": int(order_ticket),
+        "symbol": symbol,
+        "price": round(float(price), digits),
+        "sl": round(float(sl), digits),
+        "tp": round(float(tp), digits),
+        "type_filling": type_filling,
+    }
+    return mt5.order_send(req)
+
+
 def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=None):
     """
     Lấy N lệnh đóng gần nhất chỉ của bot: symbol + magic; nếu comment_prefix có thì chỉ deal có comment bắt đầu bằng prefix.

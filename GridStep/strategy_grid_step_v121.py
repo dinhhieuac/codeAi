@@ -7,6 +7,7 @@ Grid Step Trading Bot V121 — clone từ V12 + theo document/v121.md:
 - V12.1 execution (parameters.v121_execution_enabled, mặc định true khi rule bật): một pending theo bias
   (mép range 67/33% + xác nhận wick nến M5), giá STOP từ low/high nến M5 ± buffer; rule/bias dùng mid thị trường;
   step SL/TP trong nhánh này = buffer-based clamp; grid legacy 2 pending vẫn ref quanh anchor.
+  V12.1: pending được recheck cập nhật theo mỗi nến M5 đóng (M15 chỉ bối cảnh); cập nhật giá chỉ khi |new-old| >= max(0.25*ExecutionStep, 2*point).
 Cooldown/pause riêng: grid_cooldown_v121.json, grid_pause_v121.json, last_exit_time_v121.json.
 parameters.lookback_range_hours: độ dài cửa sổ (giờ) để lấy high/low trên M15 cho range box (mặc định 3).
 """
@@ -16,12 +17,14 @@ import sys
 import sqlite3
 import os
 import json
+import hashlib
 from datetime import datetime, timedelta, timezone
 sys.path.append('..')
 from db import Database
 from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, place_buy_stop, place_sell_stop,
+    modify_pending_stop,
     get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
     check_autotrading_allowed,
 )
@@ -363,6 +366,53 @@ def _get_rates(symbol, timeframe, count):
     """
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     return rates if rates is not None and len(rates) >= 1 else None
+
+
+def _v121_last_closed_m5_open_ts(symbol):
+    """Unix mở nến M5 đã đóng gần nhất (rates[-2])."""
+    r = _get_rates(symbol, mt5.TIMEFRAME_M5, 3)
+    if r is None or len(r) < 2:
+        return None
+    return int(r[-2]["time"])
+
+
+def _v121_params_fingerprint(params):
+    """Hash parameters để phát hiện đổi config → hủy pending V12.1."""
+    if not params:
+        return ""
+    try:
+        blob = json.dumps(params, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return ""
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:24]
+
+
+def _v121_pending_implied_bias(pending_order):
+    t = pending_order.type
+    if t == mt5.ORDER_TYPE_BUY_STOP:
+        return "BUY"
+    if t == mt5.ORDER_TYPE_SELL_STOP:
+        return "SELL"
+    return None
+
+
+def _v121_pending_update_threshold_price(step_val, point, params):
+    frac = float(params.get("v121_pending_update_step_fraction", 0.25))
+    min_pts = int(params.get("v121_pending_update_min_points", 2))
+    return max(frac * float(step_val), min_pts * float(point))
+
+
+def _v121_clear_execution_armed_state():
+    """Xóa trạng thái arm V12.1 (bias/config/mốc M5 đã xử lý)."""
+    strategy_grid_step_logic._v121_armed_bias = None
+    strategy_grid_step_logic._v121_armed_params_sig = None
+    strategy_grid_step_logic._v121_last_processed_m5_close_ts = None
+
+
+def _v121_tp_leg_price(step_val, spread_tp_adj, min_leg_floor):
+    """Khoảng giá entry → TP: step − spread (parameters.spread), không nhỏ hơn min_leg_floor."""
+    adj = max(0.0, float(spread_tp_adj or 0))
+    return max(float(step_val) - adj, float(min_leg_floor))
 
 
 def _ema(close_arr, period):
@@ -1030,8 +1080,19 @@ def cancel_all_pending(symbol, magic, strategy_name=None, account_id=0, step=Non
     return len(orders)
 
 
-def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl_tp_price=5.0, info=None, step=None):
-    """Đồng bộ status lệnh chờ với MT5. Khi một lệnh khớp → hủy mọi pending còn lại (1 hoặc 2 lệnh tùy chế độ)."""
+def sync_grid_pending_status(
+    symbol,
+    magic,
+    strategy_name=None,
+    account_id=0,
+    sl_tp_price=5.0,
+    info=None,
+    step=None,
+    tp_spread_adj=0.0,
+    min_tp_leg_floor=0.0,
+):
+    """Đồng bộ status lệnh chờ với MT5. Khi một lệnh khớp → hủy mọi pending còn lại (1 hoặc 2 lệnh tùy chế độ).
+    TP log DB: khoảng TP = step − tp_spread_adj (tối thiểu min_tp_leg_floor); SL giữ nguyên step."""
     if strategy_name is None:
         strategy_name = STRATEGY_NAME_V121
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
@@ -1043,6 +1104,8 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
         key = round(float(p.price_open), digits)
         pos_by_price[key] = p
     step_val = float(sl_tp_price)
+    floor = float(min_tp_leg_floor) if min_tp_leg_floor else 0.0
+    tp_leg = _v121_tp_leg_price(step_val, tp_spread_adj, floor)
     filled_this_sync = False
     for row in db.get_grid_pending_by_status(strategy_name, symbol, "PENDING"):
         ticket, order_type, price = row["ticket"], row["order_type"], row["price"]
@@ -1055,9 +1118,9 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
             filled_this_sync = True
             entry = float(pos.price_open)
             if pos.type == mt5.ORDER_TYPE_BUY:
-                sl, tp = round(entry - step_val, digits), round(entry + step_val, digits)
+                sl, tp = round(entry - step_val, digits), round(entry + tp_leg, digits)
             else:
-                sl, tp = round(entry + step_val, digits), round(entry - step_val, digits)
+                sl, tp = round(entry + step_val, digits), round(entry - tp_leg, digits)
             if not db.order_exists(pos.ticket):
                 comment_db = strategy_name.replace("Grid_Step_", "GridStep_") if strategy_name else "GridStep_V121"
                 db.log_order(
@@ -1073,6 +1136,7 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
         n = cancel_all_pending(symbol, magic, strategy_name, account_id, step)
         if n > 0:
             print(f"   [V121] Đã hủy {n} lệnh chờ còn lại sau khi khớp.")
+        _v121_clear_execution_armed_state()
     return
 
 
@@ -1234,7 +1298,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         block_reason = ""
         log_info = {}
 
-    sync_grid_pending_status(symbol, magic, strategy_name, config.get("account"), sl_tp_price, info, step_filter)
+    spread_tp_cfg = float(params.get("spread", 0.5) or 0)
+    sync_grid_pending_status(
+        symbol,
+        magic,
+        strategy_name,
+        config.get("account"),
+        sl_tp_price,
+        info,
+        step_filter,
+        tp_spread_adj=spread_tp_cfg,
+        min_tp_leg_floor=min_distance,
+    )
     pendings = get_pending_orders(symbol, magic, step_filter)
 
     # Basket TP
@@ -1243,6 +1318,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"✅ [BASKET TP] V121 Profit {profit:.2f} >= {target_profit}, đóng tất cả.")
         close_all_positions(symbol, magic, step_filter)
         cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+        if v121_exec:
+            _v121_clear_execution_armed_state()
         save_last_exit_time(get_mt5_time_utc(symbol))
         msg = f"✅ Grid Step V121: Basket TP. Profit={profit:.2f} | Closed all."
         send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
@@ -1253,6 +1330,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"🛑 [BASKET SL] V121 Profit {profit:.2f} <= -{abs(basket_stop_loss_usd):.2f}, đóng tất cả.")
         close_all_positions(symbol, magic, step_filter)
         cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+        if v121_exec:
+            _v121_clear_execution_armed_state()
         save_last_exit_time(get_mt5_time_utc(symbol))
         msg = f"🛑 Grid Step V121: Basket SL. Profit={profit:.2f} | Closed all."
         send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
@@ -1267,6 +1346,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 remaining_min = max(1, int((remaining.total_seconds() + 59) // 60)) if remaining else consecutive_loss_pause_minutes
                 print(f"⏸️ [V121] Đang tạm dừng ({consecutive_loss_count} lệnh thua liên tiếp), chờ {consecutive_loss_pause_minutes} phút (còn {remaining_min} phút).")
                 strategy_grid_step_logic._last_pause_log_v121 = strategy_name
+            if v121_exec and get_pending_orders(symbol, magic, step_filter):
+                n_p = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                if n_p:
+                    _v121_clear_execution_armed_state()
+                    print(f"   [V121 V12.1] Pause: đã hủy {n_p} lệnh chờ.")
             return error_count, 0
         # Chỉ lấy lệnh của bot: MT5 history lọc theo comment_prefix (GridStep_V121/...), không lẫn bot khác
         comment_prefix = (strategy_name or STRATEGY_NAME_V121).replace("Grid_Step_", "GridStep_")
@@ -1280,6 +1364,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     pass
             if last_close_dt is None or mt5_now < last_close_dt + timedelta(minutes=consecutive_loss_pause_minutes):
                 n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                if v121_exec and n_cancelled:
+                    _v121_clear_execution_armed_state()
                 set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time_str)
                 print(f"⏸️ [V121] {consecutive_loss_count} lệnh thua liên tiếp → hủy {n_cancelled} lệnh chờ, tạm dừng {consecutive_loss_pause_minutes} phút.")
                 send_telegram(f"⏸️ Grid Step V121 tạm dừng: {consecutive_loss_count} lệnh thua liên tiếp.", config.get("telegram_token"), config.get("telegram_chat_id"))
@@ -1307,6 +1393,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                         did_pause = False
         if did_pause:
             n_cancelled = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+            if v121_exec and n_cancelled:
+                _v121_clear_execution_armed_state()
             set_paused(strategy_name, consecutive_loss_pause_minutes, from_time=last_close_time)
             print(f"⏸️ [V121] (DB) {consecutive_loss_count} lệnh thua → tạm dừng {consecutive_loss_pause_minutes} phút.")
             return error_count, 0
@@ -1317,13 +1405,14 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         return error_count, 0
     if len(positions) >= max_positions:
         return error_count, 0
-    # Đối xứng: tối đa 1 BUY + 1 SELL. V12.1: tối đa 1 pending (một phía).
+    # Legacy: tối đa 2 pending. V12.1: tối đa 1; >1 thì dọn.
     if v121_exec:
-        if len(pendings) >= 1:
-            return error_count, 0
-    else:
-        if len(pendings) == 2:
-            return error_count, 0
+        if len(pendings) > 1:
+            cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+            pendings = get_pending_orders(symbol, magic, step_filter)
+            _v121_clear_execution_armed_state()
+    elif len(pendings) == 2:
+        return error_count, 0
 
     # Log chi tiết điểm và PrecheckStep (rule/block/start; khác ExecutionStep buffer-based trong nhánh V12.1).
     if rule_enabled and log_info:
@@ -1382,16 +1471,30 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             n_c = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
             if n_c:
                 print(f"⏸️ [V121] Không re-arm (rule): {block_reason or 'score'} — đã hủy {n_c} lệnh chờ.")
+                if v121_exec:
+                    _v121_clear_execution_armed_state()
         return error_count, 0
 
     if not v121_exec and grid_step_price < spread_price:
         return error_count, 0
 
+    # V12.1: tắt v121_pending_recheck_on_m5 → giữ pending đến khớp (hành vi cũ).
+    if v121_exec and pendings and not params.get("v121_pending_recheck_on_m5", True):
+        return error_count, 0
+
+    # V12.1: cùng một nến M5 đã xử lý rồi → không recheck đặt lại (spread/block đã xử lý phía trên).
+    if v121_exec and pendings and params.get("v121_pending_recheck_on_m5", True):
+        m5_gate_ts = _v121_last_closed_m5_open_ts(symbol)
+        last_m5_done = getattr(strategy_grid_step_logic, "_v121_last_processed_m5_close_ts", None)
+        if m5_gate_ts is not None and last_m5_done is not None and m5_gate_ts == last_m5_done:
+            return error_count, 0
+
     if positions:
         cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
-    else:
-        if pendings:
-            cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+        if v121_exec:
+            _v121_clear_execution_armed_state()
+    elif not v121_exec and pendings:
+        cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
 
     current_price = get_market_price_now(symbol)
     if current_price is None:
@@ -1409,15 +1512,21 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         ctx["price"] = current_price
         sb = float(params.get("step_base", 5))
         bias = v121_bias_from_range_and_m5(ctx, sb)
-        if bias is None:
-            print(f"⏸️ [V121 V12.1] Chưa có bias. EntryScore={entry_score}")
-            return error_count, 0
         rates_m5 = ctx.get("rates_m5")
         if rates_m5 is None or len(rates_m5) < 2:
             return error_count, 0
         sig = rates_m5[-2]
         low_sig = float(sig["low"])
         high_sig = float(sig["high"])
+        m5_close_ts = int(rates_m5[-2]["time"])
+        pend_cur = get_pending_orders(symbol, magic, step_filter)
+        if bias is None:
+            if pend_cur:
+                cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                _v121_clear_execution_armed_state()
+                strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+            print(f"⏸️ [V121 V12.1] Chưa có bias. EntryScore={entry_score}")
+            return error_count, 0
         buf = v121_pending_entry_buffer(ctx, spread_price, min_distance_points, point)
         tick_pl = mt5.symbol_info_tick(symbol)
         if tick_pl is None:
@@ -1441,11 +1550,101 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             f"clamp=[{step_detail_v121['step_min']},{step_detail_v121['step_max']}] "
             f"-> ExecutionStep={step_val}"
         )
+        sell_price = round(low_sig - buf, digits)
+        buy_price = round(high_sig + buf, digits)
+        cur_fp = _v121_params_fingerprint(params)
         filling = mt5.ORDER_FILLING_IOC if (info.filling_mode & 2) else mt5.ORDER_FILLING_FOK
         comment = _comment_for_step(step_filter)
+        pend_cur = get_pending_orders(symbol, magic, step_filter)
+        if pend_cur and params.get("v121_pending_recheck_on_m5", True):
+            if getattr(strategy_grid_step_logic, "_v121_armed_bias", None) is None:
+                strategy_grid_step_logic._v121_armed_bias = _v121_pending_implied_bias(pend_cur[0])
+            armed_sig = getattr(strategy_grid_step_logic, "_v121_armed_params_sig", None)
+            if armed_sig is None:
+                strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+            elif armed_sig != cur_fp:
+                cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                pend_cur = get_pending_orders(symbol, magic, step_filter)
+                strategy_grid_step_logic._v121_armed_bias = None
+                strategy_grid_step_logic._v121_armed_params_sig = None
+                print("🔄 [V121 V12.1] Đổi config → hủy pending, sẽ đặt lại nếu đủ điều kiện.")
+            armed_bias = getattr(strategy_grid_step_logic, "_v121_armed_bias", None)
+            if pend_cur and armed_bias and bias != armed_bias:
+                cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                pend_cur = get_pending_orders(symbol, magic, step_filter)
+                strategy_grid_step_logic._v121_armed_bias = None
+                strategy_grid_step_logic._v121_armed_params_sig = None
+                print("🔄 [V121 V12.1] Đổi bias → hủy pending.")
+            if pend_cur:
+                implied = _v121_pending_implied_bias(pend_cur[0])
+                if implied and implied != bias:
+                    cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                    pend_cur = get_pending_orders(symbol, magic, step_filter)
+                    strategy_grid_step_logic._v121_armed_bias = None
+                    strategy_grid_step_logic._v121_armed_params_sig = None
+                    print("🔄 [V121 V12.1] Loại lệnh chờ không khớp bias → hủy.")
+            if pend_cur:
+                # Một pending một chiều: cập nhật SL/TP (và giá STOP nếu lệch >= ngưỡng) bằng MODIFY, không hủy+đặt.
+                ord0 = pend_cur[0]
+                new_entry = sell_price if bias == "SELL" else buy_price
+                old_entry = float(ord0.price_open)
+                thr = _v121_pending_update_threshold_price(step_val, point, params)
+                diff = abs(new_entry - old_entry)
+                tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
+                move_px = diff >= thr
+                use_px = round(new_entry if move_px else old_entry, digits)
+                if bias == "SELL":
+                    if bid > 0 and use_px >= (bid - min_pending_gap):
+                        print(
+                            f"⏸️ [V121 V12.1] MODIFY SELL_STOP bỏ qua: giá {use_px} >= bid-gap."
+                        )
+                        strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                        return error_count, 0
+                    nsl = round(use_px + step_val, digits)
+                    ntp = round(use_px - tp_leg_v, digits)
+                    otype = "SELL_STOP"
+                else:
+                    if ask > 0 and use_px <= (ask + min_pending_gap):
+                        print(
+                            f"⏸️ [V121 V12.1] MODIFY BUY_STOP bỏ qua: giá {use_px} <= ask+gap."
+                        )
+                        strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                        return error_count, 0
+                    nsl = round(use_px - step_val, digits)
+                    ntp = round(use_px + tp_leg_v, digits)
+                    otype = "BUY_STOP"
+                ocp = round(float(ord0.price_open), digits)
+                ocs = round(float(getattr(ord0, "sl", 0) or 0), digits)
+                octp = round(float(getattr(ord0, "tp", 0) or 0), digits)
+                if use_px == ocp and nsl == ocs and ntp == octp:
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
+                _tik = int(getattr(ord0, "ticket", 0) or 0)
+                rmod = (
+                    modify_pending_stop(symbol, _tik, use_px, nsl, ntp, digits=info.digits, type_filling=filling)
+                    if _tik
+                    else None
+                )
+                if rmod is not None and rmod.retcode == mt5.TRADE_RETCODE_DONE:
+                    db.log_grid_pending(int(_tik), strategy_name, symbol, otype, use_px, nsl, ntp, volume, acc)
+                    action = "dời giá + SL/TP" if move_px else "SL/TP"
+                    print(
+                        f"🔧 [V121 V12.1] MODIFY {otype} #{_tik} ({action}): px={use_px} SL={nsl} TP={ntp}"
+                    )
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
+                errm = mt5.last_error() if rmod is None else (rmod.retcode, rmod.comment)
+                print(f"⚠️ [V121 V12.1] MODIFY thất bại {errm} → hủy và đặt lại.")
+                cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                pend_cur = get_pending_orders(symbol, magic, step_filter)
+                strategy_grid_step_logic._v121_armed_bias = None
+                strategy_grid_step_logic._v121_armed_params_sig = None
 
         if bias == "SELL":
-            sell_price = round(low_sig - buf, digits)
             if bid > 0 and sell_price >= (bid - min_pending_gap):
                 print(
                     f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} >= bid-gap {round(bid - min_pending_gap, digits)} "
@@ -1461,9 +1660,10 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 cooldown_levels = load_cooldown_levels(cooldown_minutes)
                 if is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, digits, step_filter):
                     return error_count, 0
+            tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
             sl_sell = round(sell_price + step_val, digits)
-            tp_sell = round(sell_price - step_val, digits)
-            print(f"📤 [V121 V12.1] bias=SELL | SELL_STOP @ {sell_price} (low_M5={low_sig} buf={buf:.3f}) SL={sl_sell} TP={tp_sell}")
+            tp_sell = round(sell_price - tp_leg_v, digits)
+            print(f"📤 [V121 V12.1] bias=SELL | SELL_STOP @ {sell_price} (low_M5={low_sig} buf={buf:.3f}) SL={sl_sell} TP={tp_sell} (leg={tp_leg_v}=step-spread)")
             r = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
             if r is None:
                 err = mt5.last_error()
@@ -1479,9 +1679,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 save_cooldown_levels([sell_price], step_filter)
             db.log_grid_pending(r.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
             print(f"✅ Grid V121 V12.1: SELL_STOP @ {sell_price:.2f}")
+            strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+            strategy_grid_step_logic._v121_armed_bias = bias
+            strategy_grid_step_logic._v121_armed_params_sig = cur_fp
             return 0, 0
 
-        buy_price = round(high_sig + buf, digits)
         if ask > 0 and buy_price <= (ask + min_pending_gap):
             print(
                 f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} <= ask+gap {round(ask + min_pending_gap, digits)} "
@@ -1497,9 +1699,10 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             cooldown_levels = load_cooldown_levels(cooldown_minutes)
             if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, digits, step_filter):
                 return error_count, 0
+        tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
         sl_buy = round(buy_price - step_val, digits)
-        tp_buy = round(buy_price + step_val, digits)
-        print(f"📤 [V121 V12.1] bias=BUY | BUY_STOP @ {buy_price} (high_M5={high_sig} buf={buf:.3f}) SL={sl_buy} TP={tp_buy}")
+        tp_buy = round(buy_price + tp_leg_v, digits)
+        print(f"📤 [V121 V12.1] bias=BUY | BUY_STOP @ {buy_price} (high_M5={high_sig} buf={buf:.3f}) SL={sl_buy} TP={tp_buy} (leg={tp_leg_v}=step-spread)")
         r = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
         if r is None:
             err = mt5.last_error()
@@ -1515,6 +1718,9 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             save_cooldown_levels([buy_price], step_filter)
         db.log_grid_pending(r.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         print(f"✅ Grid V121 V12.1: BUY_STOP @ {buy_price:.2f}")
+        strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+        strategy_grid_step_logic._v121_armed_bias = bias
+        strategy_grid_step_logic._v121_armed_params_sig = cur_fp
         return 0, 0
 
     legacy_anchor_price = get_grid_anchor_price(symbol, magic, step_filter)
@@ -1537,15 +1743,16 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             return error_count, 0
 
     step_val = float(sl_tp_price)
+    tp_leg_l = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
     filling = mt5.ORDER_FILLING_FOK
     if info.filling_mode & 2:
         filling = mt5.ORDER_FILLING_IOC
 
     comment = _comment_for_step(step_filter)
     sl_buy = buy_price - step_val
-    tp_buy = buy_price + step_val
+    tp_buy = buy_price + tp_leg_l
     sl_sell = sell_price + step_val
-    tp_sell = sell_price - step_val
+    tp_sell = sell_price - tp_leg_l
 
     if tick is None:
         return error_count, 0
