@@ -8,6 +8,7 @@ Grid Step Trading Bot V121 — clone từ V12 + theo document/v121.md:
   (mép range 67/33% + xác nhận wick nến M5), giá STOP từ low/high nến M5 ± buffer; rule/bias dùng mid thị trường;
   step SL/TP trong nhánh này = buffer-based clamp; grid legacy 2 pending vẫn ref quanh anchor.
 Cooldown/pause riêng: grid_cooldown_v121.json, grid_pause_v121.json, last_exit_time_v121.json.
+parameters.lookback_range_hours: độ dài cửa sổ (giờ) để lấy high/low trên M15 cho range box (mặc định 3).
 """
 import MetaTrader5 as mt5
 import time
@@ -355,7 +356,11 @@ def sync_closed_orders_from_mt5(config, strategy_name=None):
 # ---------- Rule Start Step XAU (từ rule_start_step_xau.md) ----------
 
 def _get_rates(symbol, timeframe, count):
-    """Lấy nến từ MT5. copy_rates_from_pos(0, count): index 0 = bar hiện tại (đang hình thành), 1,2,... = quá khứ."""
+    """Lấy nến từ MT5 (copy_rates_from_pos).
+
+    Python MT5 trả mảng thời gian tăng dần: [0]=nến cũ nhất, [-1]=nến hiện tại (đang chạy),
+    [-2]=vừa đóng gần nhất. (Khác với chỉ số vị trí trong tài liệu MQL «từ hiện tại lùi».)
+    """
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     return rates if rates is not None and len(rates) >= 1 else None
 
@@ -372,7 +377,7 @@ def _ema(close_arr, period):
 
 
 def _atr(rates, period):
-    """rates: array từ MT5 (index 0 = bar mới nhất). Trả về ATR của bar đã đóng gần nhất (index 1)."""
+    """rates: copy_rates (cũ→mới): [0] cũ nhất, [-1] nến hiện tại. Trả về ATR tại nến đóng gần nhất (index -2)."""
     if rates is None or len(rates) < period + 2:
         return None
     # True range: max(high-low, |high-prev_close|, |low-prev_close|)
@@ -382,11 +387,10 @@ def _atr(rates, period):
         prev_close = float(rates[i - 1]["close"])
         tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
         tr_list.append(tr)
-    if len(tr_list) < period:
+    if len(tr_list) < period + 1:
         return None
-    # ATR = SMA(TR, period) tính tại vị trí tương ứng bar 1 (đã đóng gần nhất)
-    atr_val = sum(tr_list[:period]) / period
-    return atr_val
+    # SMA(TR) trên period nến kết thúc tại nến đóng gần nhất (bỏ TR của nến đang chạy tr[-1])
+    return sum(tr_list[-(period + 1) : -1]) / period
 
 
 def _median(arr):
@@ -397,62 +401,120 @@ def _median(arr):
     return (a[n // 2] + a[(n - 1) // 2]) / 2.0
 
 
+def _v121_lookback_range_hours(params):
+    """
+    Số giờ dùng để dựng box high/low trên M15 (parameters.lookback_range_hours, mặc định 3).
+    Cho phép số thập phân (vd 0.5 = 30 phút). Clamp 0.25h–96h.
+    """
+    try:
+        h = float(params.get("lookback_range_hours", 3))
+    except (TypeError, ValueError):
+        h = 3.0
+    return max(0.25, min(96.0, h))
+
+
+def _v121_lookback_m15_bars(params):
+    """Số nến M15 đã đóng cho range box = round(hours×4), tối thiểu 1."""
+    return max(1, int(round(_v121_lookback_range_hours(params) * 4)))
+
+
+def _v121_mt5_server_tz():
+    """Timezone cố định offset của broker/terminal: UTC + terminal_info.time_zone (giây). Khớp trục giờ chart khi để Server."""
+    ti = mt5.terminal_info()
+    sec = int(getattr(ti, "time_zone", 0) or 0) if ti is not None else 0
+    return timezone(timedelta(seconds=sec))
+
+
+def _v121_format_bar_open_ts(ts: int) -> str:
+    """Hiển thị thời điểm mở nến: giờ server (theo MT5) trước, UTC sau — cùng một instant, khác nhãn."""
+    ts = int(ts)
+    utc_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    srv_tz = _v121_mt5_server_tz()
+    srv_dt = utc_dt.astimezone(srv_tz)
+    off = srv_tz.utcoffset(srv_dt)
+    osec = int(off.total_seconds()) if off else 0
+    if osec % 3600 == 0 and osec != 0:
+        olab = f"GMT{osec // 3600:+d}"
+    elif osec == 0:
+        olab = "GMT+0"
+    else:
+        olab = f"GMT{osec:+d}s"
+    return f"{srv_dt.strftime('%Y-%m-%d %H:%M')} {olab} srv · {utc_dt.strftime('%Y-%m-%d %H:%M')} UTC"
+
+
 def rule_v121_fetch_context(symbol, params):
-    """Lấy toàn bộ dữ liệu cần cho rule: atr_m5, atr_m15, ema50_m15, range_3h, last3 M15, last3 M5 (breakout_3bars), M5 current/prev bar.
+    """Lấy toàn bộ dữ liệu cần cho rule: atr_m5, atr_m15, ema50_m15, range box M15 (độ dài lookback_range_hours), last3 M15, last3 M5 (breakout_3bars), M5 current/prev bar.
     Trả về dict hoặc None nếu thiếu dữ liệu."""
     atr_period_m5 = params.get("atr_period_m5", 20)
     ema_period_m15 = params.get("ema_period_m15", 50)
-    lookback_m15_bars = params.get("lookback_range_hours", 3) * 4  # 3h = 12 bars M15
+    lh_cfg = _v121_lookback_range_hours(params)
+    lookback_m15_bars = _v121_lookback_m15_bars(params)
     need_m5 = atr_period_m5 + 5
     need_m15 = max(ema_period_m15 + 5, lookback_m15_bars + 5, 3 + 5, 52)  # 52 để có ema50 và ema50_prev (slope)
     rates_m5 = _get_rates(symbol, mt5.TIMEFRAME_M5, need_m5)
     rates_m15 = _get_rates(symbol, mt5.TIMEFRAME_M15, need_m15)
     if rates_m5 is None or rates_m15 is None:
         return None
-    # M5: index 0 = current bar, 1 = last closed, ...
+    # M5: [-1]=đang chạy, [-2]=vừa đóng (mảng MT5 Python: cũ→mới)
     close_m5 = [float(r["close"]) for r in rates_m5]
     high_m5 = [float(r["high"]) for r in rates_m5]
     low_m5 = [float(r["low"]) for r in rates_m5]
     atr_m5 = _atr(rates_m5, atr_period_m5)
     if atr_m5 is None:
         return None
-    # Nến M5 hiện tại (index 0) biên độ
-    range_m5_current = high_m5[0] - low_m5[0] if high_m5[0] != low_m5[0] else 0.0
-    range_m5_prev = high_m5[1] - low_m5[1] if len(high_m5) > 1 else 0.0
+    range_m5_current = high_m5[-1] - low_m5[-1] if len(high_m5) and high_m5[-1] != low_m5[-1] else 0.0
+    range_m5_prev = high_m5[-2] - low_m5[-2] if len(high_m5) > 1 else 0.0
     # M15
     close_m15 = [float(r["close"]) for r in rates_m15]
     open_m15 = [float(r["open"]) for r in rates_m15]
     high_m15 = [float(r["high"]) for r in rates_m15]
     low_m15 = [float(r["low"]) for r in rates_m15]
-    # EMA50 M15 và slope (để Block 3 trend: EMA dốc cùng hướng 3 nến)
-    close_m15_old_to_new = close_m15[::-1]
+    # EMA50 M15: close_m15 đã cũ→mới (đúng thứ tự MT5), không đảo [::-1]
+    close_m15_old_to_new = close_m15
     ema50_m15 = _ema(close_m15_old_to_new, ema_period_m15)
     ema50_prev = _ema(close_m15_old_to_new[:-1], ema_period_m15) if len(close_m15_old_to_new) > ema_period_m15 else None
     ema50_slope = (ema50_m15 - ema50_prev) if (ema50_m15 is not None and ema50_prev is not None) else None
     atr_m15 = _atr(rates_m15, 20)
-    # Range 3h: 12 nến M15 đã đóng (index 1..12)
+    # Range box: N nến M15 đã đóng gần nhất: i=1 → [-2], i=2 → [-3], … (bỏ [-1] đang chạy)
     n_range = min(lookback_m15_bars, len(rates_m15) - 1)
     if n_range < 1:
         return None
-    range_high_3h = max(float(rates_m15[i]["high"]) for i in range(1, 1 + n_range))
-    range_low_3h = min(float(rates_m15[i]["low"]) for i in range(1, 1 + n_range))
-    # 3 nến M15 gần nhất đã đóng: index 1, 2, 3 (trend_strong, score…)
+    range_high_3h = max(float(rates_m15[-1 - i]["high"]) for i in range(1, 1 + n_range))
+    range_low_3h = min(float(rates_m15[-1 - i]["low"]) for i in range(1, 1 + n_range))
+    # mt5_pos i = «cách 1-based từ nến hiện tại»: 1 = vừa đóng (numpy index -2)
+    range_m15_box_bars = []
+    for i in range(1, 1 + n_range):
+        r = rates_m15[-1 - i]
+        ts = int(r["time"])
+        tstr = _v121_format_bar_open_ts(ts)
+        range_m15_box_bars.append({
+            "mt5_pos": i,
+            "ts": ts,
+            "t": tstr,
+            "o": round(float(r["open"]), 2),
+            "h": round(float(r["high"]), 2),
+            "l": round(float(r["low"]), 2),
+            "c": round(float(r["close"]), 2),
+        })
+    # Luôn sắp theo thời gian mở nến tăng dần (cũ → mới), tránh nhầm khi in
+    range_m15_box_bars_chrono = sorted(range_m15_box_bars, key=lambda b: b["ts"])
     last3_m15 = []
     for i in range(1, min(4, len(rates_m15))):
+        r = rates_m15[-1 - i]
         last3_m15.append({
-            "open": float(rates_m15[i]["open"]),
-            "high": float(rates_m15[i]["high"]),
-            "low": float(rates_m15[i]["low"]),
-            "close": float(rates_m15[i]["close"]),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
         })
-    # 3 nến M5 đã đóng gần nhất: index 1, 2, 3 (breakout_3bars)
     last3_m5 = []
     for i in range(1, min(4, len(rates_m5))):
+        r = rates_m5[-1 - i]
         last3_m5.append({
-            "open": float(rates_m5[i]["open"]),
-            "high": float(rates_m5[i]["high"]),
-            "low": float(rates_m5[i]["low"]),
-            "close": float(rates_m5[i]["close"]),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
         })
     # Median ATR M5 lookback (để so sánh volatility)
     atr_lookback = params.get("median_atr_lookback", 50)
@@ -470,11 +532,14 @@ def rule_v121_fetch_context(symbol, params):
     if median_atr_m5 is None or median_atr_m5 <= 0:
         median_atr_m5 = atr_m5  # fallback
     return {
-        "price": (float(rates_m5[0]["high"]) + float(rates_m5[0]["low"])) / 2.0 if rates_m5 is not None else None,
+        "price": (float(rates_m5[-1]["high"]) + float(rates_m5[-1]["low"])) / 2.0 if rates_m5 is not None else None,
         "atr_m5": atr_m5,
         "atr_m15": atr_m15,
         "ema50_m15": ema50_m15,
         "ema50_slope": ema50_slope,
+        "lookback_range_hours": lh_cfg,
+        "lookback_m15_bars": lookback_m15_bars,
+        "range_m15_box_bars": range_m15_box_bars_chrono,
         "range_high_3h": range_high_3h,
         "range_low_3h": range_low_3h,
         "last3_m15": last3_m15,
@@ -484,6 +549,23 @@ def rule_v121_fetch_context(symbol, params):
         "rates_m5": rates_m5,
         "median_atr_m5": median_atr_m5,
     }
+
+
+def _v121_format_range_m15_box_lines(box_bars):
+    """Chuỗi log nhiều dòng: nến M15 cấu thành range box (đã sắp cũ→mới theo time)."""
+    if not box_bars:
+        return ""
+    lines = [
+        "   📈 M15 range box (đã đóng, cũ→mới; giờ mở nến = MT5 server + UTC; mt5_pos=1..N = từ vừa đóng lùi, numpy=-1-N)",
+    ]
+    for seq, b in enumerate(box_bars, start=1):
+        lines.append(
+            f"      #{seq} mt5_pos={b['mt5_pos']} {b['t']} O={b['o']} H={b['h']} L={b['l']} C={b['c']}"
+        )
+    mn = min(x["l"] for x in box_bars)
+    mx = max(x["h"] for x in box_bars)
+    lines.append(f"      → min(low)={mn} max(high)={mx} (trùng range_low_3h / range_high_3h)")
+    return "\n".join(lines)
 
 
 def _v121_breakout_range_hi_lo(ctx, step_base, params):
@@ -711,9 +793,17 @@ def rule_v121_dynamic_step(ctx, params):
 def _rule_v121_block_debug_log(ctx, params):
     """Số liệu MT5 + ngưỡng config cho từng hard block (để log, tránh nhầm giữa breakout_m5 vs breakout_3bars)."""
     step_base_cfg = float(params.get("step_base", 5))
-    out = {"step_base_for_blocks": step_base_cfg}
+    out = {
+        "step_base_for_blocks": step_base_cfg,
+        "lookback_range_hours": _v121_lookback_range_hours(params),
+        "lookback_m15_bars": _v121_lookback_m15_bars(params),
+    }
     if ctx is None:
         return out
+
+    box = ctx.get("range_m15_box_bars")
+    if box:
+        out["range_m15_box_lines"] = _v121_format_range_m15_box_lines(box)
 
     # Block 2 — breakout M5
     r_m5 = params.get("block_breakout_m5_ratio")
@@ -739,16 +829,22 @@ def _rule_v121_block_debug_log(ctx, params):
     if r3 > 0:
         out["breakout_3bars_threshold"] = r3 * step_base_cfg
 
-    # Block 2c — range 3h
+    # Block 2c — range 3h (buffer = max(margin×step_base, pct×range_3h), giống rule_v121_hard_blocks)
     rm = params.get("block_breakout_range_margin")
     if rm is None:
         rm = 0.5
-    rm = float(rm)
-    out["block_breakout_range_margin"] = rm
-    if rm > 0:
+    rp = params.get("block_breakout_range_pct")
+    if rp is None:
+        rp = 0.20
+    out["block_breakout_range_margin"] = float(rm)
+    out["block_breakout_range_pct"] = float(rp)
+    br_en, hi_br, lo_br, buf_br, _, _, rs_dbg = _v121_breakout_range_hi_lo(ctx, step_base_cfg, params)
+    if br_en and hi_br is not None:
         out["mt5_price_rule"] = ctx.get("price")
-        out["breakout_range_high_line"] = ctx["range_high_3h"] + rm * step_base_cfg
-        out["breakout_range_low_line"] = ctx["range_low_3h"] - rm * step_base_cfg
+        out["breakout_range_buffer"] = round(buf_br, 3)
+        out["breakout_range_range_size_3h"] = round(rs_dbg, 3)
+        out["breakout_range_high_line"] = hi_br
+        out["breakout_range_low_line"] = lo_br
 
     # Block 5 — ATR nóng
     med = ctx.get("median_atr_m5") or ctx.get("atr_m5")
@@ -776,8 +872,9 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
     price = ctx["price"]
     mid_low = ctx["range_low_3h"] + range_size_3h * 0.33
     mid_high = ctx["range_low_3h"] + range_size_3h * 0.67
+    lh = _v121_lookback_range_hours(params)
     if mid_low < price < mid_high:
-        ret.append("price_mid_range: giá trong 33–67% range 3h (không start)")
+        ret.append(f"price_mid_range: giá trong 33–67% range box {lh:g}h (không start)")
 
     block_breakout_m5_ratio = params.get("block_breakout_m5_ratio")
     if block_breakout_m5_ratio is None:
@@ -798,8 +895,8 @@ def _rule_v121_unsatisfied_list(ctx, last_exit_dt, step_base, params, now_utc, c
     br_en, hi, lo, buf_u, _m_u, _p_u, _rs_u = _v121_breakout_range_hi_lo(ctx, step_base, params)
     if br_en and hi is not None and (price >= hi or price <= lo):
         ret.append(
-            f"breakout_range: giá {price:.3f} ngoài [lo−buffer, hi+buffer] (3h) "
-            f"buffer=max(margin×step,pct×range_3h)={buf_u:.3f}"
+            f"breakout_range: giá {price:.3f} ngoài [lo−buffer, hi+buffer] (box {lh:g}h) "
+            f"buffer=max(margin×step,pct×range_span)={buf_u:.3f}"
         )
 
     sum3_body_m15 = sum(abs(b["close"] - b["open"]) for b in ctx["last3_m15"])
@@ -863,9 +960,10 @@ def _format_v121_block_reason_detail(block_reason, log_info):
         )
     if br == "breakout_range":
         return (
-            f" | [breakout_range] margin={log_info.get('block_breakout_range_margin')} "
+            f" | [breakout_range] box={log_info.get('lookback_range_hours')}h "
+            f"margin={log_info.get('block_breakout_range_margin')} "
             f"pct={log_info.get('block_breakout_range_pct')} "
-            f"buffer={log_info.get('breakout_range_buffer')} range_3h={log_info.get('breakout_range_range_size_3h')} "
+            f"buffer={log_info.get('breakout_range_buffer')} range_span={log_info.get('breakout_range_range_size_3h')} "
             f"price={log_info.get('mt5_price_rule')} high_line={log_info.get('breakout_range_high_line')} "
             f"low_line={log_info.get('breakout_range_low_line')}"
         )
@@ -877,7 +975,8 @@ def _format_v121_block_reason_detail(block_reason, log_info):
             f"ngưỡng_1.5xmedian={log_info.get('atr_hot_threshold')}"
         )
     if br == "price_mid_range":
-        return " | [price_mid_range] giá trong 33–67% range 3h"
+        lh = log_info.get("lookback_range_hours", 3)
+        return f" | [price_mid_range] giá trong 33–67% range box {lh}h"
     return ""
 
 
@@ -1065,7 +1164,7 @@ def v121_bias_from_range_and_m5(ctx, step_base):
     rates_m5 = ctx.get("rates_m5")
     if rates_m5 is None or len(rates_m5) < 2:
         return None
-    sig = rates_m5[1]
+    sig = rates_m5[-2]
     o = float(sig["open"])
     h = float(sig["high"])
     l = float(sig["low"])
@@ -1324,7 +1423,12 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             # Gộp log block: dòng 1 = score + PrecheckStep; dòng 2 = Block + chi tiết (tránh wrap cắt "EntryScore")
             head = f"⏸️ [V121] {time_str} | {score_str} | {step_str}"
             block_line = f"   Block: {block_reason} | min_score>={min_sc}{block_detail}"
-            full_text = f"{head}\n{block_line}{unsat_line}"
+            box_extra = log_info.get("range_m15_box_lines")
+            if box_extra:
+                box_extra = "\n" + box_extra
+            else:
+                box_extra = ""
+            full_text = f"{head}\n{block_line}{unsat_line}{box_extra}"
             # Tránh spam cùng trạng thái mỗi giây (hai tick giá lệch nhẹ vẫn in một lần trong cửa sổ throttle)
             throttle_sec = float(params.get("block_log_throttle_seconds", 25))
             sig = (strategy_name, block_reason, entry_score, round(ps, 2))
@@ -1369,7 +1473,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     acc = config.get("account")
     cooldown_minutes = params.get("cooldown_minutes", 0)
 
-    # --- V12.1: một pending (SELL STOP hoặc BUY STOP) theo bias + nến M5 đóng [1] ---
+    # --- V12.1: một pending (SELL STOP hoặc BUY STOP) theo bias + nến M5 đóng gần nhất (rates_m5[-2]) ---
     if v121_exec:
         ctx = rule_v121_fetch_context(symbol, params)
         if ctx is None:
@@ -1383,7 +1487,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         rates_m5 = ctx.get("rates_m5")
         if rates_m5 is None or len(rates_m5) < 2:
             return error_count, 0
-        sig = rates_m5[1]
+        sig = rates_m5[-2]
         low_sig = float(sig["low"])
         high_sig = float(sig["high"])
         buf = v121_pending_entry_buffer(ctx, spread_price, min_distance_points, point)
@@ -1599,7 +1703,13 @@ if __name__ == "__main__":
         params = config.get("parameters", {})
         rule_enabled = params.get("rule_start_step_enabled", True)
         v121_exec = bool(params.get("v121_execution_enabled", True)) and rule_enabled
-        print(f"✅ Grid Step V121 Bot - Started | Rule: {'ON' if rule_enabled else 'OFF'} | V12.1 execution (1 pending/bias): {'ON' if v121_exec else 'OFF'}")
+        _lb_h = _v121_lookback_range_hours(params)
+        _lb_b = _v121_lookback_m15_bars(params)
+        print(
+            f"✅ Grid Step V121 Bot - Started | Rule: {'ON' if rule_enabled else 'OFF'} | "
+            f"V12.1 execution: {'ON' if v121_exec else 'OFF'} | "
+            f"Range box M15: {_lb_h}h (~{_lb_b} nến đóng, lookback_range_hours)"
+        )
         loop_count = 0
         try:
             while True:
