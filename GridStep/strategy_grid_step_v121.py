@@ -4,6 +4,9 @@ Grid Step Trading Bot V121 — clone từ V12 + theo document/v121.md:
 - Re-check Hard Block + Entry Score trước mọi lần re-arm (không chỉ lúc flat); nếu không đủ điều kiện → hủy pending, không đặt lại.
 - Basket stop-loss: đóng toàn bộ + hủy pending + last_exit + cooldown (giống basket TP).
 - Refresh pendings sau sync; pre-check giá BUY_STOP/SELL_STOP vs ask/bid; rollback nếu một phía fail.
+- V12.1 execution (parameters.v121_execution_enabled, mặc định true khi rule bật): một pending theo bias
+  (mép range 67/33% + thân nến M5 đóng), giá SELL/BUY STOP từ low/high nến tín hiệu M5 ± buffer;
+  tắt để giữ cặp BUY_STOP + SELL_STOP đối xứng quanh ref.
 Cooldown/pause riêng: grid_cooldown_v121.json, grid_pause_v121.json, last_exit_time_v121.json.
 """
 import MetaTrader5 as mt5
@@ -955,7 +958,7 @@ def cancel_all_pending(symbol, magic, strategy_name=None, account_id=0, step=Non
 
 
 def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl_tp_price=5.0, info=None, step=None):
-    """Đồng bộ status lệnh chờ với MT5. Rule: chỉ 1 BUY STOP + 1 SELL STOP; khi có lệnh khớp → hủy ngay lệnh pending còn lại."""
+    """Đồng bộ status lệnh chờ với MT5. Khi một lệnh khớp → hủy mọi pending còn lại (1 hoặc 2 lệnh tùy chế độ)."""
     if strategy_name is None:
         strategy_name = STRATEGY_NAME_V121
     pending_tickets = {o.ticket for o in get_pending_orders(symbol, magic, step)}
@@ -993,11 +996,10 @@ def sync_grid_pending_status(symbol, magic, strategy_name=None, account_id=0, sl
             print(f"✅ Grid V121 lệnh khớp: ticket={ticket} → position={pos.ticket} ({order_type} @ {price})")
         else:
             db.update_grid_pending_status(ticket, "CANCELLED")
-    # Rule: khi có lệnh vừa khớp → hủy ngay lệnh chờ còn lại (chỉ giữ tối đa 1 BUY STOP + 1 SELL STOP)
     if filled_this_sync:
         n = cancel_all_pending(symbol, magic, strategy_name, account_id, step)
         if n > 0:
-            print(f"   [V121] Đã hủy {n} lệnh chờ còn lại (rule: 1 BUY STOP + 1 SELL STOP, khi khớp hủy bên kia).")
+            print(f"   [V121] Đã hủy {n} lệnh chờ còn lại sau khi khớp.")
     return
 
 
@@ -1007,6 +1009,38 @@ def position_at_level(positions, level_price, point, tolerance_points=1):
         if abs(p.price_open - level_price) <= tol:
             return True
     return False
+
+
+def v121_bias_from_range_and_m5(ctx, step_base):
+    """
+    V12.1: mép trên range (>= 67% từ đáy) + nến M5 đóng giảm -> SELL;
+    mép dưới (<= 33%) + nến M5 đóng tăng -> BUY.
+    """
+    range_size = ctx["range_high_3h"] - ctx["range_low_3h"]
+    if range_size <= 0:
+        range_size = float(step_base)
+    price = ctx["price"]
+    top_zone = ctx["range_low_3h"] + range_size * 0.67
+    bottom_zone = ctx["range_low_3h"] + range_size * 0.33
+    rates_m5 = ctx.get("rates_m5")
+    if rates_m5 is None or len(rates_m5) < 2:
+        return None
+    sig = rates_m5[1]
+    o, c = float(sig["open"]), float(sig["close"])
+    bearish_m5 = c < o
+    bullish_m5 = c > o
+    if price >= top_zone and bearish_m5:
+        return "SELL"
+    if price <= bottom_zone and bullish_m5:
+        return "BUY"
+    return None
+
+
+def v121_pending_entry_buffer(ctx, spread_price, min_distance_points, point):
+    """buffer = max(0.15 * atr_m5, 1.5 * spread, min_distance_points * point)."""
+    atr_m5 = float(ctx.get("atr_m5") or 0)
+    md = float(min_distance_points) * float(point)
+    return max(0.15 * atr_m5, 1.5 * float(spread_price), md)
 
 
 def total_profit(symbol, magic, step=None):
@@ -1037,6 +1071,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     consecutive_loss_count = params.get("consecutive_loss_count", 2)
     consecutive_loss_pause_minutes = params.get("consecutive_loss_pause_minutes", 5)
     rule_enabled = params.get("rule_start_step_enabled", True)
+    # V12.1: một pending theo bias + M5; chỉ khi rule bật (cần context/score). Tắt = grid đối xứng 2 pending.
+    v121_exec = bool(params.get("v121_execution_enabled", True)) and rule_enabled
 
     info = mt5.symbol_info(symbol)
     if not info:
@@ -1152,9 +1188,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         return error_count, 0
     if len(positions) >= max_positions:
         return error_count, 0
-    # Rule: chỉ tối đa 1 BUY STOP + 1 SELL STOP; khi đã có 2 lệnh chờ thì chờ một bên khớp (sync sẽ hủy bên còn lại)
-    if len(pendings) == 2:
-        return error_count, 0
+    # Đối xứng: tối đa 1 BUY + 1 SELL. V12.1: tối đa 1 pending (một phía).
+    if v121_exec:
+        if len(pendings) >= 1:
+            return error_count, 0
+    else:
+        if len(pendings) == 2:
+            return error_count, 0
 
     # Log chi tiết điểm và step (mỗi vòng khi có log_info từ rule). Kèm giờ đang dùng (server MT5 hoặc local UTC).
     if rule_enabled and log_info:
@@ -1201,6 +1241,103 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
+    digits = getattr(info, "digits", 2)
+    acc = config.get("account")
+    cooldown_minutes = params.get("cooldown_minutes", 0)
+
+    # --- V12.1: một pending (SELL STOP hoặc BUY STOP) theo bias + nến M5 đóng [1] ---
+    if v121_exec:
+        ctx = rule_v121_fetch_context(symbol, params)
+        if ctx is None:
+            return error_count, 0
+        ctx["price"] = current_price
+        sb = float(params.get("step_base", 5))
+        bias = v121_bias_from_range_and_m5(ctx, sb)
+        if bias is None:
+            print(f"⏸️ [V121 V12.1] Chưa có bias (mép 67/33% range + thân nến M5 đóng). EntryScore={entry_score}")
+            return error_count, 0
+        rates_m5 = ctx.get("rates_m5")
+        if rates_m5 is None or len(rates_m5) < 2:
+            return error_count, 0
+        sig = rates_m5[1]
+        low_sig = float(sig["low"])
+        high_sig = float(sig["high"])
+        buf = v121_pending_entry_buffer(ctx, spread_price, min_distance_points, point)
+        tick_pl = mt5.symbol_info_tick(symbol)
+        if tick_pl is None:
+            return error_count, 0
+        bid, ask = tick_pl.bid, tick_pl.ask
+        step_val = float(sl_tp_price)
+        filling = mt5.ORDER_FILLING_IOC if (info.filling_mode & 2) else mt5.ORDER_FILLING_FOK
+        comment = _comment_for_step(step_filter)
+
+        if bias == "SELL":
+            sell_price = round(low_sig - buf, digits)
+            if bid > 0 and sell_price >= bid:
+                print(f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} >= bid {bid} (Invalid price).")
+                return error_count, 0
+            if position_at_level(positions, sell_price, point):
+                return error_count, 0
+            for p in positions:
+                if abs(p.price_open - sell_price) < min_distance:
+                    return error_count, 0
+            if cooldown_minutes > 0:
+                cooldown_levels = load_cooldown_levels(cooldown_minutes)
+                if is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, digits, step_filter):
+                    return error_count, 0
+            sl_sell = round(sell_price + step_val, digits)
+            tp_sell = round(sell_price - step_val, digits)
+            print(f"📤 [V121 V12.1] Step={grid_step_price:.3f} | bias=SELL | SELL_STOP @ {sell_price} (low_M5={low_sig} buf={buf:.3f}) SL={sl_sell} TP={tp_sell}")
+            r = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
+            if r is None:
+                err = mt5.last_error()
+                print(f"❌ SELL_STOP lỗi: {err}")
+                return error_count + 1, getattr(err, "code", 0)
+            if r.retcode != mt5.TRADE_RETCODE_DONE:
+                msg = f"❌ SELL_STOP failed: {r.retcode} {r.comment}"
+                if r.retcode == 10027:
+                    msg += " → Bật nút 'Algo Trading' trong MT5 để cho phép đặt lệnh."
+                print(msg)
+                return error_count + 1, r.retcode
+            if cooldown_minutes > 0:
+                save_cooldown_levels([sell_price], step_filter)
+            db.log_grid_pending(r.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
+            print(f"✅ Grid V121 V12.1: SELL_STOP @ {sell_price:.2f}")
+            return 0, 0
+
+        buy_price = round(high_sig + buf, digits)
+        if bid > 0 and buy_price <= ask:
+            print(f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} <= ask {ask} (Invalid price).")
+            return error_count, 0
+        if position_at_level(positions, buy_price, point):
+            return error_count, 0
+        for p in positions:
+            if abs(p.price_open - buy_price) < min_distance:
+                return error_count, 0
+        if cooldown_minutes > 0:
+            cooldown_levels = load_cooldown_levels(cooldown_minutes)
+            if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, digits, step_filter):
+                return error_count, 0
+        sl_buy = round(buy_price - step_val, digits)
+        tp_buy = round(buy_price + step_val, digits)
+        print(f"📤 [V121 V12.1] Step={grid_step_price:.3f} | bias=BUY | BUY_STOP @ {buy_price} (high_M5={high_sig} buf={buf:.3f}) SL={sl_buy} TP={tp_buy}")
+        r = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
+        if r is None:
+            err = mt5.last_error()
+            print(f"❌ BUY_STOP lỗi: {err}")
+            return error_count + 1, getattr(err, "code", 0)
+        if r.retcode != mt5.TRADE_RETCODE_DONE:
+            msg = f"❌ BUY_STOP failed: {r.retcode} {r.comment}"
+            if r.retcode == 10027:
+                msg += " → Bật nút 'Algo Trading' trong MT5 để cho phép đặt lệnh."
+            print(msg)
+            return error_count + 1, r.retcode
+        if cooldown_minutes > 0:
+            save_cooldown_levels([buy_price], step_filter)
+        db.log_grid_pending(r.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
+        print(f"✅ Grid V121 V12.1: BUY_STOP @ {buy_price:.2f}")
+        return 0, 0
+
     ref = round(current_price / grid_step_price) * grid_step_price
     ref = round(ref, info.digits)
     buy_price = round(ref + grid_step_price, info.digits)
@@ -1214,7 +1351,6 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         if abs(p.price_open - buy_price) < min_distance or abs(p.price_open - sell_price) < min_distance:
             return error_count, 0
 
-    cooldown_minutes = params.get("cooldown_minutes", 0)
     if cooldown_minutes > 0:
         cooldown_levels = load_cooldown_levels(cooldown_minutes)
         if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, info.digits, step_filter) or is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, info.digits, step_filter):
@@ -1257,7 +1393,6 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"✅ Grid V121: BUY_STOP @ {buy_price:.2f}, SELL_STOP @ {sell_price:.2f} | ref={ref}")
         if cooldown_minutes > 0:
             save_cooldown_levels([buy_price, sell_price], step_filter)
-        acc = config.get("account")
         db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_STOP", buy_price, sl_buy, tp_buy, volume, acc)
         db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_STOP", sell_price, sl_sell, tp_sell, volume, acc)
         return 0, 0
@@ -1312,7 +1447,8 @@ if __name__ == "__main__":
         check_autotrading_allowed()  # Cảnh báo nếu AutoTrading tắt trong MT5 (lỗi 10027)
         params = config.get("parameters", {})
         rule_enabled = params.get("rule_start_step_enabled", True)
-        print(f"✅ Grid Step V121 Bot - Started | Rule XAU: {'ON' if rule_enabled else 'OFF'}")
+        v121_exec = bool(params.get("v121_execution_enabled", True)) and rule_enabled
+        print(f"✅ Grid Step V121 Bot - Started | Rule: {'ON' if rule_enabled else 'OFF'} | V12.1 execution (1 pending/bias): {'ON' if v121_exec else 'OFF'}")
         loop_count = 0
         try:
             while True:
