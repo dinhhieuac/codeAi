@@ -5,8 +5,8 @@ Grid Step Trading Bot V121 — clone từ V12 + theo document/v121.md:
 - Basket stop-loss: đóng toàn bộ + hủy pending + last_exit + cooldown (giống basket TP).
 - Refresh pendings sau sync; pre-check giá BUY_STOP/SELL_STOP vs ask/bid; rollback nếu một phía fail.
 - V12.1 execution (parameters.v121_execution_enabled, mặc định true khi rule bật): một pending theo bias
-  (mép range 67/33% + thân nến M5 đóng), giá SELL/BUY STOP từ low/high nến tín hiệu M5 ± buffer;
-  tắt để giữ cặp BUY_STOP + SELL_STOP đối xứng quanh ref.
+  (mép range 67/33% + xác nhận wick nến M5), giá STOP từ low/high nến M5 ± buffer; rule/bias dùng mid thị trường;
+  step SL/TP trong nhánh này = buffer-based clamp; grid legacy 2 pending vẫn ref quanh anchor.
 Cooldown/pause riêng: grid_cooldown_v121.json, grid_pause_v121.json, last_exit_time_v121.json.
 """
 import MetaTrader5 as mt5
@@ -941,6 +941,18 @@ def get_grid_anchor_price(symbol, magic, step=None):
     return float(latest.price_open)
 
 
+def get_market_price_now(symbol):
+    """Mid bid/ask hiện tại — dùng cho rule V12.1 (không dùng anchor position)."""
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return None
+    bid = float(getattr(tick, "bid", 0.0) or 0.0)
+    ask = float(getattr(tick, "ask", 0.0) or 0.0)
+    if bid > 0 and ask > 0:
+        return (bid + ask) / 2.0
+    return bid or ask or None
+
+
 def get_pending_orders(symbol, magic, step=None):
     """Chỉ lấy lệnh chờ của bot V121: lọc theo symbol, magic và comment (GridStep_V121). Tránh cancel/đụng bot khác."""
     return get_pending_orders_bot(symbol, magic, comment=_comment_for_step(step))
@@ -1013,8 +1025,7 @@ def position_at_level(positions, level_price, point, tolerance_points=1):
 
 def v121_bias_from_range_and_m5(ctx, step_base):
     """
-    V12.1: mép trên range (>= 67% từ đáy) + nến M5 đóng giảm -> SELL;
-    mép dưới (<= 33%) + nến M5 đóng tăng -> BUY.
+    V12.1: mép range 67/33% + xác nhận thân/wick nến M5 đóng (wick >= 0.5 * body).
     """
     range_size = ctx["range_high_3h"] - ctx["range_low_3h"]
     if range_size <= 0:
@@ -1026,12 +1037,20 @@ def v121_bias_from_range_and_m5(ctx, step_base):
     if rates_m5 is None or len(rates_m5) < 2:
         return None
     sig = rates_m5[1]
-    o, c = float(sig["open"]), float(sig["close"])
+    o = float(sig["open"])
+    h = float(sig["high"])
+    l = float(sig["low"])
+    c = float(sig["close"])
+    body = abs(c - o)
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
     bearish_m5 = c < o
     bullish_m5 = c > o
-    if price >= top_zone and bearish_m5:
+    sell_confirm = bearish_m5 and upper_wick >= body * 0.5
+    buy_confirm = bullish_m5 and lower_wick >= body * 0.5
+    if price >= top_zone and sell_confirm:
         return "SELL"
-    if price <= bottom_zone and bullish_m5:
+    if price <= bottom_zone and buy_confirm:
         return "BUY"
     return None
 
@@ -1041,6 +1060,50 @@ def v121_pending_entry_buffer(ctx, spread_price, min_distance_points, point):
     atr_m5 = float(ctx.get("atr_m5") or 0)
     md = float(min_distance_points) * float(point)
     return max(0.15 * atr_m5, 1.5 * float(spread_price), md)
+
+
+def v121_dynamic_step_from_buffer(ctx, buf, params):
+    """
+    V12.1: step = clamp(max(1.05*atr_m5, 0.25*range_3h, 2.2*buffer), step_min, step_max).
+    """
+    step_base = float(params.get("step_base", 5))
+    step_min = float(params.get("step_min", step_base * 0.8))
+    step_max = float(params.get("step_max", step_base * 1.8))
+    atr_m5 = float(ctx.get("atr_m5") or step_base)
+    range_3h = float(ctx.get("range_high_3h", 0) - ctx.get("range_low_3h", 0))
+    if range_3h <= 0:
+        range_3h = step_base
+    raw = max(
+        1.05 * atr_m5,
+        0.25 * range_3h,
+        2.2 * float(buf),
+    )
+    step_val = max(step_min, min(step_max, raw))
+    detail = {
+        "mode": "v121_buffer_based",
+        "atr_m5": round(atr_m5, 3),
+        "range_3h": round(range_3h, 3),
+        "buffer": round(float(buf), 3),
+        "raw": round(raw, 3),
+        "step_min": step_min,
+        "step_max": step_max,
+    }
+    return round(step_val, 3), detail
+
+
+def v121_pending_guard_prices(info, point, spread_price):
+    stops_level_points = float(getattr(info, "trade_stops_level", 0) or 0)
+    freeze_level_points = float(getattr(info, "trade_freeze_level", 0) or 0)
+    stops_buffer = stops_level_points * point
+    freeze_buffer = freeze_level_points * point
+    extra_buffer = max(0.5 * float(spread_price), point)
+    min_pending_gap = max(stops_buffer, freeze_buffer, extra_buffer)
+    return {
+        "stops_buffer": stops_buffer,
+        "freeze_buffer": freeze_buffer,
+        "extra_buffer": extra_buffer,
+        "min_pending_gap": min_pending_gap,
+    }
 
 
 def total_profit(symbol, magic, step=None):
@@ -1090,11 +1153,15 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     positions = list(positions)
     pendings = get_pending_orders(symbol, magic, step_filter)
 
-    # Tính step động sớm để dùng cho sync/ensure và place (V121 rule). Giờ: ưu tiên MT5 server, fallback local UTC.
+    # Tính step động sớm để dùng cho sync/ensure và place (V121 rule). Giá cho rule: mid thị trường, không anchor position.
     mt5_now, time_src = get_mt5_time_utc(symbol, return_source=True)
-    current_price_early = get_grid_anchor_price(symbol, magic, step_filter)
+    current_price_early = get_market_price_now(symbol)
+    if current_price_early is None:
+        return error_count, 0
     if rule_enabled:
-        allow_start, dynamic_step, entry_score, block_reason, log_info = rule_v121_allow_start_and_step(symbol, current_price_early, params, mt5_now)
+        allow_start, dynamic_step, entry_score, block_reason, log_info = rule_v121_allow_start_and_step(
+            symbol, current_price_early, params, mt5_now
+        )
         grid_step_price = dynamic_step
         sl_tp_price = dynamic_step
     else:
@@ -1230,16 +1297,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 print(f"⏸️ [V121] Không re-arm (rule): {block_reason or 'score'} — đã hủy {n_c} lệnh chờ.")
         return error_count, 0
 
-    if grid_step_price < spread_price:
+    if not v121_exec and grid_step_price < spread_price:
         return error_count, 0
 
     if positions:
         cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
         if pendings:
             cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
+
+    current_price = get_market_price_now(symbol)
+    if current_price is None:
+        return error_count, 0
 
     digits = getattr(info, "digits", 2)
     acc = config.get("account")
@@ -1254,7 +1323,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         sb = float(params.get("step_base", 5))
         bias = v121_bias_from_range_and_m5(ctx, sb)
         if bias is None:
-            print(f"⏸️ [V121 V12.1] Chưa có bias (mép 67/33% range + thân nến M5 đóng). EntryScore={entry_score}")
+            print(f"⏸️ [V121 V12.1] Chưa có bias. EntryScore={entry_score}")
             return error_count, 0
         rates_m5 = ctx.get("rates_m5")
         if rates_m5 is None or len(rates_m5) < 2:
@@ -1266,15 +1335,33 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         tick_pl = mt5.symbol_info_tick(symbol)
         if tick_pl is None:
             return error_count, 0
-        bid, ask = tick_pl.bid, tick_pl.ask
-        step_val = float(sl_tp_price)
+        bid, ask = float(tick_pl.bid), float(tick_pl.ask)
+        guard = v121_pending_guard_prices(info, point, spread_price)
+        min_pending_gap = guard["min_pending_gap"]
+
+        step_val, step_detail_v121 = v121_dynamic_step_from_buffer(ctx, buf, params)
+        grid_step_price = step_val
+        sl_tp_price = step_val
+        if step_val < spread_price:
+            print(f"⏸️ [V121 V12.1] Step buffer-based {step_val:.3f} < spread {spread_price:.3f}.")
+            return error_count, 0
+        print(
+            f"📏 [V121 V12.1 Step] atr={step_detail_v121['atr_m5']} "
+            f"range_3h={step_detail_v121['range_3h']} "
+            f"buffer={step_detail_v121['buffer']} raw={step_detail_v121['raw']} "
+            f"clamp=[{step_detail_v121['step_min']},{step_detail_v121['step_max']}] "
+            f"-> step={step_val}"
+        )
         filling = mt5.ORDER_FILLING_IOC if (info.filling_mode & 2) else mt5.ORDER_FILLING_FOK
         comment = _comment_for_step(step_filter)
 
         if bias == "SELL":
             sell_price = round(low_sig - buf, digits)
-            if bid > 0 and sell_price >= bid:
-                print(f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} >= bid {bid} (Invalid price).")
+            if bid > 0 and sell_price >= (bid - min_pending_gap):
+                print(
+                    f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} >= bid-gap {round(bid - min_pending_gap, digits)} "
+                    f"(bid={bid}, gap={min_pending_gap:.3f})"
+                )
                 return error_count, 0
             if position_at_level(positions, sell_price, point):
                 return error_count, 0
@@ -1287,7 +1374,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     return error_count, 0
             sl_sell = round(sell_price + step_val, digits)
             tp_sell = round(sell_price - step_val, digits)
-            print(f"📤 [V121 V12.1] Step={grid_step_price:.3f} | bias=SELL | SELL_STOP @ {sell_price} (low_M5={low_sig} buf={buf:.3f}) SL={sl_sell} TP={tp_sell}")
+            print(f"📤 [V121 V12.1] bias=SELL | SELL_STOP @ {sell_price} (low_M5={low_sig} buf={buf:.3f}) SL={sl_sell} TP={tp_sell}")
             r = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
             if r is None:
                 err = mt5.last_error()
@@ -1306,8 +1393,11 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             return 0, 0
 
         buy_price = round(high_sig + buf, digits)
-        if bid > 0 and buy_price <= ask:
-            print(f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} <= ask {ask} (Invalid price).")
+        if ask > 0 and buy_price <= (ask + min_pending_gap):
+            print(
+                f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} <= ask+gap {round(ask + min_pending_gap, digits)} "
+                f"(ask={ask}, gap={min_pending_gap:.3f})"
+            )
             return error_count, 0
         if position_at_level(positions, buy_price, point):
             return error_count, 0
@@ -1320,7 +1410,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 return error_count, 0
         sl_buy = round(buy_price - step_val, digits)
         tp_buy = round(buy_price + step_val, digits)
-        print(f"📤 [V121 V12.1] Step={grid_step_price:.3f} | bias=BUY | BUY_STOP @ {buy_price} (high_M5={high_sig} buf={buf:.3f}) SL={sl_buy} TP={tp_buy}")
+        print(f"📤 [V121 V12.1] bias=BUY | BUY_STOP @ {buy_price} (high_M5={high_sig} buf={buf:.3f}) SL={sl_buy} TP={tp_buy}")
         r = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
         if r is None:
             err = mt5.last_error()
@@ -1338,7 +1428,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         print(f"✅ Grid V121 V12.1: BUY_STOP @ {buy_price:.2f}")
         return 0, 0
 
-    ref = round(current_price / grid_step_price) * grid_step_price
+    legacy_anchor_price = get_grid_anchor_price(symbol, magic, step_filter)
+    ref = round(legacy_anchor_price / grid_step_price) * grid_step_price
     ref = round(ref, info.digits)
     buy_price = round(ref + grid_step_price, info.digits)
     sell_price = round(ref - grid_step_price, info.digits)
