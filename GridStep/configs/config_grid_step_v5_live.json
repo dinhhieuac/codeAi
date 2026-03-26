@@ -26,7 +26,18 @@
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
         "max_loss_streak": 2,
+        "live_min_entry_gap_minutes": 5,
+        "history_days_back": 7,
+        "history_comment_prefix": "",
         "preferred_direction": "SELL",
-        "allow_reverse_entry": false
+        "allow_reverse_entry": false,
+        "demo_history_enabled": true,
+        "demo_history_config_file": "config_grid_step_v5.json",
+        "demo_history_account": 0,
+        "demo_history_password": "YOUR_DEMO_PASSWORD",
+        "demo_history_server": "YOUR_DEMO_SERVER",
+        "demo_history_mt5_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+        "demo_history_symbol": "XAUUSD",
+        "demo_history_magic": 100010
     }
 }
