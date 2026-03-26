@@ -8,6 +8,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 import os
 import sys
 import time
+import json
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +18,7 @@ import strategy_grid_step as base
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_v5.json")
 base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
+LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 
 
 def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridStep", days_back=3):
@@ -266,6 +268,24 @@ def _v5_history_score_gate(config):
     return True, f"high_score:{score}", features
 
 
+def _append_live_entry_log(record):
+    try:
+        with open(LIVE_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except IOError:
+        pass
+
+
+def _snapshot_bot_orders_positions(symbol, magic):
+    orders = mt5.orders_get(symbol=symbol) or []
+    orders = [o for o in orders if getattr(o, "magic", 0) == magic]
+    positions = mt5.positions_get(symbol=symbol) or []
+    positions = [p for p in positions if getattr(p, "magic", 0) == magic]
+    pending_tickets = sorted(int(getattr(o, "ticket", 0) or 0) for o in orders)
+    position_tickets = sorted(int(getattr(p, "ticket", 0) or 0) for p in positions)
+    return pending_tickets, position_tickets
+
+
 def run():
     args = sys.argv[1:]
     if args and args[0].strip() == "--check-db":
@@ -319,6 +339,12 @@ def run():
                     time.sleep(1)
                     continue
 
+                params = config.get("parameters", {})
+                v5_role = str(params.get("v5_role", "demo")).lower().strip()
+                sym = config["symbol"]
+                mag = config["magic"]
+                pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
+
                 if consecutive_loss_pause_enabled:
                     if steps_list is not None:
                         for step_val in steps_list:
@@ -336,10 +362,47 @@ def run():
                         config, consecutive_errors, step=None
                     )
 
+                post_pending, post_positions = _snapshot_bot_orders_positions(sym, mag)
+                new_pending = [t for t in post_pending if t not in pre_pending]
+                new_positions = [t for t in post_positions if t not in pre_positions]
+                if v5_role == "live" and (new_pending or new_positions):
+                    now_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    record = {
+                        "ts_utc": now_utc,
+                        "role": v5_role,
+                        "symbol": sym,
+                        "magic": mag,
+                        "gate_reason": gate_reason,
+                        "score": gate_features.get("score"),
+                        "conditions": {
+                            "min_gap_ok": gate_features.get("min_gap_ok"),
+                            "same_direction_as_prev": gate_features.get("same_direction_as_prev"),
+                            "signal_type": gate_features.get("signal_type"),
+                            "preferred_direction": gate_features.get("preferred_direction"),
+                            "sum_last_5_net_profit": gate_features.get("sum_last_5_net_profit"),
+                            "sum_last_10_net_profit": gate_features.get("sum_last_10_net_profit"),
+                            "win_count_last_5": gate_features.get("win_count_last_5"),
+                            "win_rate_last_10": gate_features.get("win_rate_last_10"),
+                            "loss_streak": gate_features.get("loss_streak"),
+                            "last_trade_result": gate_features.get("last_trade_result"),
+                            "current_open_below_prev_open": gate_features.get("current_open_below_prev_open"),
+                            "reverse_direction_from_prev": gate_features.get("reverse_direction_from_prev"),
+                            "blocked": gate_features.get("blocked"),
+                            "block_reason": gate_features.get("block_reason"),
+                        },
+                        "new_pending_tickets": new_pending,
+                        "new_position_tickets": new_positions,
+                        "pending_count_after": len(post_pending),
+                        "position_count_after": len(post_positions),
+                    }
+                    _append_live_entry_log(record)
+                    print(
+                        f"📝 [V5 Live] logged entry event: pending={new_pending} positions={new_positions} "
+                        f"score={gate_features.get('score')} -> {LIVE_LOG_FILE}"
+                    )
+
                 loop_count += 1
                 if loop_count % 30 == 0:
-                    sym = config["symbol"]
-                    mag = config["magic"]
                     pos = mt5.positions_get(symbol=sym, magic=mag) or []
                     ords = mt5.orders_get(symbol=sym) or []
                     ords = [o for o in ords if o.magic == mag]
