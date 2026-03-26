@@ -507,6 +507,7 @@ def run():
     consecutive_errors = 0
     if config and base.connect_mt5(config):
         params = config.get("parameters", {})
+        loop_interval_seconds = max(1.0, float(params.get("loop_interval_seconds", 10)))
         if "steps" in params and params["steps"] is not None:
             steps_config = params["steps"]
             if not isinstance(steps_config, list):
@@ -571,7 +572,7 @@ def run():
                     if prev is None or prev[0] != sig or (now_m - prev[1]) > 15:
                         print(f"⏸️ [V5 Gate] skip live entry: {gate_reason} | features={gate_features}")
                         run._last_gate_log = (sig, now_m)
-                    time.sleep(1)
+                    time.sleep(loop_interval_seconds)
                     continue
 
                 params = config.get("parameters", {})
@@ -594,7 +595,7 @@ def run():
                                 f"(min_gap={live_min_entry_gap_seconds}s), skip mở lệnh mới."
                             )
                             run._last_live_cd_log = (sig_cd, now_m)
-                        time.sleep(1)
+                        time.sleep(loop_interval_seconds)
                         continue
 
                 if consecutive_loss_pause_enabled:
@@ -684,7 +685,7 @@ def run():
                     consecutive_errors = 0
                     continue
 
-                time.sleep(1)
+                time.sleep(loop_interval_seconds)
         except KeyboardInterrupt:
             print("🛑 Grid Step Bot V5 Stopped")
             mt5.shutdown()

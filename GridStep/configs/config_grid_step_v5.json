@@ -25,6 +25,7 @@
         "min_gap_minutes": 5,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
+        "loop_interval_seconds": 10,
         "max_loss_streak": 2,
         "history_comment_prefix": "",
         "preferred_direction": "SELL",
