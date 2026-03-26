@@ -1,0 +1,31 @@
+{
+    "account": 463080275,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial17",
+    "mt5_path": "C:\\Program Files\\M8\\terminal64.exe",
+    "symbol": "XAUUSD",
+    "volume": 0.01,
+    "magic": 100010,
+    "max_positions": 5,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "270589269",
+    "parameters": {
+        "steps": [5],
+        "min_distance_points": 5,
+        "target_profit": 50.0,
+        "spread_max": 0.5,
+        "cooldown_minutes": 0,
+        "consecutive_loss_pause_enabled": false,
+        "consecutive_loss_count": 2,
+        "consecutive_loss_pause_minutes": 5,
+        "history_window": 20,
+        "profit_window_short": 5,
+        "profit_window_long": 10,
+        "min_gap_minutes": 5,
+        "entry_score_threshold": 6,
+        "medium_score_threshold": 5,
+        "max_loss_streak": 2,
+        "preferred_direction": "SELL",
+        "allow_reverse_entry": false
+    }
+}

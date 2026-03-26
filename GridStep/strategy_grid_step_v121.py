@@ -25,7 +25,7 @@ from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, place_buy_stop, place_sell_stop,
     modify_pending_stop,
-    get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
+    get_last_n_closed_profits_bot, get_recent_closed_entry_prices_bot, get_closed_deals_bot, close_positions_bot,
     check_autotrading_allowed,
 )
 
@@ -401,6 +401,61 @@ def _v121_pending_move_min_delta(buf, step_val, params):
     bfrac = float(params.get("v121_pending_update_buffer_fraction", 0.5))
     sfrac = float(params.get("v121_pending_update_step_fraction", 0.25))
     return max(bfrac * float(buf), sfrac * float(step_val))
+
+
+def _v121_recent_close_zone_price(step_val, params, min_distance, buf=None):
+    """
+    Bán kính giá (vùng): dùng chung cho (1) entry lệnh đóng gần đây, (2) entry position đang mở.
+    v121_recent_entry_zone_price > 0 → dùng trực tiếp; không thì max(min_distance, fraction * ExecutionStep, 0.5*buffer nếu có).
+    """
+    z = float(params.get("v121_recent_entry_zone_price", 0) or 0)
+    if z > 0:
+        return z
+    frac = float(params.get("v121_recent_entry_zone_step_fraction", 0.5))
+    out = max(float(min_distance), frac * float(step_val))
+    if buf is not None:
+        out = max(out, 0.5 * float(buf))
+    return out
+
+
+def _v121_recent_closed_entry_prices_cached(symbol, magic, lookback_minutes, comment_prefix, ttl_sec=5.0):
+    """Gom history MT5, cache vài giây để tránh gọi lặp mỗi tick."""
+    key = (symbol, magic, int(lookback_minutes), comment_prefix or "")
+    now_m = time.monotonic()
+    prev = getattr(strategy_grid_step_logic, "_v121_recent_entry_hist", None)
+    if prev and prev[0] == key and (now_m - prev[1]) <= ttl_sec:
+        return prev[2]
+    prices = get_recent_closed_entry_prices_bot(
+        symbol, magic, lookback_minutes, days_back=1, comment_prefix=comment_prefix
+    )
+    strategy_grid_step_logic._v121_recent_entry_hist = (key, now_m, prices)
+    return prices
+
+
+def _v121_conflict_with_recent_close(symbol, magic, level_price, zone, lookback_minutes, comment_prefix):
+    """
+    Trả về giá entry lịch sử gây xung đột nếu |level - entry| <= zone trong cửa lookback; ngược lại None.
+    """
+    if lookback_minutes <= 0 or zone <= 0:
+        return None
+    prices = _v121_recent_closed_entry_prices_cached(symbol, magic, lookback_minutes, comment_prefix)
+    lp = float(level_price)
+    for ep in prices:
+        if abs(lp - float(ep)) <= zone:
+            return float(ep)
+    return None
+
+
+def _v121_conflict_with_open_position(positions, level_price, zone):
+    """Trả về price_open nếu pending/level trùng vùng với một position đang mở (|Δ| <= zone)."""
+    if zone <= 0 or not positions:
+        return None
+    lp = float(level_price)
+    for p in positions:
+        ep = float(p.price_open)
+        if abs(ep - lp) <= zone:
+            return ep
+    return None
 
 
 def _v121_clear_execution_armed_state():
@@ -1253,6 +1308,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     params = config.get("parameters", {})
     strategy_name = params.get("strategy_name", STRATEGY_NAME_V121)
     step_filter = None
+    comment_prefix = (strategy_name or STRATEGY_NAME_V121).replace("Grid_Step_", "GridStep_")
     min_distance_points = params.get("min_distance_points", 5)
     max_positions = config.get("max_positions", 5)
     target_profit = params.get("target_profit", 50.0)
@@ -1355,7 +1411,6 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     print(f"   [V121 V12.1] Pause: đã hủy {n_p} lệnh chờ.")
             return error_count, 0
         # Chỉ lấy lệnh của bot: MT5 history lọc theo comment_prefix (GridStep_V121/...), không lẫn bot khác
-        comment_prefix = (strategy_name or STRATEGY_NAME_V121).replace("Grid_Step_", "GridStep_")
         profits, last_close_time_str = get_last_n_closed_profits_bot(symbol, magic, consecutive_loss_count, days_back=1, comment_prefix=comment_prefix)
         if len(profits) >= consecutive_loss_count and all((p or 0) < 0 for p in profits):
             last_close_dt = None
@@ -1554,6 +1609,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         )
         sell_price = round(low_sig - buf, digits)
         buy_price = round(high_sig + buf, digits)
+        recent_block_min = int(params.get("v121_recent_entry_block_minutes", 0) or 0)
+        zone_recent = _v121_recent_close_zone_price(step_val, params, min_distance, buf)
         cur_fp = _v121_params_fingerprint(params)
         filling = mt5.ORDER_FILLING_IOC if (info.filling_mode & 2) else mt5.ORDER_FILLING_FOK
         comment = _comment_for_step(step_filter)
@@ -1607,6 +1664,28 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     return 0, 0
                 tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
                 use_px = round(new_entry, digits)
+                rc = _v121_conflict_with_recent_close(
+                    symbol, magic, use_px, zone_recent, recent_block_min, comment_prefix
+                )
+                if rc is not None:
+                    print(
+                        f"⏸️ [V121 V12.1] MODIFY bỏ qua: {use_px} trong vùng entry vừa đóng @ {rc} "
+                        f"(±{zone_recent:.2f}, {recent_block_min}m)"
+                    )
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
+                opx = _v121_conflict_with_open_position(positions, use_px, zone_recent)
+                if opx is not None:
+                    print(
+                        f"⏸️ [V121 V12.1] MODIFY bỏ qua: {use_px} trong vùng position mở @ {opx} "
+                        f"(±{zone_recent:.2f})"
+                    )
+                    strategy_grid_step_logic._v121_last_processed_m5_close_ts = m5_close_ts
+                    strategy_grid_step_logic._v121_armed_bias = bias
+                    strategy_grid_step_logic._v121_armed_params_sig = cur_fp
+                    return 0, 0
                 if bias == "SELL":
                     if bid > 0 and use_px >= (bid - min_pending_gap):
                         print(
@@ -1667,14 +1746,26 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                     f"(bid={bid}, gap={min_pending_gap:.3f})"
                 )
                 return error_count, 0
-            if position_at_level(positions, sell_price, point):
+            opx = _v121_conflict_with_open_position(positions, sell_price, zone_recent)
+            if opx is not None:
+                print(
+                    f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} gần entry position mở @ {opx} "
+                    f"(±{zone_recent:.2f})"
+                )
                 return error_count, 0
-            for p in positions:
-                if abs(p.price_open - sell_price) < min_distance:
-                    return error_count, 0
             if cooldown_minutes > 0:
                 cooldown_levels = load_cooldown_levels(cooldown_minutes)
                 if is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, digits, step_filter):
+                    return error_count, 0
+            if recent_block_min > 0:
+                rc = _v121_conflict_with_recent_close(
+                    symbol, magic, sell_price, zone_recent, recent_block_min, comment_prefix
+                )
+                if rc is not None:
+                    print(
+                        f"⏸️ [V121 V12.1] SELL_STOP skip: {sell_price} gần entry đóng gần @ {rc} "
+                        f"(±{zone_recent:.2f}, {recent_block_min}m)"
+                    )
                     return error_count, 0
             tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
             sl_sell = round(sell_price + step_val, digits)
@@ -1707,14 +1798,26 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
                 f"(ask={ask}, gap={min_pending_gap:.3f})"
             )
             return error_count, 0
-        if position_at_level(positions, buy_price, point):
+        opx = _v121_conflict_with_open_position(positions, buy_price, zone_recent)
+        if opx is not None:
+            print(
+                f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} gần entry position mở @ {opx} "
+                f"(±{zone_recent:.2f})"
+            )
             return error_count, 0
-        for p in positions:
-            if abs(p.price_open - buy_price) < min_distance:
-                return error_count, 0
         if cooldown_minutes > 0:
             cooldown_levels = load_cooldown_levels(cooldown_minutes)
             if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, digits, step_filter):
+                return error_count, 0
+        if recent_block_min > 0:
+            rc = _v121_conflict_with_recent_close(
+                symbol, magic, buy_price, zone_recent, recent_block_min, comment_prefix
+            )
+            if rc is not None:
+                print(
+                    f"⏸️ [V121 V12.1] BUY_STOP skip: {buy_price} gần entry đóng gần @ {rc} "
+                    f"(±{zone_recent:.2f}, {recent_block_min}m)"
+                )
                 return error_count, 0
         tp_leg_v = _v121_tp_leg_price(step_val, spread_tp_cfg, min_distance)
         sl_buy = round(buy_price - step_val, digits)
@@ -1747,17 +1850,38 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     buy_price = round(ref + grid_step_price, info.digits)
     sell_price = round(ref - grid_step_price, info.digits)
 
-    if position_at_level(positions, buy_price, point):
+    zone_recent_legacy = _v121_recent_close_zone_price(float(grid_step_price), params, min_distance, None)
+    opx_b = _v121_conflict_with_open_position(positions, buy_price, zone_recent_legacy)
+    opx_s = _v121_conflict_with_open_position(positions, sell_price, zone_recent_legacy)
+    if opx_b is not None:
+        print(
+            f"⏸️ [V121] Legacy: BUY_STOP {buy_price} gần position mở @ {opx_b} (±{zone_recent_legacy:.2f})"
+        )
         return error_count, 0
-    if position_at_level(positions, sell_price, point):
+    if opx_s is not None:
+        print(
+            f"⏸️ [V121] Legacy: SELL_STOP {sell_price} gần position mở @ {opx_s} (±{zone_recent_legacy:.2f})"
+        )
         return error_count, 0
-    for p in positions:
-        if abs(p.price_open - buy_price) < min_distance or abs(p.price_open - sell_price) < min_distance:
-            return error_count, 0
 
     if cooldown_minutes > 0:
         cooldown_levels = load_cooldown_levels(cooldown_minutes)
         if is_level_in_cooldown(cooldown_levels, buy_price, cooldown_minutes, info.digits, step_filter) or is_level_in_cooldown(cooldown_levels, sell_price, cooldown_minutes, info.digits, step_filter):
+            return error_count, 0
+
+    recent_block_min = int(params.get("v121_recent_entry_block_minutes", 0) or 0)
+    if recent_block_min > 0:
+        rb = _v121_conflict_with_recent_close(
+            symbol, magic, buy_price, zone_recent_legacy, recent_block_min, comment_prefix
+        )
+        rs = _v121_conflict_with_recent_close(
+            symbol, magic, sell_price, zone_recent_legacy, recent_block_min, comment_prefix
+        )
+        if rb is not None or rs is not None:
+            print(
+                f"⏸️ [V121] Legacy: bỏ qua grid — BUY {buy_price} hoặc SELL {sell_price} "
+                f"gần entry vừa đóng (±{zone_recent_legacy:.2f}, {recent_block_min}m; conflict buy={rb} sell={rs})"
+            )
             return error_count, 0
 
     step_val = float(sl_tp_price)

@@ -551,6 +551,59 @@ def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=
     return profits, last_close_time_str
 
 
+def get_recent_closed_entry_prices_bot(symbol, magic, lookback_minutes, days_back=1, comment_prefix=None):
+    """
+    Giá vào (DEAL_ENTRY_IN) của các position đã đóng trong lookback_minutes gần nhất.
+    Chỉ lệnh bot: symbol + magic; comment_prefix nếu có thì prefix comment (GridStep_...).
+    Trả về list giá (float), mới đóng trước (theo thời điểm deal OUT cuối).
+    """
+    if lookback_minutes <= 0:
+        return []
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days_back)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    if not deals:
+        return []
+    now_ts = datetime.now().timestamp()
+    cutoff = now_ts - lookback_minutes * 60
+    by_position = {}
+    for d in deals:
+        if getattr(d, "magic", 0) != magic:
+            continue
+        if getattr(d, "symbol", "") != symbol:
+            continue
+        if comment_prefix is not None:
+            c = (getattr(d, "comment", "") or "").strip()
+            if not c.startswith(comment_prefix):
+                continue
+        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {"in_price": None, "out_time": None}
+        if d.entry == mt5.DEAL_ENTRY_IN:
+            by_position[pid]["in_price"] = getattr(d, "price", None)
+        elif d.entry == mt5.DEAL_ENTRY_OUT:
+            t = getattr(d, "time", None)
+            if t is not None:
+                prev = by_position[pid].get("out_time")
+                if prev is None or t >= prev:
+                    by_position[pid]["out_time"] = t
+    rows = []
+    for pid, v in by_position.items():
+        op = v.get("out_time")
+        ip = v.get("in_price")
+        if op is None or ip is None:
+            continue
+        if op < cutoff:
+            continue
+        rows.append((float(ip), op))
+    rows.sort(key=lambda x: x[1], reverse=True)
+    return [r[0] for r in rows]
+
+
 def get_closed_deals_bot(symbol, magic, days_back=1, comment_prefix=None):
     """
     Lấy các position đã đóng chỉ của bot: symbol + magic; nếu comment_prefix có thì chỉ deal có comment bắt đầu bằng prefix.

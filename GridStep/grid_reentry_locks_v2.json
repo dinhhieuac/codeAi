@@ -719,6 +719,90 @@
       "active": true,
       "created_at": "2026-03-25T07:09:01.134911Z",
       "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4530.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4520.0,
+      "active": true,
+      "created_at": "2026-03-26T03:04:56.274566Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4515.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4505.0,
+      "active": true,
+      "created_at": "2026-03-26T03:04:56.278565Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 4430.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 4440.0,
+      "active": true,
+      "created_at": "2026-03-26T10:01:26.373844Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4435.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4425.0,
+      "active": true,
+      "created_at": "2026-03-26T10:01:26.377843Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "SELL",
+      "entry_price": 4420.0,
+      "unlock_rule": "ask_gte",
+      "unlock_price": 4430.0,
+      "active": true,
+      "created_at": "2026-03-26T10:01:26.380845Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4425.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4415.0,
+      "active": true,
+      "created_at": "2026-03-26T10:01:26.383844Z",
+      "reason": "SL"
+    },
+    {
+      "strategy_name": "Grid_V2_Step_5.0",
+      "symbol": "XAUUSD",
+      "step": 5.0,
+      "side": "BUY",
+      "entry_price": 4475.0,
+      "unlock_rule": "bid_lte",
+      "unlock_price": 4465.0,
+      "active": true,
+      "created_at": "2026-03-26T10:01:26.386846Z",
+      "reason": "SL"
     }
   ]
 }
