@@ -216,6 +216,11 @@ def _is_blocked(features, max_loss_streak=2):
 
 def _v5_history_score_gate(config):
     params = config.get("parameters", {})
+    v5_role = str(params.get("v5_role", "demo")).lower().strip()
+    # Demo phải luôn chạy như bot gốc (không bị gate chặn).
+    if v5_role != "live":
+        return True, "demo_mode_no_gate", {"role": v5_role}
+
     history_window = int(params.get("history_window", 20))
     min_gap_minutes = float(params.get("min_gap_minutes", 5))
     entry_score_threshold = int(params.get("entry_score_threshold", 6))
@@ -235,7 +240,7 @@ def _v5_history_score_gate(config):
         symbol, magic, history_window=history_window, comment_prefix="GridStep", days_back=3
     )
     if len(closed) < 5:
-        return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed)}
+        return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed), "role": v5_role}
 
     features = _build_score_features(
         closed, current_mid_price, preferred_direction=preferred_direction, min_gap_minutes=min_gap_minutes

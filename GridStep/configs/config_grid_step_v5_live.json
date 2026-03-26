@@ -1,8 +1,8 @@
 {
-    "account": 0,
-    "password": "YOUR_REAL_PASSWORD",
-    "server": "YOUR_REAL_SERVER",
-    "mt5_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+    "account": 415420110,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Trial14",
+    "mt5_path": "C:\\Program Files\\M12\\terminal64.exe",
     "symbol": "XAUUSD",
     "volume": 0.01,
     "magic": 100510,
@@ -10,6 +10,7 @@
     "telegram_token": "",
     "telegram_chat_id": "",
     "parameters": {
+        "v5_role": "live",
         "steps": [5],
         "min_distance_points": 5,
         "target_profit": 50.0,
