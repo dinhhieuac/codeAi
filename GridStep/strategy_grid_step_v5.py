@@ -136,14 +136,64 @@ def _calc_streak(closed):
     return win_streak, loss_streak
 
 
-def _build_score_features(closed, current_mid_price, preferred_direction="SELL", min_gap_minutes=5):
+def _v5_gate_step_val(config):
+    p = config.get("parameters", {})
+    steps = p.get("steps")
+    if steps is not None:
+        if isinstance(steps, list) and len(steps) > 0:
+            return float(steps[0])
+        return float(steps)
+    return float(p.get("step", 5) or 5)
+
+
+def _v5_preview_grid_levels(config):
+    """
+    Giá BUY_STOP / SELL_STOP dự kiến (cùng công thức anchor + ref như strategy_grid_step),
+    không hủy pending — chỉ đọc giá để chấm entry score.
+    """
+    symbol = config["symbol"]
+    magic = config["magic"]
+    step_val = _v5_gate_step_val(config)
+    step_filter = step_val
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return None
+    current_price = base.get_grid_anchor_price(symbol, magic, step_filter)
+    ref = round(current_price / step_val) * step_val
+    ref = round(ref, info.digits)
+    buy_price = round(ref + step_val, info.digits)
+    sell_price = round(ref - step_val, info.digits)
+    return {
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "ref": ref,
+        "step": step_val,
+        "anchor": float(current_price),
+    }
+
+
+def _signals_sorted_by_open_time(closed_trades):
+    """Chuỗi tín hiệu đã khớp (theo thời điểm mở), không dùng close_time."""
+    return sorted(closed_trades, key=lambda x: x["open_time"], reverse=True)
+
+
+def _build_v5_features(
+    closed,
+    preferred_direction,
+    min_gap_minutes,
+    preview,
+    current_signal_ts,
+):
+    """
+    State: từ lệnh đã đóng (sort theo close_time — list closed đã như vậy).
+    Entry: tín hiệu sắp vào = hướng ưu tiên + giá lưới dự kiến; so với tín hiệu trước (open_time).
+    """
     c5 = closed[:5]
     c10 = closed[:10]
     if not c5:
         return {"ready": False, "reason": "not_enough_closed_trades"}
 
-    last_trade = c5[0]
-    prev_trade = closed[1] if len(closed) > 1 else None
+    last_closed = c5[0]
     sum5 = sum(t["net_profit"] for t in c5)
     sum10 = sum(t["net_profit"] for t in c10) if c10 else 0.0
     win5 = sum(1 for t in c5 if t["net_profit"] > 0)
@@ -153,20 +203,33 @@ def _build_score_features(closed, current_mid_price, preferred_direction="SELL",
     pf10 = (gross_profit10 / gross_loss10) if gross_loss10 > 0 else float("inf")
     win_streak, loss_streak = _calc_streak(closed)
 
-    same_direction_as_prev = bool(prev_trade and last_trade["type"] == prev_trade["type"])
-    reverse_direction_from_prev = bool(prev_trade and last_trade["type"] != prev_trade["type"])
-    gap_minutes_from_prev_signal = (
-        (last_trade["open_time"] - prev_trade["open_time"]) / 60.0 if prev_trade else 999.0
-    )
-    previous_open_price = float(prev_trade["open_price"]) if prev_trade else float(last_trade["open_price"])
-    current_open_below_prev_open = float(current_mid_price) < previous_open_price
-    current_open_above_prev_open = float(current_mid_price) > previous_open_price
-    last_trade_result = "Win" if last_trade["net_profit"] > 0 else "Loss"
-    signal_type = last_trade["type"]
-    min_gap_ok = gap_minutes_from_prev_signal >= float(min_gap_minutes)
+    last_trade_result = "Win" if last_closed["net_profit"] > 0 else "Loss"
+
+    sig_open_order = _signals_sorted_by_open_time(closed)
+    prev_sig = sig_open_order[0] if sig_open_order else None
+
+    pref = str(preferred_direction or "SELL").upper()
+    if pref not in ("BUY", "SELL"):
+        pref = "SELL"
+
+    cur_type = pref
+    cur_px = float(preview["buy_price"]) if cur_type == "BUY" else float(preview["sell_price"])
+
+    prev_type = prev_sig["type"] if prev_sig else None
+    prev_open = float(prev_sig["open_price"]) if prev_sig else cur_px
+    prev_open_ts = int(prev_sig["open_time"]) if prev_sig else 0
+
+    same_dir = bool(prev_type and cur_type == prev_type)
+    reverse_dir = bool(prev_type and cur_type != prev_type)
+    gap_min = (float(current_signal_ts) - float(prev_open_ts)) / 60.0 if prev_sig else 999.0
+    min_gap_ok = gap_min >= float(min_gap_minutes)
+
+    cur_below_prev = cur_px < prev_open
+    cur_above_prev = cur_px > prev_open
 
     return {
         "ready": True,
+        "min_gap_minutes": float(min_gap_minutes),
         "last_trade_result": last_trade_result,
         "sum_last_5_net_profit": sum5,
         "avg_last_5_net_profit": (sum5 / len(c5)),
@@ -178,58 +241,88 @@ def _build_score_features(closed, current_mid_price, preferred_direction="SELL",
         "profit_factor_last_10": pf10,
         "win_streak": win_streak,
         "loss_streak": loss_streak,
-        "same_direction_as_prev": same_direction_as_prev,
-        "reverse_direction_from_prev": reverse_direction_from_prev,
-        "gap_minutes_from_prev_signal": gap_minutes_from_prev_signal,
-        "previous_open_price": previous_open_price,
-        "current_open_below_prev_open": current_open_below_prev_open,
-        "current_open_above_prev_open": current_open_above_prev_open,
-        "signal_type": signal_type,
-        "preferred_direction": preferred_direction,
+        "signal_type": cur_type,
+        "preferred_direction": pref,
+        "current_signal_type": cur_type,
+        "current_signal_open_price": cur_px,
+        "current_signal_open_ts": int(current_signal_ts),
+        "prev_signal_type": prev_type,
+        "prev_signal_open_price": prev_open,
+        "prev_signal_open_ts": prev_open_ts,
+        "same_direction_as_prev_signal": same_dir,
+        "reverse_direction_from_prev_signal": reverse_dir,
+        "gap_minutes_from_prev_signal": gap_min,
         "min_gap_ok": min_gap_ok,
+        "current_open_below_prev_open": cur_below_prev,
+        "current_open_above_prev_open": cur_above_prev,
+        "grid_preview": preview,
     }
 
 
-def _score_signal(features):
+def _score_signal_detailed(features):
+    """
+    Chấm điểm: state (lệnh đóng) + entry (tín hiệu hiện tại vs tín hiệu trước).
+    Các điều kiện đã là hard block (loss_streak, sum5/10 âm, gap, loss+same_dir không cải thiện giá)
+    không trừ điểm lặp — chỉ dùng _is_blocked.
+    """
     if not features or not features.get("ready"):
-        return None
+        return None, {"add": [], "sub": [], "note": "not_ready"}
     score = 0
-    if features["gap_minutes_from_prev_signal"] >= 5:
-        score += 2
+    add, sub = [], []
+    pref = str(features.get("preferred_direction") or "SELL").upper()
+    min_gap_cfg = float(features.get("min_gap_minutes", 5))
+
+    def ap(rule, pts):
+        nonlocal score
+        score += pts
+        add.append(f"{rule}:+{pts}")
+
+    def sp(rule, pts):
+        nonlocal score
+        score -= pts
+        sub.append(f"{rule}:-{pts}")
+
+    if features["gap_minutes_from_prev_signal"] >= min_gap_cfg:
+        ap(f"gap>={min_gap_cfg}m", 2)
     if features["sum_last_5_net_profit"] >= 15:
-        score += 2
+        ap("sum5>=15", 2)
     if features["win_count_last_5"] >= 3:
-        score += 1
+        ap("win5>=3", 1)
     if features["sum_last_10_net_profit"] > 0:
-        score += 1
+        ap("sum10>0", 1)
     if features["win_rate_last_10"] >= 0.5:
-        score += 1
+        ap("winrate10>=0.5", 1)
     if features["last_trade_result"] == "Win":
-        score += 1
-    if features["same_direction_as_prev"]:
-        score += 1
-    if features["signal_type"] == "SELL":
-        score += 1
-    if features["current_open_below_prev_open"]:
-        score += 1
+        ap("last_closed=Win", 1)
+    if features.get("same_direction_as_prev_signal"):
+        ap("same_dir_as_prev_signal", 1)
+    st = features.get("current_signal_type") or features.get("signal_type")
+    if st == pref:
+        ap(f"match_preferred({pref})", 1)
+    if pref == "SELL" and features["current_open_below_prev_open"]:
+        ap("cont_SELL_price_lower", 1)
+    elif pref == "BUY" and features["current_open_above_prev_open"]:
+        ap("cont_BUY_price_higher", 1)
 
-    if features["last_trade_result"] == "Loss" and features["same_direction_as_prev"]:
-        score -= 3
-    if features["loss_streak"] >= 2:
-        score -= 2
-    if features["sum_last_5_net_profit"] < 0:
-        score -= 2
-    if features["sum_last_10_net_profit"] < 0:
-        score -= 1
-    if features["reverse_direction_from_prev"]:
-        score -= 1
-    if features["current_open_above_prev_open"] and features["preferred_direction"] == "SELL":
-        score -= 1
+    # Mềm: không trùng hard block
+    if features.get("reverse_direction_from_prev_signal"):
+        sp("reverse_vs_prev_signal", 1)
+    if pref == "SELL" and features["current_open_above_prev_open"]:
+        sp("bad_cont_SELL_price_higher", 1)
+    elif pref == "BUY" and features["current_open_below_prev_open"]:
+        sp("bad_cont_BUY_price_lower", 1)
 
-    return score
+    breakdown = {"add": add, "sub": sub, "preferred_direction": pref}
+    return score, breakdown
+
+
+def _score_signal(features):
+    s, _ = _score_signal_detailed(features)
+    return s
 
 
 def _is_blocked(features, max_loss_streak=2):
+    pref = str(features.get("preferred_direction") or "SELL").upper()
     if features["loss_streak"] >= int(max_loss_streak):
         return True, "loss_streak"
     if features["sum_last_5_net_profit"] < 0:
@@ -238,8 +331,11 @@ def _is_blocked(features, max_loss_streak=2):
         return True, "sum_last_10_net_profit<0"
     if not features["min_gap_ok"]:
         return True, "gap_minutes_from_prev_signal<min_gap"
-    if features["last_trade_result"] == "Loss" and features["same_direction_as_prev"] and not features["current_open_below_prev_open"]:
-        return True, "loss_same_direction_no_price_improve"
+    if features["last_trade_result"] == "Loss" and features.get("same_direction_as_prev_signal"):
+        if pref == "SELL" and not features["current_open_below_prev_open"]:
+            return True, "loss_same_dir_no_price_improve_SELL"
+        if pref == "BUY" and not features["current_open_above_prev_open"]:
+            return True, "loss_same_dir_no_price_improve_BUY"
     return False, ""
 
 
@@ -261,7 +357,7 @@ def _v5_history_score_gate(config):
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return False, "tick_none", {}
-    current_mid_price = (float(tick.bid) + float(tick.ask)) / 2.0
+    current_signal_ts = int(getattr(tick, "time", 0) or 0) or int(time.time())
 
     # Live có thể đọc history từ demo account riêng.
     demo_history_enabled = bool(params.get("demo_history_enabled", False))
@@ -395,15 +491,24 @@ def _v5_history_score_gate(config):
             return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
         return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed), "role": v5_role}
 
-    features = _build_score_features(
-        closed, current_mid_price, preferred_direction=preferred_direction, min_gap_minutes=min_gap_minutes
+    preview = _v5_preview_grid_levels(config)
+    if preview is None:
+        return False, "preview_grid_failed", {"closed_count": len(closed), "role": v5_role}
+
+    features = _build_v5_features(
+        closed,
+        preferred_direction,
+        min_gap_minutes,
+        preview,
+        current_signal_ts,
     )
     if not features.get("ready"):
         return False, str(features.get("reason", "feature_not_ready")), features
 
     blocked, block_reason = _is_blocked(features, max_loss_streak=max_loss_streak)
-    score = _score_signal(features)
+    score, score_breakdown = _score_signal_detailed(features)
     features["score"] = score
+    features["score_breakdown"] = score_breakdown
     features["blocked"] = blocked
     features["block_reason"] = block_reason
 
@@ -411,8 +516,9 @@ def _v5_history_score_gate(config):
     if v5_role != "live":
         return True, "demo_mode_no_gate", features
 
-    if not allow_reverse_entry and features["signal_type"] != preferred_direction:
-        return False, f"direction_gate:{features['signal_type']}!=preferred:{preferred_direction}", features
+    cur_sig = features.get("current_signal_type") or features.get("signal_type")
+    if not allow_reverse_entry and cur_sig != preferred_direction:
+        return False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features
     if blocked:
         return False, f"blocked:{block_reason}", features
     if score < medium_score_threshold:
@@ -524,6 +630,10 @@ def run():
         try:
             while True:
                 allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
+                params = config.get("parameters", {})
+                v5_role = str(params.get("v5_role", "demo")).lower().strip()
+                medium_thr = int(params.get("medium_score_threshold", 5))
+                entry_thr = int(params.get("entry_score_threshold", 6))
                 # Log tóm tắt kết quả kiểm tra gate (throttle để tránh spam)
                 gate_sig = (
                     bool(allow_live),
@@ -549,13 +659,19 @@ def run():
                         no_order_hint = "gate_passed -> check base strategy logs for place/skip reason"
                     else:
                         no_order_hint = f"gate_reason:{gate_reason}"
+                    sb = gate_features.get("score_breakdown") or {}
+                    add_s = "; ".join(sb.get("add", [])) if isinstance(sb, dict) else ""
+                    sub_s = "; ".join(sb.get("sub", [])) if isinstance(sb, dict) else ""
+                    bd = f"breakdown add=[{add_s}] sub=[{sub_s}]" if (add_s or sub_s) else ""
                     print(
                         f"🧮 [V5 Gate] eval allow={allow_live} reason={gate_reason} "
                         f"score={score_text} "
+                        f"thresholds(live): medium>={medium_thr}, entry>={entry_thr} "
                         f"sum5={gate_features.get('sum_last_5_net_profit')} "
                         f"sum10={gate_features.get('sum_last_10_net_profit')} "
                         f"loss_streak={gate_features.get('loss_streak')} "
-                        f"signal={gate_features.get('signal_type')} | {no_order_hint}"
+                        f"signal={gate_features.get('signal_type')} pref={gate_features.get('preferred_direction')} "
+                        f"| {bd} | {no_order_hint}"
                     )
                     run._last_gate_eval_log = (gate_sig, now_m)
                 if not allow_live:
@@ -575,8 +691,6 @@ def run():
                     time.sleep(loop_interval_seconds)
                     continue
 
-                params = config.get("parameters", {})
-                v5_role = str(params.get("v5_role", "demo")).lower().strip()
                 sym = config["symbol"]
                 mag = config["magic"]
                 live_min_entry_gap_seconds = int(float(params.get("live_min_entry_gap_minutes", 5)) * 60)
@@ -636,10 +750,14 @@ def run():
                         "magic": mag,
                         "gate_reason": gate_reason,
                         "score": gate_features.get("score"),
+                        "score_breakdown": gate_features.get("score_breakdown"),
                         "conditions": {
                             "min_gap_ok": gate_features.get("min_gap_ok"),
-                            "same_direction_as_prev": gate_features.get("same_direction_as_prev"),
+                            "min_gap_minutes": gate_features.get("min_gap_minutes"),
+                            "same_direction_as_prev_signal": gate_features.get("same_direction_as_prev_signal"),
                             "signal_type": gate_features.get("signal_type"),
+                            "current_signal_open_price": gate_features.get("current_signal_open_price"),
+                            "prev_signal_open_price": gate_features.get("prev_signal_open_price"),
                             "preferred_direction": gate_features.get("preferred_direction"),
                             "sum_last_5_net_profit": gate_features.get("sum_last_5_net_profit"),
                             "sum_last_10_net_profit": gate_features.get("sum_last_10_net_profit"),
@@ -648,7 +766,9 @@ def run():
                             "loss_streak": gate_features.get("loss_streak"),
                             "last_trade_result": gate_features.get("last_trade_result"),
                             "current_open_below_prev_open": gate_features.get("current_open_below_prev_open"),
-                            "reverse_direction_from_prev": gate_features.get("reverse_direction_from_prev"),
+                            "reverse_direction_from_prev_signal": gate_features.get(
+                                "reverse_direction_from_prev_signal"
+                            ),
                             "blocked": gate_features.get("blocked"),
                             "block_reason": gate_features.get("block_reason"),
                         },
