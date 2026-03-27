@@ -22,7 +22,15 @@ LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_live_state.json")
 
 
-def _fetch_closed_trades_with_account(account_cfg, symbol, magic, history_window=20, comment_prefix="GridStep", days_back=3):
+def _fetch_closed_trades_with_account(
+    account_cfg,
+    symbol,
+    magic,
+    history_window=20,
+    comment_prefix="GridStep",
+    days_back=3,
+    max_positions=None,
+):
     """
     Đổi login sang account_cfg để đọc history, rồi caller tự chịu trách nhiệm restore account trước đó.
     account_cfg: {account,password,server,mt5_path}
@@ -41,16 +49,18 @@ def _fetch_closed_trades_with_account(account_cfg, symbol, magic, history_window
     if not ok:
         print(f"⚠️ [V5 Gate] login fail for history account={account_cfg.get('account')}")
         return []
-    return _fetch_closed_trades(
-        symbol, magic, history_window=history_window, comment_prefix=comment_prefix, days_back=days_back
+    cap = int(max_positions) if max_positions is not None else max(int(history_window), 100)
+    return _fetch_closed_positions_list(
+        symbol, magic, comment_prefix=comment_prefix, days_back=days_back, max_positions=cap
     )
 
 
-def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridStep", days_back=3):
+def _fetch_closed_positions_list(
+    symbol, magic, comment_prefix="GridStep", days_back=3, max_positions=500
+):
     """
-    Lấy trade đã đóng (position-level) từ MT5 history:
-    - gom DEAL_ENTRY_IN/OUT theo position_id
-    - giữ đủ trường để tính điểm theo check_win.md
+    Lấy trade đã đóng (position-level) từ MT5 history.
+    Sort theo close_time giảm dần; cắt max_positions (không dùng slice này cho chuỗi tín hiệu — chỉ cho state).
     """
     to_date = datetime.now()
     from_date = to_date - timedelta(days=max(1, int(days_back)))
@@ -116,7 +126,16 @@ def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridS
             }
         )
     closed.sort(key=lambda x: x["close_time"], reverse=True)
-    return closed[: max(1, int(history_window))]
+    cap = max(1, int(max_positions))
+    return closed[:cap]
+
+
+def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridStep", days_back=3):
+    """Tương thích cũ: chỉ lấy history_window bản ghi đầu (theo close_time)."""
+    raw = _fetch_closed_positions_list(
+        symbol, magic, comment_prefix=comment_prefix, days_back=days_back, max_positions=max(int(history_window), 1)
+    )
+    return raw[: max(1, int(history_window))]
 
 
 def _calc_streak(closed):
@@ -172,24 +191,116 @@ def _v5_preview_grid_levels(config):
     }
 
 
-def _signals_sorted_by_open_time(closed_trades):
-    """Chuỗi tín hiệu đã khớp (theo thời điểm mở), không dùng close_time."""
-    return sorted(closed_trades, key=lambda x: x["open_time"], reverse=True)
+def _v5_step_filter_for_gate(config):
+    """Cùng kênh step đầu với preview grid (GridStep_N hoặc None)."""
+    p = config.get("parameters", {})
+    steps = p.get("steps")
+    if steps is not None:
+        if isinstance(steps, list) and len(steps) > 0:
+            return float(steps[0])
+        return float(steps)
+    return None
+
+
+def _open_positions_as_signals(symbol, magic, step_filter):
+    """Vị thế đang mở — tín hiệu đã khớp, có open_time thật."""
+    positions = base.get_positions_for_step(symbol, magic, step_filter)
+    out = []
+    for p in positions or []:
+        out.append(
+            {
+                "position_id": int(getattr(p, "ticket", 0) or 0),
+                "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
+                "open_time": int(getattr(p, "time", 0) or 0),
+                "open_price": float(p.price_open),
+                "source": "open_position",
+            }
+        )
+    return out
+
+
+def _merge_signal_history(open_signals, closed_positions, signal_window):
+    """
+    Merge tín hiệu thật: position đang mở + lịch sử đóng (theo open_time).
+    Không sort theo close_time trước; closed_positions là từ _fetch_closed_positions_list (đã sort close_time).
+    """
+    merged = []
+    seen = set()
+    for s in open_signals:
+        pid = s["position_id"]
+        if pid and pid not in seen:
+            seen.add(pid)
+            merged.append(s)
+    for c in closed_positions:
+        pid = int(c.get("position_id", 0) or 0)
+        if pid and pid not in seen:
+            seen.add(pid)
+            merged.append(
+                {
+                    "position_id": pid,
+                    "type": c["type"],
+                    "open_time": int(c["open_time"]),
+                    "open_price": float(c["open_price"]),
+                    "source": "closed_history",
+                }
+            )
+    merged.sort(key=lambda x: x["open_time"], reverse=True)
+    win = max(1, int(signal_window))
+    return merged[:win]
+
+
+def _compute_grid_entry_signal(preview, tick, pendings):
+    """
+    Tín hiệu vào lưới gần nhất (cùng logic với base: 2 stop; chọn phía gần mid).
+    Thời gian: time_setup của pending (lúc grid được treo) nếu có; không thì tick.time.
+    """
+    bid = float(tick.bid)
+    ask = float(tick.ask)
+    mid = (bid + ask) / 2.0
+    buy_price = float(preview["buy_price"])
+    sell_price = float(preview["sell_price"])
+    if abs(mid - buy_price) <= abs(mid - sell_price):
+        cur_type = "BUY"
+        cur_px = buy_price
+    else:
+        cur_type = "SELL"
+        cur_px = sell_price
+    ts = int(getattr(tick, "time", 0) or 0) or int(time.time())
+    ts_src = "tick_time"
+    if pendings:
+        setups = []
+        for o in pendings:
+            t = int(getattr(o, "time_setup", 0) or 0)
+            if t > 0:
+                setups.append(t)
+        if setups:
+            ts = min(setups)
+            ts_src = "pending_time_setup_min"
+    return {
+        "current_signal_type": cur_type,
+        "current_signal_open_price": cur_px,
+        "current_signal_open_ts": ts,
+        "current_signal_ts_source": ts_src,
+        "nearest_stop_rule": "min_distance_to_mid",
+        "mid_price": mid,
+    }
 
 
 def _build_v5_features(
-    closed,
+    closed_state,
+    signal_history,
+    prev_signal,
+    entry_signal,
     preferred_direction,
     min_gap_minutes,
     preview,
-    current_signal_ts,
 ):
     """
-    State: từ lệnh đã đóng (sort theo close_time — list closed đã như vậy).
-    Entry: tín hiệu sắp vào = hướng ưu tiên + giá lưới dự kiến; so với tín hiệu trước (open_time).
+    State: từ closed_state (đã sort theo close_time — slice từ history_window).
+    Entry: tín hiệu hiện tại từ _compute_grid_entry_signal; prev từ signal_history (mở + đóng, sort open_time).
     """
-    c5 = closed[:5]
-    c10 = closed[:10]
+    c5 = closed_state[:5]
+    c10 = closed_state[:10]
     if not c5:
         return {"ready": False, "reason": "not_enough_closed_trades"}
 
@@ -201,27 +312,27 @@ def _build_v5_features(
     gross_profit10 = sum(t["net_profit"] for t in c10 if t["net_profit"] > 0)
     gross_loss10 = abs(sum(t["net_profit"] for t in c10 if t["net_profit"] <= 0))
     pf10 = (gross_profit10 / gross_loss10) if gross_loss10 > 0 else float("inf")
-    win_streak, loss_streak = _calc_streak(closed)
+    win_streak, loss_streak = _calc_streak(closed_state)
 
     last_trade_result = "Win" if last_closed["net_profit"] > 0 else "Loss"
-
-    sig_open_order = _signals_sorted_by_open_time(closed)
-    prev_sig = sig_open_order[0] if sig_open_order else None
 
     pref = str(preferred_direction or "SELL").upper()
     if pref not in ("BUY", "SELL"):
         pref = "SELL"
 
-    cur_type = pref
-    cur_px = float(preview["buy_price"]) if cur_type == "BUY" else float(preview["sell_price"])
+    cur_type = str(entry_signal.get("current_signal_type") or "SELL").upper()
+    cur_px = float(entry_signal["current_signal_open_price"])
+    cur_ts = int(entry_signal.get("current_signal_open_ts") or 0)
 
+    prev_sig = prev_signal
     prev_type = prev_sig["type"] if prev_sig else None
     prev_open = float(prev_sig["open_price"]) if prev_sig else cur_px
     prev_open_ts = int(prev_sig["open_time"]) if prev_sig else 0
+    prev_src = prev_sig.get("source") if prev_sig else None
 
     same_dir = bool(prev_type and cur_type == prev_type)
     reverse_dir = bool(prev_type and cur_type != prev_type)
-    gap_min = (float(current_signal_ts) - float(prev_open_ts)) / 60.0 if prev_sig else 999.0
+    gap_min = (float(cur_ts) - float(prev_open_ts)) / 60.0 if prev_sig and prev_open_ts else 999.0
     min_gap_ok = gap_min >= float(min_gap_minutes)
 
     cur_below_prev = cur_px < prev_open
@@ -245,10 +356,13 @@ def _build_v5_features(
         "preferred_direction": pref,
         "current_signal_type": cur_type,
         "current_signal_open_price": cur_px,
-        "current_signal_open_ts": int(current_signal_ts),
+        "current_signal_open_ts": cur_ts,
+        "current_signal_ts_source": entry_signal.get("current_signal_ts_source"),
         "prev_signal_type": prev_type,
         "prev_signal_open_price": prev_open,
         "prev_signal_open_ts": prev_open_ts,
+        "prev_signal_source": prev_src,
+        "signal_history_len": len(signal_history),
         "same_direction_as_prev_signal": same_dir,
         "reverse_direction_from_prev_signal": reverse_dir,
         "gap_minutes_from_prev_signal": gap_min,
@@ -256,6 +370,10 @@ def _build_v5_features(
         "current_open_below_prev_open": cur_below_prev,
         "current_open_above_prev_open": cur_above_prev,
         "grid_preview": preview,
+        "entry_signal_meta": {
+            "nearest_stop_rule": entry_signal.get("nearest_stop_rule"),
+            "mid_price": entry_signal.get("mid_price"),
+        },
     }
 
 
@@ -299,17 +417,18 @@ def _score_signal_detailed(features):
     st = features.get("current_signal_type") or features.get("signal_type")
     if st == pref:
         ap(f"match_preferred({pref})", 1)
-    if pref == "SELL" and features["current_open_below_prev_open"]:
+    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
+    if cur == "SELL" and features["current_open_below_prev_open"]:
         ap("cont_SELL_price_lower", 1)
-    elif pref == "BUY" and features["current_open_above_prev_open"]:
+    elif cur == "BUY" and features["current_open_above_prev_open"]:
         ap("cont_BUY_price_higher", 1)
 
     # Mềm: không trùng hard block
     if features.get("reverse_direction_from_prev_signal"):
         sp("reverse_vs_prev_signal", 1)
-    if pref == "SELL" and features["current_open_above_prev_open"]:
+    if cur == "SELL" and features["current_open_above_prev_open"]:
         sp("bad_cont_SELL_price_higher", 1)
-    elif pref == "BUY" and features["current_open_below_prev_open"]:
+    elif cur == "BUY" and features["current_open_below_prev_open"]:
         sp("bad_cont_BUY_price_lower", 1)
 
     breakdown = {"add": add, "sub": sub, "preferred_direction": pref}
@@ -322,7 +441,7 @@ def _score_signal(features):
 
 
 def _is_blocked(features, max_loss_streak=2):
-    pref = str(features.get("preferred_direction") or "SELL").upper()
+    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if features["loss_streak"] >= int(max_loss_streak):
         return True, "loss_streak"
     if features["sum_last_5_net_profit"] < 0:
@@ -332,9 +451,9 @@ def _is_blocked(features, max_loss_streak=2):
     if not features["min_gap_ok"]:
         return True, "gap_minutes_from_prev_signal<min_gap"
     if features["last_trade_result"] == "Loss" and features.get("same_direction_as_prev_signal"):
-        if pref == "SELL" and not features["current_open_below_prev_open"]:
+        if cur == "SELL" and not features["current_open_below_prev_open"]:
             return True, "loss_same_dir_no_price_improve_SELL"
-        if pref == "BUY" and not features["current_open_above_prev_open"]:
+        if cur == "BUY" and not features["current_open_above_prev_open"]:
             return True, "loss_same_dir_no_price_improve_BUY"
     return False, ""
 
@@ -343,7 +462,14 @@ def _v5_history_score_gate(config):
     params = config.get("parameters", {})
     v5_role = str(params.get("v5_role", "demo")).lower().strip()
     history_window = int(params.get("history_window", 20))
+    signal_history_window = int(params.get("signal_history_window", history_window))
     history_days_back = int(params.get("history_days_back", 7))
+    max_closed_fetch = max(
+        int(params.get("max_closed_fetch", 500)),
+        history_window,
+        signal_history_window,
+        5,
+    )
     min_gap_minutes = float(params.get("min_gap_minutes", 5))
     entry_score_threshold = int(params.get("entry_score_threshold", 6))
     medium_score_threshold = int(params.get("medium_score_threshold", 5))
@@ -357,9 +483,9 @@ def _v5_history_score_gate(config):
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return False, "tick_none", {}
-    current_signal_ts = int(getattr(tick, "time", 0) or 0) or int(time.time())
 
     # Live có thể đọc history từ demo account riêng.
+    state_from_demo_account = False
     demo_history_enabled = bool(params.get("demo_history_enabled", False))
     demo_history_config_file = str(params.get("demo_history_config_file", "") or "").strip()
     demo_history_account = params.get("demo_history_account")
@@ -403,7 +529,9 @@ def _v5_history_score_gate(config):
                 history_window=history_window,
                 comment_prefix=history_comment_prefix,
                 days_back=history_days_back,
+                max_positions=max_closed_fetch,
             )
+            state_from_demo_account = True
             # restore live session để phần đặt lệnh luôn chạy trên live
             _ = _fetch_closed_trades_with_account(
                 live_cfg,
@@ -422,8 +550,12 @@ def _v5_history_score_gate(config):
             print(
                 f"⚠️ [V5 Gate] demo_history_config_file='{demo_history_config_file}' thiếu account/password/server, fallback current account."
             )
-            closed = _fetch_closed_trades(
-                symbol, magic, history_window=history_window, comment_prefix=history_comment_prefix, days_back=history_days_back
+            closed = _fetch_closed_positions_list(
+                symbol,
+                magic,
+                comment_prefix=history_comment_prefix,
+                days_back=history_days_back,
+                max_positions=max_closed_fetch,
             )
             print(
                 f"📚 [V5 Gate] history source=current account={config.get('account')} "
@@ -449,7 +581,9 @@ def _v5_history_score_gate(config):
             history_window=history_window,
             comment_prefix=history_comment_prefix,
             days_back=history_days_back,
+            max_positions=max_closed_fetch,
         )
+        state_from_demo_account = True
         # restore live session để phần đặt lệnh luôn chạy trên live
         _ = _fetch_closed_trades_with_account(
             live_cfg,
@@ -465,8 +599,12 @@ def _v5_history_score_gate(config):
             f"window={history_window} days_back={history_days_back}"
         )
     else:
-        closed = _fetch_closed_trades(
-            symbol, magic, history_window=history_window, comment_prefix=history_comment_prefix, days_back=history_days_back
+        closed = _fetch_closed_positions_list(
+            symbol,
+            magic,
+            comment_prefix=history_comment_prefix,
+            days_back=history_days_back,
+            max_positions=max_closed_fetch,
         )
         print(
             f"📚 [V5 Gate] history source=current account={config.get('account')} "
@@ -491,17 +629,45 @@ def _v5_history_score_gate(config):
             return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
         return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed), "role": v5_role}
 
+    closed_state = closed[: max(1, history_window)]
+
+    step_filter = _v5_step_filter_for_gate(config)
+    if state_from_demo_account:
+        signal_closed_for_merge = _fetch_closed_positions_list(
+            symbol,
+            magic,
+            comment_prefix=history_comment_prefix,
+            days_back=history_days_back,
+            max_positions=max_closed_fetch,
+        )
+    else:
+        signal_closed_for_merge = closed
+
+    open_sigs = _open_positions_as_signals(symbol, magic, step_filter)
+    signal_history = _merge_signal_history(open_sigs, signal_closed_for_merge, signal_history_window)
+    prev_signal = signal_history[0] if signal_history else None
+
     preview = _v5_preview_grid_levels(config)
     if preview is None:
         return False, "preview_grid_failed", {"closed_count": len(closed), "role": v5_role}
 
+    pendings = base.get_pending_orders(symbol, magic, step_filter)
+    entry_signal = _compute_grid_entry_signal(preview, tick, pendings)
+
     features = _build_v5_features(
-        closed,
+        closed_state,
+        signal_history,
+        prev_signal,
+        entry_signal,
         preferred_direction,
         min_gap_minutes,
         preview,
-        current_signal_ts,
     )
+    features["state_history_source"] = "demo_account" if state_from_demo_account else "current_account"
+    features["signal_closed_merge_source"] = (
+        "live_account" if state_from_demo_account else "same_as_state_fetch"
+    )
+    features["signal_history_window"] = signal_history_window
     if not features.get("ready"):
         return False, str(features.get("reason", "feature_not_ready")), features
 
@@ -671,6 +837,7 @@ def run():
                         f"sum10={gate_features.get('sum_last_10_net_profit')} "
                         f"loss_streak={gate_features.get('loss_streak')} "
                         f"signal={gate_features.get('signal_type')} pref={gate_features.get('preferred_direction')} "
+                        f"prev_src={gate_features.get('prev_signal_source')} ts_src={gate_features.get('current_signal_ts_source')} "
                         f"| {bd} | {no_order_hint}"
                     )
                     run._last_gate_eval_log = (gate_sig, now_m)
@@ -757,7 +924,11 @@ def run():
                             "same_direction_as_prev_signal": gate_features.get("same_direction_as_prev_signal"),
                             "signal_type": gate_features.get("signal_type"),
                             "current_signal_open_price": gate_features.get("current_signal_open_price"),
+                            "current_signal_ts_source": gate_features.get("current_signal_ts_source"),
                             "prev_signal_open_price": gate_features.get("prev_signal_open_price"),
+                            "prev_signal_source": gate_features.get("prev_signal_source"),
+                            "state_history_source": gate_features.get("state_history_source"),
+                            "signal_closed_merge_source": gate_features.get("signal_closed_merge_source"),
                             "preferred_direction": gate_features.get("preferred_direction"),
                             "sum_last_5_net_profit": gate_features.get("sum_last_5_net_profit"),
                             "sum_last_10_net_profit": gate_features.get("sum_last_10_net_profit"),

@@ -20,6 +20,8 @@
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
         "history_window": 20,
+        "signal_history_window": 20,
+        "max_closed_fetch": 500,
         "profit_window_short": 5,
         "profit_window_long": 10,
         "min_gap_minutes": 5,
