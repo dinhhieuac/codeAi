@@ -138,6 +138,14 @@ def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridS
     return raw[: max(1, int(history_window))]
 
 
+def _normalize_preferred_direction(raw, default="SELL"):
+    """BUY | SELL | BOTH (BOTH = không ép hướng, không cộng match_preferred). Chuỗi lạ → BOTH."""
+    p = str(raw if raw is not None else default).strip().upper()
+    if p in ("BUY", "SELL", "BOTH"):
+        return p
+    return "BOTH"
+
+
 def _calc_streak(closed):
     win_streak = 0
     loss_streak = 0
@@ -249,6 +257,30 @@ def _merge_signal_history(open_signals, closed_positions, signal_window):
     return merged[:win]
 
 
+def _find_previous_signal(signal_history, current_signal_type, current_signal_open_price, price_tolerance):
+    """
+    Tín hiệu đứng trước current_entry: bỏ các phần tử đầu trùng/khớp với entry đang chấm
+    (cùng hướng + |giá - current| <= tolerance), rồi lấy phần tử kế tiếp làm prev.
+    Trả về (prev_signal | None, số phần tử đầu đã bỏ qua).
+    """
+    if not signal_history:
+        return None, 0
+    cur_type = str(current_signal_type or "").upper()
+    cur_px = float(current_signal_open_price)
+    tol = float(price_tolerance)
+    i = 0
+    while i < len(signal_history):
+        s = signal_history[i]
+        st = str(s.get("type", "")).upper()
+        opx = float(s.get("open_price", 0) or 0)
+        if st == cur_type and abs(opx - cur_px) <= tol:
+            i += 1
+            continue
+        break
+    prev = signal_history[i] if i < len(signal_history) else None
+    return prev, i
+
+
 def _compute_grid_entry_signal(preview, tick, pendings):
     """
     Tín hiệu vào lưới gần nhất (cùng logic với base: 2 stop; chọn phía gần mid).
@@ -297,7 +329,7 @@ def _build_v5_features(
 ):
     """
     State: từ closed_state (đã sort theo close_time — slice từ history_window).
-    Entry: tín hiệu hiện tại từ _compute_grid_entry_signal; prev từ signal_history (mở + đóng, sort open_time).
+    Entry: tín hiệu hiện tại từ _compute_grid_entry_signal; prev từ _find_previous_signal (bỏ trùng entry hiện tại).
     """
     c5 = closed_state[:5]
     c10 = closed_state[:10]
@@ -387,7 +419,7 @@ def _score_signal_detailed(features):
         return None, {"add": [], "sub": [], "note": "not_ready"}
     score = 0
     add, sub = [], []
-    pref = str(features.get("preferred_direction") or "SELL").upper()
+    pref = _normalize_preferred_direction(features.get("preferred_direction"))
     min_gap_cfg = float(features.get("min_gap_minutes", 5))
 
     def ap(rule, pts):
@@ -415,21 +447,21 @@ def _score_signal_detailed(features):
     if features.get("same_direction_as_prev_signal"):
         ap("same_dir_as_prev_signal", 1)
     st = features.get("current_signal_type") or features.get("signal_type")
-    if st == pref:
+    if pref in ("BUY", "SELL") and st == pref:
         ap(f"match_preferred({pref})", 1)
     cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if cur == "SELL" and features["current_open_below_prev_open"]:
-        ap("cont_SELL_price_lower", 1)
+        ap("sell_continuation_price_improved", 1)
     elif cur == "BUY" and features["current_open_above_prev_open"]:
-        ap("cont_BUY_price_higher", 1)
+        ap("buy_continuation_price_improved", 1)
 
     # Mềm: không trùng hard block
     if features.get("reverse_direction_from_prev_signal"):
         sp("reverse_vs_prev_signal", 1)
     if cur == "SELL" and features["current_open_above_prev_open"]:
-        sp("bad_cont_SELL_price_higher", 1)
+        sp("sell_continuation_price_worse", 1)
     elif cur == "BUY" and features["current_open_below_prev_open"]:
-        sp("bad_cont_BUY_price_lower", 1)
+        sp("buy_continuation_price_worse", 1)
 
     breakdown = {"add": add, "sub": sub, "preferred_direction": pref}
     return score, breakdown
@@ -474,7 +506,7 @@ def _v5_history_score_gate(config):
     entry_score_threshold = int(params.get("entry_score_threshold", 6))
     medium_score_threshold = int(params.get("medium_score_threshold", 5))
     max_loss_streak = int(params.get("max_loss_streak", 2))
-    preferred_direction = str(params.get("preferred_direction", "SELL")).upper()
+    preferred_direction = _normalize_preferred_direction(params.get("preferred_direction", "SELL"))
     allow_reverse_entry = bool(params.get("allow_reverse_entry", False))
     history_comment_prefix = str(params.get("history_comment_prefix", "") or "").strip() or None
     symbol = config["symbol"]
@@ -645,7 +677,6 @@ def _v5_history_score_gate(config):
 
     open_sigs = _open_positions_as_signals(symbol, magic, step_filter)
     signal_history = _merge_signal_history(open_sigs, signal_closed_for_merge, signal_history_window)
-    prev_signal = signal_history[0] if signal_history else None
 
     preview = _v5_preview_grid_levels(config)
     if preview is None:
@@ -653,6 +684,22 @@ def _v5_history_score_gate(config):
 
     pendings = base.get_pending_orders(symbol, magic, step_filter)
     entry_signal = _compute_grid_entry_signal(preview, tick, pendings)
+
+    info = mt5.symbol_info(symbol)
+    point = float(getattr(info, "point", 0.01) or 0.01) if info else 0.01
+    digits = int(getattr(info, "digits", 5) or 5) if info else 5
+    tol_cfg = params.get("prev_signal_price_tolerance")
+    if tol_cfg is not None and float(tol_cfg) > 0:
+        price_tol = float(tol_cfg)
+    else:
+        price_tol = max(2.0 * point, 10 ** (-digits) * 0.5)
+
+    prev_signal, prev_leading_skipped = _find_previous_signal(
+        signal_history,
+        entry_signal["current_signal_type"],
+        entry_signal["current_signal_open_price"],
+        price_tol,
+    )
 
     features = _build_v5_features(
         closed_state,
@@ -668,6 +715,8 @@ def _v5_history_score_gate(config):
         "live_account" if state_from_demo_account else "same_as_state_fetch"
     )
     features["signal_history_window"] = signal_history_window
+    features["prev_signal_price_tolerance"] = price_tol
+    features["prev_signal_leading_overlap_skipped"] = prev_leading_skipped
     if not features.get("ready"):
         return False, str(features.get("reason", "feature_not_ready")), features
 
@@ -682,8 +731,12 @@ def _v5_history_score_gate(config):
     if v5_role != "live":
         return True, "demo_mode_no_gate", features
 
-    cur_sig = features.get("current_signal_type") or features.get("signal_type")
-    if not allow_reverse_entry and cur_sig != preferred_direction:
+    cur_sig = str(features.get("current_signal_type") or features.get("signal_type") or "").upper()
+    if (
+        not allow_reverse_entry
+        and preferred_direction in ("BUY", "SELL")
+        and cur_sig != preferred_direction
+    ):
         return False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features
     if blocked:
         return False, f"blocked:{block_reason}", features
