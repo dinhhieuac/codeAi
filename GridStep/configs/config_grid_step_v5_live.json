@@ -32,6 +32,8 @@
         "history_comment_prefix": "",
         "preferred_direction": "BOTH",
         "allow_reverse_entry": true,
+        "live_skip_if_equivalent": true,
+        "live_duplicate_price_threshold": 0,
         "demo_history_enabled": true,
         "demo_history_config_file": "config_grid_step_v5.json",
         "demo_history_account": 0,

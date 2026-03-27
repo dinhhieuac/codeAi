@@ -257,26 +257,56 @@ def _merge_signal_history(open_signals, closed_positions, signal_window):
     return merged[:win]
 
 
-def _find_previous_signal(signal_history, current_signal_type, current_signal_open_price, price_tolerance):
+def _find_previous_signal(
+    signal_history,
+    current_signal_type,
+    current_signal_open_price,
+    price_tolerance,
+    grid_step=None,
+    open_same_dir_grid_step_mult=None,
+):
     """
-    Tín hiệu đứng trước current_entry: bỏ các phần tử đầu trùng/khớp với entry đang chấm
-    (cùng hướng + |giá - current| <= tolerance), rồi lấy phần tử kế tiếp làm prev.
-    Trả về (prev_signal | None, số phần tử đầu đã bỏ qua).
+    Tín hiệu đứng trước current_entry (không lấy nhầm leg đang mở trùng chu kỳ hiện tại).
+
+    Bỏ qua phần tử đầu khi:
+    - cùng hướng và |giá - current| <= price_tolerance (trùng mức stop); hoặc
+    - source=open_position, cùng hướng, và giá trong ~một bước lưới so với current stop
+      (vì tolerance theo point có thể << grid_step, ví dụ XAU step=5).
     """
     if not signal_history:
         return None, 0
     cur_type = str(current_signal_type or "").upper()
     cur_px = float(current_signal_open_price)
     tol = float(price_tolerance)
+    gs = float(grid_step) if grid_step is not None and float(grid_step) > 0 else None
+    mult = (
+        float(open_same_dir_grid_step_mult)
+        if open_same_dir_grid_step_mult is not None and float(open_same_dir_grid_step_mult) > 0
+        else 1.05
+    )
+    open_same_dir_max_dist = (max(tol, gs * mult) if gs is not None else tol)
+
     i = 0
     while i < len(signal_history):
         s = signal_history[i]
         st = str(s.get("type", "")).upper()
         opx = float(s.get("open_price", 0) or 0)
-        if st == cur_type and abs(opx - cur_px) <= tol:
+        src = str(s.get("source", "") or "")
+        dist = abs(opx - cur_px)
+
+        if st != cur_type:
+            break
+
+        if dist <= tol:
             i += 1
             continue
+
+        if src == "open_position" and gs is not None and dist <= open_same_dir_max_dist:
+            i += 1
+            continue
+
         break
+
     prev = signal_history[i] if i < len(signal_history) else None
     return prev, i
 
@@ -694,11 +724,16 @@ def _v5_history_score_gate(config):
     else:
         price_tol = max(2.0 * point, 10 ** (-digits) * 0.5)
 
+    grid_step = preview.get("step")
+    open_mult = params.get("prev_signal_open_same_dir_grid_step_mult")
+
     prev_signal, prev_leading_skipped = _find_previous_signal(
         signal_history,
         entry_signal["current_signal_type"],
         entry_signal["current_signal_open_price"],
         price_tol,
+        grid_step=grid_step,
+        open_same_dir_grid_step_mult=open_mult,
     )
 
     features = _build_v5_features(
@@ -717,6 +752,10 @@ def _v5_history_score_gate(config):
     features["signal_history_window"] = signal_history_window
     features["prev_signal_price_tolerance"] = price_tol
     features["prev_signal_leading_overlap_skipped"] = prev_leading_skipped
+    _om = float(open_mult) if open_mult is not None and float(open_mult) > 0 else 1.05
+    features["prev_signal_open_same_dir_max_dist"] = (
+        max(price_tol, float(grid_step) * _om) if grid_step is not None and float(grid_step) > 0 else None
+    )
     if not features.get("ready"):
         return False, str(features.get("reason", "feature_not_ready")), features
 
@@ -742,10 +781,10 @@ def _v5_history_score_gate(config):
         return False, f"blocked:{block_reason}", features
     if score < medium_score_threshold:
         return False, f"low_score:{score}<{medium_score_threshold}", features
-    # score == medium_score_threshold: cho phép chạy base logic như normal lot (chưa tách risk-size trong v5)
+    # Live: chỉ coi tín hiệu đủ đẹp khi đạt entry_score_threshold (demo không dùng nhánh này).
     if score < entry_score_threshold:
-        return True, f"medium_score:{score}", features
-    return True, f"high_score:{score}", features
+        return False, f"below_entry_score:{score}<{entry_score_threshold}", features
+    return True, f"qualified:{score}", features
 
 
 def _append_live_entry_log(record):
@@ -764,6 +803,35 @@ def _snapshot_bot_orders_positions(symbol, magic):
     pending_tickets = sorted(int(getattr(o, "ticket", 0) or 0) for o in orders)
     position_tickets = sorted(int(getattr(p, "ticket", 0) or 0) for p in positions)
     return pending_tickets, position_tickets
+
+
+def _live_has_equivalent_order(symbol, magic, step_filter, signal_type, entry_price, price_threshold):
+    """
+    Live đã có lệnh/position tương ứng tín hiệu: cùng symbol/magic (đã lọc), cùng chiều,
+    giá vào gần entry_price trong price_threshold.
+    """
+    st = str(signal_type or "").upper()
+    if st not in ("BUY", "SELL"):
+        return False
+    try:
+        ep = float(entry_price)
+    except (TypeError, ValueError):
+        return False
+    thr = float(price_threshold)
+
+    for p in base.get_positions_for_step(symbol, magic, step_filter) or []:
+        ptype = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
+        if ptype == st and abs(float(p.price_open) - ep) <= thr:
+            return True
+
+    for o in base.get_pending_orders(symbol, magic, step_filter) or []:
+        ot = int(getattr(o, "type", -1))
+        opr = float(getattr(o, "price_open", 0) or 0)
+        if st == "BUY" and ot == mt5.ORDER_TYPE_BUY_STOP and abs(opr - ep) <= thr:
+            return True
+        if st == "SELL" and ot == mt5.ORDER_TYPE_SELL_STOP and abs(opr - ep) <= thr:
+            return True
+    return False
 
 
 def _load_live_state():
@@ -810,6 +878,114 @@ def _mark_live_entry_now(symbol, magic):
         "last_entry_ts_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     }
     _save_live_state(state)
+
+
+def _print_v5_gate_detail(allow_live, gate_reason, gate_features, v5_role, medium_thr, entry_thr):
+    """Log gate nhiều dòng: tổng điểm, từng rule cộng/trừ, entry/prev, ý nghĩa demo vs live."""
+    gf = gate_features or {}
+    sb = gf.get("score_breakdown") if isinstance(gf.get("score_breakdown"), dict) else {}
+    adds = sb.get("add") or []
+    subs = sb.get("sub") or []
+    sc = gf.get("score")
+    blk = gf.get("blocked")
+    br = gf.get("block_reason") or "-"
+
+    print("🧮 [V5 Gate] —— chi tiết chấm điểm / gate ——")
+    print(f"  allow={allow_live}  |  role={v5_role}  |  reason: {gate_reason}")
+    print(
+        f"  Tổng điểm: {sc}  |  ngưỡng live: medium>={medium_thr} (lọc thấp), entry>={entry_thr} (đủ đẹp để qualified)"
+    )
+    if adds or subs:
+        print("  Điểm cộng/trừ:")
+        for ln in adds:
+            print(f"      (+) {ln}")
+        for ln in subs:
+            print(f"      (−) {ln}")
+    else:
+        print("  Điểm cộng/trừ: (không có breakdown — có thể gate chưa ready)")
+
+    gap = gf.get("gap_minutes_from_prev_signal")
+    try:
+        gap_s = f"{float(gap):.2f}"
+    except (TypeError, ValueError):
+        gap_s = str(gap)
+    print(
+        f"  State (lệnh đóng): sum5={gf.get('sum_last_5_net_profit')}  sum10={gf.get('sum_last_10_net_profit')}  "
+        f"loss_streak={gf.get('loss_streak')}  last_closed={gf.get('last_trade_result')}"
+    )
+    print(
+        f"  Entry đang chấm: {gf.get('current_signal_type')} @ {gf.get('current_signal_open_price')}  "
+        f"| preferred={gf.get('preferred_direction')}"
+    )
+    print(
+        f"  So với trước: prev={gf.get('prev_signal_type')} @ {gf.get('prev_signal_open_price')}  "
+        f"| prev_src={gf.get('prev_signal_source')}  gap={gap_s} phút  min_gap_ok={gf.get('min_gap_ok')}"
+    )
+    print(
+        f"  Thời gian entry: ts_src={gf.get('current_signal_ts_source')}  "
+        f"| hard_block={blk}  | block_reason={br}"
+    )
+    if v5_role != "live":
+        print(
+            "  📌 Demo: score chỉ để quan sát — gate KHÔNG chặn. Có vào lệnh hay không do strategy grid "
+            "(2 pending, position, spread, pause...), không do điểm."
+        )
+        try:
+            s = int(sc) if sc is not None else 0
+        except (TypeError, ValueError):
+            s = 0
+        if s < entry_thr:
+            print(
+                f"  📌 Nếu đây là live: với điểm {s} < entry ({entry_thr}) sẽ KHÔNG được coi qualified — chưa đủ đẹp."
+            )
+    else:
+        if allow_live:
+            print("  📌 Live: đã qualified / qua gate — strategy được gọi (trừ khi cooldown hoặc skip trùng pending).")
+        else:
+            print("  📌 Live: KHÔNG qualified — không chạy strategy theo gate (xem reason).")
+
+    print("🧮 [V5 Gate] ————————————————————————")
+
+
+def _print_v5_no_new_order_detail(
+    v5_role,
+    gate_reason,
+    gate_features,
+    pre_pending,
+    post_pending,
+    pre_positions,
+    post_positions,
+    max_positions,
+):
+    """Giải thích vì sao không có ticket pending/position mới sau một vòng strategy."""
+    gf = gate_features or {}
+    np_pre, np_post = len(pre_pending), len(post_pending)
+    npos_pre, npos_post = len(pre_positions), len(post_positions)
+    mx = int(max_positions or 5)
+
+    print("ℹ️ [V5] —— không có lệnh mới trong vòng này ——")
+    print(f"  role={v5_role}  score={gf.get('score')}  gate_reason={gate_reason}")
+    print(f"  MT5: pending {np_pre}→{np_post}  |  positions {npos_pre}→{npos_post}")
+    reasons = []
+    if np_pre >= 2:
+        reasons.append(
+            "Grid (strategy_grid_step.py): len(pendings)==2 → bot CỐ TÌNH không đặt thêm cặp STOP; "
+            "chờ một lệnh khớp (hoặc bạn hủy tay). Đây là đúng thiết kế, không phải lỗi V5 hay score."
+        )
+    if npos_pre >= mx:
+        reasons.append(f"Đã đạt hoặc vượt max_positions={mx} → không mở thêm position.")
+    if npos_pre > 0 and np_pre > 0:
+        reasons.append("Có position và vẫn có pending → trạng thái lưới bình thường; có thể chờ TP basket hoặc điều kiện spread/min_distance/pause (xem log [step=...] phía trên nếu có).")
+    if npos_pre > 0 and np_pre == 0:
+        reasons.append("Có position nhưng không còn pending → base có thể vừa khớp một chân; vòng sau thường hủy/đặt lại cặp — xem log strategy.")
+    if not reasons:
+        reasons.append("Không đoán được chắc: xem log strategy_grid_step (spread_max, pause, min_distance_points, cooldown...).")
+
+    for i, r in enumerate(reasons, 1):
+        print(f"  {i}) {r}")
+    if v5_role != "live":
+        print("  (Demo: không có gate theo điểm; lý do không vào lệnh chủ yếu là điều kiện grid như trên.)")
+    print("ℹ️ [V5] ————————————————————————")
 
 
 def run():
@@ -866,36 +1042,21 @@ def run():
                 now_m = time.monotonic()
                 prev_gate = getattr(run, "_last_gate_eval_log", None)
                 if prev_gate is None or prev_gate[0] != gate_sig or (now_m - prev_gate[1]) > 10:
-                    score_text = gate_features.get("score")
-                    if score_text is None:
-                        score_text = "N/A"
-                    no_order_hint = None
-                    if not allow_live:
-                        no_order_hint = f"blocked_by_gate:{gate_reason}"
-                    elif gate_reason.startswith("demo_insufficient_history"):
-                        no_order_hint = "no_order_reason_from_gate:none (demo bypass)"
-                    elif gate_reason.startswith("medium_score") or gate_reason.startswith("high_score"):
-                        no_order_hint = "gate_passed -> check base strategy logs for place/skip reason"
+                    if bool(params.get("v5_verbose_gate_log", True)):
+                        _print_v5_gate_detail(
+                            allow_live, gate_reason, gate_features, v5_role, medium_thr, entry_thr
+                        )
                     else:
-                        no_order_hint = f"gate_reason:{gate_reason}"
-                    sb = gate_features.get("score_breakdown") or {}
-                    add_s = "; ".join(sb.get("add", [])) if isinstance(sb, dict) else ""
-                    sub_s = "; ".join(sb.get("sub", [])) if isinstance(sb, dict) else ""
-                    bd = f"breakdown add=[{add_s}] sub=[{sub_s}]" if (add_s or sub_s) else ""
-                    print(
-                        f"🧮 [V5 Gate] eval allow={allow_live} reason={gate_reason} "
-                        f"score={score_text} "
-                        f"thresholds(live): medium>={medium_thr}, entry>={entry_thr} "
-                        f"sum5={gate_features.get('sum_last_5_net_profit')} "
-                        f"sum10={gate_features.get('sum_last_10_net_profit')} "
-                        f"loss_streak={gate_features.get('loss_streak')} "
-                        f"signal={gate_features.get('signal_type')} pref={gate_features.get('preferred_direction')} "
-                        f"prev_src={gate_features.get('prev_signal_source')} ts_src={gate_features.get('current_signal_ts_source')} "
-                        f"| {bd} | {no_order_hint}"
-                    )
+                        sb = gate_features.get("score_breakdown") or {}
+                        add_s = "; ".join(sb.get("add", [])) if isinstance(sb, dict) else ""
+                        sub_s = "; ".join(sb.get("sub", [])) if isinstance(sb, dict) else ""
+                        print(
+                            f"🧮 [V5 Gate] allow={allow_live} reason={gate_reason} score={gate_features.get('score')} "
+                            f"add=[{add_s}] sub=[{sub_s}]"
+                        )
                     run._last_gate_eval_log = (gate_sig, now_m)
                 if not allow_live:
-                    # throttle log để tránh spam mỗi giây
+                    # throttle log — cả demo cũng dừng tại đây nếu gate trả allow=False (tick_none, preview_grid_failed, feature_not_ready...)
                     sig = (
                         gate_reason,
                         gate_features.get("score"),
@@ -906,7 +1067,14 @@ def run():
                     now_m = time.monotonic()
                     prev = getattr(run, "_last_gate_log", None)
                     if prev is None or prev[0] != sig or (now_m - prev[1]) > 15:
-                        print(f"⏸️ [V5 Gate] skip live entry: {gate_reason} | features={gate_features}")
+                        print(
+                            f"⏸️ [V5 Gate] KHÔNG gọi strategy_grid_step — role={v5_role} | reason={gate_reason}"
+                        )
+                        if v5_role != "live":
+                            print(
+                                "   (Demo: thường gặp tick_none, preview_grid_failed, feature_not_ready — "
+                                "không phải do điểm score.)"
+                            )
                         run._last_gate_log = (sig, now_m)
                     time.sleep(loop_interval_seconds)
                     continue
@@ -932,6 +1100,41 @@ def run():
                         time.sleep(loop_interval_seconds)
                         continue
 
+                # Live: tín hiệu demo đủ điểm nhưng đã có cặp pending khớp tín hiệu → không gọi strategy (tránh thừa).
+                live_skip_dup = bool(params.get("live_skip_if_equivalent", True))
+                if v5_role == "live" and live_skip_dup and allow_live:
+                    step_f = _v5_step_filter_for_gate(config)
+                    sig_type = gate_features.get("current_signal_type") or gate_features.get("signal_type")
+                    sig_px = gate_features.get("current_signal_open_price")
+                    gpr = gate_features.get("grid_preview") or {}
+                    step_val = float(gpr.get("step") or _v5_gate_step_val(config))
+                    info_lp = mt5.symbol_info(sym)
+                    pt = float(getattr(info_lp, "point", 0.01) or 0.01) if info_lp else 0.01
+                    dthr_raw = params.get("live_duplicate_price_threshold")
+                    if dthr_raw is not None and float(dthr_raw) > 0:
+                        dthr = float(dthr_raw)
+                    else:
+                        dthr = max(2.0 * pt, step_val * 1.05)
+                    try:
+                        spx = float(sig_px) if sig_px is not None else 0.0
+                    except (TypeError, ValueError):
+                        spx = 0.0
+                    has_eq = _live_has_equivalent_order(sym, mag, step_f, sig_type, spx, dthr)
+                    npos_ct = len(pre_positions)
+                    npen_ct = len(pre_pending)
+                    if has_eq and npos_ct == 0 and npen_ct == 2:
+                        now_m = time.monotonic()
+                        prev_sk = getattr(run, "_last_live_dup_skip_log", None)
+                        sig_sk = (str(sig_type), round(spx, 2), round(dthr, 4))
+                        if prev_sk is None or prev_sk[0] != sig_sk or (now_m - prev_sk[1]) > 15:
+                            print(
+                                "ℹ️ [V5 Live] tín hiệu đạt ngưỡng nhưng live đã có pending tương đương "
+                                f"({sig_type} @ ~{spx}, thr={dthr}); bỏ qua gọi strategy."
+                            )
+                            run._last_live_dup_skip_log = (sig_sk, now_m)
+                        time.sleep(loop_interval_seconds)
+                        continue
+
                 if consecutive_loss_pause_enabled:
                     if steps_list is not None:
                         for step_val in steps_list:
@@ -953,13 +1156,23 @@ def run():
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
                 if not new_pending and not new_positions:
-                    # Gate pass nhưng không có lệnh mới: log rõ để đọc nhanh lý do.
-                    print(
-                        "ℹ️ [V5] no new order this loop | "
-                        f"role={v5_role} score={gate_features.get('score', 'N/A')} reason={gate_reason} "
-                        f"pending_before/after={len(pre_pending)}/{len(post_pending)} "
-                        f"positions_before/after={len(pre_positions)}/{len(post_positions)}"
-                    )
+                    if bool(params.get("v5_verbose_no_order_log", True)):
+                        _print_v5_no_new_order_detail(
+                            v5_role,
+                            gate_reason,
+                            gate_features,
+                            pre_pending,
+                            post_pending,
+                            pre_positions,
+                            post_positions,
+                            config.get("max_positions", 5),
+                        )
+                    else:
+                        print(
+                            "ℹ️ [V5] no new order | "
+                            f"role={v5_role} score={gate_features.get('score')} pending="
+                            f"{len(pre_pending)}/{len(post_pending)} pos={len(pre_positions)}/{len(post_positions)}"
+                        )
                 if v5_role == "live" and (new_pending or new_positions):
                     _mark_live_entry_now(sym, mag)
                     now_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
