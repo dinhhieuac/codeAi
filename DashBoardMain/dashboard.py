@@ -1027,6 +1027,7 @@ def export_orders():
             o.sl,
             o.tp,
             o.open_time,
+            o.close_time,
             o.close_price,
             o.profit,
             o.comment,
@@ -1076,10 +1077,7 @@ def export_orders():
     
     # Use orders_with_signals instead of fetching from database again
     orders = orders_with_signals
-    
-    params = [cutoff_str]
-    
-    
+
     # Create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1095,6 +1093,7 @@ def export_orders():
         'Stop Loss',
         'Take Profit',
         'Open Time',
+        'Close Time',
         'Close Price',
         'Profit ($)',
         'Status',
@@ -1123,6 +1122,7 @@ def export_orders():
         row.append(order['sl'])
         row.append(order['tp'])
         row.append(order['open_time'])
+        row.append(order['close_time'] if order.get('close_time') else '')
         row.append(order['close_price'] if order['close_price'] else '')
         row.append(order['profit'] if order['profit'] is not None else '')
         

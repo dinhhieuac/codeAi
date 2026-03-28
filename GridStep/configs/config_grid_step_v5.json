@@ -24,7 +24,7 @@
         "max_closed_fetch": 500,
         "profit_window_short": 5,
         "profit_window_long": 10,
-        "min_gap_minutes": 5,
+        "min_gap_minutes": 1,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
         "loop_interval_seconds": 10,

@@ -221,6 +221,7 @@ def _open_positions_as_signals(symbol, magic, step_filter):
                 "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
                 "open_time": int(getattr(p, "time", 0) or 0),
                 "open_price": float(p.price_open),
+                "close_time": 0,
                 "source": "open_position",
             }
         )
@@ -249,6 +250,7 @@ def _merge_signal_history(open_signals, closed_positions, signal_window):
                     "type": c["type"],
                     "open_time": int(c["open_time"]),
                     "open_price": float(c["open_price"]),
+                    "close_time": int(c.get("close_time") or 0),
                     "source": "closed_history",
                 }
             )
@@ -378,9 +380,7 @@ def _build_v5_features(
 
     last_trade_result = "Win" if last_closed["net_profit"] > 0 else "Loss"
 
-    pref = str(preferred_direction or "SELL").upper()
-    if pref not in ("BUY", "SELL"):
-        pref = "SELL"
+    pref = _normalize_preferred_direction(preferred_direction)
 
     cur_type = str(entry_signal.get("current_signal_type") or "SELL").upper()
     cur_px = float(entry_signal["current_signal_open_price"])
@@ -396,6 +396,18 @@ def _build_v5_features(
     reverse_dir = bool(prev_type and cur_type != prev_type)
     gap_min = (float(cur_ts) - float(prev_open_ts)) / 60.0 if prev_sig and prev_open_ts else 999.0
     min_gap_ok = gap_min >= float(min_gap_minutes)
+
+    prev_close_ts = int(prev_sig.get("close_time") or 0) if prev_sig else 0
+    if prev_sig and prev_open_ts:
+        if prev_close_ts > 0:
+            prev_duration_min = max(0.0, (float(prev_close_ts) - float(prev_open_ts)) / 60.0)
+            gap_from_prev_close_min = max(0.0, (float(cur_ts) - float(prev_close_ts)) / 60.0)
+        else:
+            prev_duration_min = max(0.0, (float(cur_ts) - float(prev_open_ts)) / 60.0)
+            gap_from_prev_close_min = None
+    else:
+        prev_duration_min = None
+        gap_from_prev_close_min = None
 
     cur_below_prev = cur_px < prev_open
     cur_above_prev = cur_px > prev_open
@@ -428,6 +440,9 @@ def _build_v5_features(
         "same_direction_as_prev_signal": same_dir,
         "reverse_direction_from_prev_signal": reverse_dir,
         "gap_minutes_from_prev_signal": gap_min,
+        "gap_from_prev_signal_min": gap_min,
+        "prev_duration_min": prev_duration_min,
+        "gap_from_prev_close_min": gap_from_prev_close_min,
         "min_gap_ok": min_gap_ok,
         "current_open_below_prev_open": cur_below_prev,
         "current_open_above_prev_open": cur_above_prev,
@@ -921,6 +936,12 @@ def _print_v5_gate_detail(allow_live, gate_reason, gate_features, v5_role, mediu
         f"  So với trước: prev={gf.get('prev_signal_type')} @ {gf.get('prev_signal_open_price')}  "
         f"| prev_src={gf.get('prev_signal_source')}  gap={gap_s} phút  min_gap_ok={gf.get('min_gap_ok')}"
     )
+    if gf.get("prev_duration_min") is not None or gf.get("gap_from_prev_close_min") is not None:
+        pd = gf.get("prev_duration_min")
+        gc = gf.get("gap_from_prev_close_min")
+        pd_s = f"{float(pd):.2f}" if pd is not None else "-"
+        gc_s = f"{float(gc):.2f}" if gc is not None else "-"
+        print(f"  Close-time features: prev_duration_min={pd_s} phút  gap_from_prev_close_min={gc_s} phút")
     print(
         f"  Thời gian entry: ts_src={gf.get('current_signal_ts_source')}  "
         f"| hard_block={blk}  | block_reason={br}"

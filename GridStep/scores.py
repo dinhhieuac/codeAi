@@ -1,8 +1,8 @@
 """
 BTCUSD scoring — Grid Step 200.0 (logic riêng, không copy XAU V5).
 
-Dựa trên tài liệu: reversal nhanh sau chuỗi thua, SELL sau nghỉ dài,
-hạn chế continuation cùng hướng (đặc biệt BUY continuation).
+Bản cập nhật: dùng thêm feature từ close_time (prev_duration_min, gap_from_prev_close_min)
+và strong reversal theo last=Loss / loss_streak (xem strategy_grid_step_v5 _build_v5_features).
 """
 
 from __future__ import annotations
@@ -35,29 +35,55 @@ def _norm_side(x: Any) -> str:
     return s if s in ("BUY", "SELL") else ""
 
 
+# Ngưỡng dùng chung cho gate BTC (strategy_grid_step_btc_v5) và điểm trừ sum10 âm sâu.
+SUM10_HARD_BLOCK_THRESHOLD = -10.0
+STRONG_REVERSAL_GAP_LT_MIN = 3.0
+
+
+def _gap_from_prev_signal_min(features: Dict[str, Any]) -> float:
+    """Khoảng cách (phút) từ mở tín hiệu trước tới entry hiện tại."""
+    g = features.get("gap_from_prev_signal_min")
+    if g is not None:
+        return _f(g, 999.0)
+    return _f(features.get("gap_minutes_from_prev_signal"), 999.0)
+
+
+def btc_strong_reversal_signal(features: Dict[str, Any]) -> bool:
+    """
+    Strong reversal (BTC):
+    - reverse_direction_from_prev_signal
+    - gap_from_prev_signal_min < 3
+    - và (last_trade_result == Loss hoặc loss_streak >= 2)
+    """
+    rev = _b(features.get("reverse_direction_from_prev_signal"))
+    gap = _gap_from_prev_signal_min(features)
+    last = str(features.get("last_trade_result") or "").strip()
+    loss_streak = _i(features.get("loss_streak"))
+    if not rev or gap >= STRONG_REVERSAL_GAP_LT_MIN:
+        return False
+    return last == "Loss" or loss_streak >= 2
+
+
 def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str, Any], str]:
     """
     Tính điểm BTCUSD (Grid Step 200.0) và bucket quyết định.
-
-    `features` nên có các khóa (mục 2 tài liệu):
-      current_signal_type, prev_signal_type, same_direction_as_prev_signal,
-      reverse_direction_from_prev_signal, gap_minutes_from_prev_signal,
-      sum_last_5_net_profit, sum_last_10_net_profit, win_rate_last_10,
-      last_trade_result, loss_streak, win_streak
-
-    Trả về:
-      (score, detail, decision) với decision ∈ REJECT | PROBE | NEUTRAL | EXECUTE
     """
     cur = _norm_side(features.get("current_signal_type") or features.get("signal_type"))
-    gap = _f(features.get("gap_minutes_from_prev_signal"), 999.0)
+    gap_sig = _gap_from_prev_signal_min(features)
     same_dir = _b(features.get("same_direction_as_prev_signal"))
     rev = _b(features.get("reverse_direction_from_prev_signal"))
     loss_streak = _i(features.get("loss_streak"))
-    win_streak = _i(features.get("win_streak"))
-    sum5 = _f(features.get("sum_last_5_net_profit"))
     sum10 = _f(features.get("sum_last_10_net_profit"))
-    win_rate10 = _f(features.get("win_rate_last_10"))
     last = str(features.get("last_trade_result") or "").strip()
+
+    pd_raw = features.get("prev_duration_min")
+    prev_d: float | None
+    if pd_raw is None:
+        prev_d = None
+    else:
+        prev_d = _f(pd_raw, 0.0)
+
+    strong = btc_strong_reversal_signal(features)
 
     score = 0
     add: List[str] = []
@@ -73,40 +99,37 @@ def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str,
         score -= pts
         sub.append(f"{rule}:-{pts}")
 
-    # --- Điểm cộng (mục 3) ---
-    if rev and gap < 3:
+    # --- Điểm cộng ---
+    if rev and gap_sig < STRONG_REVERSAL_GAP_LT_MIN:
         ap("reversal_fast_gap_lt_3m", 3)
 
-    if loss_streak >= 2 and gap < 3:
-        ap("after_loss_streak_reversal_fast_lt_3m", 2)
+    if strong:
+        ap("strong_reversal", 2)
 
-    if cur == "SELL" and gap >= 60:
-        ap("sell_after_long_rest_ge_60m", 2)
+    if prev_d is not None and 1.0 <= prev_d < 3.0:
+        ap("prev_duration_1_to_3m", 1)
 
-    if cur == "SELL" and win_rate10 >= 0.7 and last == "Win":
-        ap("sell_strong_recent_state_winrate_ge_0.7_last_win", 1)
-
-    if cur == "BUY" and sum5 >= 6:
-        ap("buy_only_if_sum5_ge_6", 1)
+    if cur == "SELL" and gap_sig >= 60:
+        ap("sell_after_long_pause_ge_60m", 2)
 
     if sum10 >= 10:
         ap("state_sum10_ge_10", 1)
 
-    # --- Điểm trừ (mục 4) ---
-    if same_dir and last == "Loss":
-        sp("same_dir_after_loss", 3)
+    if cur == "SELL" and last == "Win" and sum10 > 0:
+        ap("sell_after_win_positive_sum10", 1)
 
-    if same_dir and gap >= 20:
-        sp("continuation_slow_gap_ge_20m", 2)
+    # --- Điểm trừ ---
+    if same_dir and gap_sig >= 20:
+        sp("continuation_slow_gap_ge_20m", 3)
 
     if cur == "BUY" and same_dir:
         sp("buy_continuation", 2)
 
-    if loss_streak >= 2 and gap >= 20:
-        sp("after_loss_streak_signal_slow_ge_20m", 2)
+    if rev and gap_sig < STRONG_REVERSAL_GAP_LT_MIN and prev_d is not None and prev_d < 1.0:
+        sp("reversal_too_fast_after_prev_lt_1m", 2)
 
-    if win_streak >= 3 and gap < 3:
-        sp("long_win_streak_reverse_too_fast_gap_lt_3m", 1)
+    if sum10 < SUM10_HARD_BLOCK_THRESHOLD and not strong:
+        sp("sum10_deep_negative_no_strong_reversal", 2)
 
     decision = btcusd_grid_step_200_decision(score)
     detail = {
@@ -115,18 +138,16 @@ def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str,
         "add": add,
         "sub": sub,
         "symbol_profile": "BTCUSD_GridStep200",
+        "strong_reversal": strong,
     }
     return score, detail, decision
 
 
 def btcusd_grid_step_200_decision(score: int) -> str:
     """
-    Ngưỡng mục 5 tài liệu (ưu tiên mô tả text, không theo pseudocode cuối
-    để score=3 không bị nhầm REJECT).
-
     - score <= 0     → REJECT
     - score 1..2     → PROBE
-    - score == 3     → NEUTRAL (tránh / chỉ log)
+    - score == 3     → NEUTRAL
     - score >= 4     → EXECUTE
     """
     if score >= 4:
@@ -146,11 +167,6 @@ def btcusd_grid_step_200_should_trade(
 ) -> Tuple[bool, str, int, Dict[str, Any]]:
     """
     Wrapper tiện cho bot: có nên vào lệnh "chuẩn" hay "probe" hay không.
-
-    - EXECUTE → True (chuẩn)
-    - PROBE   → True nếu allow_probe
-    - NEUTRAL → True chỉ nếu allow_neutral (mặc định False)
-    - REJECT  → False
     """
     points, detail, decision = btcusd_grid_step_200_score(features)
     if decision == "EXECUTE":
