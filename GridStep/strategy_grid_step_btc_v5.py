@@ -6,6 +6,12 @@ Reuse engine của strategy_grid_step_v5 nhưng:
 - score = BTCUSD Grid Step 200.0 từ scores.py
 - file state/log riêng cho BTC v5
 
+Console log (cùng format V5, xem strategy_grid_step_v5):
+- Dòng đầu: [V5] RESULT=... | MAIN_REASON=...
+- Các block: [SIGNAL], [SCORE], [CONTEXT], [BLOCK], [GRID], [RELAY]; demo có thêm [LIVE_CHECK].
+- parameters: v5_structured_log (mặc định true), v5_compact_cycle_log (mặc định false);
+  nếu tắt structured và bật v5_verbose_no_order_log thì chỉ còn dòng no-order tối giản.
+
 Relay Demo → Live (cùng logic engine V5):
 - Phải import signal_relay *trước* strategy_grid_step_v5 để trỏ file relay riêng BTC
   (btc_v5_relay_signal.json / btc_v5_relay_state.json), không dùng chung với XAU V5.

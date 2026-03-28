@@ -12,7 +12,7 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "v5_relay_signal.json")
@@ -68,31 +68,30 @@ def demo_try_publish_relay(
     *,
     relay_zone_points: float,
     ttl_minutes: float,
-    verbose: bool,
-) -> Optional[str]:
+    verbose: bool = False,
+) -> Tuple[Optional[str], str]:
     """
     Gọi sau khi demo có pending/position mới. Mỗi zone chỉ relay 1 lần (demo_relayed_zones).
-    Trả về relay_id nếu đã ghi file.
+    Trả về (relay_id hoặc None, mã lý do cho log [RELAY]).
     """
+    del verbose  # log cấu trúc do strategy_grid_step_v5 in
     if not gate_features:
-        return None
+        return None, "NO_GATE_FEATURES"
     symbol = config.get("symbol")
     magic = int(config.get("magic") or 0)
     entry = gate_features.get("current_signal_open_price")
     sig_type = gate_features.get("current_signal_type") or gate_features.get("signal_type")
     if entry is None or not symbol or not sig_type:
-        return None
+        return None, "MISSING_ENTRY_OR_SYMBOL"
     try:
         entry_f = float(entry)
     except (TypeError, ValueError):
-        return None
+        return None, "BAD_ENTRY_PRICE"
     zone = price_zone_key(entry_f, float(relay_zone_points))
     state = _load_json(RELAY_STATE_FILE, _default_state())
     demo_zones: List = list(state.get("demo_relayed_zones") or [])
     if zone in demo_zones:
-        if verbose:
-            print(f"📡 [Relay] demo zone {zone} đã relay trước đó — không phát lại cho live.")
-        return None
+        return None, "RELAY_ALREADY_SENT_IN_ZONE"
     relay_id = str(uuid.uuid4())
     now = time.time()
     expires = now + float(ttl_minutes) * 60.0
@@ -116,12 +115,7 @@ def demo_try_publish_relay(
     demo_zones.append(zone)
     state["demo_relayed_zones"] = demo_zones
     _atomic_write(RELAY_STATE_FILE, state)
-    if verbose:
-        print(
-            f"📡 [Relay] demo phát tín hiệu live: zone={zone} relay_id={relay_id[:8]}… "
-            f"TTL={ttl_minutes}m -> {RELAY_SIGNAL_FILE}"
-        )
-    return relay_id
+    return relay_id, "DEMO_ORDER_SENT"
 
 
 def relay_read_valid(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:

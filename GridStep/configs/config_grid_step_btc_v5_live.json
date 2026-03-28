@@ -31,6 +31,8 @@
         "history_comment_prefix": "",
         "preferred_direction": "BOTH",
         "allow_reverse_entry": true,
+        "v5_structured_log": true,
+        "v5_compact_cycle_log": false,
         "live_min_entry_gap_minutes": 5,
         "live_skip_if_equivalent": true,
         "live_duplicate_price_threshold": 0,

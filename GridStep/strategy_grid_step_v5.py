@@ -918,118 +918,239 @@ def _mark_live_entry_now(symbol, magic):
     _save_live_state(state)
 
 
-def _print_v5_gate_detail(allow_live, gate_reason, gate_features, v5_role, medium_thr, entry_thr):
-    """Log gate nhiều dòng: tổng điểm, từng rule cộng/trừ, entry/prev, ý nghĩa demo vs live."""
-    gf = gate_features or {}
+def _v5_signal_relation(gf):
+    """REVERSAL | CONTINUATION | FIRST_SIGNAL"""
+    if not gf or not gf.get("ready"):
+        return "FIRST_SIGNAL"
+    pt = gf.get("prev_signal_type")
+    ct = gf.get("current_signal_type") or gf.get("signal_type")
+    if not pt or not ct:
+        return "FIRST_SIGNAL"
+    if str(pt).upper() == str(ct).upper():
+        return "CONTINUATION"
+    return "REVERSAL"
+
+
+def _v5_score_decision_label(gf, entry_thr):
+    sb = gf.get("score_breakdown") if isinstance(gf.get("score_breakdown"), dict) else {}
+    d = sb.get("decision")
+    if d in ("EXECUTE", "NEUTRAL", "PROBE", "REJECT"):
+        return d
+    try:
+        sc = int(gf.get("score")) if gf.get("score") is not None else 0
+    except (TypeError, ValueError):
+        sc = 0
+    if sc >= int(entry_thr):
+        return "EXECUTE"
+    if sc == 3:
+        return "NEUTRAL"
+    if 1 <= sc <= 2:
+        return "PROBE"
+    return "REJECT"
+
+
+def _v5_gate_main_reason_code(gate_reason):
+    """Map gate_reason -> MAIN_REASON mã ngắn."""
+    gr = str(gate_reason or "")
+    if not gr:
+        return "UNKNOWN"
+    if gr.startswith("blocked:"):
+        br = gr.replace("blocked:", "", 1)
+        if "loss_streak" in br:
+            return "HARD_BLOCK_LOSS_STREAK"
+        if "sum_last_10" in br or "deep_negative" in gr:
+            return "HARD_BLOCK_SUM10_DEEP_NEGATIVE"
+        if "sum_last_5" in br:
+            return "HARD_BLOCK_SUM5"
+        if "gap" in br:
+            return "HARD_BLOCK_MIN_GAP"
+        return "HARD_BLOCK"
+    if "below_entry_score" in gr or "low_score" in gr:
+        return "SCORE_REJECT"
+    if gr in ("tick_none", "preview_grid_failed", "feature_not_ready"):
+        return "NO_SIGNAL"
+    if "need>=" in gr or "closed_trades" in gr:
+        return "INSUFFICIENT_HISTORY"
+    if gr.startswith("live_maintenance"):
+        return "LIVE_MAINTENANCE"
+    if gr == "live_relay_ok":
+        return "RELAY_OK"
+    if "direction_gate" in gr:
+        return "DIRECTION_GATE"
+    return "GATE_" + gr[:24].replace(" ", "_")
+
+
+def _v5_grid_action_reason(pre_np, pre_npos, new_p, new_pos, mx):
+    """action, reason_code cho [GRID] khi không có lệnh mới."""
+    mx = int(mx or 5)
+    if pre_np >= 2 and not new_p:
+        return "NO_NEW_ORDER", "GRID_FULL_2_PENDING"
+    if pre_npos >= mx and not new_pos:
+        return "NO_NEW_ORDER", "MAX_POSITIONS_REACHED"
+    if new_p or new_pos:
+        return "PLACE_ORDER", "NEW_TICKETS"
+    return "NO_NEW_ORDER", "GRID_NO_CHANGE"
+
+
+def _v5_compute_result_main(ctx):
+    """(RESULT, MAIN_REASON) cho [V5] dòng đầu."""
+    exit_kind = ctx.get("exit_kind") or "normal"
+    gate_reason = str(ctx.get("gate_reason") or "")
+    if exit_kind == "no_relay_flat":
+        return "SKIP", "NO_RELAY"
+    if exit_kind == "relay_zone_mismatch":
+        return "SKIP", "RELAY_ZONE_MISMATCH"
+    if exit_kind == "gate_blocked":
+        return "BLOCKED", _v5_gate_main_reason_code(gate_reason)
+    if exit_kind == "live_cooldown":
+        return "SKIP", "LIVE_COOLDOWN"
+    if exit_kind == "dup_skip":
+        return "SKIP", "DUPLICATE_PENDING"
+    if ctx.get("new_pending") or ctx.get("new_positions"):
+        return "NEW_ORDER", "ORDER_PLACED"
+    g_act, g_reason = _v5_grid_action_reason(
+        ctx.get("pre_np", 0),
+        ctx.get("pre_npos", 0),
+        ctx.get("new_pending") or [],
+        ctx.get("new_positions") or [],
+        ctx.get("max_positions", 5),
+    )
+    if g_act == "PLACE_ORDER":
+        return "NEW_ORDER", "ORDER_PLACED"
+    return "NO_ORDER", g_reason
+
+
+def _v5_emit_structured_cycle_log(ctx, params):
+    """
+    Log một vòng: RESULT / MAIN_REASON + [SIGNAL][SCORE][CONTEXT][BLOCK][GRID][RELAY][LIVE_CHECK].
+    ctx: dict từ run loop (exit_kind, gate_*, grid_*, relay_*, ...).
+    """
+    if not bool(params.get("v5_structured_log", True)):
+        return
+    compact = bool(params.get("v5_compact_cycle_log", False))
+    gf = ctx.get("gate_features") or {}
     sb = gf.get("score_breakdown") if isinstance(gf.get("score_breakdown"), dict) else {}
     adds = sb.get("add") or []
     subs = sb.get("sub") or []
+    entry_thr = int(ctx.get("entry_thr") or 6)
     sc = gf.get("score")
-    blk = gf.get("blocked")
-    br = gf.get("block_reason") or "-"
+    v5_role = str(ctx.get("v5_role") or "demo")
 
-    print("🧮 [V5 Gate] —— chi tiết chấm điểm / gate ——")
-    print(f"  allow={allow_live}  |  role={v5_role}  |  reason: {gate_reason}")
-    print(
-        f"  Tổng điểm: {sc}  |  ngưỡng live: medium>={medium_thr} (lọc thấp), entry>={entry_thr} (đủ đẹp để qualified)"
+    result, main = _v5_compute_result_main(ctx)
+    g_act, g_reason = _v5_grid_action_reason(
+        ctx.get("pre_np", 0),
+        ctx.get("pre_npos", 0),
+        ctx.get("new_pending") or [],
+        ctx.get("new_positions") or [],
+        ctx.get("max_positions", 5),
     )
-    if adds or subs:
-        print("  Điểm cộng/trừ:")
-        for ln in adds:
-            print(f"      (+) {ln}")
-        for ln in subs:
-            print(f"      (−) {ln}")
-    else:
-        print("  Điểm cộng/trừ: (không có breakdown — có thể gate chưa ready)")
 
-    gap = gf.get("gap_minutes_from_prev_signal")
-    try:
-        gap_s = f"{float(gap):.2f}"
-    except (TypeError, ValueError):
-        gap_s = str(gap)
-    print(
-        f"  State (lệnh đóng): sum5={gf.get('sum_last_5_net_profit')}  sum10={gf.get('sum_last_10_net_profit')}  "
-        f"loss_streak={gf.get('loss_streak')}  last_closed={gf.get('last_trade_result')}"
-    )
-    print(
-        f"  Entry đang chấm: {gf.get('current_signal_type')} @ {gf.get('current_signal_open_price')}  "
-        f"| preferred={gf.get('preferred_direction')}"
-    )
-    print(
-        f"  So với trước: prev={gf.get('prev_signal_type')} @ {gf.get('prev_signal_open_price')}  "
-        f"| prev_src={gf.get('prev_signal_source')}  gap={gap_s} phút  min_gap_ok={gf.get('min_gap_ok')}"
-    )
-    if gf.get("prev_duration_min") is not None or gf.get("gap_from_prev_close_min") is not None:
-        pd = gf.get("prev_duration_min")
-        gc = gf.get("gap_from_prev_close_min")
-        pd_s = f"{float(pd):.2f}" if pd is not None else "-"
-        gc_s = f"{float(gc):.2f}" if gc is not None else "-"
-        print(f"  Close-time features: prev_duration_min={pd_s} phút  gap_from_prev_close_min={gc_s} phút")
-    print(
-        f"  Thời gian entry: ts_src={gf.get('current_signal_ts_source')}  "
-        f"| hard_block={blk}  | block_reason={br}"
-    )
-    if v5_role != "live":
+    if compact:
+        rel = _v5_signal_relation(gf)
+        side = gf.get("current_signal_type") or gf.get("signal_type") or "-"
+        ep = gf.get("current_signal_open_price")
+        ps = f"{gf.get('prev_signal_type')} {gf.get('prev_signal_open_price')}"
+        minus_rules = ",".join(subs) if subs else "none"
+        print(f"[V5] RESULT={result} | MAIN_REASON={main}")
+        print(f"[SIGNAL] {side} {ep} | prev={ps} | relation={rel}")
         print(
-            "  📌 Demo: score chỉ để quan sát — gate KHÔNG chặn. Có vào lệnh hay không do strategy grid "
-            "(2 pending, position, spread, pause...), không do điểm."
+            f"[SCORE] score={sc} | decision={_v5_score_decision_label(gf, entry_thr)} | minus={minus_rules}"
         )
+        print(f"[BLOCK] hard_block={gf.get('blocked')} | reason={gf.get('block_reason') or '-'}")
+        print(
+            f"[GRID] positions={ctx.get('pre_npos')} | pendings={ctx.get('pre_np')} | "
+            f"action={g_act} | reason={g_reason}"
+        )
+        ren = ctx.get("relay_enabled", False)
+        rs = ctx.get("relay_sent", False)
+        rr = ctx.get("relay_reason") or "-"
+        print(f"[RELAY] sent={rs} | reason={rr}" if ren else "[RELAY] enabled=False")
+        return
+
+    print(f"[V5] RESULT={result} | MAIN_REASON={main}")
+    print("[SIGNAL]")
+    print(f"- side={gf.get('current_signal_type') or gf.get('signal_type') or '-'}")
+    print(f"- entry={gf.get('current_signal_open_price')}")
+    print(f"- prev_side={gf.get('prev_signal_type')}")
+    print(f"- prev_open={gf.get('prev_signal_open_price')}")
+    print(f"- relation={_v5_signal_relation(gf)}")
+    print(f"- preferred={gf.get('preferred_direction')}")
+
+    print("[SCORE]")
+    print(f"- score={sc}")
+    print(f"- decision={_v5_score_decision_label(gf, entry_thr)}")
+    print(f"- add={len(adds)}")
+    print(f"- sub={len(subs)}")
+    plus_rules = ", ".join(adds) if adds else "none"
+    minus_rules = ", ".join(subs) if subs else "none"
+    print(f"- plus_rules={plus_rules}")
+    print(f"- minus_rules={minus_rules}")
+
+    print("[CONTEXT]")
+    gsm = gf.get("gap_from_prev_signal_min")
+    if gsm is None:
+        gsm = gf.get("gap_minutes_from_prev_signal")
+    print(f"- gap_signal_min={gsm}")
+    gc = gf.get("gap_from_prev_close_min")
+    print(f"- gap_from_prev_close_min={gc if gc is not None else '-'}")
+    pd = gf.get("prev_duration_min")
+    print(f"- prev_duration_min={pd if pd is not None else '-'}")
+    print(f"- ts_src={gf.get('current_signal_ts_source')}")
+
+    print("[BLOCK]")
+    print(f"- hard_block={gf.get('blocked')}")
+    print(f"- block_reason={gf.get('block_reason') or '-'}")
+    print(f"- min_gap_ok={gf.get('min_gap_ok')}")
+    print(f"- loss_streak={gf.get('loss_streak')}")
+    print(f"- last_closed={gf.get('last_trade_result')}")
+    print(f"- sum5={gf.get('sum_last_5_net_profit')}")
+    print(f"- sum10={gf.get('sum_last_10_net_profit')}")
+
+    print("[GRID]")
+    print(f"- positions={ctx.get('pre_npos')}")
+    print(f"- pendings={ctx.get('pre_np')}")
+    print(f"- action={g_act}")
+    print(f"- reason={g_reason}")
+
+    ren = bool(ctx.get("relay_enabled", False))
+    print("[RELAY]")
+    print(f"- enabled={ren}")
+    if ren:
+        print(f"- sent={bool(ctx.get('relay_sent'))}")
+        if ctx.get("relay_zone") is not None:
+            print(f"- zone={ctx.get('relay_zone')}")
+        if ctx.get("relay_side"):
+            print(f"- side={ctx.get('relay_side')}")
+        print(f"- reason={ctx.get('relay_reason') or '-'}")
+    else:
+        print("- reason=RELAY_DISABLED")
+
+    if v5_role != "live":
         try:
             s = int(sc) if sc is not None else 0
+            eq = "QUALIFIED" if s >= entry_thr else "REJECT"
         except (TypeError, ValueError):
-            s = 0
-        if s < entry_thr:
-            print(
-                f"  📌 Nếu đây là live: với điểm {s} < entry ({entry_thr}) sẽ KHÔNG được coi qualified — chưa đủ đẹp."
-            )
-    else:
-        if allow_live:
-            print("  📌 Live: đã qualified / qua gate — strategy được gọi (trừ khi cooldown hoặc skip trùng pending).")
-        else:
-            print("  📌 Live: KHÔNG qualified — không chạy strategy theo gate (xem reason).")
-
-    print("🧮 [V5 Gate] ————————————————————————")
+            eq = "?"
+        print("[LIVE_CHECK]")
+        print(f"- equivalent={eq}")
+        print(f"- entry_threshold={entry_thr}")
+        print(f"- score={sc}")
+    print("")
 
 
-def _print_v5_no_new_order_detail(
-    v5_role,
-    gate_reason,
-    gate_features,
-    pre_pending,
-    post_pending,
-    pre_positions,
-    post_positions,
-    max_positions,
-):
-    """Giải thích vì sao không có ticket pending/position mới sau một vòng strategy."""
-    gf = gate_features or {}
-    np_pre, np_post = len(pre_pending), len(post_pending)
-    npos_pre, npos_post = len(pre_positions), len(post_positions)
-    mx = int(max_positions or 5)
-
-    print("ℹ️ [V5] —— không có lệnh mới trong vòng này ——")
-    print(f"  role={v5_role}  score={gf.get('score')}  gate_reason={gate_reason}")
-    print(f"  MT5: pending {np_pre}→{np_post}  |  positions {npos_pre}→{npos_post}")
-    reasons = []
-    if np_pre >= 2:
-        reasons.append(
-            "Grid (strategy_grid_step.py): len(pendings)==2 → bot CỐ TÌNH không đặt thêm cặp STOP; "
-            "chờ một lệnh khớp (hoặc bạn hủy tay). Đây là đúng thiết kế, không phải lỗi V5 hay score."
-        )
-    if npos_pre >= mx:
-        reasons.append(f"Đã đạt hoặc vượt max_positions={mx} → không mở thêm position.")
-    if npos_pre > 0 and np_pre > 0:
-        reasons.append("Có position và vẫn có pending → trạng thái lưới bình thường; có thể chờ TP basket hoặc điều kiện spread/min_distance/pause (xem log [step=...] phía trên nếu có).")
-    if npos_pre > 0 and np_pre == 0:
-        reasons.append("Có position nhưng không còn pending → base có thể vừa khớp một chân; vòng sau thường hủy/đặt lại cặp — xem log strategy.")
-    if not reasons:
-        reasons.append("Không đoán được chắc: xem log strategy_grid_step (spread_max, pause, min_distance_points, cooldown...).")
-
-    for i, r in enumerate(reasons, 1):
-        print(f"  {i}) {r}")
-    if v5_role != "live":
-        print("  (Demo: không có gate theo điểm; lý do không vào lệnh chủ yếu là điều kiện grid như trên.)")
-    print("ℹ️ [V5] ————————————————————————")
+def _v5_try_emit_cycle_log(ctx, params):
+    """Throttle ~10s khi cùng (RESULT, MAIN, score, pendings, positions)."""
+    if not bool(params.get("v5_structured_log", True)):
+        return
+    gf = ctx.get("gate_features") or {}
+    r, m = _v5_compute_result_main(ctx)
+    sig = (r, m, gf.get("score"), ctx.get("pre_np"), ctx.get("pre_npos"))
+    now_m = time.monotonic()
+    prev = getattr(run, "_last_v5_struct_log", None)
+    if prev is not None and prev[0] == sig and (now_m - prev[1]) < 10.0:
+        return
+    _v5_emit_structured_cycle_log(ctx, params)
+    run._last_v5_struct_log = (sig, now_m)
 
 
 def run():
@@ -1088,24 +1209,41 @@ def run():
                             else None
                         )
                         if not relay_payload:
-                            sig_r = ("no_relay_flat",)
-                            now_m = time.monotonic()
-                            prev_r = getattr(run, "_last_live_relay_log", None)
-                            if prev_r is None or prev_r[0] != sig_r or (now_m - prev_r[1]) > 20:
-                                print(
-                                    "⏸️ [V5 Live] live_execute_demo_signal_only: flat, không có relay demo hợp lệ — "
-                                    "không gọi strategy."
-                                )
-                                run._last_live_relay_log = (sig_r, now_m)
+                            _v5_try_emit_cycle_log(
+                                {
+                                    "exit_kind": "no_relay_flat",
+                                    "v5_role": v5_role,
+                                    "entry_thr": entry_thr,
+                                    "max_positions": config.get("max_positions", 5),
+                                    "pre_np": len(pre_pending),
+                                    "pre_npos": len(pre_positions),
+                                    "gate_reason": "no_relay",
+                                    "gate_features": {},
+                                    "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                                    "relay_sent": False,
+                                    "relay_reason": "NO_RELAY",
+                                },
+                                params,
+                            )
                             time.sleep(loop_interval_seconds)
                             continue
                         if not _relay_zone_matches_current(config, relay_payload):
-                            sig_z = (relay_payload.get("relay_id"), "zone_mismatch")
-                            now_m = time.monotonic()
-                            prev_z = getattr(run, "_last_live_relay_zone_log", None)
-                            if prev_z is None or prev_z[0] != sig_z or (now_m - prev_z[1]) > 15:
-                                print("⏸️ [V5 Live] relay zone không khớp grid hiện tại — skip.")
-                                run._last_live_relay_zone_log = (sig_z, now_m)
+                            _v5_try_emit_cycle_log(
+                                {
+                                    "exit_kind": "relay_zone_mismatch",
+                                    "v5_role": v5_role,
+                                    "entry_thr": entry_thr,
+                                    "max_positions": config.get("max_positions", 5),
+                                    "pre_np": len(pre_pending),
+                                    "pre_npos": len(pre_positions),
+                                    "gate_reason": "relay_zone_mismatch",
+                                    "gate_features": signal_relay.relay_to_gate_features(relay_payload),
+                                    "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                                    "relay_sent": False,
+                                    "relay_reason": "RELAY_ZONE_MISMATCH",
+                                },
+                                params,
+                            )
                             time.sleep(loop_interval_seconds)
                             continue
                         allow_live = True
@@ -1119,53 +1257,23 @@ def run():
                 else:
                     allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
 
-                # Log tóm tắt kết quả kiểm tra gate (throttle để tránh spam)
-                gate_sig = (
-                    bool(allow_live),
-                    gate_reason,
-                    gate_features.get("score"),
-                    round(float(gate_features.get("sum_last_5_net_profit", 0) or 0), 2),
-                    round(float(gate_features.get("sum_last_10_net_profit", 0) or 0), 2),
-                    gate_features.get("loss_streak"),
-                    gate_features.get("signal_type"),
-                )
-                now_m = time.monotonic()
-                prev_gate = getattr(run, "_last_gate_eval_log", None)
-                if prev_gate is None or prev_gate[0] != gate_sig or (now_m - prev_gate[1]) > 10:
-                    if bool(params.get("v5_verbose_gate_log", True)):
-                        _print_v5_gate_detail(
-                            allow_live, gate_reason, gate_features, v5_role, medium_thr, entry_thr
-                        )
-                    else:
-                        sb = gate_features.get("score_breakdown") or {}
-                        add_s = "; ".join(sb.get("add", [])) if isinstance(sb, dict) else ""
-                        sub_s = "; ".join(sb.get("sub", [])) if isinstance(sb, dict) else ""
-                        print(
-                            f"🧮 [V5 Gate] allow={allow_live} reason={gate_reason} score={gate_features.get('score')} "
-                            f"add=[{add_s}] sub=[{sub_s}]"
-                        )
-                    run._last_gate_eval_log = (gate_sig, now_m)
                 if not allow_live:
-                    # throttle log — cả demo cũng dừng tại đây nếu gate trả allow=False (tick_none, preview_grid_failed, feature_not_ready...)
-                    sig = (
-                        gate_reason,
-                        gate_features.get("score"),
-                        gate_features.get("closed_count"),
-                        round(float(gate_features.get("sum_last_5_net_profit", 0) or 0), 2),
-                        round(float(gate_features.get("sum_last_10_net_profit", 0) or 0), 2),
+                    _v5_try_emit_cycle_log(
+                        {
+                            "exit_kind": "gate_blocked",
+                            "v5_role": v5_role,
+                            "entry_thr": entry_thr,
+                            "max_positions": config.get("max_positions", 5),
+                            "pre_np": len(pre_pending),
+                            "pre_npos": len(pre_positions),
+                            "gate_reason": gate_reason,
+                            "gate_features": gate_features or {},
+                            "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                            "relay_sent": False,
+                            "relay_reason": "NO_DEMO_ORDER",
+                        },
+                        params,
                     )
-                    now_m = time.monotonic()
-                    prev = getattr(run, "_last_gate_log", None)
-                    if prev is None or prev[0] != sig or (now_m - prev[1]) > 15:
-                        print(
-                            f"⏸️ [V5 Gate] KHÔNG gọi strategy_grid_step — role={v5_role} | reason={gate_reason}"
-                        )
-                        if v5_role != "live":
-                            print(
-                                "   (Demo: thường gặp tick_none, preview_grid_failed, feature_not_ready — "
-                                "không phải do điểm score.)"
-                            )
-                        run._last_gate_log = (sig, now_m)
                     time.sleep(loop_interval_seconds)
                     continue
 
@@ -1175,15 +1283,22 @@ def run():
                     # Chỉ chặn mở mới khi hệ thống đang flat (không position, không pending).
                     # Nếu đang có lệnh, để base strategy quản lý vòng đời bình thường.
                     if remain_cd > 0 and (len(pre_pending) == 0 and len(pre_positions) == 0):
-                        prev_cd = getattr(run, "_last_live_cd_log", None)
-                        now_m = time.monotonic()
-                        sig_cd = (remain_cd // 5, len(pre_pending), len(pre_positions))
-                        if prev_cd is None or prev_cd[0] != sig_cd or (now_m - prev_cd[1]) > 10:
-                            print(
-                                f"⏸️ [V5 Live] entry cooldown: còn {remain_cd}s "
-                                f"(min_gap={live_min_entry_gap_seconds}s), skip mở lệnh mới."
-                            )
-                            run._last_live_cd_log = (sig_cd, now_m)
+                        _v5_try_emit_cycle_log(
+                            {
+                                "exit_kind": "live_cooldown",
+                                "v5_role": v5_role,
+                                "entry_thr": entry_thr,
+                                "max_positions": config.get("max_positions", 5),
+                                "pre_np": len(pre_pending),
+                                "pre_npos": len(pre_positions),
+                                "gate_reason": gate_reason,
+                                "gate_features": gate_features or {},
+                                "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                                "relay_sent": False,
+                                "relay_reason": "LIVE_COOLDOWN",
+                            },
+                            params,
+                        )
                         time.sleep(loop_interval_seconds)
                         continue
 
@@ -1210,15 +1325,22 @@ def run():
                     npos_ct = len(pre_positions)
                     npen_ct = len(pre_pending)
                     if has_eq and npos_ct == 0 and npen_ct == 2:
-                        now_m = time.monotonic()
-                        prev_sk = getattr(run, "_last_live_dup_skip_log", None)
-                        sig_sk = (str(sig_type), round(spx, 2), round(dthr, 4))
-                        if prev_sk is None or prev_sk[0] != sig_sk or (now_m - prev_sk[1]) > 15:
-                            print(
-                                "ℹ️ [V5 Live] tín hiệu đạt ngưỡng nhưng live đã có pending tương đương "
-                                f"({sig_type} @ ~{spx}, thr={dthr}); bỏ qua gọi strategy."
-                            )
-                            run._last_live_dup_skip_log = (sig_sk, now_m)
+                        _v5_try_emit_cycle_log(
+                            {
+                                "exit_kind": "dup_skip",
+                                "v5_role": v5_role,
+                                "entry_thr": entry_thr,
+                                "max_positions": config.get("max_positions", 5),
+                                "pre_np": len(pre_pending),
+                                "pre_npos": len(pre_positions),
+                                "gate_reason": gate_reason,
+                                "gate_features": gate_features or {},
+                                "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                                "relay_sent": False,
+                                "relay_reason": "DUPLICATE_PENDING",
+                            },
+                            params,
+                        )
                         time.sleep(loop_interval_seconds)
                         continue
 
@@ -1243,33 +1365,67 @@ def run():
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
 
+                relay_sent = False
+                relay_reason = "NO_DEMO_ORDER"
+                relay_zone = None
+                relay_side = None
                 if v5_role == "demo" and bool(params.get("signal_relay_enabled", False)) and (
                     new_pending or new_positions
                 ):
-                    signal_relay.demo_try_publish_relay(
+                    _rid, relay_reason = signal_relay.demo_try_publish_relay(
                         config,
                         gate_features,
                         relay_zone_points=float(params.get("relay_zone_points") or 200),
                         ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
-                        verbose=relay_verbose,
+                        verbose=False,
                     )
+                    relay_sent = _rid is not None
+                    if relay_sent:
+                        try:
+                            ep = float(gate_features.get("current_signal_open_price") or 0)
+                            relay_zone = signal_relay.price_zone_key(
+                                ep, float(params.get("relay_zone_points") or 200)
+                            )
+                            relay_side = str(
+                                gate_features.get("current_signal_type")
+                                or gate_features.get("signal_type")
+                                or ""
+                            ).upper()
+                        except (TypeError, ValueError):
+                            pass
 
                 if live_demo_only and active_relay_id and (new_pending or new_positions):
                     signal_relay.relay_consume(active_relay_id, verbose=relay_verbose)
 
+                rr_out = relay_reason
+                if v5_role != "demo" and relay_reason == "NO_DEMO_ORDER":
+                    rr_out = "NOT_DEMO_ROLE"
+
+                _v5_try_emit_cycle_log(
+                    {
+                        "exit_kind": "normal",
+                        "v5_role": v5_role,
+                        "entry_thr": entry_thr,
+                        "max_positions": config.get("max_positions", 5),
+                        "pre_np": len(pre_pending),
+                        "pre_npos": len(pre_positions),
+                        "gate_reason": gate_reason,
+                        "gate_features": gate_features or {},
+                        "new_pending": new_pending,
+                        "new_positions": new_positions,
+                        "relay_enabled": bool(params.get("signal_relay_enabled", False)),
+                        "relay_sent": relay_sent,
+                        "relay_reason": rr_out,
+                        "relay_zone": relay_zone,
+                        "relay_side": relay_side or None,
+                    },
+                    params,
+                )
+
                 if not new_pending and not new_positions:
-                    if bool(params.get("v5_verbose_no_order_log", True)):
-                        _print_v5_no_new_order_detail(
-                            v5_role,
-                            gate_reason,
-                            gate_features,
-                            pre_pending,
-                            post_pending,
-                            pre_positions,
-                            post_positions,
-                            config.get("max_positions", 5),
-                        )
-                    else:
+                    if not bool(params.get("v5_structured_log", True)) and bool(
+                        params.get("v5_verbose_no_order_log", True)
+                    ):
                         print(
                             "ℹ️ [V5] no new order | "
                             f"role={v5_role} score={gate_features.get('score')} pending="
