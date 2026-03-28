@@ -61,6 +61,8 @@ def _btc_score_signal_detailed(features):
         "profile": detail.get("symbol_profile"),
         "decision": detail.get("decision"),
         "strong_reversal": detail.get("strong_reversal"),
+        "gap_for_reversal_min": detail.get("gap_for_reversal_min"),
+        "gap_from_prev_signal_min": detail.get("gap_from_prev_signal_min"),
     }
     return score, breakdown
 

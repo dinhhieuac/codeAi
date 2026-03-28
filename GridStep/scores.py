@@ -1,8 +1,9 @@
 """
 BTCUSD scoring — Grid Step 200.0 (logic riêng, không copy XAU V5).
 
-Bản cập nhật: dùng thêm feature từ close_time (prev_duration_min, gap_from_prev_close_min)
-và strong reversal theo last=Loss / loss_streak (xem strategy_grid_step_v5 _build_v5_features).
+Bản cập nhật: tách hai loại gap:
+- gap_from_prev_signal_min (mở→entry): continuation, SELL sau pause dài
+- gap_from_prev_close_min (đóng→entry): reversal nhanh / strong reversal khi có close_time
 """
 
 from __future__ import annotations
@@ -41,22 +42,33 @@ STRONG_REVERSAL_GAP_LT_MIN = 3.0
 
 
 def _gap_from_prev_signal_min(features: Dict[str, Any]) -> float:
-    """Khoảng cách (phút) từ mở tín hiệu trước tới entry hiện tại."""
+    """Khoảng cách (phút) từ mở tín hiệu trước tới entry hiện tại (spacing / continuation)."""
     g = features.get("gap_from_prev_signal_min")
     if g is not None:
         return _f(g, 999.0)
     return _f(features.get("gap_minutes_from_prev_signal"), 999.0)
 
 
+def _gap_for_reversal_min(features: Dict[str, Any]) -> float:
+    """
+    Gap cho reversal nhanh / strong reversal: ưu tiên thời gian từ khi lệnh trước *đóng*
+    tới entry hiện tại; nếu không có (prev đang mở hoặc chưa sync close_time) thì dùng gap mở→mở.
+    """
+    g_close = features.get("gap_from_prev_close_min")
+    if g_close is not None:
+        return _f(g_close, 999.0)
+    return _gap_from_prev_signal_min(features)
+
+
 def btc_strong_reversal_signal(features: Dict[str, Any]) -> bool:
     """
     Strong reversal (BTC):
     - reverse_direction_from_prev_signal
-    - gap_from_prev_signal_min < 3
+    - _gap_for_reversal_min < 3
     - và (last_trade_result == Loss hoặc loss_streak >= 2)
     """
     rev = _b(features.get("reverse_direction_from_prev_signal"))
-    gap = _gap_from_prev_signal_min(features)
+    gap = _gap_for_reversal_min(features)
     last = str(features.get("last_trade_result") or "").strip()
     loss_streak = _i(features.get("loss_streak"))
     if not rev or gap >= STRONG_REVERSAL_GAP_LT_MIN:
@@ -70,9 +82,9 @@ def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str,
     """
     cur = _norm_side(features.get("current_signal_type") or features.get("signal_type"))
     gap_sig = _gap_from_prev_signal_min(features)
+    gap_rev = _gap_for_reversal_min(features)
     same_dir = _b(features.get("same_direction_as_prev_signal"))
     rev = _b(features.get("reverse_direction_from_prev_signal"))
-    loss_streak = _i(features.get("loss_streak"))
     sum10 = _f(features.get("sum_last_10_net_profit"))
     last = str(features.get("last_trade_result") or "").strip()
 
@@ -99,8 +111,8 @@ def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str,
         score -= pts
         sub.append(f"{rule}:-{pts}")
 
-    # --- Điểm cộng ---
-    if rev and gap_sig < STRONG_REVERSAL_GAP_LT_MIN:
+    # --- Điểm cộng (reversal dùng gap_rev = đóng→entry khi có close_time) ---
+    if rev and gap_rev < STRONG_REVERSAL_GAP_LT_MIN:
         ap("reversal_fast_gap_lt_3m", 3)
 
     if strong:
@@ -139,6 +151,8 @@ def btcusd_grid_step_200_score(features: Dict[str, Any]) -> Tuple[int, Dict[str,
         "sub": sub,
         "symbol_profile": "BTCUSD_GridStep200",
         "strong_reversal": strong,
+        "gap_for_reversal_min": gap_rev,
+        "gap_from_prev_signal_min": gap_sig,
     }
     return score, detail, decision
 
