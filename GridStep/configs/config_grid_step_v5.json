@@ -33,6 +33,11 @@
         "preferred_direction": "BOTH",
         "allow_reverse_entry": true,
         "v5_verbose_gate_log": true,
-        "v5_verbose_no_order_log": true
+        "v5_verbose_no_order_log": true,
+        "signal_relay_enabled": true,
+        "relay_zone_points": 5,
+        "relay_signal_ttl_minutes": 180,
+        "relay_verbose_log": true,
+        "live_execute_demo_signal_only": false
     }
 }

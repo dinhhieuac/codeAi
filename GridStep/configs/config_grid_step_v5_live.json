@@ -41,6 +41,11 @@
         "demo_history_server": "YOUR_DEMO_SERVER",
         "demo_history_mt5_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
         "demo_history_symbol": "XAUUSD",
-        "demo_history_magic": 100010
+        "demo_history_magic": 100010,
+        "signal_relay_enabled": true,
+        "relay_zone_points": 5,
+        "relay_signal_ttl_minutes": 180,
+        "relay_verbose_log": true,
+        "live_execute_demo_signal_only": true
     }
 }

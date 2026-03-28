@@ -5,9 +5,24 @@ Reuse engine của strategy_grid_step_v5 nhưng:
 - base strategy = strategy_grid_step_btc
 - score = BTCUSD Grid Step 200.0 từ scores.py
 - file state/log riêng cho BTC v5
+
+Relay Demo → Live (cùng logic engine V5):
+- Phải import signal_relay *trước* strategy_grid_step_v5 để trỏ file relay riêng BTC
+  (btc_v5_relay_signal.json / btc_v5_relay_state.json), không dùng chung với XAU V5.
+- Demo (config_grid_step_btc_v5.json): signal_relay_enabled, chấm điểm + gate + grid;
+  khi có lệnh mới thành công → phát relay (mỗi zone relay_zone_points chỉ 1 lần).
+- Live (config_grid_step_btc_v5_live.json): live_execute_demo_signal_only=true → flat chỉ
+  mirror theo relay; có position/pending thì vẫn bảo trì lưới.
 """
 import os
 import sys
+
+# Trỏ đường dẫn relay TRƯỚC khi nạp engine (strategy_grid_step_v5 cũng import signal_relay).
+import signal_relay
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+signal_relay.RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "btc_v5_relay_signal.json")
+signal_relay.RELAY_STATE_FILE = os.path.join(SCRIPT_DIR, "btc_v5_relay_state.json")
 
 import strategy_grid_step_v5 as core
 import strategy_grid_step_btc as btc_base
@@ -16,9 +31,6 @@ from scores import (
     btc_strong_reversal_signal,
     btcusd_grid_step_200_score,
 )
-
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Rebind base logic sang BTC clone.
 core.base = btc_base

@@ -13,6 +13,7 @@ import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
 
 import strategy_grid_step as base
+import signal_relay
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +21,28 @@ base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_v5.json")
 base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
 LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_live_state.json")
+
+
+def _relay_zone_matches_current(config, relay_payload):
+    """Live: zone grid hiện tại phải khớp zone trong relay."""
+    params = config.get("parameters", {})
+    zp = float(params.get("relay_zone_points") or 200)
+    preview = _v5_preview_grid_levels(config)
+    if preview is None:
+        return False
+    tick = mt5.symbol_info_tick(config["symbol"])
+    if tick is None:
+        return False
+    step_f = _v5_step_filter_for_gate(config)
+    pendings = base.get_pending_orders(config["symbol"], config["magic"], step_f)
+    entry = _compute_grid_entry_signal(preview, tick, pendings)
+    try:
+        px = float(entry.get("current_signal_open_price") or 0)
+    except (TypeError, ValueError):
+        return False
+    want = int(relay_payload.get("zone_key") or 0)
+    got = signal_relay.price_zone_key(px, zp)
+    return want == got
 
 
 def _fetch_closed_trades_with_account(
@@ -1045,11 +1068,57 @@ def run():
 
         try:
             while True:
-                allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
                 params = config.get("parameters", {})
                 v5_role = str(params.get("v5_role", "demo")).lower().strip()
                 medium_thr = int(params.get("medium_score_threshold", 5))
                 entry_thr = int(params.get("entry_score_threshold", 6))
+                relay_verbose = bool(params.get("relay_verbose_log", True))
+                sym = config["symbol"]
+                mag = config["magic"]
+                pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
+                has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
+                live_demo_only = v5_role == "live" and bool(params.get("live_execute_demo_signal_only"))
+                active_relay_id = None
+
+                if live_demo_only:
+                    if not has_grid:
+                        relay_payload = (
+                            signal_relay.relay_read_valid(config)
+                            if bool(params.get("signal_relay_enabled", False))
+                            else None
+                        )
+                        if not relay_payload:
+                            sig_r = ("no_relay_flat",)
+                            now_m = time.monotonic()
+                            prev_r = getattr(run, "_last_live_relay_log", None)
+                            if prev_r is None or prev_r[0] != sig_r or (now_m - prev_r[1]) > 20:
+                                print(
+                                    "⏸️ [V5 Live] live_execute_demo_signal_only: flat, không có relay demo hợp lệ — "
+                                    "không gọi strategy."
+                                )
+                                run._last_live_relay_log = (sig_r, now_m)
+                            time.sleep(loop_interval_seconds)
+                            continue
+                        if not _relay_zone_matches_current(config, relay_payload):
+                            sig_z = (relay_payload.get("relay_id"), "zone_mismatch")
+                            now_m = time.monotonic()
+                            prev_z = getattr(run, "_last_live_relay_zone_log", None)
+                            if prev_z is None or prev_z[0] != sig_z or (now_m - prev_z[1]) > 15:
+                                print("⏸️ [V5 Live] relay zone không khớp grid hiện tại — skip.")
+                                run._last_live_relay_zone_log = (sig_z, now_m)
+                            time.sleep(loop_interval_seconds)
+                            continue
+                        allow_live = True
+                        gate_reason = "live_relay_ok"
+                        gate_features = signal_relay.relay_to_gate_features(relay_payload)
+                        active_relay_id = relay_payload.get("relay_id")
+                    else:
+                        allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
+                        allow_live = True
+                        gate_reason = f"live_maintenance:{gate_reason}"
+                else:
+                    allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
+
                 # Log tóm tắt kết quả kiểm tra gate (throttle để tránh spam)
                 gate_sig = (
                     bool(allow_live),
@@ -1100,10 +1169,7 @@ def run():
                     time.sleep(loop_interval_seconds)
                     continue
 
-                sym = config["symbol"]
-                mag = config["magic"]
                 live_min_entry_gap_seconds = int(float(params.get("live_min_entry_gap_minutes", 5)) * 60)
-                pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 if v5_role == "live":
                     remain_cd = _live_entry_cooldown_remaining_seconds(sym, mag, live_min_entry_gap_seconds)
                     # Chỉ chặn mở mới khi hệ thống đang flat (không position, không pending).
@@ -1176,6 +1242,21 @@ def run():
                 post_pending, post_positions = _snapshot_bot_orders_positions(sym, mag)
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
+
+                if v5_role == "demo" and bool(params.get("signal_relay_enabled", False)) and (
+                    new_pending or new_positions
+                ):
+                    signal_relay.demo_try_publish_relay(
+                        config,
+                        gate_features,
+                        relay_zone_points=float(params.get("relay_zone_points") or 200),
+                        ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
+                        verbose=relay_verbose,
+                    )
+
+                if live_demo_only and active_relay_id and (new_pending or new_positions):
+                    signal_relay.relay_consume(active_relay_id, verbose=relay_verbose)
+
                 if not new_pending and not new_positions:
                     if bool(params.get("v5_verbose_no_order_log", True)):
                         _print_v5_no_new_order_detail(
@@ -1202,6 +1283,7 @@ def run():
                         "role": v5_role,
                         "symbol": sym,
                         "magic": mag,
+                        "demo_relay_id": gate_features.get("relay_id"),
                         "gate_reason": gate_reason,
                         "score": gate_features.get("score"),
                         "score_breakdown": gate_features.get("score_breakdown"),
