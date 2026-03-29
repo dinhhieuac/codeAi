@@ -15,10 +15,12 @@ Console log (cùng format V5, xem strategy_grid_step_v5):
 Relay Demo → Live (cùng logic engine V5):
 - Phải import signal_relay *trước* strategy_grid_step_v5 để trỏ file relay riêng BTC
   (btc_v5_relay_signal.json / btc_v5_relay_state.json), không dùng chung với XAU V5.
-- Demo (config_grid_step_btc_v5.json): signal_relay_enabled, chấm điểm + gate + grid;
-  khi có lệnh mới thành công → phát relay (mỗi zone relay_zone_points chỉ 1 lần).
-- Live (config_grid_step_btc_v5_live.json): live_execute_demo_signal_only=true → flat chỉ
-  mirror theo relay; có position/pending thì vẫn bảo trì lưới.
+- Demo (config_grid_step_btc_v5.json): signal_relay_enabled; relay_publish_on_qualified_signal=true
+  → khi history đủ và điểm đạt ngưỡng (cùng chuẩn gate live) ghi relay ngay, không chờ MT5
+  đặt lệnh; vẫn có thể phát thêm khi có lệnh mới (dedup theo zone).
+- Live (config_grid_step_btc_v5_live.json): live_execute_demo_signal_only=true, flat chỉ đọc
+  relay từ demo; live_relay_blind_follow=true → bỏ kiểm tra zone khớp giá, cooldown và
+  duplicate pending so với tín hiệu relay (vẫn còn spread/min_distance trong lớp grid MT5).
 """
 import os
 import sys

@@ -5,6 +5,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
 """
+import copy
 import os
 import sys
 import time
@@ -558,6 +559,53 @@ def _is_blocked(features, max_loss_streak=2):
     return False, ""
 
 
+def _closed_list_signature(closed):
+    """Chữ ký lịch sử đóng: đổi khi có lệnh đóng mới (hoặc số bản ghi đổi)."""
+    if not closed:
+        return (0, 0, 0)
+    top = closed[0]
+    return (
+        int(top.get("close_time", 0) or 0),
+        int(top.get("position_id", 0) or 0),
+        len(closed),
+    )
+
+
+def _v5_gate_cache_key(config, v5_role, state_from_demo_account):
+    p = config.get("parameters", {})
+    parts = [
+        str(v5_role),
+        str(config.get("symbol") or ""),
+        int(config.get("magic") or 0),
+        int(config.get("account") or 0),
+        "demo_hist" if state_from_demo_account else "current",
+    ]
+    if state_from_demo_account:
+        parts.append(str(p.get("demo_history_config_file", "") or ""))
+    return tuple(parts)
+
+
+def _v5_log_gate_no_new_close_throttled(closed):
+    """Log khi tái dùng score vì không có lệnh đóng mới (throttle ~30s cùng nội dung)."""
+    try:
+        top = closed[0] if closed else {}
+        ts = int(top.get("close_time", 0) or 0)
+        last_s = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "-"
+        pid = top.get("position_id", "-")
+        msg = (
+            f"📚 [V5 Gate] không có lệnh đóng mới — giữ nguyên score đã tính "
+            f"(last_close={last_s}, position_id={pid}, closed_count={len(closed)})"
+        )
+    except Exception:
+        msg = "📚 [V5 Gate] không có lệnh đóng mới — giữ nguyên score đã tính"
+    now_m = time.monotonic()
+    prev = getattr(run, "_v5_gate_no_close_log", None)
+    if prev is not None and prev[0] == msg and (now_m - prev[1]) < 30.0:
+        return
+    print(msg)
+    run._v5_gate_no_close_log = (msg, now_m)
+
+
 def _v5_history_score_gate(config):
     params = config.get("parameters", {})
     v5_role = str(params.get("v5_role", "demo")).lower().strip()
@@ -729,6 +777,32 @@ def _v5_history_score_gate(config):
             return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
         return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed), "role": v5_role}
 
+    sig = _closed_list_signature(closed)
+    cache_key = _v5_gate_cache_key(config, v5_role, state_from_demo_account)
+    rescore_only = bool(params.get("v5_rescore_only_on_new_close", False))
+
+    def _cache_put(allow, gate_reason, features):
+        if not rescore_only:
+            return
+        try:
+            run._v5_gate_score_cache = {
+                "key": cache_key,
+                "sig": sig,
+                "allow": allow,
+                "gate_reason": gate_reason,
+                "features": copy.deepcopy(features),
+            }
+        except Exception:
+            pass
+
+    if rescore_only:
+        c = getattr(run, "_v5_gate_score_cache", None)
+        if isinstance(c, dict) and c.get("key") == cache_key and c.get("sig") == sig:
+            _v5_log_gate_no_new_close_throttled(closed)
+            feat = copy.deepcopy(c["features"])
+            feat["v5_score_reused_no_new_close"] = True
+            return c["allow"], c["gate_reason"], feat
+
     closed_state = closed[: max(1, history_window)]
 
     step_filter = _v5_step_filter_for_gate(config)
@@ -806,6 +880,7 @@ def _v5_history_score_gate(config):
 
     # Demo: luôn cho chạy bot gốc, nhưng vẫn trả đủ feature/score để log quan sát.
     if v5_role != "live":
+        _cache_put(True, "demo_mode_no_gate", features)
         return True, "demo_mode_no_gate", features
 
     cur_sig = str(features.get("current_signal_type") or features.get("signal_type") or "").upper()
@@ -814,15 +889,50 @@ def _v5_history_score_gate(config):
         and preferred_direction in ("BUY", "SELL")
         and cur_sig != preferred_direction
     ):
+        _cache_put(False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features)
         return False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features
     if blocked:
+        _cache_put(False, f"blocked:{block_reason}", features)
         return False, f"blocked:{block_reason}", features
     if score < medium_score_threshold:
+        _cache_put(False, f"low_score:{score}<{medium_score_threshold}", features)
         return False, f"low_score:{score}<{medium_score_threshold}", features
     # Live: chỉ coi tín hiệu đủ đẹp khi đạt entry_score_threshold (demo không dùng nhánh này).
     if score < entry_score_threshold:
+        _cache_put(False, f"below_entry_score:{score}<{entry_score_threshold}", features)
         return False, f"below_entry_score:{score}<{entry_score_threshold}", features
+    _cache_put(True, f"qualified:{score}", features)
     return True, f"qualified:{score}", features
+
+
+def _v5_features_qualify_live_equivalent(features: dict, params: dict) -> bool:
+    """
+    Cùng tiêu chí gate như live (_v5_history_score_gate khi v5_role=live):
+    ready, không blocked, medium + entry score, preferred direction (nếu cấu hình).
+    Dùng trên demo để phát relay ngay khi đủ điểm (không chờ MT5 đặt lệnh).
+    """
+    if not features or not features.get("ready"):
+        return False
+    if features.get("blocked"):
+        return False
+    try:
+        sc = int(features.get("score")) if features.get("score") is not None else None
+    except (TypeError, ValueError):
+        sc = None
+    if sc is None:
+        return False
+    medium_thr = int(params.get("medium_score_threshold", 5))
+    entry_thr = int(params.get("entry_score_threshold", 6))
+    if sc < medium_thr:
+        return False
+    if sc < entry_thr:
+        return False
+    allow_reverse = bool(params.get("allow_reverse_entry", True))
+    preferred = str(params.get("preferred_direction", "BOTH") or "BOTH").upper()
+    cur_sig = str(features.get("current_signal_type") or features.get("signal_type") or "").upper()
+    if not allow_reverse and preferred in ("BUY", "SELL") and cur_sig != preferred:
+        return False
+    return True
 
 
 def _append_live_entry_log(record):
@@ -1199,6 +1309,7 @@ def run():
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
                 live_demo_only = v5_role == "live" and bool(params.get("live_execute_demo_signal_only"))
+                live_relay_blind = bool(params.get("live_relay_blind_follow", False))
                 active_relay_id = None
 
                 if live_demo_only:
@@ -1227,7 +1338,7 @@ def run():
                             )
                             time.sleep(loop_interval_seconds)
                             continue
-                        if not _relay_zone_matches_current(config, relay_payload):
+                        if not live_relay_blind and not _relay_zone_matches_current(config, relay_payload):
                             _v5_try_emit_cycle_log(
                                 {
                                     "exit_kind": "relay_zone_mismatch",
@@ -1277,12 +1388,55 @@ def run():
                     time.sleep(loop_interval_seconds)
                     continue
 
+                # Demo: đủ điểm (cùng chuẩn gate live) → ghi relay ngay, không chờ MT5 có lệnh mới.
+                relay_early_sent = False
+                relay_early_reason = "NO_DEMO_ORDER"
+                relay_early_zone = None
+                relay_early_side = None
+                if (
+                    v5_role == "demo"
+                    and bool(params.get("signal_relay_enabled", False))
+                    and bool(params.get("relay_publish_on_qualified_signal", False))
+                    and gate_features
+                    and _v5_features_qualify_live_equivalent(gate_features, params)
+                ):
+                    _rid_er, relay_early_reason = signal_relay.demo_try_publish_relay(
+                        config,
+                        gate_features,
+                        relay_zone_points=float(params.get("relay_zone_points") or 200),
+                        ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
+                        verbose=False,
+                    )
+                    relay_early_sent = _rid_er is not None
+                    if relay_early_sent:
+                        try:
+                            ep = float(gate_features.get("current_signal_open_price") or 0)
+                            relay_early_zone = signal_relay.price_zone_key(
+                                ep, float(params.get("relay_zone_points") or 200)
+                            )
+                            relay_early_side = str(
+                                gate_features.get("current_signal_type")
+                                or gate_features.get("signal_type")
+                                or ""
+                            ).upper()
+                        except (TypeError, ValueError):
+                            pass
+
                 live_min_entry_gap_seconds = int(float(params.get("live_min_entry_gap_minutes", 5)) * 60)
                 if v5_role == "live":
                     remain_cd = _live_entry_cooldown_remaining_seconds(sym, mag, live_min_entry_gap_seconds)
                     # Chỉ chặn mở mới khi hệ thống đang flat (không position, không pending).
                     # Nếu đang có lệnh, để base strategy quản lý vòng đời bình thường.
-                    if remain_cd > 0 and (len(pre_pending) == 0 and len(pre_positions) == 0):
+                    skip_live_cd = (
+                        live_relay_blind
+                        and live_demo_only
+                        and str(gate_reason) == "live_relay_ok"
+                    )
+                    if (
+                        remain_cd > 0
+                        and (len(pre_pending) == 0 and len(pre_positions) == 0)
+                        and not skip_live_cd
+                    ):
                         _v5_try_emit_cycle_log(
                             {
                                 "exit_kind": "live_cooldown",
@@ -1304,6 +1458,8 @@ def run():
 
                 # Live: tín hiệu demo đủ điểm nhưng đã có cặp pending khớp tín hiệu → không gọi strategy (tránh thừa).
                 live_skip_dup = bool(params.get("live_skip_if_equivalent", True))
+                if live_relay_blind and live_demo_only and str(gate_reason) == "live_relay_ok":
+                    live_skip_dup = False
                 if v5_role == "live" and live_skip_dup and allow_live:
                     step_f = _v5_step_filter_for_gate(config)
                     sig_type = gate_features.get("current_signal_type") or gate_features.get("signal_type")
@@ -1365,22 +1521,23 @@ def run():
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
 
-                relay_sent = False
-                relay_reason = "NO_DEMO_ORDER"
-                relay_zone = None
-                relay_side = None
+                relay_sent = relay_early_sent
+                relay_reason = relay_early_reason
+                relay_zone = relay_early_zone
+                relay_side = relay_early_side
                 if v5_role == "demo" and bool(params.get("signal_relay_enabled", False)) and (
                     new_pending or new_positions
                 ):
-                    _rid, relay_reason = signal_relay.demo_try_publish_relay(
+                    _rid, rsn_ord = signal_relay.demo_try_publish_relay(
                         config,
                         gate_features,
                         relay_zone_points=float(params.get("relay_zone_points") or 200),
                         ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
                         verbose=False,
                     )
-                    relay_sent = _rid is not None
-                    if relay_sent:
+                    if _rid is not None:
+                        relay_sent = True
+                        relay_reason = rsn_ord
                         try:
                             ep = float(gate_features.get("current_signal_open_price") or 0)
                             relay_zone = signal_relay.price_zone_key(
@@ -1393,6 +1550,8 @@ def run():
                             ).upper()
                         except (TypeError, ValueError):
                             pass
+                    elif not relay_early_sent:
+                        relay_reason = rsn_ord
 
                 if live_demo_only and active_relay_id and (new_pending or new_positions):
                     signal_relay.relay_consume(active_relay_id, verbose=relay_verbose)

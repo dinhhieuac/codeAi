@@ -1,0 +1,11 @@
+{
+  "demo_relayed_zones": [
+    66400,
+    66600,
+    67000,
+    67200,
+    66800,
+    67400
+  ],
+  "live_consumed_relay_ids": []
+}

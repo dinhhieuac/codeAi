@@ -33,7 +33,8 @@
         "allow_reverse_entry": true,
         "v5_structured_log": true,
         "v5_compact_cycle_log": false,
-        "live_min_entry_gap_minutes": 5,
+        "v5_rescore_only_on_new_close": true,
+        "live_min_entry_gap_minutes": 1,
         "live_skip_if_equivalent": true,
         "live_duplicate_price_threshold": 0,
         "demo_history_enabled": true,
@@ -48,6 +49,7 @@
         "relay_zone_points": 200,
         "relay_signal_ttl_minutes": 180,
         "relay_verbose_log": true,
-        "live_execute_demo_signal_only": true
+        "live_execute_demo_signal_only": true,
+        "live_relay_blind_follow": true
     }
 }
