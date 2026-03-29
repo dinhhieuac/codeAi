@@ -6,21 +6,26 @@ Reuse engine của strategy_grid_step_v5 nhưng:
 - score = BTCUSD Grid Step 200.0 từ scores.py
 - file state/log riêng cho BTC v5
 
-Console log (cùng format V5, xem strategy_grid_step_v5):
-- Dòng đầu: [V5] RESULT=... | MAIN_REASON=...
-- Các block: [SIGNAL], [SCORE], [CONTEXT], [BLOCK], [GRID], [RELAY]; demo có thêm [LIVE_CHECK].
-- parameters: v5_structured_log (mặc định true), v5_compact_cycle_log (mặc định false);
-  nếu tắt structured và bật v5_verbose_no_order_log thì chỉ còn dòng no-order tối giản.
+Gate / history (strategy_grid_step_v5):
+- v5_rescore_only_on_new_close: chỉ tính lại score khi có lệnh đóng mới (trên session/account lấy history).
+- Nếu chưa có đóng mới: một dòng `📚 [V5 Gate] chưa có lệnh đóng mới` + giữ cache score; với account hiện tại
+  dùng peek deal OUT để không tải full history.
+- v5_quiet_structured_when_no_new_close (mặc định true): không in block [V5]/[SIGNAL]/[SCORE]... khi đang tái dùng
+  score (tránh spam); đặt false nếu cần xem full log mỗi vòng.
 
-Relay Demo → Live (cùng logic engine V5):
-- Phải import signal_relay *trước* strategy_grid_step_v5 để trỏ file relay riêng BTC
-  (btc_v5_relay_signal.json / btc_v5_relay_state.json), không dùng chung với XAU V5.
-- Demo (config_grid_step_btc_v5.json): signal_relay_enabled; relay_publish_on_qualified_signal=true
-  → khi history đủ và điểm đạt ngưỡng (cùng chuẩn gate live) ghi relay ngay, không chờ MT5
-  đặt lệnh; vẫn có thể phát thêm khi có lệnh mới (dedup theo zone).
-- Live (config_grid_step_btc_v5_live.json): live_execute_demo_signal_only=true, flat chỉ đọc
-  relay từ demo; live_relay_blind_follow=true → bỏ kiểm tra zone khớp giá, cooldown và
-  duplicate pending so với tín hiệu relay (vẫn còn spread/min_distance trong lớp grid MT5).
+Console log (cùng format V5):
+- Dòng đầu: [V5] RESULT=... | MAIN_REASON=...
+- [SCORE]: profile= bucket trong scores.py (EXECUTE/PROBE/...); live_entry_gate= so với
+  entry_score_threshold (khác profile: PROBE chỉ là vùng 1–2 điểm).
+- [LIVE_CHECK] (demo): equivalent QUALIFIED/REJECT theo ngưỡng entry.
+- parameters: v5_structured_log, v5_compact_cycle_log; v5_verbose_no_order_log khi tắt structured.
+
+Relay Demo → Live:
+- import signal_relay *trước* strategy_grid_step_v5 → btc_v5_relay_signal.json / btc_v5_relay_state.json.
+- Demo config: relay_publish_on_qualified_signal — đủ điểm (chuẩn gate live) thì ghi relay sớm;
+  dedup theo zone; relay vẫn thử khi có lệnh MT5 mới.
+- Live config: live_execute_demo_signal_only, live_relay_blind_follow — mirror relay;
+  lớp grid MT5 vẫn có spread/min_distance.
 """
 import os
 import sys

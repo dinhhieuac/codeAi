@@ -34,6 +34,7 @@
         "v5_structured_log": true,
         "v5_compact_cycle_log": false,
         "v5_rescore_only_on_new_close": true,
+        "v5_quiet_structured_when_no_new_close": true,
         "v5_verbose_no_order_log": true,
         "signal_relay_enabled": true,
         "relay_publish_on_qualified_signal": true,

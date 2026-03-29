@@ -585,19 +585,68 @@ def _v5_gate_cache_key(config, v5_role, state_from_demo_account):
     return tuple(parts)
 
 
-def _v5_log_gate_no_new_close_throttled(closed):
-    """Log khi tái dùng score vì không có lệnh đóng mới (throttle ~30s cùng nội dung)."""
+def _v5_peek_any_out_deal_after(symbol, magic, comment_prefix, since_ts: int) -> bool:
+    """
+    True nếu có deal OUT (đóng) sau since_ts — cần build lại full closed list.
+    Chỉ quét cửa sổ thời gian ngắn sau mốc since_ts (nhẹ hơn build toàn bộ by_pos).
+    """
+    if since_ts <= 0:
+        return True
     try:
-        top = closed[0] if closed else {}
-        ts = int(top.get("close_time", 0) or 0)
-        last_s = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "-"
-        pid = top.get("position_id", "-")
-        msg = (
-            f"📚 [V5 Gate] không có lệnh đóng mới — giữ nguyên score đã tính "
-            f"(last_close={last_s}, position_id={pid}, closed_count={len(closed)})"
-        )
+        from_dt = datetime.utcfromtimestamp(max(0, since_ts - 5))
+        to_dt = datetime.now()
+        deals = mt5.history_deals_get(from_dt, to_dt)
+        if deals is None:
+            deals = mt5.history_deals_get(from_dt, to_dt, group="*")
+        for d in deals or []:
+            if getattr(d, "magic", 0) != magic:
+                continue
+            if getattr(d, "symbol", "") != symbol:
+                continue
+            c = (getattr(d, "comment", "") or "").strip()
+            if comment_prefix and not c.startswith(comment_prefix):
+                continue
+            if int(getattr(d, "entry", -1)) != int(mt5.DEAL_ENTRY_OUT):
+                continue
+            t = int(getattr(d, "time", 0) or 0)
+            if t > since_ts:
+                return True
     except Exception:
-        msg = "📚 [V5 Gate] không có lệnh đóng mới — giữ nguyên score đã tính"
+        return True
+    return False
+
+
+def _v5_try_return_cached_gate_without_full_fetch(
+    config, v5_role, symbol, magic, history_comment_prefix, state_from_demo_account
+):
+    """
+    Khi đã có cache score và peek không thấy deal OUT mới → trả cache, không gọi _fetch_closed_positions_list.
+    Chỉ dùng khi MT5 session đang là account lấy history (current), không dùng nhánh login account demo khác.
+    """
+    params = config.get("parameters", {})
+    if not bool(params.get("v5_rescore_only_on_new_close", False)):
+        return None
+    ck = _v5_gate_cache_key(config, v5_role, state_from_demo_account)
+    c = getattr(run, "_v5_gate_score_cache", None)
+    if not isinstance(c, dict) or c.get("key") != ck:
+        return None
+    lc_ts = int(c.get("last_close_ts") or 0)
+    if lc_ts <= 0:
+        return None
+    if _v5_peek_any_out_deal_after(symbol, magic, history_comment_prefix, lc_ts):
+        return None
+    _v5_log_gate_no_new_close_throttled()
+    feat = copy.deepcopy(c["features"])
+    feat["v5_score_reused_no_new_close"] = True
+    feat["v5_gate_history_skip"] = "peek_no_new_out_deal"
+    return c["allow"], c["gate_reason"], feat
+
+
+def _v5_log_gate_no_new_close_throttled():
+    """
+    Rule: chỉ tính lại score khi có lệnh đóng mới (demo). Nếu không → một dòng log ngắn, throttle ~30s.
+    """
+    msg = "📚 [V5 Gate] chưa có lệnh đóng mới"
     now_m = time.monotonic()
     prev = getattr(run, "_v5_gate_no_close_log", None)
     if prev is not None and prev[0] == msg and (now_m - prev[1]) < 30.0:
@@ -698,6 +747,11 @@ def _v5_history_score_gate(config):
             print(
                 f"⚠️ [V5 Gate] demo_history_config_file='{demo_history_config_file}' thiếu account/password/server, fallback current account."
             )
+            _r = _v5_try_return_cached_gate_without_full_fetch(
+                config, v5_role, symbol, magic, history_comment_prefix, False
+            )
+            if _r is not None:
+                return _r
             closed = _fetch_closed_positions_list(
                 symbol,
                 magic,
@@ -747,6 +801,11 @@ def _v5_history_score_gate(config):
             f"window={history_window} days_back={history_days_back}"
         )
     else:
+        _r = _v5_try_return_cached_gate_without_full_fetch(
+            config, v5_role, symbol, magic, history_comment_prefix, False
+        )
+        if _r is not None:
+            return _r
         closed = _fetch_closed_positions_list(
             symbol,
             magic,
@@ -781,9 +840,12 @@ def _v5_history_score_gate(config):
     cache_key = _v5_gate_cache_key(config, v5_role, state_from_demo_account)
     rescore_only = bool(params.get("v5_rescore_only_on_new_close", False))
 
-    def _cache_put(allow, gate_reason, features):
+    def _cache_put(allow, gate_reason, features, closed_for_ts=None):
         if not rescore_only:
             return
+        ts = 0
+        if closed_for_ts and len(closed_for_ts) > 0:
+            ts = int(closed_for_ts[0].get("close_time", 0) or 0)
         try:
             run._v5_gate_score_cache = {
                 "key": cache_key,
@@ -791,6 +853,7 @@ def _v5_history_score_gate(config):
                 "allow": allow,
                 "gate_reason": gate_reason,
                 "features": copy.deepcopy(features),
+                "last_close_ts": ts,
             }
         except Exception:
             pass
@@ -798,7 +861,7 @@ def _v5_history_score_gate(config):
     if rescore_only:
         c = getattr(run, "_v5_gate_score_cache", None)
         if isinstance(c, dict) and c.get("key") == cache_key and c.get("sig") == sig:
-            _v5_log_gate_no_new_close_throttled(closed)
+            _v5_log_gate_no_new_close_throttled(closed, mode="after_fetch")
             feat = copy.deepcopy(c["features"])
             feat["v5_score_reused_no_new_close"] = True
             return c["allow"], c["gate_reason"], feat
@@ -880,7 +943,7 @@ def _v5_history_score_gate(config):
 
     # Demo: luôn cho chạy bot gốc, nhưng vẫn trả đủ feature/score để log quan sát.
     if v5_role != "live":
-        _cache_put(True, "demo_mode_no_gate", features)
+        _cache_put(True, "demo_mode_no_gate", features, closed_for_ts=closed)
         return True, "demo_mode_no_gate", features
 
     cur_sig = str(features.get("current_signal_type") or features.get("signal_type") or "").upper()
@@ -889,19 +952,19 @@ def _v5_history_score_gate(config):
         and preferred_direction in ("BUY", "SELL")
         and cur_sig != preferred_direction
     ):
-        _cache_put(False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features)
+        _cache_put(False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features, closed_for_ts=closed)
         return False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features
     if blocked:
-        _cache_put(False, f"blocked:{block_reason}", features)
+        _cache_put(False, f"blocked:{block_reason}", features, closed_for_ts=closed)
         return False, f"blocked:{block_reason}", features
     if score < medium_score_threshold:
-        _cache_put(False, f"low_score:{score}<{medium_score_threshold}", features)
+        _cache_put(False, f"low_score:{score}<{medium_score_threshold}", features, closed_for_ts=closed)
         return False, f"low_score:{score}<{medium_score_threshold}", features
     # Live: chỉ coi tín hiệu đủ đẹp khi đạt entry_score_threshold (demo không dùng nhánh này).
     if score < entry_score_threshold:
-        _cache_put(False, f"below_entry_score:{score}<{entry_score_threshold}", features)
+        _cache_put(False, f"below_entry_score:{score}<{entry_score_threshold}", features, closed_for_ts=closed)
         return False, f"below_entry_score:{score}<{entry_score_threshold}", features
-    _cache_put(True, f"qualified:{score}", features)
+    _cache_put(True, f"qualified:{score}", features, closed_for_ts=closed)
     return True, f"qualified:{score}", features
 
 
@@ -1059,6 +1122,15 @@ def _v5_score_decision_label(gf, entry_thr):
     return "REJECT"
 
 
+def _v5_live_entry_gate_label(score, entry_thr):
+    """QUALIFIED | REJECT — cùng nghĩa với [LIVE_CHECK] equivalent (score >= entry_threshold)."""
+    try:
+        s = int(score) if score is not None else 0
+    except (TypeError, ValueError):
+        return "?"
+    return "QUALIFIED" if s >= int(entry_thr) else "REJECT"
+
+
 def _v5_gate_main_reason_code(gate_reason):
     """Map gate_reason -> MAIN_REASON mã ngắn."""
     gr = str(gate_reason or "")
@@ -1163,8 +1235,10 @@ def _v5_emit_structured_cycle_log(ctx, params):
         minus_rules = ",".join(subs) if subs else "none"
         print(f"[V5] RESULT={result} | MAIN_REASON={main}")
         print(f"[SIGNAL] {side} {ep} | prev={ps} | relation={rel}")
+        lg = _v5_live_entry_gate_label(sc, entry_thr)
+        prof = sb.get("decision") if sb.get("decision") else _v5_score_decision_label(gf, entry_thr)
         print(
-            f"[SCORE] score={sc} | decision={_v5_score_decision_label(gf, entry_thr)} | minus={minus_rules}"
+            f"[SCORE] score={sc} | profile={prof} | live_entry_gate={lg} | minus={minus_rules}"
         )
         print(f"[BLOCK] hard_block={gf.get('blocked')} | reason={gf.get('block_reason') or '-'}")
         print(
@@ -1188,7 +1262,8 @@ def _v5_emit_structured_cycle_log(ctx, params):
 
     print("[SCORE]")
     print(f"- score={sc}")
-    print(f"- decision={_v5_score_decision_label(gf, entry_thr)}")
+    print(f"- profile={sb.get('decision') or _v5_score_decision_label(gf, entry_thr)}")
+    print(f"- live_entry_gate={_v5_live_entry_gate_label(sc, entry_thr)}")
     print(f"- add={len(adds)}")
     print(f"- sub={len(subs)}")
     plus_rules = ", ".join(adds) if adds else "none"
@@ -1245,6 +1320,8 @@ def _v5_emit_structured_cycle_log(ctx, params):
         print(f"- equivalent={eq}")
         print(f"- entry_threshold={entry_thr}")
         print(f"- score={sc}")
+        if eq == "REJECT":
+            print("- note=score < entry_threshold; profile=PROBE chỉ là bucket 1–2 điểm (scores.py), không phải đủ cổng live")
     print("")
 
 
@@ -1253,6 +1330,8 @@ def _v5_try_emit_cycle_log(ctx, params):
     if not bool(params.get("v5_structured_log", True)):
         return
     gf = ctx.get("gate_features") or {}
+    if gf.get("v5_score_reused_no_new_close") and bool(params.get("v5_quiet_structured_when_no_new_close", True)):
+        return
     r, m = _v5_compute_result_main(ctx)
     sig = (r, m, gf.get("score"), ctx.get("pre_np"), ctx.get("pre_npos"))
     now_m = time.monotonic()
