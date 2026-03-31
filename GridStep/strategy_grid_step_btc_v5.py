@@ -21,7 +21,7 @@ Console log (cùng format V5):
 - parameters: v5_structured_log, v5_compact_cycle_log; v5_verbose_no_order_log khi tắt structured.
 
 Relay Demo → Live:
-- import signal_relay *trước* strategy_grid_step_v5 → btc_v5_relay_signal.json / btc_v5_relay_state.json.
+- gọi core.configure_grid_step_v5_paths(...) ngay sau import → btc_v5_relay_signal.json / btc_v5_relay_state.json + live log/state riêng.
 - Demo config: relay_publish_on_qualified_signal — đủ điểm (chuẩn gate live) thì ghi relay sớm;
   dedup theo zone; relay vẫn thử khi có lệnh MT5 mới.
 - Live config: live_execute_demo_signal_only, live_relay_blind_follow — mirror relay;
@@ -30,14 +30,16 @@ Relay Demo → Live:
 import os
 import sys
 
-# Trỏ đường dẫn relay TRƯỚC khi nạp engine (strategy_grid_step_v5 cũng import signal_relay).
-import signal_relay
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-signal_relay.RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "btc_v5_relay_signal.json")
-signal_relay.RELAY_STATE_FILE = os.path.join(SCRIPT_DIR, "btc_v5_relay_state.json")
 
 import strategy_grid_step_v5 as core
+
+core.configure_grid_step_v5_paths(
+    relay_signal_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_signal.json"),
+    relay_state_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_state.json"),
+    live_log_file=os.path.join(SCRIPT_DIR, "btc_v5_live_entry_log.jsonl"),
+    live_state_file=os.path.join(SCRIPT_DIR, "btc_v5_live_state.json"),
+)
 import strategy_grid_step_btc as btc_base
 from scores import (
     SUM10_HARD_BLOCK_THRESHOLD,
@@ -49,11 +51,6 @@ from scores import (
 core.base = btc_base
 core.base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_btc_v5.json")
 core.base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_btc_v5.json")
-
-# Tách log/state live riêng cho BTC v5.
-core.LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "btc_v5_live_entry_log.jsonl")
-core.LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "btc_v5_live_state.json")
-
 
 def _btc_is_blocked(features, max_loss_streak=2):
     """

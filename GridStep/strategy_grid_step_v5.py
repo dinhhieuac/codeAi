@@ -4,6 +4,7 @@ Grid Step Trading Bot V5.
 V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
+- wrapper (vd strategy_grid_step_btc_v5) gọi configure_grid_step_v5_paths() để tách relay/live log.
 """
 import copy
 import os
@@ -22,6 +23,28 @@ base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_v5.json")
 base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
 LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_live_state.json")
+
+
+def configure_grid_step_v5_paths(
+    *,
+    relay_signal_file=None,
+    relay_state_file=None,
+    live_log_file=None,
+    live_state_file=None,
+):
+    """
+    Trỏ file relay + live entry log/state (dùng trong strategy_grid_step_btc_v5).
+    Gọi ngay sau `import strategy_grid_step_v5`.
+    """
+    global LIVE_LOG_FILE, LIVE_STATE_FILE
+    if relay_signal_file is not None:
+        signal_relay.RELAY_SIGNAL_FILE = relay_signal_file
+    if relay_state_file is not None:
+        signal_relay.RELAY_STATE_FILE = relay_state_file
+    if live_log_file is not None:
+        LIVE_LOG_FILE = live_log_file
+    if live_state_file is not None:
+        LIVE_STATE_FILE = live_state_file
 
 
 def _relay_zone_matches_current(config, relay_payload):

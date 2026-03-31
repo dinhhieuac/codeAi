@@ -20,6 +20,8 @@
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
         "history_window": 20,
+        "signal_history_window": 20,
+        "max_closed_fetch": 500,
         "profit_window_short": 5,
         "profit_window_long": 10,
         "min_gap_minutes": 1,
@@ -32,6 +34,10 @@
         "history_comment_prefix": "",
         "preferred_direction": "BOTH",
         "allow_reverse_entry": true,
+        "v5_structured_log": true,
+        "v5_compact_cycle_log": false,
+        "v5_rescore_only_on_new_close": true,
+        "v5_quiet_structured_when_no_new_close": true,
         "live_skip_if_equivalent": true,
         "live_duplicate_price_threshold": 0,
         "demo_history_enabled": true,
@@ -43,9 +49,11 @@
         "demo_history_symbol": "XAUUSD",
         "demo_history_magic": 100010,
         "signal_relay_enabled": true,
+        "relay_publish_on_qualified_signal": true,
         "relay_zone_points": 5,
         "relay_signal_ttl_minutes": 180,
         "relay_verbose_log": true,
-        "live_execute_demo_signal_only": true
+        "live_execute_demo_signal_only": true,
+        "live_relay_blind_follow": true
     }
 }
