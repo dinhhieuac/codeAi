@@ -1011,15 +1011,26 @@ def _v5_compute_result_main(ctx):
 def _v5_gate_pass_for_log(ctx) -> bool:
     """Cổng tín hiệu (điểm + không hard_block) — dùng để ghi chú log, độc lập với có đặt lệnh hay không."""
     gf = ctx.get("gate_features") or {}
-    if bool(gf.get("blocked")):
-        return False
-    sc = gf.get("score")
     entry_thr = int(ctx.get("entry_thr") or 6)
+    return _v5_ket_luan_dat(gf, entry_thr)
+
+
+def _v5_ket_luan_dat(gate_features: dict, entry_thr: int) -> bool:
+    """
+    Khớp kết_luận=đạt trên log demo (_v5_emit_minimal_cycle_log):
+    score >= entry_score_threshold và không hard_block.
+    Dùng để ghi v5_relay_signal.json khi relay bật.
+    """
+    if not gate_features:
+        return False
+    if bool(gate_features.get("blocked")):
+        return False
+    sc = gate_features.get("score")
     try:
         si = int(sc) if sc is not None else None
     except (TypeError, ValueError):
         return False
-    return si is not None and si >= entry_thr
+    return si is not None and si >= int(entry_thr)
 
 
 def _v5_demo_grid_full_session_note(v5_role, result, main, gate_pass: bool) -> str:
@@ -1360,23 +1371,16 @@ def run():
                     time.sleep(loop_interval_seconds)
                     continue
 
-                # Demo: đủ điểm (cùng chuẩn gate live) → ghi relay ngay, không chờ MT5 có lệnh mới.
-                # Rule: chỉ khi score vừa được tính lại (có lệnh đóng mới, không dùng cache) — không spam relay mỗi vòng.
+                # Demo: kết_luận=đạt (score>=entry, không block) → ghi v5_relay_signal.json (zone trùng thì signal_relay bỏ qua).
                 relay_early_sent = False
                 relay_early_reason = "NO_DEMO_ORDER"
                 relay_early_zone = None
                 relay_early_side = None
-                skip_early_relay = bool(gate_features.get("v5_score_reused_no_new_close")) and bool(
-                    params.get("v5_rescore_only_on_new_close", False)
-                )
-                if skip_early_relay:
-                    relay_early_reason = "SKIP_NO_NEW_CLOSE_SCORE_REUSE"
-                elif (
+                if (
                     v5_role == "demo"
                     and bool(params.get("signal_relay_enabled", False))
-                    and bool(params.get("relay_publish_on_qualified_signal", False))
                     and gate_features
-                    and _v5_features_qualify_live_equivalent(gate_features, params)
+                    and _v5_ket_luan_dat(gate_features, entry_thr)
                 ):
                     _rid_er, relay_early_reason = signal_relay.demo_try_publish_relay(
                         config,
