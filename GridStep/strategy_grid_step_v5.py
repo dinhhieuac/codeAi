@@ -922,12 +922,19 @@ def _v5_score_decision_label(gf, entry_thr):
 
 
 def _v5_live_entry_gate_label(score, entry_thr):
-    """QUALIFIED | REJECT — cùng nghĩa với [LIVE_CHECK] equivalent (score >= entry_threshold)."""
+    """Chỉ theo điểm vs entry_threshold: QUALIFIED | REJECT (chưa tính hard_block)."""
     try:
         s = int(score) if score is not None else 0
     except (TypeError, ValueError):
         return "?"
     return "QUALIFIED" if s >= int(entry_thr) else "REJECT"
+
+
+def _v5_effective_live_gate_label(score, entry_thr, blocked):
+    """Cổng thực tế cho log: đủ điểm nhưng hard_block → BLOCKED (tránh QUALIFIED + kết_luận không đạt)."""
+    if blocked:
+        return "BLOCKED"
+    return _v5_live_entry_gate_label(score, entry_thr)
 
 
 def _v5_gate_main_reason_code(gate_reason):
@@ -1001,6 +1008,35 @@ def _v5_compute_result_main(ctx):
     return "NO_ORDER", g_reason
 
 
+def _v5_gate_pass_for_log(ctx) -> bool:
+    """Cổng tín hiệu (điểm + không hard_block) — dùng để ghi chú log, độc lập với có đặt lệnh hay không."""
+    gf = ctx.get("gate_features") or {}
+    if bool(gf.get("blocked")):
+        return False
+    sc = gf.get("score")
+    entry_thr = int(ctx.get("entry_thr") or 6)
+    try:
+        si = int(sc) if sc is not None else None
+    except (TypeError, ValueError):
+        return False
+    return si is not None and si >= entry_thr
+
+
+def _v5_demo_grid_full_session_note(v5_role, result, main, gate_pass: bool) -> str:
+    """
+    Khi chạy demo: NO_ORDER do đủ 2 pending chỉ mô tả grid trên account demo đang kết nối.
+    Live bot đọc relay + pending trên account live — không lấy số pending của demo.
+    """
+    if str(v5_role or "demo").lower() != "demo":
+        return ""
+    if not gate_pass or result != "NO_ORDER" or main != "GRID_FULL_2_PENDING":
+        return ""
+    return (
+        "ℹ️ GRID_FULL_2_PENDING chỉ áp trên account đang chạy (demo); live không dùng pending của demo, "
+        "chỉ relay + trạng thái riêng của live"
+    )
+
+
 def _v5_param_log_debug(params):
     """True = full block [SIGNAL][SCORE]...; False (default) = một dòng điểm + kết luận. Alias JSON: logDebug."""
     return bool(params.get("v5_log_debug", params.get("logDebug", False)))
@@ -1009,6 +1045,7 @@ def _v5_param_log_debug(params):
 def _v5_emit_minimal_cycle_log(ctx, params):
     """
     Chế độ ngắn: điểm, plus/minus rules, live_gate, kết luận đạt/không đạt, RESULT.
+    kết_luận=đạt khi score>=entry_threshold và không hard_block (điểm cao vẫn có thể bị block, vd min_gap).
     """
     if not bool(params.get("v5_structured_log", True)):
         return
@@ -1019,7 +1056,8 @@ def _v5_emit_minimal_cycle_log(ctx, params):
     entry_thr = int(ctx.get("entry_thr") or 6)
     sc = gf.get("score")
     result, main = _v5_compute_result_main(ctx)
-    lg = _v5_live_entry_gate_label(sc, entry_thr)
+    blocked = bool(gf.get("blocked"))
+    lg = _v5_effective_live_gate_label(sc, entry_thr, blocked)
     prof = sb.get("decision") if sb.get("decision") else _v5_score_decision_label(gf, entry_thr)
     plus_s = ",".join(str(x) for x in adds) if adds else "-"
     minus_s = ",".join(str(x) for x in subs) if subs else "-"
@@ -1027,15 +1065,17 @@ def _v5_emit_minimal_cycle_log(ctx, params):
         si = int(sc) if sc is not None else None
     except (TypeError, ValueError):
         si = None
-    blocked = bool(gf.get("blocked"))
     ok = si is not None and si >= entry_thr and not blocked
     concl = "đạt" if ok else "không đạt"
     blk = ""
     if blocked:
         blk = f" | block={gf.get('block_reason') or 'yes'}"
+    v5_role = str(ctx.get("v5_role") or "demo")
+    sess_note = _v5_demo_grid_full_session_note(v5_role, result, main, ok)
+    suff = f" | {sess_note}" if sess_note else ""
     print(
         f"[V5] score={sc} | profile={prof} | +[{plus_s}] | -[{minus_s}] | "
-        f"live_gate={lg}{blk} | kết_luận={concl} | RESULT={result} | {main}"
+        f"live_gate={lg}{blk} | kết_luận={concl} | RESULT={result} | {main}{suff}"
     )
     print("")
 
@@ -1073,7 +1113,7 @@ def _v5_emit_structured_cycle_log(ctx, params):
         minus_rules = ",".join(subs) if subs else "none"
         print(f"[V5] RESULT={result} | MAIN_REASON={main}")
         print(f"[SIGNAL] {side} {ep} | prev={ps} | relation={rel}")
-        lg = _v5_live_entry_gate_label(sc, entry_thr)
+        lg = _v5_effective_live_gate_label(sc, entry_thr, bool(gf.get("blocked")))
         prof = sb.get("decision") if sb.get("decision") else _v5_score_decision_label(gf, entry_thr)
         print(
             f"[SCORE] score={sc} | profile={prof} | live_entry_gate={lg} | minus={minus_rules}"
@@ -1083,6 +1123,9 @@ def _v5_emit_structured_cycle_log(ctx, params):
             f"[GRID] positions={ctx.get('pre_npos')} | pendings={ctx.get('pre_np')} | "
             f"action={g_act} | reason={g_reason}"
         )
+        _sn = _v5_demo_grid_full_session_note(v5_role, result, main, _v5_gate_pass_for_log(ctx))
+        if _sn:
+            print(f"[GRID] {_sn}")
         ren = ctx.get("relay_enabled", False)
         rs = ctx.get("relay_sent", False)
         rr = ctx.get("relay_reason") or "-"
@@ -1101,7 +1144,7 @@ def _v5_emit_structured_cycle_log(ctx, params):
     print("[SCORE]")
     print(f"- score={sc}")
     print(f"- profile={sb.get('decision') or _v5_score_decision_label(gf, entry_thr)}")
-    print(f"- live_entry_gate={_v5_live_entry_gate_label(sc, entry_thr)}")
+    print(f"- live_entry_gate={_v5_effective_live_gate_label(sc, entry_thr, bool(gf.get('blocked')))}")
     print(f"- add={len(adds)}")
     print(f"- sub={len(subs)}")
     plus_rules = ", ".join(adds) if adds else "none"
@@ -1134,6 +1177,9 @@ def _v5_emit_structured_cycle_log(ctx, params):
     print(f"- pendings={ctx.get('pre_np')}")
     print(f"- action={g_act}")
     print(f"- reason={g_reason}")
+    _snf = _v5_demo_grid_full_session_note(v5_role, result, main, _v5_gate_pass_for_log(ctx))
+    if _snf:
+        print(f"- note={_snf}")
 
     ren = bool(ctx.get("relay_enabled", False))
     print("[RELAY]")
@@ -1149,17 +1195,25 @@ def _v5_emit_structured_cycle_log(ctx, params):
         print("- reason=RELAY_DISABLED")
 
     if v5_role != "live":
+        blk_demo = bool(gf.get("blocked"))
         try:
-            s = int(sc) if sc is not None else 0
-            eq = "QUALIFIED" if s >= entry_thr else "REJECT"
+            s_int = int(sc) if sc is not None else 0
         except (TypeError, ValueError):
+            s_int = None
+        if blk_demo:
+            eq = "BLOCKED"
+        elif s_int is None:
             eq = "?"
+        else:
+            eq = "QUALIFIED" if s_int >= entry_thr else "REJECT"
         print("[LIVE_CHECK]")
         print(f"- equivalent={eq}")
         print(f"- entry_threshold={entry_thr}")
         print(f"- score={sc}")
         if eq == "REJECT":
             print("- note=score < entry_threshold; profile=PROBE chỉ là bucket 1–2 điểm (scores.py), không phải đủ cổng live")
+        elif eq == "BLOCKED":
+            print(f"- note=đủ điểm nhưng hard_block (vd min_gap) — block_reason={gf.get('block_reason') or '-'}")
     print("")
 
 
