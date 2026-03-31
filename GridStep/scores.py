@@ -212,7 +212,7 @@ def xauusd_grid_step_v5_score_detailed(
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Chấm điểm XAUUSD: state (lệnh đóng) + entry (tín hiệu hiện tại vs tín hiệu trước).
-    Các điều kiện đã là hard block (loss_streak, sum5/10 âm, gap, loss+same_dir không cải thiện giá)
+    Các điều kiện đã là hard block (loss_streak, sum5 âm, sum10 âm tùy config, gap, loss+same_dir không cải thiện giá)
     không trừ điểm lặp — chỉ dùng `xauusd_grid_step_v5_is_blocked`.
     """
     if not features or not features.get("ready"):
@@ -276,14 +276,15 @@ def xauusd_grid_step_v5_is_blocked(
     features: Dict[str, Any],
     *,
     max_loss_streak: int = 2,
+    hard_block_sum10_negative: bool = True,
 ) -> Tuple[bool, str]:
-    """Hard block XAU V5 (giống logic cũ trong strategy_grid_step_v5)."""
+    """Hard block XAU V5. `hard_block_sum10_negative`: bật chặn khi tổng 10 lệnh âm (config `v5_hard_block_sum10_negative`)."""
     cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if _i(features.get("loss_streak")) >= int(max_loss_streak):
         return True, "loss_streak"
     if _f(features.get("sum_last_5_net_profit")) < 0:
         return True, "sum_last_5_net_profit<0"
-    if _f(features.get("sum_last_10_net_profit")) < 0:
+    if hard_block_sum10_negative and _f(features.get("sum_last_10_net_profit")) < 0:
         return True, "sum_last_10_net_profit<0"
     if not _b(features.get("min_gap_ok")):
         return True, "gap_minutes_from_prev_signal<min_gap"

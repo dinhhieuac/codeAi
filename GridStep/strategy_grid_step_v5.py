@@ -472,8 +472,12 @@ def _score_signal(features):
     return s
 
 
-def _is_blocked(features, max_loss_streak=2):
-    return xauusd_grid_step_v5_is_blocked(features, max_loss_streak=max_loss_streak)
+def _is_blocked(features, max_loss_streak=2, hard_block_sum10_negative=True):
+    return xauusd_grid_step_v5_is_blocked(
+        features,
+        max_loss_streak=max_loss_streak,
+        hard_block_sum10_negative=hard_block_sum10_negative,
+    )
 
 
 def _closed_list_signature(closed):
@@ -755,7 +759,12 @@ def _v5_history_score_gate(config):
     if not features.get("ready"):
         return False, str(features.get("reason", "feature_not_ready")), features
 
-    blocked, block_reason = _is_blocked(features, max_loss_streak=max_loss_streak)
+    hard_block_sum10 = bool(params.get("v5_hard_block_sum10_negative", True))
+    blocked, block_reason = _is_blocked(
+        features,
+        max_loss_streak=max_loss_streak,
+        hard_block_sum10_negative=hard_block_sum10,
+    )
     score, score_breakdown = _score_signal_detailed(features)
     features["score"] = score
     features["score_breakdown"] = score_breakdown
