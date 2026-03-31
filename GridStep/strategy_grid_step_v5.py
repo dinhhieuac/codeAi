@@ -692,6 +692,8 @@ def _v5_history_score_gate(config):
     demo_history_symbol = str(params.get("demo_history_symbol", symbol) or symbol)
     demo_history_mt5_path = str(params.get("demo_history_mt5_path", config.get("mt5_path")) or config.get("mt5_path"))
 
+    # In sau khi chắc chắn không return cache nội bộ (tránh log "loaded" mỗi vòng khi không có đóng mới).
+    gate_history_source_line = None
     # Ưu tiên đọc account demo từ một file config riêng (vd config_grid_step_v5.json).
     if v5_role == "live" and demo_history_enabled and demo_history_config_file:
         demo_cfg_path = os.path.join(SCRIPT_DIR, "configs", demo_history_config_file)
@@ -738,7 +740,7 @@ def _v5_history_score_gate(config):
                 comment_prefix=history_comment_prefix,
                 days_back=1,
             )
-            print(
+            gate_history_source_line = (
                 f"📚 [V5 Gate] history source=demo_config file={demo_history_config_file} "
                 f"account={demo_cfg.get('account')} symbol={demo_symbol} magic={demo_magic} "
                 f"window={history_window} days_back={history_days_back}"
@@ -759,7 +761,7 @@ def _v5_history_score_gate(config):
                 days_back=history_days_back,
                 max_positions=max_closed_fetch,
             )
-            print(
+            gate_history_source_line = (
                 f"📚 [V5 Gate] history source=current account={config.get('account')} "
                 f"symbol={symbol} magic={magic} window={history_window} days_back={history_days_back}"
             )
@@ -795,7 +797,7 @@ def _v5_history_score_gate(config):
             comment_prefix=history_comment_prefix,
             days_back=1,
         )
-        print(
+        gate_history_source_line = (
             f"📚 [V5 Gate] history source=demo account={demo_history_account} "
             f"symbol={demo_history_symbol} magic={demo_history_magic} "
             f"window={history_window} days_back={history_days_back}"
@@ -813,24 +815,25 @@ def _v5_history_score_gate(config):
             days_back=history_days_back,
             max_positions=max_closed_fetch,
         )
-        print(
+        gate_history_source_line = (
             f"📚 [V5 Gate] history source=current account={config.get('account')} "
             f"symbol={symbol} magic={magic} window={history_window} days_back={history_days_back} role={v5_role}"
         )
-    # Log quá trình lấy history đóng
-    try:
-        last_closed_time = None
-        if closed:
-            ts = int(closed[0].get("close_time", 0) or 0)
-            if ts > 0:
-                last_closed_time = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-        print(
-            f"📚 [V5 Gate] history loaded: closed_count={len(closed)} "
-            f"(need>=5, window={history_window}) last_closed={last_closed_time}"
-        )
-    except Exception:
-        pass
     if len(closed) < 5:
+        if gate_history_source_line:
+            print(gate_history_source_line)
+        try:
+            last_closed_time = None
+            if closed:
+                ts = int(closed[0].get("close_time", 0) or 0)
+                if ts > 0:
+                    last_closed_time = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"📚 [V5 Gate] history loaded: closed_count={len(closed)} "
+                f"(need>=5, window={history_window}) last_closed={last_closed_time}"
+            )
+        except Exception:
+            pass
         if v5_role != "live":
             # Demo luôn chạy bot gốc; chưa đủ history chỉ để quan sát log, không được chặn lệnh.
             return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
@@ -861,10 +864,32 @@ def _v5_history_score_gate(config):
     if rescore_only:
         c = getattr(run, "_v5_gate_score_cache", None)
         if isinstance(c, dict) and c.get("key") == cache_key and c.get("sig") == sig:
-            _v5_log_gate_no_new_close_throttled(closed, mode="after_fetch")
+            _v5_log_gate_no_new_close_throttled()
+            try:
+                if (not c.get("last_close_ts")) and closed and closed[0].get("close_time"):
+                    c2 = dict(c)
+                    c2["last_close_ts"] = int(closed[0]["close_time"])
+                    run._v5_gate_score_cache = c2
+            except Exception:
+                pass
             feat = copy.deepcopy(c["features"])
             feat["v5_score_reused_no_new_close"] = True
             return c["allow"], c["gate_reason"], feat
+
+    if gate_history_source_line:
+        print(gate_history_source_line)
+    try:
+        last_closed_time = None
+        if closed:
+            ts = int(closed[0].get("close_time", 0) or 0)
+            if ts > 0:
+                last_closed_time = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"📚 [V5 Gate] history loaded: closed_count={len(closed)} "
+            f"(need>=5, window={history_window}) last_closed={last_closed_time}"
+        )
+    except Exception:
+        pass
 
     closed_state = closed[: max(1, history_window)]
 
@@ -1468,11 +1493,17 @@ def run():
                     continue
 
                 # Demo: đủ điểm (cùng chuẩn gate live) → ghi relay ngay, không chờ MT5 có lệnh mới.
+                # Rule: chỉ khi score vừa được tính lại (có lệnh đóng mới, không dùng cache) — không spam relay mỗi vòng.
                 relay_early_sent = False
                 relay_early_reason = "NO_DEMO_ORDER"
                 relay_early_zone = None
                 relay_early_side = None
-                if (
+                skip_early_relay = bool(gate_features.get("v5_score_reused_no_new_close")) and bool(
+                    params.get("v5_rescore_only_on_new_close", False)
+                )
+                if skip_early_relay:
+                    relay_early_reason = "SKIP_NO_NEW_CLOSE_SCORE_REUSE"
+                elif (
                     v5_role == "demo"
                     and bool(params.get("signal_relay_enabled", False))
                     and bool(params.get("relay_publish_on_qualified_signal", False))

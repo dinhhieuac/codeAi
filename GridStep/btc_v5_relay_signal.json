@@ -1,21 +1,21 @@
 {
-  "relay_id": "6f5e4a55-8a30-469d-afc5-a78c463e70e4",
-  "created_ts": 1774797932.843082,
-  "expires_ts": 1774808732.843082,
+  "relay_id": "0e5fe97e-4e64-4136-91ec-5c7d1f55a4bc",
+  "created_ts": 1774920852.649194,
+  "expires_ts": 1774931652.649194,
   "symbol": "BTCUSD",
   "magic": 100011,
-  "zone_key": 66200,
+  "zone_key": 68400,
   "zone_points": 200.0,
-  "entry_price": 66200.0,
-  "signal_type": "SELL",
+  "entry_price": 68400.0,
+  "signal_type": "BUY",
   "step": 200.0,
   "grid_preview": {
-    "buy_price": 66600.0,
-    "sell_price": 66200.0,
-    "ref": 66400.0,
+    "buy_price": 68400.0,
+    "sell_price": 68000.0,
+    "ref": 68200.0,
     "step": 200.0,
-    "anchor": 66400.0
+    "anchor": 68257.92
   },
-  "gate_score": 0,
-  "gate_reason_snapshot": ""
+  "gate_score": -2,
+  "gate_reason_snapshot": "gap_minutes_from_prev_signal<min_gap"
 }
