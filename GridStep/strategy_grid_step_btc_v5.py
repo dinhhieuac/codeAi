@@ -51,11 +51,15 @@ core.base = btc_base
 core.base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_btc_v5.json")
 core.base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_btc_v5.json")
 
-def _btc_is_blocked(features, max_loss_streak=2):
+def _btc_is_blocked(features, max_loss_streak=2, **kwargs):
     """
     BTC: không hard-block chỉ vì sum10<0; chỉ khi sum10 < -10 và không strong reversal.
     Không dùng hard-block sum5<0 (phù hợp reversal sau nền xấu ngắn).
+
+    Nhận thêm keyword từ core V5 (vd `hard_block_sum10_negative` cho XAU) — **bỏ qua**;
+    gate BTC dùng SUM10_HARD_BLOCK_THRESHOLD, không rule sum10<0 kiểu XAU.
     """
+    kwargs.pop("hard_block_sum10_negative", None)
     cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if features["loss_streak"] >= int(max_loss_streak):
         return True, "loss_streak"
