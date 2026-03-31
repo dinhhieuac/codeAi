@@ -21,9 +21,9 @@ Console log (cùng format V5):
 - parameters: v5_structured_log, v5_compact_cycle_log; v5_verbose_no_order_log khi tắt structured.
 
 Relay Demo → Live:
-- gọi core.configure_grid_step_v5_paths(...) ngay sau import → btc_v5_relay_signal.json / btc_v5_relay_state.json + live log/state riêng.
-- Demo config: relay_publish_on_qualified_signal — đủ điểm (chuẩn gate live) thì ghi relay sớm;
-  dedup theo zone; relay vẫn thử khi có lệnh MT5 mới.
+- gọi core.configure_grid_step_v5_paths(...) ngay sau import → cùng file relay với XAU V5: v5_relay_signal.json / v5_relay_state.json
+  (để signal.py / live đọc một file); live entry log/state vẫn tách btc_v5_*.
+- Demo: kết_luận=đạt (strategy_grid_step_v5) thì ghi relay sớm; dedup theo zone; thử lại khi có lệnh MT5 mới.
 - Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).
 """
 import os
@@ -34,8 +34,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 import strategy_grid_step_v5 as core
 
 core.configure_grid_step_v5_paths(
-    relay_signal_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_signal.json"),
-    relay_state_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_state.json"),
+    relay_signal_file=os.path.join(SCRIPT_DIR, "v5_relay_signal.json"),
+    relay_state_file=os.path.join(SCRIPT_DIR, "v5_relay_state.json"),
     live_log_file=os.path.join(SCRIPT_DIR, "btc_v5_live_entry_log.jsonl"),
     live_state_file=os.path.join(SCRIPT_DIR, "btc_v5_live_state.json"),
 )
