@@ -32,6 +32,7 @@
         "preferred_direction": "BOTH",
         "allow_reverse_entry": true,
         "v5_structured_log": true,
+        "v5_log_debug": false,
         "v5_compact_cycle_log": false,
         "v5_rescore_only_on_new_close": true,
         "v5_quiet_structured_when_no_new_close": true,

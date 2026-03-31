@@ -5,6 +5,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
 - wrapper (vd strategy_grid_step_btc_v5) gọi configure_grid_step_v5_paths() để tách relay/live log.
+- parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
 """
 import copy
 import os
@@ -1250,6 +1251,45 @@ def _v5_compute_result_main(ctx):
     return "NO_ORDER", g_reason
 
 
+def _v5_param_log_debug(params):
+    """True = full block [SIGNAL][SCORE]...; False (default) = một dòng điểm + kết luận. Alias JSON: logDebug."""
+    return bool(params.get("v5_log_debug", params.get("logDebug", False)))
+
+
+def _v5_emit_minimal_cycle_log(ctx, params):
+    """
+    Chế độ ngắn: điểm, plus/minus rules, live_gate, kết luận đạt/không đạt, RESULT.
+    """
+    if not bool(params.get("v5_structured_log", True)):
+        return
+    gf = ctx.get("gate_features") or {}
+    sb = gf.get("score_breakdown") if isinstance(gf.get("score_breakdown"), dict) else {}
+    adds = sb.get("add") or []
+    subs = sb.get("sub") or []
+    entry_thr = int(ctx.get("entry_thr") or 6)
+    sc = gf.get("score")
+    result, main = _v5_compute_result_main(ctx)
+    lg = _v5_live_entry_gate_label(sc, entry_thr)
+    prof = sb.get("decision") if sb.get("decision") else _v5_score_decision_label(gf, entry_thr)
+    plus_s = ",".join(str(x) for x in adds) if adds else "-"
+    minus_s = ",".join(str(x) for x in subs) if subs else "-"
+    try:
+        si = int(sc) if sc is not None else None
+    except (TypeError, ValueError):
+        si = None
+    blocked = bool(gf.get("blocked"))
+    ok = si is not None and si >= entry_thr and not blocked
+    concl = "đạt" if ok else "không đạt"
+    blk = ""
+    if blocked:
+        blk = f" | block={gf.get('block_reason') or 'yes'}"
+    print(
+        f"[V5] score={sc} | profile={prof} | +[{plus_s}] | -[{minus_s}] | "
+        f"live_gate={lg}{blk} | kết_luận={concl} | RESULT={result} | {main}"
+    )
+    print("")
+
+
 def _v5_emit_structured_cycle_log(ctx, params):
     """
     Log một vòng: RESULT / MAIN_REASON + [SIGNAL][SCORE][CONTEXT][BLOCK][GRID][RELAY][LIVE_CHECK].
@@ -1386,7 +1426,10 @@ def _v5_try_emit_cycle_log(ctx, params):
     prev = getattr(run, "_last_v5_struct_log", None)
     if prev is not None and prev[0] == sig and (now_m - prev[1]) < 10.0:
         return
-    _v5_emit_structured_cycle_log(ctx, params)
+    if _v5_param_log_debug(params):
+        _v5_emit_structured_cycle_log(ctx, params)
+    else:
+        _v5_emit_minimal_cycle_log(ctx, params)
     run._last_v5_struct_log = (sig, now_m)
 
 
