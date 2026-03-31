@@ -2,10 +2,14 @@
 Grid Step Trading Bot V5.
 
 V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
+- chấm điểm XAUUSD: scores.py (`xauusd_grid_step_v5_score_detailed`, `xauusd_grid_step_v5_is_blocked`)
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
 - wrapper (vd strategy_grid_step_btc_v5) gọi configure_grid_step_v5_paths() để tách relay/live log.
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
+- v5_role=live: không đọc history / không chấm điểm trên account live — chỉ đăng nhập MT5 (account trong config),
+  đọc file relay do demo ghi; flat → mirror relay; có grid → chỉ chạy base strategy (stub gate, không score).
+  Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay, không dựng lại grid preview trên live.
 """
 import copy
 import os
@@ -17,6 +21,14 @@ from datetime import datetime, timedelta, timezone
 
 import strategy_grid_step as base
 import signal_relay
+from scores import (
+    normalize_preferred_direction_v5,
+    xauusd_grid_step_v5_is_blocked,
+    xauusd_grid_step_v5_score_detailed,
+)
+
+_normalize_preferred_direction = normalize_preferred_direction_v5
+_score_signal_detailed = xauusd_grid_step_v5_score_detailed
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,58 +61,19 @@ def configure_grid_step_v5_paths(
 
 
 def _relay_zone_matches_current(config, relay_payload):
-    """Live: zone grid hiện tại phải khớp zone trong relay."""
+    """
+    Live (không blind): zone của giá thị trường (mid bid/ask) phải khớp zone_key trong relay từ demo.
+    Không tính entry/grid preview trên account live — chỉ so giá với cùng relay_zone_points như demo.
+    """
     params = config.get("parameters", {})
     zp = float(params.get("relay_zone_points") or 200)
-    preview = _v5_preview_grid_levels(config)
-    if preview is None:
-        return False
     tick = mt5.symbol_info_tick(config["symbol"])
     if tick is None:
         return False
-    step_f = _v5_step_filter_for_gate(config)
-    pendings = base.get_pending_orders(config["symbol"], config["magic"], step_f)
-    entry = _compute_grid_entry_signal(preview, tick, pendings)
-    try:
-        px = float(entry.get("current_signal_open_price") or 0)
-    except (TypeError, ValueError):
-        return False
+    mid = (float(tick.bid) + float(tick.ask)) / 2.0
     want = int(relay_payload.get("zone_key") or 0)
-    got = signal_relay.price_zone_key(px, zp)
+    got = signal_relay.price_zone_key(mid, zp)
     return want == got
-
-
-def _fetch_closed_trades_with_account(
-    account_cfg,
-    symbol,
-    magic,
-    history_window=20,
-    comment_prefix="GridStep",
-    days_back=3,
-    max_positions=None,
-):
-    """
-    Đổi login sang account_cfg để đọc history, rồi caller tự chịu trách nhiệm restore account trước đó.
-    account_cfg: {account,password,server,mt5_path}
-    """
-    mt5_path = account_cfg.get("mt5_path")
-    if mt5_path:
-        mt5.shutdown()
-        if not mt5.initialize(path=mt5_path):
-            print(f"⚠️ [V5 Gate] initialize fail for history account path={mt5_path}")
-            return []
-    ok = mt5.login(
-        int(account_cfg.get("account", 0) or 0),
-        password=str(account_cfg.get("password", "") or ""),
-        server=str(account_cfg.get("server", "") or ""),
-    )
-    if not ok:
-        print(f"⚠️ [V5 Gate] login fail for history account={account_cfg.get('account')}")
-        return []
-    cap = int(max_positions) if max_positions is not None else max(int(history_window), 100)
-    return _fetch_closed_positions_list(
-        symbol, magic, comment_prefix=comment_prefix, days_back=days_back, max_positions=cap
-    )
 
 
 def _fetch_closed_positions_list(
@@ -184,14 +157,6 @@ def _fetch_closed_trades(symbol, magic, history_window=20, comment_prefix="GridS
         symbol, magic, comment_prefix=comment_prefix, days_back=days_back, max_positions=max(int(history_window), 1)
     )
     return raw[: max(1, int(history_window))]
-
-
-def _normalize_preferred_direction(raw, default="SELL"):
-    """BUY | SELL | BOTH (BOTH = không ép hướng, không cộng match_preferred). Chuỗi lạ → BOTH."""
-    p = str(raw if raw is not None else default).strip().upper()
-    if p in ("BUY", "SELL", "BOTH"):
-        return p
-    return "BOTH"
 
 
 def _calc_streak(closed):
@@ -502,85 +467,13 @@ def _build_v5_features(
     }
 
 
-def _score_signal_detailed(features):
-    """
-    Chấm điểm: state (lệnh đóng) + entry (tín hiệu hiện tại vs tín hiệu trước).
-    Các điều kiện đã là hard block (loss_streak, sum5/10 âm, gap, loss+same_dir không cải thiện giá)
-    không trừ điểm lặp — chỉ dùng _is_blocked.
-    """
-    if not features or not features.get("ready"):
-        return None, {"add": [], "sub": [], "note": "not_ready"}
-    score = 0
-    add, sub = [], []
-    pref = _normalize_preferred_direction(features.get("preferred_direction"))
-    min_gap_cfg = float(features.get("min_gap_minutes", 5))
-
-    def ap(rule, pts):
-        nonlocal score
-        score += pts
-        add.append(f"{rule}:+{pts}")
-
-    def sp(rule, pts):
-        nonlocal score
-        score -= pts
-        sub.append(f"{rule}:-{pts}")
-
-    if features["gap_minutes_from_prev_signal"] >= min_gap_cfg:
-        ap(f"gap>={min_gap_cfg}m", 2)
-    if features["sum_last_5_net_profit"] >= 15:
-        ap("sum5>=15", 2)
-    if features["win_count_last_5"] >= 3:
-        ap("win5>=3", 1)
-    if features["sum_last_10_net_profit"] > 0:
-        ap("sum10>0", 1)
-    if features["win_rate_last_10"] >= 0.5:
-        ap("winrate10>=0.5", 1)
-    if features["last_trade_result"] == "Win":
-        ap("last_closed=Win", 1)
-    if features.get("same_direction_as_prev_signal"):
-        ap("same_dir_as_prev_signal", 1)
-    st = features.get("current_signal_type") or features.get("signal_type")
-    if pref in ("BUY", "SELL") and st == pref:
-        ap(f"match_preferred({pref})", 1)
-    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
-    if cur == "SELL" and features["current_open_below_prev_open"]:
-        ap("sell_continuation_price_improved", 1)
-    elif cur == "BUY" and features["current_open_above_prev_open"]:
-        ap("buy_continuation_price_improved", 1)
-
-    # Mềm: không trùng hard block
-    if features.get("reverse_direction_from_prev_signal"):
-        sp("reverse_vs_prev_signal", 1)
-    if cur == "SELL" and features["current_open_above_prev_open"]:
-        sp("sell_continuation_price_worse", 1)
-    elif cur == "BUY" and features["current_open_below_prev_open"]:
-        sp("buy_continuation_price_worse", 1)
-
-    breakdown = {"add": add, "sub": sub, "preferred_direction": pref}
-    return score, breakdown
-
-
 def _score_signal(features):
     s, _ = _score_signal_detailed(features)
     return s
 
 
 def _is_blocked(features, max_loss_streak=2):
-    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
-    if features["loss_streak"] >= int(max_loss_streak):
-        return True, "loss_streak"
-    if features["sum_last_5_net_profit"] < 0:
-        return True, "sum_last_5_net_profit<0"
-    if features["sum_last_10_net_profit"] < 0:
-        return True, "sum_last_10_net_profit<0"
-    if not features["min_gap_ok"]:
-        return True, "gap_minutes_from_prev_signal<min_gap"
-    if features["last_trade_result"] == "Loss" and features.get("same_direction_as_prev_signal"):
-        if cur == "SELL" and not features["current_open_below_prev_open"]:
-            return True, "loss_same_dir_no_price_improve_SELL"
-        if cur == "BUY" and not features["current_open_above_prev_open"]:
-            return True, "loss_same_dir_no_price_improve_BUY"
-    return False, ""
+    return xauusd_grid_step_v5_is_blocked(features, max_loss_streak=max_loss_streak)
 
 
 def _closed_list_signature(closed):
@@ -595,18 +488,13 @@ def _closed_list_signature(closed):
     )
 
 
-def _v5_gate_cache_key(config, v5_role, state_from_demo_account):
-    p = config.get("parameters", {})
-    parts = [
+def _v5_gate_cache_key(config, v5_role):
+    return (
         str(v5_role),
         str(config.get("symbol") or ""),
         int(config.get("magic") or 0),
         int(config.get("account") or 0),
-        "demo_hist" if state_from_demo_account else "current",
-    ]
-    if state_from_demo_account:
-        parts.append(str(p.get("demo_history_config_file", "") or ""))
-    return tuple(parts)
+    )
 
 
 def _v5_peek_any_out_deal_after(symbol, magic, comment_prefix, since_ts: int) -> bool:
@@ -641,16 +529,15 @@ def _v5_peek_any_out_deal_after(symbol, magic, comment_prefix, since_ts: int) ->
 
 
 def _v5_try_return_cached_gate_without_full_fetch(
-    config, v5_role, symbol, magic, history_comment_prefix, state_from_demo_account
+    config, v5_role, symbol, magic, history_comment_prefix
 ):
     """
     Khi đã có cache score và peek không thấy deal OUT mới → trả cache, không gọi _fetch_closed_positions_list.
-    Chỉ dùng khi MT5 session đang là account lấy history (current), không dùng nhánh login account demo khác.
     """
     params = config.get("parameters", {})
     if not bool(params.get("v5_rescore_only_on_new_close", False)):
         return None
-    ck = _v5_gate_cache_key(config, v5_role, state_from_demo_account)
+    ck = _v5_gate_cache_key(config, v5_role)
     c = getattr(run, "_v5_gate_score_cache", None)
     if not isinstance(c, dict) or c.get("key") != ck:
         return None
@@ -679,9 +566,32 @@ def _v5_log_gate_no_new_close_throttled():
     run._v5_gate_no_close_log = (msg, now_m)
 
 
+def _v5_live_gate_features_no_relay():
+    """Live đang có grid: không chấm điểm từ account; chỉ để base strategy quản lý lệnh."""
+    return {
+        "ready": True,
+        "score": None,
+        "score_breakdown": {"add": [], "sub": [], "note": "relay_only_live_has_grid"},
+        "blocked": False,
+        "block_reason": None,
+        "min_gap_ok": True,
+        "current_signal_type": None,
+        "signal_type": None,
+        "current_signal_open_price": None,
+        "grid_preview": {},
+        "relay_id": None,
+    }
+
+
 def _v5_history_score_gate(config):
+    """
+    Chỉ dùng cho v5_role=demo: đọc history session hiện tại, tính score/log, không chặn lệnh (demo_mode_no_gate).
+    Live không gọi hàm này — live chỉ nhận tín hiệu qua relay.
+    """
     params = config.get("parameters", {})
     v5_role = str(params.get("v5_role", "demo")).lower().strip()
+    if v5_role != "demo":
+        return False, "only_demo_uses_history_gate", {}
     history_window = int(params.get("history_window", 20))
     signal_history_window = int(params.get("signal_history_window", history_window))
     history_days_back = int(params.get("history_days_back", 7))
@@ -692,11 +602,8 @@ def _v5_history_score_gate(config):
         5,
     )
     min_gap_minutes = float(params.get("min_gap_minutes", 5))
-    entry_score_threshold = int(params.get("entry_score_threshold", 6))
-    medium_score_threshold = int(params.get("medium_score_threshold", 5))
     max_loss_streak = int(params.get("max_loss_streak", 2))
     preferred_direction = _normalize_preferred_direction(params.get("preferred_direction", "SELL"))
-    allow_reverse_entry = bool(params.get("allow_reverse_entry", False))
     history_comment_prefix = str(params.get("history_comment_prefix", "") or "").strip() or None
     symbol = config["symbol"]
     magic = config["magic"]
@@ -705,144 +612,23 @@ def _v5_history_score_gate(config):
     if tick is None:
         return False, "tick_none", {}
 
-    # Live có thể đọc history từ demo account riêng.
-    state_from_demo_account = False
-    demo_history_enabled = bool(params.get("demo_history_enabled", False))
-    demo_history_config_file = str(params.get("demo_history_config_file", "") or "").strip()
-    demo_history_account = params.get("demo_history_account")
-    demo_history_password = params.get("demo_history_password")
-    demo_history_server = params.get("demo_history_server")
-    demo_history_magic = int(params.get("demo_history_magic", magic) or magic)
-    demo_history_symbol = str(params.get("demo_history_symbol", symbol) or symbol)
-    demo_history_mt5_path = str(params.get("demo_history_mt5_path", config.get("mt5_path")) or config.get("mt5_path"))
-
-    # In sau khi chắc chắn không return cache nội bộ (tránh log "loaded" mỗi vòng khi không có đóng mới).
     gate_history_source_line = None
-    # Ưu tiên đọc account demo từ một file config riêng (vd config_grid_step_v5.json).
-    if v5_role == "live" and demo_history_enabled and demo_history_config_file:
-        demo_cfg_path = os.path.join(SCRIPT_DIR, "configs", demo_history_config_file)
-        demo_cfg_raw = base.load_config(demo_cfg_path) or {}
-        demo_cfg = {
-            "account": demo_cfg_raw.get("account"),
-            "password": demo_cfg_raw.get("password"),
-            "server": demo_cfg_raw.get("server"),
-            "mt5_path": demo_cfg_raw.get("mt5_path", demo_history_mt5_path),
-        }
-        demo_symbol = str(demo_cfg_raw.get("symbol", demo_history_symbol) or demo_history_symbol)
-        demo_magic = int(demo_cfg_raw.get("magic", demo_history_magic) or demo_history_magic)
-        # Cho phép override tại live config nếu user muốn.
-        if params.get("demo_history_symbol"):
-            demo_symbol = str(params.get("demo_history_symbol"))
-        if params.get("demo_history_magic") is not None:
-            demo_magic = int(params.get("demo_history_magic") or demo_magic)
-        if params.get("demo_history_mt5_path"):
-            demo_cfg["mt5_path"] = str(params.get("demo_history_mt5_path"))
-
-        if demo_cfg.get("account") and demo_cfg.get("password") and demo_cfg.get("server"):
-            live_cfg = {
-                "account": config.get("account"),
-                "password": config.get("password"),
-                "server": config.get("server"),
-                "mt5_path": config.get("mt5_path"),
-            }
-            closed = _fetch_closed_trades_with_account(
-                demo_cfg,
-                demo_symbol,
-                demo_magic,
-                history_window=history_window,
-                comment_prefix=history_comment_prefix,
-                days_back=history_days_back,
-                max_positions=max_closed_fetch,
-            )
-            state_from_demo_account = True
-            # restore live session để phần đặt lệnh luôn chạy trên live
-            _ = _fetch_closed_trades_with_account(
-                live_cfg,
-                symbol,
-                magic,
-                history_window=1,
-                comment_prefix=history_comment_prefix,
-                days_back=1,
-            )
-            gate_history_source_line = (
-                f"📚 [V5 Gate] history source=demo_config file={demo_history_config_file} "
-                f"account={demo_cfg.get('account')} symbol={demo_symbol} magic={demo_magic} "
-                f"window={history_window} days_back={history_days_back}"
-            )
-        else:
-            print(
-                f"⚠️ [V5 Gate] demo_history_config_file='{demo_history_config_file}' thiếu account/password/server, fallback current account."
-            )
-            _r = _v5_try_return_cached_gate_without_full_fetch(
-                config, v5_role, symbol, magic, history_comment_prefix, False
-            )
-            if _r is not None:
-                return _r
-            closed = _fetch_closed_positions_list(
-                symbol,
-                magic,
-                comment_prefix=history_comment_prefix,
-                days_back=history_days_back,
-                max_positions=max_closed_fetch,
-            )
-            gate_history_source_line = (
-                f"📚 [V5 Gate] history source=current account={config.get('account')} "
-                f"symbol={symbol} magic={magic} window={history_window} days_back={history_days_back}"
-            )
-    elif v5_role == "live" and demo_history_enabled and demo_history_account and demo_history_password and demo_history_server:
-        live_cfg = {
-            "account": config.get("account"),
-            "password": config.get("password"),
-            "server": config.get("server"),
-            "mt5_path": config.get("mt5_path"),
-        }
-        demo_cfg = {
-            "account": demo_history_account,
-            "password": demo_history_password,
-            "server": demo_history_server,
-            "mt5_path": demo_history_mt5_path,
-        }
-        closed = _fetch_closed_trades_with_account(
-            demo_cfg,
-            demo_history_symbol,
-            demo_history_magic,
-            history_window=history_window,
-            comment_prefix=history_comment_prefix,
-            days_back=history_days_back,
-            max_positions=max_closed_fetch,
-        )
-        state_from_demo_account = True
-        # restore live session để phần đặt lệnh luôn chạy trên live
-        _ = _fetch_closed_trades_with_account(
-            live_cfg,
-            symbol,
-            magic,
-            history_window=1,
-            comment_prefix=history_comment_prefix,
-            days_back=1,
-        )
-        gate_history_source_line = (
-            f"📚 [V5 Gate] history source=demo account={demo_history_account} "
-            f"symbol={demo_history_symbol} magic={demo_history_magic} "
-            f"window={history_window} days_back={history_days_back}"
-        )
-    else:
-        _r = _v5_try_return_cached_gate_without_full_fetch(
-            config, v5_role, symbol, magic, history_comment_prefix, False
-        )
-        if _r is not None:
-            return _r
-        closed = _fetch_closed_positions_list(
-            symbol,
-            magic,
-            comment_prefix=history_comment_prefix,
-            days_back=history_days_back,
-            max_positions=max_closed_fetch,
-        )
-        gate_history_source_line = (
-            f"📚 [V5 Gate] history source=current account={config.get('account')} "
-            f"symbol={symbol} magic={magic} window={history_window} days_back={history_days_back} role={v5_role}"
-        )
+    _r = _v5_try_return_cached_gate_without_full_fetch(
+        config, v5_role, symbol, magic, history_comment_prefix
+    )
+    if _r is not None:
+        return _r
+    closed = _fetch_closed_positions_list(
+        symbol,
+        magic,
+        comment_prefix=history_comment_prefix,
+        days_back=history_days_back,
+        max_positions=max_closed_fetch,
+    )
+    gate_history_source_line = (
+        f"📚 [V5 Gate] history source=current account={config.get('account')} "
+        f"symbol={symbol} magic={magic} window={history_window} days_back={history_days_back}"
+    )
     if len(closed) < 5:
         if gate_history_source_line:
             print(gate_history_source_line)
@@ -858,13 +644,10 @@ def _v5_history_score_gate(config):
             )
         except Exception:
             pass
-        if v5_role != "live":
-            # Demo luôn chạy bot gốc; chưa đủ history chỉ để quan sát log, không được chặn lệnh.
-            return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
-        return False, f"need>=5_closed_trades, got={len(closed)}", {"closed_count": len(closed), "role": v5_role}
+        return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
 
     sig = _closed_list_signature(closed)
-    cache_key = _v5_gate_cache_key(config, v5_role, state_from_demo_account)
+    cache_key = _v5_gate_cache_key(config, v5_role)
     rescore_only = bool(params.get("v5_rescore_only_on_new_close", False))
 
     def _cache_put(allow, gate_reason, features, closed_for_ts=None):
@@ -918,16 +701,7 @@ def _v5_history_score_gate(config):
     closed_state = closed[: max(1, history_window)]
 
     step_filter = _v5_step_filter_for_gate(config)
-    if state_from_demo_account:
-        signal_closed_for_merge = _fetch_closed_positions_list(
-            symbol,
-            magic,
-            comment_prefix=history_comment_prefix,
-            days_back=history_days_back,
-            max_positions=max_closed_fetch,
-        )
-    else:
-        signal_closed_for_merge = closed
+    signal_closed_for_merge = closed
 
     open_sigs = _open_positions_as_signals(symbol, magic, step_filter)
     signal_history = _merge_signal_history(open_sigs, signal_closed_for_merge, signal_history_window)
@@ -969,10 +743,8 @@ def _v5_history_score_gate(config):
         min_gap_minutes,
         preview,
     )
-    features["state_history_source"] = "demo_account" if state_from_demo_account else "current_account"
-    features["signal_closed_merge_source"] = (
-        "live_account" if state_from_demo_account else "same_as_state_fetch"
-    )
+    features["state_history_source"] = "current_account"
+    features["signal_closed_merge_source"] = "same_as_state_fetch"
     features["signal_history_window"] = signal_history_window
     features["prev_signal_price_tolerance"] = price_tol
     features["prev_signal_leading_overlap_skipped"] = prev_leading_skipped
@@ -991,36 +763,14 @@ def _v5_history_score_gate(config):
     features["block_reason"] = block_reason
 
     # Demo: luôn cho chạy bot gốc, nhưng vẫn trả đủ feature/score để log quan sát.
-    if v5_role != "live":
-        _cache_put(True, "demo_mode_no_gate", features, closed_for_ts=closed)
-        return True, "demo_mode_no_gate", features
-
-    cur_sig = str(features.get("current_signal_type") or features.get("signal_type") or "").upper()
-    if (
-        not allow_reverse_entry
-        and preferred_direction in ("BUY", "SELL")
-        and cur_sig != preferred_direction
-    ):
-        _cache_put(False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features, closed_for_ts=closed)
-        return False, f"direction_gate:{cur_sig}!=preferred:{preferred_direction}", features
-    if blocked:
-        _cache_put(False, f"blocked:{block_reason}", features, closed_for_ts=closed)
-        return False, f"blocked:{block_reason}", features
-    if score < medium_score_threshold:
-        _cache_put(False, f"low_score:{score}<{medium_score_threshold}", features, closed_for_ts=closed)
-        return False, f"low_score:{score}<{medium_score_threshold}", features
-    # Live: chỉ coi tín hiệu đủ đẹp khi đạt entry_score_threshold (demo không dùng nhánh này).
-    if score < entry_score_threshold:
-        _cache_put(False, f"below_entry_score:{score}<{entry_score_threshold}", features, closed_for_ts=closed)
-        return False, f"below_entry_score:{score}<{entry_score_threshold}", features
-    _cache_put(True, f"qualified:{score}", features, closed_for_ts=closed)
-    return True, f"qualified:{score}", features
+    _cache_put(True, "demo_mode_no_gate", features, closed_for_ts=closed)
+    return True, "demo_mode_no_gate", features
 
 
 def _v5_features_qualify_live_equivalent(features: dict, params: dict) -> bool:
     """
-    Cùng tiêu chí gate như live (_v5_history_score_gate khi v5_role=live):
-    ready, không blocked, medium + entry score, preferred direction (nếu cấu hình).
+    Tiêu chí “đủ điểm như cổng live” để demo phát relay sớm: ready, không blocked,
+    medium + entry score, preferred direction (nếu cấu hình).
     Dùng trên demo để phát relay ngay khi đủ điểm (không chờ MT5 đặt lệnh).
     """
     if not features or not features.get("ready"):
@@ -1471,18 +1221,16 @@ def run():
             while True:
                 params = config.get("parameters", {})
                 v5_role = str(params.get("v5_role", "demo")).lower().strip()
-                medium_thr = int(params.get("medium_score_threshold", 5))
                 entry_thr = int(params.get("entry_score_threshold", 6))
                 relay_verbose = bool(params.get("relay_verbose_log", True))
                 sym = config["symbol"]
                 mag = config["magic"]
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
-                live_demo_only = v5_role == "live" and bool(params.get("live_execute_demo_signal_only"))
                 live_relay_blind = bool(params.get("live_relay_blind_follow", False))
                 active_relay_id = None
 
-                if live_demo_only:
+                if v5_role == "live":
                     if not has_grid:
                         relay_payload = (
                             signal_relay.relay_read_valid(config)
@@ -1532,9 +1280,9 @@ def run():
                         gate_features = signal_relay.relay_to_gate_features(relay_payload)
                         active_relay_id = relay_payload.get("relay_id")
                     else:
-                        allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
                         allow_live = True
-                        gate_reason = f"live_maintenance:{gate_reason}"
+                        gate_reason = "live_grid_maintenance"
+                        gate_features = _v5_live_gate_features_no_relay()
                 else:
                     allow_live, gate_reason, gate_features = _v5_history_score_gate(config)
 
@@ -1603,11 +1351,7 @@ def run():
                     remain_cd = _live_entry_cooldown_remaining_seconds(sym, mag, live_min_entry_gap_seconds)
                     # Chỉ chặn mở mới khi hệ thống đang flat (không position, không pending).
                     # Nếu đang có lệnh, để base strategy quản lý vòng đời bình thường.
-                    skip_live_cd = (
-                        live_relay_blind
-                        and live_demo_only
-                        and str(gate_reason) == "live_relay_ok"
-                    )
+                    skip_live_cd = live_relay_blind and str(gate_reason) == "live_relay_ok"
                     if (
                         remain_cd > 0
                         and (len(pre_pending) == 0 and len(pre_positions) == 0)
@@ -1634,9 +1378,14 @@ def run():
 
                 # Live: tín hiệu demo đủ điểm nhưng đã có cặp pending khớp tín hiệu → không gọi strategy (tránh thừa).
                 live_skip_dup = bool(params.get("live_skip_if_equivalent", True))
-                if live_relay_blind and live_demo_only and str(gate_reason) == "live_relay_ok":
+                if live_relay_blind and str(gate_reason) == "live_relay_ok":
                     live_skip_dup = False
-                if v5_role == "live" and live_skip_dup and allow_live:
+                if (
+                    v5_role == "live"
+                    and live_skip_dup
+                    and allow_live
+                    and gate_reason != "live_grid_maintenance"
+                ):
                     step_f = _v5_step_filter_for_gate(config)
                     sig_type = gate_features.get("current_signal_type") or gate_features.get("signal_type")
                     sig_px = gate_features.get("current_signal_open_price")
@@ -1729,7 +1478,7 @@ def run():
                     elif not relay_early_sent:
                         relay_reason = rsn_ord
 
-                if live_demo_only and active_relay_id and (new_pending or new_positions):
+                if v5_role == "live" and active_relay_id and (new_pending or new_positions):
                     signal_relay.relay_consume(active_relay_id, verbose=relay_verbose)
 
                 rr_out = relay_reason

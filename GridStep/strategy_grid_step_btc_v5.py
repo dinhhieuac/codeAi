@@ -24,8 +24,7 @@ Relay Demo → Live:
 - gọi core.configure_grid_step_v5_paths(...) ngay sau import → btc_v5_relay_signal.json / btc_v5_relay_state.json + live log/state riêng.
 - Demo config: relay_publish_on_qualified_signal — đủ điểm (chuẩn gate live) thì ghi relay sớm;
   dedup theo zone; relay vẫn thử khi có lệnh MT5 mới.
-- Live config: live_execute_demo_signal_only, live_relay_blind_follow — mirror relay;
-  lớp grid MT5 vẫn có spread/min_distance.
+- Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).
 """
 import os
 import sys

@@ -41,7 +41,6 @@
         "relay_publish_on_qualified_signal": true,
         "relay_zone_points": 200,
         "relay_signal_ttl_minutes": 180,
-        "relay_verbose_log": true,
-        "live_execute_demo_signal_only": false
+        "relay_verbose_log": true
     }
 }

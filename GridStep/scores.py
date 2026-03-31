@@ -1,5 +1,9 @@
 """
-BTCUSD scoring — Grid Step 200.0 (logic riêng, không copy XAU V5).
+Scoring Grid Step V5:
+- XAUUSD: `xauusd_grid_step_v5_score_detailed` / `xauusd_grid_step_v5_is_blocked` (strategy_grid_step_v5).
+- BTCUSD: `btcusd_grid_step_200_score` (strategy_grid_step_btc_v5).
+
+BTCUSD — Grid Step 200.0 (logic riêng, không copy XAU V5).
 
 Bản cập nhật: tách hai loại gap:
 - gap_from_prev_signal_min (mở→entry): continuation, SELL sau pause dài
@@ -190,3 +194,104 @@ def btcusd_grid_step_200_should_trade(
     if decision == "NEUTRAL" and allow_neutral:
         return True, decision, points, detail
     return False, decision, points, detail
+
+
+# --- XAUUSD — Grid Step V5 (strategy_grid_step_v5, step mặc định 5) ---
+
+
+def normalize_preferred_direction_v5(raw: Any, default: str = "SELL") -> str:
+    """BUY | SELL | BOTH (BOTH = không ép hướng, không cộng match_preferred). Chuỗi lạ → BOTH."""
+    p = str(raw if raw is not None else default).strip().upper()
+    if p in ("BUY", "SELL", "BOTH"):
+        return p
+    return "BOTH"
+
+
+def xauusd_grid_step_v5_score_detailed(
+    features: Dict[str, Any],
+) -> Tuple[Any, Dict[str, Any]]:
+    """
+    Chấm điểm XAUUSD: state (lệnh đóng) + entry (tín hiệu hiện tại vs tín hiệu trước).
+    Các điều kiện đã là hard block (loss_streak, sum5/10 âm, gap, loss+same_dir không cải thiện giá)
+    không trừ điểm lặp — chỉ dùng `xauusd_grid_step_v5_is_blocked`.
+    """
+    if not features or not features.get("ready"):
+        return None, {"add": [], "sub": [], "note": "not_ready"}
+    score = 0
+    add: List[str] = []
+    sub: List[str] = []
+    pref = normalize_preferred_direction_v5(features.get("preferred_direction"))
+    min_gap_cfg = _f(features.get("min_gap_minutes"), 5.0)
+
+    def ap(rule: str, pts: int) -> None:
+        nonlocal score
+        score += pts
+        add.append(f"{rule}:+{pts}")
+
+    def sp(rule: str, pts: int) -> None:
+        nonlocal score
+        score -= pts
+        sub.append(f"{rule}:-{pts}")
+
+    if _f(features.get("gap_minutes_from_prev_signal"), 0.0) >= min_gap_cfg:
+        ap(f"gap>={min_gap_cfg}m", 2)
+    if _f(features.get("sum_last_5_net_profit")) >= 15:
+        ap("sum5>=15", 2)
+    if _i(features.get("win_count_last_5")) >= 3:
+        ap("win5>=3", 1)
+    if _f(features.get("sum_last_10_net_profit")) > 0:
+        ap("sum10>0", 1)
+    if _f(features.get("win_rate_last_10")) >= 0.5:
+        ap("winrate10>=0.5", 1)
+    if str(features.get("last_trade_result") or "").strip() == "Win":
+        ap("last_closed=Win", 1)
+    if _b(features.get("same_direction_as_prev_signal")):
+        ap("same_dir_as_prev_signal", 1)
+    st = features.get("current_signal_type") or features.get("signal_type")
+    if pref in ("BUY", "SELL") and st == pref:
+        ap(f"match_preferred({pref})", 1)
+    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
+    if cur == "SELL" and _b(features.get("current_open_below_prev_open")):
+        ap("sell_continuation_price_improved", 1)
+    elif cur == "BUY" and _b(features.get("current_open_above_prev_open")):
+        ap("buy_continuation_price_improved", 1)
+
+    if _b(features.get("reverse_direction_from_prev_signal")):
+        sp("reverse_vs_prev_signal", 1)
+    if cur == "SELL" and _b(features.get("current_open_above_prev_open")):
+        sp("sell_continuation_price_worse", 1)
+    elif cur == "BUY" and _b(features.get("current_open_below_prev_open")):
+        sp("buy_continuation_price_worse", 1)
+
+    breakdown: Dict[str, Any] = {
+        "add": add,
+        "sub": sub,
+        "preferred_direction": pref,
+        "symbol_profile": "XAUUSD_GridStepV5",
+    }
+    return score, breakdown
+
+
+def xauusd_grid_step_v5_is_blocked(
+    features: Dict[str, Any],
+    *,
+    max_loss_streak: int = 2,
+) -> Tuple[bool, str]:
+    """Hard block XAU V5 (giống logic cũ trong strategy_grid_step_v5)."""
+    cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
+    if _i(features.get("loss_streak")) >= int(max_loss_streak):
+        return True, "loss_streak"
+    if _f(features.get("sum_last_5_net_profit")) < 0:
+        return True, "sum_last_5_net_profit<0"
+    if _f(features.get("sum_last_10_net_profit")) < 0:
+        return True, "sum_last_10_net_profit<0"
+    if not _b(features.get("min_gap_ok")):
+        return True, "gap_minutes_from_prev_signal<min_gap"
+    if str(features.get("last_trade_result") or "").strip() == "Loss" and _b(
+        features.get("same_direction_as_prev_signal")
+    ):
+        if cur == "SELL" and not _b(features.get("current_open_below_prev_open")):
+            return True, "loss_same_dir_no_price_improve_SELL"
+        if cur == "BUY" and not _b(features.get("current_open_above_prev_open")):
+            return True, "loss_same_dir_no_price_improve_BUY"
+    return False, ""
