@@ -277,8 +277,9 @@ def xauusd_grid_step_v5_is_blocked(
     *,
     max_loss_streak: int = 2,
     hard_block_sum10_negative: bool = True,
+    hard_block_min_gap: bool = True,
 ) -> Tuple[bool, str]:
-    """Hard block XAU V5. `hard_block_sum10_negative`: bật chặn khi tổng 10 lệnh âm (config `v5_hard_block_sum10_negative`)."""
+    """Hard block XAU V5. `v5_hard_block_sum10_negative` / `v5_hard_block_min_gap` trong config."""
     cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if _i(features.get("loss_streak")) >= int(max_loss_streak):
         return True, "loss_streak"
@@ -286,7 +287,7 @@ def xauusd_grid_step_v5_is_blocked(
         return True, "sum_last_5_net_profit<0"
     if hard_block_sum10_negative and _f(features.get("sum_last_10_net_profit")) < 0:
         return True, "sum_last_10_net_profit<0"
-    if not _b(features.get("min_gap_ok")):
+    if hard_block_min_gap and not _b(features.get("min_gap_ok")):
         return True, "gap_minutes_from_prev_signal<min_gap"
     if str(features.get("last_trade_result") or "").strip() == "Loss" and _b(
         features.get("same_direction_as_prev_signal")

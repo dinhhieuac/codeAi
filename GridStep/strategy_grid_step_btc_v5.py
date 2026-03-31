@@ -58,15 +58,17 @@ def _btc_is_blocked(features, max_loss_streak=2, **kwargs):
 
     Nhận thêm keyword từ core V5 (vd `hard_block_sum10_negative` cho XAU) — **bỏ qua**;
     gate BTC dùng SUM10_HARD_BLOCK_THRESHOLD, không rule sum10<0 kiểu XAU.
+    `hard_block_min_gap` từ config `v5_hard_block_min_gap` (mặc định True).
     """
     kwargs.pop("hard_block_sum10_negative", None)
+    hard_block_min_gap = bool(kwargs.pop("hard_block_min_gap", True))
     cur = str(features.get("current_signal_type") or features.get("signal_type") or "SELL").upper()
     if features["loss_streak"] >= int(max_loss_streak):
         return True, "loss_streak"
     sum10 = float(features.get("sum_last_10_net_profit") or 0)
     if sum10 < float(SUM10_HARD_BLOCK_THRESHOLD) and not btc_strong_reversal_signal(features):
         return True, "sum_last_10_net_profit_deep_negative_no_strong_reversal"
-    if not features["min_gap_ok"]:
+    if hard_block_min_gap and not features.get("min_gap_ok", True):
         return True, "gap_minutes_from_prev_signal<min_gap"
     if features["last_trade_result"] == "Loss" and features.get("same_direction_as_prev_signal"):
         if cur == "SELL" and not features["current_open_below_prev_open"]:

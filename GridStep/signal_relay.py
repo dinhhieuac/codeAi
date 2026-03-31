@@ -3,7 +3,8 @@ Demo → Live relay: demo phát tín hiệu sau khi gửi lệnh thành công; l
 
 File:
 - v5_relay_signal.json — payload mới nhất chờ live
-- v5_relay_state.json — zone đã relay (demo) + relay_id đã consume (live)
+- v5_relay_state.json — demo_relayed_zone_ts (zone → unix time relay cuối, dedupe theo TTL)
+  + live_consumed_relay_ids
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "v5_relay_signal.json")
@@ -20,7 +21,35 @@ RELAY_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_relay_state.json")
 
 
 def _default_state() -> Dict[str, Any]:
-    return {"demo_relayed_zones": [], "live_consumed_relay_ids": []}
+    return {"demo_relayed_zone_ts": {}, "live_consumed_relay_ids": []}
+
+
+def _normalize_demo_zone_ts(state: Dict[str, Any]) -> Dict[str, float]:
+    """
+    demo_relayed_zone_ts: { "2645": 1730000000.0 } — lần relay gần nhất theo zone_key.
+    Legacy: demo_relayed_zones = [2645, ...] → chuyển sang ts=0 (coi như hết hạn, cho relay lại).
+    """
+    raw = state.get("demo_relayed_zone_ts")
+    if isinstance(raw, dict) and raw:
+        out: Dict[str, float] = {}
+        for k, v in raw.items():
+            try:
+                out[str(int(k))] = float(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+    legacy = state.get("demo_relayed_zones")
+    if isinstance(legacy, list) and legacy:
+        out = {}
+        for z in legacy:
+            if z is None:
+                continue
+            try:
+                out[str(int(float(z)))] = 0.0
+            except (TypeError, ValueError):
+                continue
+        return out
+    return {}
 
 
 def _load_json(path: str, default: Any) -> Any:
@@ -71,10 +100,13 @@ def demo_try_publish_relay(
     verbose: bool = False,
 ) -> Tuple[Optional[str], str]:
     """
-    Gọi sau khi demo có pending/position mới. Mỗi zone chỉ relay 1 lần (demo_relayed_zones).
-    Trả về (relay_id hoặc None, mã lý do cho log [RELAY]).
+    Dedupe theo zone + TTL (parameters.relay_zone_dedupe_ttl_minutes), không chặn vĩnh viễn:
+    cùng zone sau khi hết TTL có thể ghi relay lại (giá đi xa rồi quay về zone cũ).
+    ttl_minutes ở đây là TTL file signal; dedupe dùng relay_zone_dedupe_ttl_minutes riêng.
     """
     del verbose  # log cấu trúc do strategy_grid_step_v5 in
+    params = config.get("parameters") or {}
+    dedupe_ttl_min = float(params.get("relay_zone_dedupe_ttl_minutes", 120) or 0)
     if not gate_features:
         return None, "NO_GATE_FEATURES"
     symbol = config.get("symbol")
@@ -88,12 +120,15 @@ def demo_try_publish_relay(
     except (TypeError, ValueError):
         return None, "BAD_ENTRY_PRICE"
     zone = price_zone_key(entry_f, float(relay_zone_points))
+    zone_s = str(int(zone))
     state = _load_json(RELAY_STATE_FILE, _default_state())
-    demo_zones: List = list(state.get("demo_relayed_zones") or [])
-    if zone in demo_zones:
+    zone_ts = _normalize_demo_zone_ts(state)
+    now = time.time()
+    last_ts = zone_ts.get(zone_s, 0.0)
+    # dedupe_ttl_min <= 0 → không chặn trùng zone (dễ spam; chỉ dùng khi debug)
+    if dedupe_ttl_min > 0 and last_ts > 0 and (now - last_ts) < dedupe_ttl_min * 60.0:
         return None, "RELAY_ALREADY_SENT_IN_ZONE"
     relay_id = str(uuid.uuid4())
-    now = time.time()
     expires = now + float(ttl_minutes) * 60.0
     gpr = gate_features.get("grid_preview") or {}
     payload: Dict[str, Any] = {
@@ -112,8 +147,14 @@ def demo_try_publish_relay(
         "gate_reason_snapshot": gate_features.get("block_reason"),
     }
     _atomic_write(RELAY_SIGNAL_FILE, payload)
-    demo_zones.append(zone)
-    state["demo_relayed_zones"] = demo_zones
+    zone_ts[zone_s] = now
+    # Dọn bản ghi cũ: 7×TTL nếu có dedupe; không thì 7 ngày (tránh phình file khi TTL=0)
+    span_sec = (dedupe_ttl_min * 60.0 * 7) if dedupe_ttl_min > 0 else (7 * 24 * 3600)
+    cutoff = now - span_sec
+    zone_ts = {k: v for k, v in zone_ts.items() if v >= cutoff}
+    zone_ts[zone_s] = now
+    state["demo_relayed_zone_ts"] = zone_ts
+    state.pop("demo_relayed_zones", None)
     _atomic_write(RELAY_STATE_FILE, state)
     return relay_id, "DEMO_ORDER_SENT"
 

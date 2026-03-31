@@ -4,6 +4,7 @@ Bot đọc tín hiệu từ v5_relay_signal.json (1 giây/lần), đặt lệnh 
 - Login: chỉ dùng account / password / server / mt5_path từ configs/config_grid_step_v5_live.json
 - Khối lượng: lấy key `volume` trong cùng file nếu có (không thuộc nhóm login), mặc định 0.01
 - Symbol / magic / giá lệnh: lấy từ payload relay (do demo V5 ghi)
+- Khi có tín hiệu mới (trước khi đặt cặp): hủy hết pending BUY_STOP/SELL_STOP cùng symbol+magic, comment GridStep*
 - Sau khi đặt thành công cả BUY_STOP và SELL_STOP: lưu relay_id để không lặp lại cùng tín hiệu
 """
 
@@ -13,7 +14,7 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 import MetaTrader5 as mt5
 
@@ -106,6 +107,35 @@ def _comment_for_step(step: float) -> str:
     return f"GridStep_{step}"
 
 
+def cancel_grid_stop_pendings_for_pair(symbol: str, magic: int) -> int:
+    """
+    Hủy mọi lệnh chờ BUY_STOP / SELL_STOP của cặp grid (cùng symbol + magic, comment GridStep*).
+    Gọi trước khi đặt cặp mới theo relay để tránh chồng lệnh cũ.
+    """
+    orders = mt5.orders_get(symbol=symbol) or []
+    n_ok = 0
+    stop_types = (
+        getattr(mt5, "ORDER_TYPE_BUY_STOP", 4),
+        getattr(mt5, "ORDER_TYPE_SELL_STOP", 5),
+    )
+    for o in orders:
+        if int(getattr(o, "magic", 0) or 0) != int(magic):
+            continue
+        if int(getattr(o, "type", -1)) not in stop_types:
+            continue
+        cmt = (getattr(o, "comment", "") or "").strip()
+        if not cmt.startswith("GridStep"):
+            continue
+        r = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": int(o.ticket)})
+        if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+            n_ok += 1
+        elif r is not None:
+            print(f"⚠️ [signal] Hủy pending #{o.ticket} thất bại: {r.retcode} {r.comment}")
+    if n_ok:
+        print(f"🧹 [signal] Đã hủy {n_ok} lệnh chờ stop (GridStep) trên {symbol} magic={magic}")
+    return n_ok
+
+
 def place_pair_from_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool, str]:
     """
     Đặt cặp BUY_STOP + SELL_STOP theo grid_preview trong relay.
@@ -134,6 +164,8 @@ def place_pair_from_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool,
         return False, f"symbol_info({symbol}) = None"
     if not mt5.symbol_select(symbol, True):
         return False, f"symbol_select({symbol}) thất bại"
+
+    cancel_grid_stop_pendings_for_pair(symbol, magic)
 
     digits = int(getattr(info, "digits", 5) or 5)
     volume_min = float(getattr(info, "volume_min", 0.01) or 0.01)

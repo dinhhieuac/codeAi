@@ -472,11 +472,12 @@ def _score_signal(features):
     return s
 
 
-def _is_blocked(features, max_loss_streak=2, hard_block_sum10_negative=True):
+def _is_blocked(features, max_loss_streak=2, hard_block_sum10_negative=True, hard_block_min_gap=True):
     return xauusd_grid_step_v5_is_blocked(
         features,
         max_loss_streak=max_loss_streak,
         hard_block_sum10_negative=hard_block_sum10_negative,
+        hard_block_min_gap=hard_block_min_gap,
     )
 
 
@@ -760,10 +761,12 @@ def _v5_history_score_gate(config):
         return False, str(features.get("reason", "feature_not_ready")), features
 
     hard_block_sum10 = bool(params.get("v5_hard_block_sum10_negative", True))
+    hard_block_min_gap = bool(params.get("v5_hard_block_min_gap", True))
     blocked, block_reason = _is_blocked(
         features,
         max_loss_streak=max_loss_streak,
         hard_block_sum10_negative=hard_block_sum10,
+        hard_block_min_gap=hard_block_min_gap,
     )
     score, score_breakdown = _score_signal_detailed(features)
     features["score"] = score
@@ -977,10 +980,13 @@ def _v5_gate_main_reason_code(gate_reason):
     return "GATE_" + gr[:24].replace(" ", "_")
 
 
-def _v5_grid_action_reason(pre_np, pre_npos, new_p, new_pos, mx):
+def _v5_grid_action_reason(pre_np, pre_npos, new_p, new_pos, mx, v5_role=None):
     """action, reason_code cho [GRID] khi không có lệnh mới."""
     mx = int(mx or 5)
     if pre_np >= 2 and not new_p:
+        # Demo: không dùng mã GRID_FULL_2_PENDING (dễ nhầm với “không đủ điều kiện” score); live giữ mã cũ.
+        if str(v5_role or "").lower().strip() == "demo":
+            return "NO_NEW_ORDER", "DEMO_SCORE_OK_NO_FILL"
         return "NO_NEW_ORDER", "GRID_FULL_2_PENDING"
     if pre_npos >= mx and not new_pos:
         return "NO_NEW_ORDER", "MAX_POSITIONS_REACHED"
@@ -1011,6 +1017,7 @@ def _v5_compute_result_main(ctx):
         ctx.get("new_pending") or [],
         ctx.get("new_positions") or [],
         ctx.get("max_positions", 5),
+        ctx.get("v5_role"),
     )
     if g_act == "PLACE_ORDER":
         return "NEW_ORDER", "ORDER_PLACED"
@@ -1040,21 +1047,6 @@ def _v5_ket_luan_dat(gate_features: dict, entry_thr: int) -> bool:
     except (TypeError, ValueError):
         return False
     return si is not None and si >= int(entry_thr)
-
-
-def _v5_demo_grid_full_session_note(v5_role, result, main, gate_pass: bool) -> str:
-    """
-    Khi chạy demo: NO_ORDER do đủ 2 pending chỉ mô tả grid trên account demo đang kết nối.
-    Live bot đọc relay + pending trên account live — không lấy số pending của demo.
-    """
-    if str(v5_role or "demo").lower() != "demo":
-        return ""
-    if not gate_pass or result != "NO_ORDER" or main != "GRID_FULL_2_PENDING":
-        return ""
-    return (
-        "ℹ️ GRID_FULL_2_PENDING chỉ áp trên account đang chạy (demo); live không dùng pending của demo, "
-        "chỉ relay + trạng thái riêng của live"
-    )
 
 
 def _v5_param_log_debug(params):
@@ -1090,12 +1082,9 @@ def _v5_emit_minimal_cycle_log(ctx, params):
     blk = ""
     if blocked:
         blk = f" | block={gf.get('block_reason') or 'yes'}"
-    v5_role = str(ctx.get("v5_role") or "demo")
-    sess_note = _v5_demo_grid_full_session_note(v5_role, result, main, ok)
-    suff = f" | {sess_note}" if sess_note else ""
     print(
         f"[V5] score={sc} | profile={prof} | +[{plus_s}] | -[{minus_s}] | "
-        f"live_gate={lg}{blk} | kết_luận={concl} | RESULT={result} | {main}{suff}"
+        f"live_gate={lg}{blk} | kết_luận={concl} | RESULT={result} | {main}"
     )
     print("")
 
@@ -1123,6 +1112,7 @@ def _v5_emit_structured_cycle_log(ctx, params):
         ctx.get("new_pending") or [],
         ctx.get("new_positions") or [],
         ctx.get("max_positions", 5),
+        ctx.get("v5_role"),
     )
 
     if compact:
@@ -1143,9 +1133,6 @@ def _v5_emit_structured_cycle_log(ctx, params):
             f"[GRID] positions={ctx.get('pre_npos')} | pendings={ctx.get('pre_np')} | "
             f"action={g_act} | reason={g_reason}"
         )
-        _sn = _v5_demo_grid_full_session_note(v5_role, result, main, _v5_gate_pass_for_log(ctx))
-        if _sn:
-            print(f"[GRID] {_sn}")
         ren = ctx.get("relay_enabled", False)
         rs = ctx.get("relay_sent", False)
         rr = ctx.get("relay_reason") or "-"
@@ -1197,9 +1184,6 @@ def _v5_emit_structured_cycle_log(ctx, params):
     print(f"- pendings={ctx.get('pre_np')}")
     print(f"- action={g_act}")
     print(f"- reason={g_reason}")
-    _snf = _v5_demo_grid_full_session_note(v5_role, result, main, _v5_gate_pass_for_log(ctx))
-    if _snf:
-        print(f"- note={_snf}")
 
     ren = bool(ctx.get("relay_enabled", False))
     print("[RELAY]")
