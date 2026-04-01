@@ -42,6 +42,7 @@ def configure_grid_step_v5_paths(
     *,
     relay_signal_file=None,
     relay_state_file=None,
+    relay_history_log_file=None,
     live_log_file=None,
     live_state_file=None,
 ):
@@ -54,6 +55,8 @@ def configure_grid_step_v5_paths(
         signal_relay.RELAY_SIGNAL_FILE = relay_signal_file
     if relay_state_file is not None:
         signal_relay.RELAY_STATE_FILE = relay_state_file
+    if relay_history_log_file is not None:
+        signal_relay.RELAY_SIGNAL_HISTORY_LOG = relay_history_log_file
     if live_log_file is not None:
         LIVE_LOG_FILE = live_log_file
     if live_state_file is not None:
@@ -1501,33 +1504,38 @@ def run():
                 relay_reason = relay_early_reason
                 relay_zone = relay_early_zone
                 relay_side = relay_early_side
+                # Chỉ ghi relay khi kết_luận=đạt (giống publish sớm). Grid vẫn có thể đặt lệnh khi gate chặn điểm
+                # (demo_mode) — không mirror lên live nếu không đủ điều kiện score.
                 if v5_role == "demo" and bool(params.get("signal_relay_enabled", False)) and (
                     new_pending or new_positions
                 ):
-                    _rid, rsn_ord = signal_relay.demo_try_publish_relay(
-                        config,
-                        gate_features,
-                        relay_zone_points=float(params.get("relay_zone_points") or 200),
-                        ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
-                        verbose=False,
-                    )
-                    if _rid is not None:
-                        relay_sent = True
-                        relay_reason = rsn_ord
-                        try:
-                            ep = float(gate_features.get("current_signal_open_price") or 0)
-                            relay_zone = signal_relay.price_zone_key(
-                                ep, float(params.get("relay_zone_points") or 200)
-                            )
-                            relay_side = str(
-                                gate_features.get("current_signal_type")
-                                or gate_features.get("signal_type")
-                                or ""
-                            ).upper()
-                        except (TypeError, ValueError):
-                            pass
+                    if gate_features and _v5_ket_luan_dat(gate_features, entry_thr):
+                        _rid, rsn_ord = signal_relay.demo_try_publish_relay(
+                            config,
+                            gate_features,
+                            relay_zone_points=float(params.get("relay_zone_points") or 200),
+                            ttl_minutes=float(params.get("relay_signal_ttl_minutes") or 180),
+                            verbose=False,
+                        )
+                        if _rid is not None:
+                            relay_sent = True
+                            relay_reason = rsn_ord
+                            try:
+                                ep = float(gate_features.get("current_signal_open_price") or 0)
+                                relay_zone = signal_relay.price_zone_key(
+                                    ep, float(params.get("relay_zone_points") or 200)
+                                )
+                                relay_side = str(
+                                    gate_features.get("current_signal_type")
+                                    or gate_features.get("signal_type")
+                                    or ""
+                                ).upper()
+                            except (TypeError, ValueError):
+                                pass
+                        elif not relay_early_sent:
+                            relay_reason = rsn_ord
                     elif not relay_early_sent:
-                        relay_reason = rsn_ord
+                        relay_reason = "SKIP_RELAY_NOT_QUALIFIED"
 
                 if v5_role == "live" and active_relay_id and (new_pending or new_positions):
                     signal_relay.relay_consume(active_relay_id, verbose=relay_verbose)

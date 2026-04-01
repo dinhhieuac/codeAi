@@ -5,6 +5,7 @@ File:
 - v5_relay_signal.json — payload mới nhất chờ live
 - v5_relay_state.json — demo_relayed_zone_ts (zone → unix time relay cuối, dedupe theo TTL)
   + live_consumed_relay_ids
+- v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import Any, Dict, Optional, Tuple
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "v5_relay_signal.json")
 RELAY_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_relay_state.json")
+RELAY_SIGNAL_HISTORY_LOG = os.path.join(SCRIPT_DIR, "v5_relay_signal_history.jsonl")
 
 
 def _default_state() -> Dict[str, Any]:
@@ -67,6 +69,20 @@ def _atomic_write(path: str, obj: Any) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
+
+
+def _append_relay_signal_history(payload: Dict[str, Any]) -> None:
+    """Một dòng JSON = một tín hiệu đã ghi (append-only)."""
+    path = RELAY_SIGNAL_HISTORY_LOG
+    if not path:
+        return
+    line = dict(payload)
+    line["_history_logged_ts"] = time.time()
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except IOError:
+        pass
 
 
 def price_zone_key(price: float, zone_points: float) -> int:
@@ -147,6 +163,7 @@ def demo_try_publish_relay(
         "gate_reason_snapshot": gate_features.get("block_reason"),
     }
     _atomic_write(RELAY_SIGNAL_FILE, payload)
+    _append_relay_signal_history(payload)
     zone_ts[zone_s] = now
     # Dọn bản ghi cũ: 7×TTL nếu có dedupe; không thì 7 ngày (tránh phình file khi TTL=0)
     span_sec = (dedupe_ttl_min * 60.0 * 7) if dedupe_ttl_min > 0 else (7 * 24 * 3600)
