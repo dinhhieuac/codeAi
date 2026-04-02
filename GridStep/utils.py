@@ -475,6 +475,22 @@ def place_sell_stop(symbol, volume, price, sl, tp, magic, comment, digits=None, 
     )
 
 
+def place_buy_limit(symbol, volume, price, sl, tp, magic, comment, digits=None, type_filling=None):
+    """Đặt lệnh BUY_LIMIT. Chỉ của bot (magic + comment). Trả về result của order_send."""
+    return place_pending_order(
+        symbol, volume, mt5.ORDER_TYPE_BUY_LIMIT, price, sl, tp, magic, comment,
+        digits=digits, type_filling=type_filling
+    )
+
+
+def place_sell_limit(symbol, volume, price, sl, tp, magic, comment, digits=None, type_filling=None):
+    """Đặt lệnh SELL_LIMIT. Chỉ của bot (magic + comment). Trả về result của order_send."""
+    return place_pending_order(
+        symbol, volume, mt5.ORDER_TYPE_SELL_LIMIT, price, sl, tp, magic, comment,
+        digits=digits, type_filling=type_filling
+    )
+
+
 def modify_pending_stop(symbol, order_ticket, price, sl, tp, digits=None, type_filling=None):
     """
     Sửa giá / SL / TP lệnh chờ (BUY_STOP / SELL_STOP). TRADE_ACTION_MODIFY.

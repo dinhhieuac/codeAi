@@ -1,17 +1,19 @@
 """
-Bot đọc tín hiệu inverse từ v5_relay_demo.json (1 giây/lần), đặt cặp BUY_STOP + SELL_STOP theo grid_preview_inverse.
+Bot đọc tín hiệu inverse từ v5_relay_demo.json (1 giây/lần), đặt cặp BUY_LIMIT + SELL_LIMIT theo grid_preview_inverse.
 
 Clone luồng từ signal.py; khác:
 - File relay: v5_relay_demo.json (do strategy_grid_step_v5 demo ghi khi đặt pending)
-- Giá: grid_preview_inverse (buy_price / sell_price đã đảo so với demo)
-- Comment lệnh: InvGrid_{step} — chỉ hủy lệnh chờ cùng prefix (tránh đụng GridStep_* của signal.py)
+- Giá: **`buy_price`** → **BUY_LIMIT**; **`sell_price`** → **SELL_LIMIT**. SL/TP: BUY — SL=buy−step, TP=buy+step; SELL — SL=sell+step, TP=sell−step. MT5: BUY_LIMIT < ask, SELL_LIMIT > bid
+- Comment lệnh: InvGrid_{step} — chỉ hủy lệnh chờ limit cùng prefix (tránh đụng GridStep_* của signal.py)
 - Consumed: signal_inverse_consumed_relay_ids.json (tách signal.py)
 
-- Login / volume: configs/config_grid_step_v5_live.json (giống signal.py)
+- Login / volume: configs/config_grid_step_inverse_live.json (riêng; không dùng config của signal.py)
+- Có thể trỏ file khác: python sign_inverse.py --config path/to/config.json
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -21,7 +23,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 import MetaTrader5 as mt5
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "config_grid_step_v5_live.json")
+DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "config_grid_step_inverse_live.json")
 RELAY_DEMO_PATH = os.path.join(SCRIPT_DIR, "v5_relay_demo.json")
 CONSUMED_IDS_PATH = os.path.join(SCRIPT_DIR, "signal_inverse_consumed_relay_ids.json")
 POLL_SECONDS = 1.0
@@ -105,18 +107,18 @@ def _comment_inv(step: float) -> str:
     return f"InvGrid_{step}"
 
 
-def cancel_inv_stop_pendings(symbol: str, magic: int) -> int:
-    """Hủy BUY_STOP/SELL_STOP comment InvGrid* (không đụng GridStep*)."""
+def cancel_inv_limit_pendings(symbol: str, magic: int) -> int:
+    """Hủy BUY_LIMIT/SELL_LIMIT comment InvGrid* (không đụng GridStep*)."""
     orders = mt5.orders_get(symbol=symbol) or []
     n_ok = 0
-    stop_types = (
-        getattr(mt5, "ORDER_TYPE_BUY_STOP", 4),
-        getattr(mt5, "ORDER_TYPE_SELL_STOP", 5),
+    limit_types = (
+        getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2),
+        getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3),
     )
     for o in orders:
         if int(getattr(o, "magic", 0) or 0) != int(magic):
             continue
-        if int(getattr(o, "type", -1)) not in stop_types:
+        if int(getattr(o, "type", -1)) not in limit_types:
             continue
         cmt = (getattr(o, "comment", "") or "").strip()
         if not cmt.startswith("InvGrid"):
@@ -127,7 +129,7 @@ def cancel_inv_stop_pendings(symbol: str, magic: int) -> int:
         elif r is not None:
             print(f"⚠️ [sign_inverse] Hủy pending #{o.ticket} thất bại: {r.retcode} {r.comment}")
     if n_ok:
-        print(f"🧹 [sign_inverse] Đã hủy {n_ok} lệnh chờ stop (InvGrid) trên {symbol} magic={magic}")
+        print(f"🧹 [sign_inverse] Đã hủy {n_ok} lệnh chờ limit (InvGrid) trên {symbol} magic={magic}")
     return n_ok
 
 
@@ -158,21 +160,15 @@ def _mark_consumed_after_pair_fail(r1: Any, r2: Any) -> bool:
 
 def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool, str, bool]:
     """
-    Đặt BUY_STOP + SELL_STOP theo grid_preview_inverse trong v5_relay_demo.json.
+    BUY_LIMIT @ buy_price (SL=buy−step, TP=buy+step); SELL_LIMIT @ sell_price (SL=sell+step, TP=sell−step).
     """
-    from utils import place_buy_stop, place_sell_stop
+    from utils import place_buy_limit, place_sell_limit
 
     symbol = str(payload.get("symbol") or "").strip()
     magic = int(payload.get("magic") or 0)
     relay_id = str(payload.get("relay_id") or "")
 
     gpr = payload.get("grid_preview") if isinstance(payload.get("grid_preview"), dict) else {}
-    try:
-        buy_price = float(gpr.get("buy_price"))
-        sell_price = float(gpr.get("sell_price"))
-    except (TypeError, ValueError):
-        return False, "grid_preview_inverse thiếu buy_price/sell_price", False
-
     try:
         step_val = float(payload.get("step") or gpr.get("step") or 5)
     except (TypeError, ValueError):
@@ -184,9 +180,20 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     if not mt5.symbol_select(symbol, True):
         return False, f"symbol_select({symbol}) thất bại", False
 
-    cancel_inv_stop_pendings(symbol, magic)
-
     digits = int(getattr(info, "digits", 5) or 5)
+    try:
+        key_buy = round(float(gpr.get("buy_price")), digits)
+        key_sell = round(float(gpr.get("sell_price")), digits)
+    except (TypeError, ValueError):
+        return False, "grid_preview_inverse thiếu buy_price/sell_price", False
+
+    tick = mt5.symbol_info_tick(symbol)
+
+    px_buy_lim = key_buy
+    px_sell_lim = key_sell
+
+    cancel_inv_limit_pendings(symbol, magic)
+
     volume_min = float(getattr(info, "volume_min", 0.01) or 0.01)
     volume_step = float(getattr(info, "volume_step", 0.01) or 0.01)
     vol = max(float(volume), volume_min)
@@ -197,21 +204,31 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     filling = mt5.ORDER_FILLING_IOC if (getattr(info, "filling_mode", 0) & 2) else mt5.ORDER_FILLING_FOK
     comment = _comment_inv(step_val)
 
-    sl_buy = round(buy_price - step_val, digits)
-    tp_buy = round(buy_price + step_val, digits)
-    sl_sell = round(sell_price + step_val, digits)
-    tp_sell = round(sell_price - step_val, digits)
+    # BUY_LIMIT: SL dưới entry, TP trên; SELL_LIMIT: SL trên entry, TP dưới (cùng step).
+    sl_buy = round(px_buy_lim - step_val, digits)
+    tp_buy = round(px_buy_lim + step_val, digits)
+    sl_sell = round(px_sell_lim + step_val, digits)
+    tp_sell = round(px_sell_lim - step_val, digits)
 
+    tick_hint = ""
+    if tick is not None:
+        tick_hint = f" | thị trường bid={tick.bid} ask={tick.ask}"
     print(
         f"📤 [sign_inverse] relay={relay_id[:8]}… | {symbol} | "
-        f"BUY_STOP {buy_price} | SELL_STOP {sell_price} | step={step_val} | vol={vol} | {comment}"
+        f"BUY_LIMIT@{px_buy_lim} SL={sl_buy} TP={tp_buy} | "
+        f"SELL_LIMIT@{px_sell_lim} SL={sl_sell} TP={tp_sell}"
+        f" | step={step_val} | vol={vol} | {comment}{tick_hint}"
     )
+    if tick is not None and (px_buy_lim >= float(tick.ask) or px_sell_lim <= float(tick.bid)):
+        print(
+            "⚠️ [sign_inverse] Giá có thể không hợp lệ MT5 (BUY_LIMIT phải < ask, SELL_LIMIT phải > bid) → 10015"
+        )
 
-    r1 = place_buy_stop(
-        symbol, vol, buy_price, sl_buy, tp_buy, magic, comment, digits=digits, type_filling=filling
+    r1 = place_buy_limit(
+        symbol, vol, px_buy_lim, sl_buy, tp_buy, magic, comment, digits=digits, type_filling=filling
     )
-    r2 = place_sell_stop(
-        symbol, vol, sell_price, sl_sell, tp_sell, magic, comment, digits=digits, type_filling=filling
+    r2 = place_sell_limit(
+        symbol, vol, px_sell_lim, sl_sell, tp_sell, magic, comment, digits=digits, type_filling=filling
     )
 
     if r1 is None or r2 is None:
@@ -224,14 +241,14 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
         return True, "", False
 
     if not ok1:
-        print(f"❌ [sign_inverse] BUY_STOP: {r1.retcode} {r1.comment}")
+        print(f"❌ [sign_inverse] BUY_LIMIT: {r1.retcode} {r1.comment}")
     if not ok2:
-        print(f"❌ [sign_inverse] SELL_STOP: {r2.retcode} {r2.comment}")
+        print(f"❌ [sign_inverse] SELL_LIMIT: {r2.retcode} {r2.comment}")
 
     err_detail = f"BUY {getattr(r1, 'retcode', '?')} SELL {getattr(r2, 'retcode', '?')}"
     consume = _mark_consumed_after_pair_fail(r1, r2)
     if consume and (ok1 ^ ok2):
-        cancel_inv_stop_pendings(symbol, magic)
+        cancel_inv_limit_pendings(symbol, magic)
         print(
             "🧹 [sign_inverse] Đã hủy lệnh chờ còn lại (partial fail) — đánh dấu consumed."
         )
@@ -261,7 +278,7 @@ def inverse_payload_ready(payload: Dict[str, Any], consumed: Set[str]) -> Option
 
 
 def _as_place_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Chuyển file demo → payload giống signal (grid_preview = grid_preview_inverse)."""
+    """grid_preview = grid_preview_inverse (hai mức giá trong file)."""
     inv = raw.get("grid_preview_inverse") or {}
     step = float(inv.get("step") or raw.get("step") or 5)
     return {
@@ -283,14 +300,14 @@ def describe_inverse_wait_status(payload: Any, consumed: Set[str]) -> str:
     rid = payload.get("relay_id")
     skip = inverse_payload_ready(payload, consumed)
     if skip is None:
-        return f"relay_id={str(rid)[:8]}… — sẵn sàng đặt inverse"
+        return f"relay_id={str(rid)[:8]}… — sẵn sàng đặt BUY_LIMIT/SELL_LIMIT"
     return f"relay_id={str(rid)[:8] if rid else '?'}… — bỏ qua: {skip}"
 
 
-def run_loop() -> None:
-    creds, volume = load_login_credentials(CONFIG_PATH)
+def run_loop(config_path: str) -> None:
+    creds, volume = load_login_credentials(config_path)
     consumed = load_consumed_ids()
-    print(f"📁 [sign_inverse] config login: {CONFIG_PATH}")
+    print(f"📁 [sign_inverse] config login: {config_path}")
     print(f"📁 [sign_inverse] relay demo: {RELAY_DEMO_PATH}")
     print(f"📁 [sign_inverse] consumed ids: {CONSUMED_IDS_PATH} ({len(consumed)} id)")
 
@@ -298,7 +315,7 @@ def run_loop() -> None:
         sys.exit(1)
 
     print(
-        "🔄 [sign_inverse] Đọc v5_relay_demo.json mỗi 1 giây — lệnh comment InvGrid_* "
+        "🔄 [sign_inverse] Đọc v5_relay_demo.json mỗi 1 giây — BUY_LIMIT/SELL_LIMIT comment InvGrid_* "
         f"(không đụng GridStep_*). ~{HEARTBEAT_EVERY_LOOPS}s một dòng trạng thái. Ctrl+C dừng."
     )
 
@@ -336,5 +353,16 @@ def run_loop() -> None:
         mt5.shutdown()
 
 
+def _parse_args() -> str:
+    p = argparse.ArgumentParser(description="Bot inverse: đọc v5_relay_demo.json, đặt BUY_LIMIT/SELL_LIMIT InvGrid_*")
+    p.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"JSON login/volume (mặc định: {DEFAULT_CONFIG_PATH})",
+    )
+    args = p.parse_args()
+    return os.path.abspath(args.config)
+
+
 if __name__ == "__main__":
-    run_loop()
+    run_loop(_parse_args())
