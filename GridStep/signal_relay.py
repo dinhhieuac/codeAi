@@ -7,7 +7,7 @@ File:
   + live_consumed_relay_ids
 - v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
 - v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá); đổi path qua configure_grid_step_v5_paths
-- v5_relay_demo_history.jsonl — append mỗi lần ghi demo inverse (lịch sử đầy đủ cho bot đọc tín hiệu); đổi path qua configure_grid_step_v5_paths
+- v5_relay_demo_history_<SYMBOL>.jsonl — append mỗi lần ghi demo inverse (một file/symbol, từ base path v5_relay_demo_history.jsonl); đổi base qua configure_grid_step_v5_paths
 """
 
 from __future__ import annotations
@@ -89,9 +89,32 @@ def _append_relay_signal_history(payload: Dict[str, Any]) -> None:
         pass
 
 
+def _symbol_safe_for_filename(symbol: str) -> str:
+    s = "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(symbol).strip())
+    return s or ""
+
+
+def _relay_demo_history_path_for_payload(payload: Dict[str, Any]) -> str:
+    """
+    Từ RELAY_DEMO_HISTORY_LOG (vd .../v5_relay_demo_history.jsonl) → .../v5_relay_demo_history_BTCUSD.jsonl
+    để XAU/BTC không trộn trong một file. Symbol rỗng → dùng path gốc.
+    """
+    base = RELAY_DEMO_HISTORY_LOG
+    if not base:
+        return ""
+    sym = _symbol_safe_for_filename(str(payload.get("symbol") or ""))
+    if not sym:
+        return base
+    dirname, basename = os.path.split(base)
+    stem, ext = os.path.splitext(basename)
+    if not ext:
+        ext = ".jsonl"
+    return os.path.join(dirname, f"{stem}_{sym}{ext}")
+
+
 def _append_relay_demo_history(payload: Dict[str, Any]) -> None:
     """Một dòng JSON = một lần ghi v5_relay_demo (append-only), cùng schema payload với file snapshot."""
-    path = RELAY_DEMO_HISTORY_LOG
+    path = _relay_demo_history_path_for_payload(payload)
     if not path:
         return
     line = dict(payload)

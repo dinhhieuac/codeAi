@@ -22,7 +22,7 @@ Console log (cùng format V5):
 
 Relay Demo → Live:
 - gọi core.configure_grid_step_v5_paths(...) ngay sau import → cùng file relay với XAU V5: v5_relay_signal.json / v5_relay_state.json
-  + v5_relay_signal_history.jsonl (append mỗi lần publish thành công) + v5_relay_demo.json / v5_relay_demo_history.jsonl (tín hiệu ngược khi đặt pending).
+  + v5_relay_signal_history.jsonl (append mỗi lần publish thành công) + v5_relay_demo.json / v5_relay_demo_history_BTCUSD.jsonl (tín hiệu ngược khi đặt pending; tách theo symbol).
   (để signal.py / live đọc một file); live entry log/state vẫn tách btc_v5_*.
 - Demo: kết_luận=đạt (strategy_grid_step_v5) thì ghi relay sớm; dedup theo zone; thử lại khi có lệnh MT5 mới.
 - Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).

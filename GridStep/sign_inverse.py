@@ -1,13 +1,15 @@
 """
-Bot đọc tín hiệu inverse từ v5_relay_demo.json (1 giây/lần), đặt cặp BUY_LIMIT + SELL_LIMIT theo grid_preview_inverse.
+Bot chỉ đọc **v5_relay_demo.json** (1 giây/lần), đặt cặp BUY_LIMIT + SELL_LIMIT theo grid_preview_inverse.
+
+**Không** đọc v5_relay_signal.json — file đó dành cho bot signal.py / relay live V5.
 
 Clone luồng từ signal.py; khác:
-- File relay: v5_relay_demo.json (do strategy_grid_step_v5 demo ghi khi đặt pending)
+- File tín hiệu duy nhất: v5_relay_demo.json (do strategy_grid_step_v5 demo ghi khi đặt pending)
 - Giá: **`buy_price`** → **BUY_LIMIT**; **`sell_price`** → **SELL_LIMIT**. SL/TP: BUY — SL=buy−step, TP=buy+step; SELL — SL=sell+step, TP=sell−step. MT5: BUY_LIMIT < ask, SELL_LIMIT > bid
 - Comment lệnh: InvGrid_{step} — chỉ hủy lệnh chờ limit cùng prefix (tránh đụng GridStep_* của signal.py)
 - Consumed: signal_inverse_consumed_relay_ids.json (tách signal.py)
 
-- Login / volume: configs/config_grid_step_inverse_live.json (riêng; không dùng config của signal.py)
+- Login / volume / **lọc symbol**: `config_grid_step_inverse_live.json` — `symbol` (một symbol) hoặc `inverse_allowed_symbols` (mảng). Chỉ đặt lệnh khi `v5_relay_demo.json` trùng symbol; relay BTC trong file sẽ bị bỏ qua nếu bạn chỉ cho phép XAU.
 - Có thể trỏ file khác: python sign_inverse.py --config path/to/config.json
 """
 
@@ -24,6 +26,7 @@ import MetaTrader5 as mt5
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "config_grid_step_inverse_live.json")
+# Chỉ nguồn tín hiệu inverse — không dùng v5_relay_signal.json (xem signal.py).
 RELAY_DEMO_PATH = os.path.join(SCRIPT_DIR, "v5_relay_demo.json")
 CONSUMED_IDS_PATH = os.path.join(SCRIPT_DIR, "signal_inverse_consumed_relay_ids.json")
 POLL_SECONDS = 1.0
@@ -48,7 +51,23 @@ def _atomic_write(path: str, obj: Any) -> None:
     os.replace(tmp, path)
 
 
-def load_login_credentials(config_path: str) -> Tuple[Dict[str, Any], float]:
+def _allowed_symbols_from_config(cfg: Dict[str, Any]) -> Optional[Set[str]]:
+    """
+    None = cho mọi symbol trong relay (không lọc).
+    Set khác rỗng = chỉ relay có symbol thuộc set (so khớp không phân biệt hoa thường).
+    Ưu tiên `inverse_allowed_symbols` (mảng); không có thì dùng một `symbol` (chuỗi) nếu có.
+    """
+    raw = cfg.get("inverse_allowed_symbols")
+    if isinstance(raw, list) and len(raw) > 0:
+        out = {str(x).strip().upper() for x in raw if str(x).strip()}
+        return out if out else None
+    one = cfg.get("symbol")
+    if one is not None and str(one).strip():
+        return {str(one).strip().upper()}
+    return None
+
+
+def load_sign_inverse_config(config_path: str) -> Tuple[Dict[str, Any], float, Optional[Set[str]]]:
     cfg = _load_json(config_path, None)
     if not isinstance(cfg, dict):
         raise FileNotFoundError(f"Không đọc được config: {config_path}")
@@ -59,7 +78,8 @@ def load_login_credentials(config_path: str) -> Tuple[Dict[str, Any], float]:
         "mt5_path": str(cfg.get("mt5_path") or "").strip(),
     }
     vol = float(cfg.get("volume") or 0.01)
-    return creds, vol
+    allowed = _allowed_symbols_from_config(cfg)
+    return creds, vol, allowed
 
 
 def connect_mt5_login_only(creds: Dict[str, Any]) -> bool:
@@ -255,7 +275,11 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     return False, err_detail, consume
 
 
-def inverse_payload_ready(payload: Dict[str, Any], consumed: Set[str]) -> Optional[str]:
+def inverse_payload_ready(
+    payload: Dict[str, Any],
+    consumed: Set[str],
+    allowed_symbols: Optional[Set[str]] = None,
+) -> Optional[str]:
     rid = payload.get("relay_id")
     if not rid:
         return "no_relay_id"
@@ -271,6 +295,9 @@ def inverse_payload_ready(payload: Dict[str, Any], consumed: Set[str]) -> Option
             return "bad_expires_ts"
     if not payload.get("symbol"):
         return "no_symbol"
+    sym = str(payload.get("symbol") or "").strip().upper()
+    if allowed_symbols is not None and sym not in allowed_symbols:
+        return "symbol_not_in_config"
     inv = payload.get("grid_preview_inverse")
     if not isinstance(inv, dict) or inv.get("buy_price") is None or inv.get("sell_price") is None:
         return "bad_grid_preview_inverse"
@@ -290,7 +317,9 @@ def _as_place_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def describe_inverse_wait_status(payload: Any, consumed: Set[str]) -> str:
+def describe_inverse_wait_status(
+    payload: Any, consumed: Set[str], allowed_symbols: Optional[Set[str]] = None
+) -> str:
     if not os.path.isfile(RELAY_DEMO_PATH):
         return "chưa có file (chờ demo ghi v5_relay_demo.json)"
     if payload is None:
@@ -298,18 +327,22 @@ def describe_inverse_wait_status(payload: Any, consumed: Set[str]) -> str:
     if not isinstance(payload, dict) or not payload:
         return "file trống hoặc JSON không phải object"
     rid = payload.get("relay_id")
-    skip = inverse_payload_ready(payload, consumed)
+    skip = inverse_payload_ready(payload, consumed, allowed_symbols)
     if skip is None:
         return f"relay_id={str(rid)[:8]}… — sẵn sàng đặt BUY_LIMIT/SELL_LIMIT"
     return f"relay_id={str(rid)[:8] if rid else '?'}… — bỏ qua: {skip}"
 
 
 def run_loop(config_path: str) -> None:
-    creds, volume = load_login_credentials(config_path)
+    creds, volume, allowed_symbols = load_sign_inverse_config(config_path)
     consumed = load_consumed_ids()
     print(f"📁 [sign_inverse] config login: {config_path}")
     print(f"📁 [sign_inverse] relay demo: {RELAY_DEMO_PATH}")
     print(f"📁 [sign_inverse] consumed ids: {CONSUMED_IDS_PATH} ({len(consumed)} id)")
+    if allowed_symbols is not None:
+        print(f"📌 [sign_inverse] Chỉ xử lý relay symbol: {sorted(allowed_symbols)} (khác → bỏ qua)")
+    else:
+        print("📌 [sign_inverse] Không lọc symbol — mọi symbol trong v5_relay_demo.json đều xử lý")
 
     if not connect_mt5_login_only(creds):
         sys.exit(1)
@@ -326,7 +359,7 @@ def run_loop(config_path: str) -> None:
             loop_n += 1
             payload = _load_json(RELAY_DEMO_PATH, None)
             if isinstance(payload, dict) and payload:
-                skip = inverse_payload_ready(payload, consumed)
+                skip = inverse_payload_ready(payload, consumed, allowed_symbols)
                 if skip is None:
                     place_payload = _as_place_payload(payload)
                     ok, err, mark_consumed = place_pair_from_inverse_relay(place_payload, volume)
@@ -343,7 +376,7 @@ def run_loop(config_path: str) -> None:
                     elif err and "thiếu" not in err:
                         print(f"⚠️ [sign_inverse] Bỏ qua (sẽ thử lại): {err}")
             if loop_n % HEARTBEAT_EVERY_LOOPS == 0:
-                st = describe_inverse_wait_status(payload, consumed)
+                st = describe_inverse_wait_status(payload, consumed, allowed_symbols)
                 print(f"💓 [sign_inverse] #{loop_n} | {st}")
 
             time.sleep(POLL_SECONDS)

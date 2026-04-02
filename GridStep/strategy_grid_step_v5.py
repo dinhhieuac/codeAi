@@ -51,6 +51,8 @@ def configure_grid_step_v5_paths(
     """
     Trỏ file relay + live entry log/state (dùng trong strategy_grid_step_btc_v5).
     Gọi ngay sau `import strategy_grid_step_v5`.
+    relay_demo_history_log_file: base path (vd v5_relay_demo_history.jsonl); append thực tế vào
+    v5_relay_demo_history_<SYMBOL>.jsonl theo payload.symbol.
     """
     global LIVE_LOG_FILE, LIVE_STATE_FILE
     if relay_signal_file is not None:
