@@ -1,0 +1,35 @@
+{
+  "relay_id": "21998ecf-00d6-450f-8432-fbc6bb1c949a",
+  "created_ts": 1775118107.2519908,
+  "symbol": "XAUUSD",
+  "magic": 100010,
+  "note": "inverse_of_demo_pending_stops",
+  "demo_grid_preview": {
+    "buy_price": 4640.0,
+    "sell_price": 4630.0,
+    "ref": 4635.0,
+    "step": 5.0,
+    "anchor": 4632.983
+  },
+  "inverted_signals": [
+    {
+      "demo": "BUY_STOP",
+      "demo_price": 4640.0,
+      "inverse": "SELL_STOP",
+      "inverse_price": 4640.0
+    },
+    {
+      "demo": "SELL_STOP",
+      "demo_price": 4630.0,
+      "inverse": "BUY_STOP",
+      "inverse_price": 4630.0
+    }
+  ],
+  "grid_preview_inverse": {
+    "buy_price": 4630.0,
+    "sell_price": 4640.0,
+    "step": 5.0,
+    "ref": 4635.0,
+    "anchor": 4632.983
+  }
+}

@@ -30,7 +30,7 @@
         "medium_score_threshold": 5,
         "loop_interval_seconds": 10,
         "max_loss_streak": 2,
-        "v5_hard_block_sum10_negative": true,
+        "v5_hard_block_sum10_negative": false,
         "v5_hard_block_min_gap": false,
         "history_comment_prefix": "",
         "preferred_direction": "BOTH",

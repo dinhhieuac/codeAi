@@ -25,7 +25,7 @@
         "history_days_back": 7,
         "min_gap_minutes": 1,
         "entry_score_threshold": 4,
-        "medium_score_threshold": 1,
+        "medium_score_threshold": 4,
         "loop_interval_seconds": 10,
         "max_loss_streak": 3,
         "v5_hard_block_min_gap": false,

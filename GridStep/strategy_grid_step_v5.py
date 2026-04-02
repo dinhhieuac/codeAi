@@ -43,6 +43,8 @@ def configure_grid_step_v5_paths(
     relay_signal_file=None,
     relay_state_file=None,
     relay_history_log_file=None,
+    relay_demo_file=None,
+    relay_demo_history_log_file=None,
     live_log_file=None,
     live_state_file=None,
 ):
@@ -57,6 +59,10 @@ def configure_grid_step_v5_paths(
         signal_relay.RELAY_STATE_FILE = relay_state_file
     if relay_history_log_file is not None:
         signal_relay.RELAY_SIGNAL_HISTORY_LOG = relay_history_log_file
+    if relay_demo_file is not None:
+        signal_relay.RELAY_DEMO_FILE = relay_demo_file
+    if relay_demo_history_log_file is not None:
+        signal_relay.RELAY_DEMO_HISTORY_LOG = relay_demo_history_log_file
     if live_log_file is not None:
         LIVE_LOG_FILE = live_log_file
     if live_state_file is not None:
@@ -1499,6 +1505,16 @@ def run():
                 post_pending, post_positions = _snapshot_bot_orders_positions(sym, mag)
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
+
+                # Demo: vừa đặt cặp pending stop → ghi v5_relay_demo.json (2 mức ngược demo: buy↔sell cùng giá).
+                if v5_role == "demo" and (new_pending or new_positions) and isinstance(
+                    gate_features, dict
+                ):
+                    gpr = gate_features.get("grid_preview")
+                    if isinstance(gpr, dict) and gpr.get("buy_price") is not None and gpr.get(
+                        "sell_price"
+                    ) is not None:
+                        signal_relay.demo_write_inverse_relay_file(config, gate_features)
 
                 relay_sent = relay_early_sent
                 relay_reason = relay_early_reason

@@ -6,6 +6,8 @@ File:
 - v5_relay_state.json — demo_relayed_zone_ts (zone → unix time relay cuối, dedupe theo TTL)
   + live_consumed_relay_ids
 - v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
+- v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá); đổi path qua configure_grid_step_v5_paths
+- v5_relay_demo_history.jsonl — append mỗi lần ghi demo inverse (lịch sử đầy đủ cho bot đọc tín hiệu); đổi path qua configure_grid_step_v5_paths
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RELAY_SIGNAL_FILE = os.path.join(SCRIPT_DIR, "v5_relay_signal.json")
 RELAY_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_relay_state.json")
 RELAY_SIGNAL_HISTORY_LOG = os.path.join(SCRIPT_DIR, "v5_relay_signal_history.jsonl")
+RELAY_DEMO_FILE = os.path.join(SCRIPT_DIR, "v5_relay_demo.json")
+RELAY_DEMO_HISTORY_LOG = os.path.join(SCRIPT_DIR, "v5_relay_demo_history.jsonl")
 
 
 def _default_state() -> Dict[str, Any]:
@@ -85,6 +89,20 @@ def _append_relay_signal_history(payload: Dict[str, Any]) -> None:
         pass
 
 
+def _append_relay_demo_history(payload: Dict[str, Any]) -> None:
+    """Một dòng JSON = một lần ghi v5_relay_demo (append-only), cùng schema payload với file snapshot."""
+    path = RELAY_DEMO_HISTORY_LOG
+    if not path:
+        return
+    line = dict(payload)
+    line["_history_logged_ts"] = time.time()
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except IOError:
+        pass
+
+
 def price_zone_key(price: float, zone_points: float) -> int:
     """Ví dụ zone_points=200, giá 66450 → zone 66400 (bucket theo bước lưới)."""
     try:
@@ -95,6 +113,58 @@ def price_zone_key(price: float, zone_points: float) -> int:
         return int((p // z) * z)
     except Exception:
         return 0
+
+
+def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[str, Any]) -> None:
+    """
+    Ghi v5_relay_demo.json khi demo vừa đặt cặp pending stop (BUY_STOP + SELL_STOP).
+    Hai tín hiệu ngược demo (cùng giá, đổi loại lệnh); grid_preview_inverse đổi buy_price/sell_price.
+    """
+    gpr = gate_features.get("grid_preview") if isinstance(gate_features.get("grid_preview"), dict) else {}
+    try:
+        buy_demo = float(gpr.get("buy_price"))
+        sell_demo = float(gpr.get("sell_price"))
+    except (TypeError, ValueError):
+        return
+    step = float(gpr.get("step") or _step_from_config(config))
+    symbol = str(config.get("symbol") or "")
+    magic = int(config.get("magic") or 0)
+    inv_gpr: Dict[str, Any] = {
+        "buy_price": sell_demo,
+        "sell_price": buy_demo,
+        "step": step,
+    }
+    for key in ("ref", "anchor"):
+        if gpr.get(key) is not None:
+            try:
+                inv_gpr[key] = float(gpr[key])
+            except (TypeError, ValueError):
+                pass
+    out: Dict[str, Any] = {
+        "relay_id": str(uuid.uuid4()),
+        "created_ts": time.time(),
+        "symbol": symbol,
+        "magic": magic,
+        "note": "inverse_of_demo_pending_stops",
+        "demo_grid_preview": dict(gpr),
+        "inverted_signals": [
+            {
+                "demo": "BUY_STOP",
+                "demo_price": buy_demo,
+                "inverse": "SELL_STOP",
+                "inverse_price": buy_demo,
+            },
+            {
+                "demo": "SELL_STOP",
+                "demo_price": sell_demo,
+                "inverse": "BUY_STOP",
+                "inverse_price": sell_demo,
+            },
+        ],
+        "grid_preview_inverse": inv_gpr,
+    }
+    _atomic_write(RELAY_DEMO_FILE, out)
+    _append_relay_demo_history(out)
 
 
 def _step_from_config(config: Dict[str, Any]) -> float:
