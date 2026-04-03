@@ -21,9 +21,9 @@ Console log (cùng format V5):
 - parameters: v5_structured_log, v5_compact_cycle_log; v5_verbose_no_order_log khi tắt structured.
 
 Relay Demo → Live:
-- gọi core.configure_grid_step_v5_paths(...) ngay sau import → cùng file relay với XAU V5: v5_relay_signal.json / v5_relay_state.json
-  + v5_relay_signal_history.jsonl (append mỗi lần publish thành công) + v5_relay_demo.json / v5_relay_demo_history_BTCUSD.jsonl (tín hiệu ngược khi đặt pending; tách theo symbol).
-  (để signal.py / live đọc một file); live entry log/state vẫn tách btc_v5_*.
+- gọi core.configure_grid_step_v5_paths(...) ngay sau import → cùng v5_relay_signal.json / v5_relay_state.json / v5_relay_signal_history.jsonl với XAU V5;
+  inverse demo chỉ ghi **btc_v5_relay_demo.json** (và lịch sử base btc_v5_relay_demo_history.jsonl → btc_v5_relay_demo_history_BTCUSD.jsonl), không ghi đè v5_relay_demo.json của XAU.
+- sign_inverse: đặt `relay_demo_file` trong config trỏ tới btc_v5_relay_demo.json khi mirror BTC.
 - Demo: kết_luận=đạt (strategy_grid_step_v5) thì ghi relay sớm; dedup theo zone; thử lại khi có lệnh MT5 mới.
 - Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).
 """
@@ -38,8 +38,8 @@ core.configure_grid_step_v5_paths(
     relay_signal_file=os.path.join(SCRIPT_DIR, "v5_relay_signal.json"),
     relay_state_file=os.path.join(SCRIPT_DIR, "v5_relay_state.json"),
     relay_history_log_file=os.path.join(SCRIPT_DIR, "v5_relay_signal_history.jsonl"),
-    relay_demo_file=os.path.join(SCRIPT_DIR, "v5_relay_demo.json"),
-    relay_demo_history_log_file=os.path.join(SCRIPT_DIR, "v5_relay_demo_history.jsonl"),
+    relay_demo_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_demo.json"),
+    relay_demo_history_log_file=os.path.join(SCRIPT_DIR, "btc_v5_relay_demo_history.jsonl"),
     live_log_file=os.path.join(SCRIPT_DIR, "btc_v5_live_entry_log.jsonl"),
     live_state_file=os.path.join(SCRIPT_DIR, "btc_v5_live_state.json"),
 )
