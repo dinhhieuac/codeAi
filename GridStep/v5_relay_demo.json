@@ -1,35 +1,35 @@
 {
-  "relay_id": "5b01dfe5-3bc3-4fb3-9145-23edf5eca199",
-  "created_ts": 1775185632.2718909,
-  "symbol": "BTCUSD",
-  "magic": 100011,
+  "relay_id": "1d6e3461-473f-4c80-94fa-98719112a4f8",
+  "created_ts": 1775466030.5910754,
+  "symbol": "XAUUSD",
+  "magic": 100010,
   "note": "inverse_of_demo_pending_stops",
   "demo_grid_preview": {
-    "buy_price": 66800.0,
-    "sell_price": 66400.0,
-    "ref": 66600.0,
-    "step": 200.0,
-    "anchor": 66600.0
+    "buy_price": 4705.0,
+    "sell_price": 4695.0,
+    "ref": 4700.0,
+    "step": 5.0,
+    "anchor": 4700.0
   },
   "inverted_signals": [
     {
       "demo": "BUY_STOP",
-      "demo_price": 66800.0,
+      "demo_price": 4705.0,
       "inverse": "SELL_STOP",
-      "inverse_price": 66800.0
+      "inverse_price": 4705.0
     },
     {
       "demo": "SELL_STOP",
-      "demo_price": 66400.0,
+      "demo_price": 4695.0,
       "inverse": "BUY_STOP",
-      "inverse_price": 66400.0
+      "inverse_price": 4695.0
     }
   ],
   "grid_preview_inverse": {
-    "buy_price": 66400.0,
-    "sell_price": 66800.0,
-    "step": 200.0,
-    "ref": 66600.0,
-    "anchor": 66600.0
+    "buy_price": 4695.0,
+    "sell_price": 4705.0,
+    "step": 5.0,
+    "ref": 4700.0,
+    "anchor": 4700.0
   }
 }

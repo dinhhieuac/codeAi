@@ -8,6 +8,9 @@ File:
 - v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
 - v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá); đổi path qua configure_grid_step_v5_paths
 - v5_relay_demo_history_<SYMBOL>.jsonl — append mỗi lần ghi demo inverse (một file/symbol, từ base path v5_relay_demo_history.jsonl); đổi base qua configure_grid_step_v5_paths
+
+Đặt BUY_LIMIT/SELL_LIMIT inverse trên MT5 do sign_inverse / btc_sign_inverser thực hiện; trước khi đặt có kiểm tra
+trùng giá (utils.has_same_price_inverse_duplicate) — file này không gọi MT5.
 """
 
 from __future__ import annotations

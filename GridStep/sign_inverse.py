@@ -182,7 +182,7 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     """
     BUY_LIMIT @ buy_price (SL=buy−step, TP=buy+step); SELL_LIMIT @ sell_price (SL=sell+step, TP=sell−step).
     """
-    from utils import place_buy_limit, place_sell_limit
+    from utils import has_same_price_inverse_duplicate, place_buy_limit, place_sell_limit
 
     symbol = str(payload.get("symbol") or "").strip()
     magic = int(payload.get("magic") or 0)
@@ -211,6 +211,11 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
 
     px_buy_lim = key_buy
     px_sell_lim = key_sell
+
+    dup, dup_reason = has_same_price_inverse_duplicate(symbol, magic, px_buy_lim, px_sell_lim, digits)
+    if dup:
+        print(f"⏭️ [sign_inverse] Bỏ qua tín hiệu — {dup_reason} (trùng mức giá inverse) — đánh dấu relay đã xử lý")
+        return False, dup_reason, True
 
     cancel_inv_limit_pendings(symbol, magic)
 

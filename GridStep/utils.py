@@ -2,6 +2,7 @@ import MetaTrader5 as mt5
 import os
 import json
 import requests
+from typing import Tuple
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -424,6 +425,56 @@ def get_pending_orders_bot(symbol, magic, comment=None):
     if comment is not None:
         orders = [o for o in orders if (getattr(o, "comment", "") or "").strip() == comment]
     return orders
+
+
+def has_same_price_inverse_duplicate(
+    symbol: str,
+    magic: int,
+    px_buy_limit: float,
+    px_sell_limit: float,
+    digits: int,
+) -> Tuple[bool, str]:
+    """
+    Trước khi đặt cặp BUY_LIMIT + SELL_LIMIT inverse: kiểm tra đã có lệnh chờ hoặc vị thế
+    cùng magic tại đúng một trong hai mức giá (làm tròn theo digits) thì coi là trùng tín hiệu.
+    Dùng từ sign_inverse / btc_sign_inverser (signal_relay chỉ ghi file, không gọi MT5).
+    """
+    rb = round(float(px_buy_limit), digits)
+    rs = round(float(px_sell_limit), digits)
+    buy_lim = getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2)
+    sell_lim = getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3)
+    pos_buy = getattr(mt5, "POSITION_TYPE_BUY", 0)
+    pos_sell = getattr(mt5, "POSITION_TYPE_SELL", 1)
+
+    orders = mt5.orders_get(symbol=symbol) or []
+    for o in orders:
+        if int(getattr(o, "magic", 0) or 0) != int(magic):
+            continue
+        try:
+            op = round(float(getattr(o, "price_open", 0) or 0), digits)
+        except (TypeError, ValueError):
+            continue
+        ot = int(getattr(o, "type", -1))
+        if ot == buy_lim and op == rb:
+            return True, f"đã có BUY_LIMIT@{op}"
+        if ot == sell_lim and op == rs:
+            return True, f"đã có SELL_LIMIT@{op}"
+
+    positions = mt5.positions_get(symbol=symbol) or []
+    for p in positions:
+        if int(getattr(p, "magic", 0) or 0) != int(magic):
+            continue
+        try:
+            op = round(float(getattr(p, "price_open", 0) or 0), digits)
+        except (TypeError, ValueError):
+            continue
+        pt = int(getattr(p, "type", -1))
+        if pt == pos_buy and op == rb:
+            return True, f"đã có position BUY@{op}"
+        if pt == pos_sell and op == rs:
+            return True, f"đã có position SELL@{op}"
+
+    return False, ""
 
 
 def place_pending_order(symbol, volume, order_type, price, sl, tp, magic, comment, digits=None, type_filling=None):

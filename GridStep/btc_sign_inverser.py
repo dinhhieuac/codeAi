@@ -5,7 +5,7 @@ Bot inverse BTC: đọc **btc_v5_relay_demo.json** (1 giây/lần), đặt cặp
 
 Giống sign_inverse.py; khác mặc định:
 - File tín hiệu: btc_v5_relay_demo.json (strategy_grid_step_btc_v5 demo ghi khi đặt pending)
-- Config mặc định: configs/config_grid_step_inverse_btc_live.json
+- Config mặc định: configs/config_grid_step_inverse_btc_live.json — **`symbol`**: tên symbol MT5 dùng khi đặt BUY_LIMIT/SELL_LIMIT (vd BTCUSDm; giá vẫn lấy từ relay)
 - Consumed: btc_signal_inverse_consumed_relay_ids.json (tách khỏi bot inverse XAU)
 
 Chạy: python btc_sign_inverser.py
@@ -62,7 +62,13 @@ def _allowed_symbols_from_config(cfg: Dict[str, Any]) -> Optional[Set[str]]:
     return None
 
 
-def load_btc_inverse_config(config_path: str) -> Tuple[Dict[str, Any], float, Optional[Set[str]]]:
+def load_btc_inverse_config(
+    config_path: str,
+) -> Tuple[Dict[str, Any], float, Optional[Set[str]], Optional[str]]:
+    """
+    trade_symbol: symbol MT5 khi mở lệnh (từ key `symbol` trong JSON). Nếu có, không chặn relay
+    vì lệch tên broker (vd relay BTCUSD vs config BTCUSDm).
+    """
     cfg = _load_json(config_path, None)
     if not isinstance(cfg, dict):
         raise FileNotFoundError(f"Không đọc được config: {config_path}")
@@ -73,8 +79,13 @@ def load_btc_inverse_config(config_path: str) -> Tuple[Dict[str, Any], float, Op
         "mt5_path": str(cfg.get("mt5_path") or "").strip(),
     }
     vol = float(cfg.get("volume") or 0.01)
+    trade_symbol = str(cfg.get("symbol") or "").strip() or None
     allowed = _allowed_symbols_from_config(cfg)
-    return creds, vol, allowed
+    if trade_symbol is not None and not (
+        isinstance(cfg.get("inverse_allowed_symbols"), list) and len(cfg.get("inverse_allowed_symbols") or []) > 0
+    ):
+        allowed = None
+    return creds, vol, allowed, trade_symbol
 
 
 def connect_mt5_login_only(creds: Dict[str, Any]) -> bool:
@@ -173,7 +184,7 @@ def _mark_consumed_after_pair_fail(r1: Any, r2: Any) -> bool:
 
 
 def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool, str, bool]:
-    from utils import place_buy_limit, place_sell_limit
+    from utils import has_same_price_inverse_duplicate, place_buy_limit, place_sell_limit
 
     symbol = str(payload.get("symbol") or "").strip()
     magic = int(payload.get("magic") or 0)
@@ -202,6 +213,11 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
 
     px_buy_lim = key_buy
     px_sell_lim = key_sell
+
+    dup, dup_reason = has_same_price_inverse_duplicate(symbol, magic, px_buy_lim, px_sell_lim, digits)
+    if dup:
+        print(f"⏭️ {LOG_PREFIX} Bỏ qua tín hiệu — {dup_reason} (trùng mức giá inverse) — đánh dấu relay đã xử lý")
+        return False, dup_reason, True
 
     cancel_inv_limit_pendings(symbol, magic)
 
@@ -292,12 +308,13 @@ def inverse_payload_ready(
     return None
 
 
-def _as_place_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _as_place_payload(raw: Dict[str, Any], trade_symbol: Optional[str] = None) -> Dict[str, Any]:
     inv = raw.get("grid_preview_inverse") or {}
     step = float(inv.get("step") or raw.get("step") or 5)
+    sym = trade_symbol if (trade_symbol and str(trade_symbol).strip()) else raw.get("symbol")
     return {
         "relay_id": raw.get("relay_id"),
-        "symbol": raw.get("symbol"),
+        "symbol": sym,
         "magic": raw.get("magic"),
         "step": step,
         "grid_preview": dict(inv),
@@ -305,7 +322,9 @@ def _as_place_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def describe_inverse_wait_status(
-    payload: Any, consumed: Set[str], allowed_symbols: Optional[Set[str]] = None
+    payload: Any,
+    consumed: Set[str],
+    allowed_symbols: Optional[Set[str]] = None,
 ) -> str:
     if not os.path.isfile(RELAY_DEMO_PATH):
         return "chưa có file (chờ demo ghi btc_v5_relay_demo.json)"
@@ -321,15 +340,17 @@ def describe_inverse_wait_status(
 
 
 def run_loop(config_path: str) -> None:
-    creds, volume, allowed_symbols = load_btc_inverse_config(config_path)
+    creds, volume, allowed_symbols, trade_symbol = load_btc_inverse_config(config_path)
     consumed = load_consumed_ids()
     relay_name = os.path.basename(RELAY_DEMO_PATH)
     print(f"📁 {LOG_PREFIX} config: {config_path}")
     print(f"📁 {LOG_PREFIX} relay demo: {RELAY_DEMO_PATH}")
     print(f"📁 {LOG_PREFIX} consumed ids: {CONSUMED_IDS_PATH} ({len(consumed)} id)")
+    if trade_symbol:
+        print(f"📌 {LOG_PREFIX} Mở lệnh trên symbol MT5: {trade_symbol} (theo config; giá từ relay)")
     if allowed_symbols is not None:
-        print(f"📌 {LOG_PREFIX} Chỉ xử lý relay symbol: {sorted(allowed_symbols)} (khác → bỏ qua)")
-    else:
+        print(f"📌 {LOG_PREFIX} Chỉ relay có symbol: {sorted(allowed_symbols)} (khác → bỏ qua)")
+    elif not trade_symbol:
         print(f"📌 {LOG_PREFIX} Không lọc symbol — mọi symbol trong {relay_name} đều xử lý")
 
     if not connect_mt5_login_only(creds):
@@ -349,7 +370,7 @@ def run_loop(config_path: str) -> None:
             if isinstance(payload, dict) and payload:
                 skip = inverse_payload_ready(payload, consumed, allowed_symbols)
                 if skip is None:
-                    place_payload = _as_place_payload(payload)
+                    place_payload = _as_place_payload(payload, trade_symbol)
                     ok, err, mark_consumed = place_pair_from_inverse_relay(place_payload, volume)
                     if ok:
                         rid = str(payload["relay_id"])

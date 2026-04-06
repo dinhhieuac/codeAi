@@ -1,8 +1,8 @@
 {
-  "account": 0,
-  "password": "",
-  "server": "Exness-MT5Trial6",
-  "mt5_path": "C:\\\\Program Files\\\\MetaTrader 5\\\\terminal64.exe",
-  "symbol": "BTCUSD",
+"account": 213341144,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Real28",
+    "mt5_path": "C:\\Program Files\\M9\\terminal64.exe",
+  "symbol": "BTCUSDm",
   "volume": 0.01
 }
