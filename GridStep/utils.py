@@ -2,7 +2,7 @@ import MetaTrader5 as mt5
 import os
 import json
 import requests
-from typing import Tuple
+from typing import Any, Optional, Tuple
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -475,6 +475,64 @@ def has_same_price_inverse_duplicate(
             return True, f"đã có position SELL@{op}"
 
     return False, ""
+
+
+def normalize_inverse_limit_prices(
+    info: Any,
+    tick: Any,
+    px_buy_lim: float,
+    px_sell_lim: float,
+    digits: int,
+) -> Tuple[Optional[float], Optional[float], str]:
+    """
+    Kéo giá relay về vùng hợp lệ MT5: BUY_LIMIT < ask, SELL_LIMIT > bid, tôn trọng trade_stops_level /
+    trade_freeze_level (theo point). Trả về (None, None, lý do) nếu spread không đủ hoặc buy≥sell sau chỉnh.
+    """
+    if tick is None:
+        return (
+            round(float(px_buy_lim), digits),
+            round(float(px_sell_lim), digits),
+            "",
+        )
+    bid = float(tick.bid)
+    ask = float(tick.ask)
+    point = float(getattr(info, "point", 0) or 0)
+    if point <= 0:
+        point = float(10 ** (-digits))
+    stops = int(getattr(info, "trade_stops_level", 0) or 0)
+    freeze = int(getattr(info, "trade_freeze_level", 0) or 0)
+    min_pts = max(stops, freeze, 1)
+    min_dist = min_pts * point
+    eps = point * 0.25
+
+    max_buy = ask - min_dist
+    min_sell = bid + min_dist
+    if max_buy <= min_sell + eps:
+        return (
+            None,
+            None,
+            f"spread không đủ cho limit (ask−min={max_buy:.{digits}f} ≤ bid+min={min_sell:.{digits}f})",
+        )
+
+    pb = round(float(px_buy_lim), digits)
+    ps = round(float(px_sell_lim), digits)
+    notes: list[str] = []
+    if pb > max_buy + eps:
+        pb = round(max_buy, digits)
+        notes.append(f"BUY_LIMIT→{pb} (≤ ask−min_dist)")
+    if ps < min_sell - eps:
+        ps = round(min_sell, digits)
+        notes.append(f"SELL_LIMIT→{ps} (≥ bid+min_dist)")
+
+    if pb >= ps:
+        return (
+            None,
+            None,
+            f"lưới sau chỉnh giá không hợp lệ: BUY {pb} ≥ SELL {ps}",
+        )
+
+    note = "; ".join(notes) if notes else ""
+    return pb, ps, note
 
 
 def place_pending_order(symbol, volume, order_type, price, sl, tp, magic, comment, digits=None, type_filling=None):

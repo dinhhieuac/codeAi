@@ -1,8 +1,10 @@
 {
-  "account": 413491713,
+  "account": 183677261,
   "password": "@Dinhhieu273",
-  "server": "Exness-MT5Trial6",
+  "server": "Exness-MT5Real25",
   "mt5_path": "C:\\\\Program Files\\\\M11\\\\terminal64.exe",
-  "symbol": "XAUUSD",
-  "volume": 0.01
+  "symbol": "XAUUSDc",
+  "volume": 0.01,
+  "spread_sl": 0,
+  "spread_tp": -0.3
 }

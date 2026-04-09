@@ -1508,7 +1508,8 @@ def run():
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
 
-                # Demo: vừa đặt cặp pending stop → ghi v5_relay_demo.json (2 mức ngược demo: buy↔sell cùng giá).
+                # Demo: vừa đặt cặp pending stop → ghi v5_relay_demo.json (signal_relay: relay_id lô +
+                # relay_id_buy_limit / relay_id_sell_limit riêng từng chân).
                 if v5_role == "demo" and (new_pending or new_positions) and isinstance(
                     gate_features, dict
                 ):

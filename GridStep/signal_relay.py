@@ -6,11 +6,12 @@ File:
 - v5_relay_state.json — demo_relayed_zone_ts (zone → unix time relay cuối, dedupe theo TTL)
   + live_consumed_relay_ids
 - v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
-- v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá); đổi path qua configure_grid_step_v5_paths
+- v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá).
+  `relay_id` = id lô (sign_inverse consume); `relay_id_buy_limit` / `relay_id_sell_limit` = id từng chân inverse; đổi path qua configure_grid_step_v5_paths
 - v5_relay_demo_history_<SYMBOL>.jsonl — append mỗi lần ghi demo inverse (một file/symbol, từ base path v5_relay_demo_history.jsonl); đổi base qua configure_grid_step_v5_paths
 
-Đặt BUY_LIMIT/SELL_LIMIT inverse trên MT5 do sign_inverse / btc_sign_inverser thực hiện; trước khi đặt có kiểm tra
-trùng giá (utils.has_same_price_inverse_duplicate) — file này không gọi MT5.
+Đặt BUY_LIMIT/SELL_LIMIT inverse trên MT5 do sign_inverse / btc_sign_inverser thực hiện; `demo_relay_order_relay_ids` +
+`inverse_order_invgrid_comment` map đúng relay_id từng chân vào comment lệnh. Trùng giá: utils.has_same_price_inverse_duplicate.
 """
 
 from __future__ import annotations
@@ -166,8 +167,14 @@ def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[st
                 inv_gpr[key] = float(gpr[key])
             except (TypeError, ValueError):
                 pass
+    # BUY_LIMIT @ inv buy_price (từ mức SELL_STOP demo); SELL_LIMIT @ inv sell_price (từ BUY_STOP demo).
+    relay_id_buy_limit = str(uuid.uuid4())
+    relay_id_sell_limit = str(uuid.uuid4())
+    relay_id_batch = str(uuid.uuid4())
     out: Dict[str, Any] = {
-        "relay_id": str(uuid.uuid4()),
+        "relay_id": relay_id_batch,
+        "relay_id_buy_limit": relay_id_buy_limit,
+        "relay_id_sell_limit": relay_id_sell_limit,
         "created_ts": time.time(),
         "symbol": symbol,
         "magic": magic,
@@ -179,18 +186,52 @@ def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[st
                 "demo_price": buy_demo,
                 "inverse": "SELL_STOP",
                 "inverse_price": buy_demo,
+                "relay_id": relay_id_sell_limit,
             },
             {
                 "demo": "SELL_STOP",
                 "demo_price": sell_demo,
                 "inverse": "BUY_STOP",
                 "inverse_price": sell_demo,
+                "relay_id": relay_id_buy_limit,
             },
         ],
         "grid_preview_inverse": inv_gpr,
     }
     _atomic_write(RELAY_DEMO_FILE, out)
     _append_relay_demo_history(out)
+
+
+def demo_relay_order_relay_ids(payload: Dict[str, Any]) -> Tuple[str, str, str]:
+    """
+    Đọc payload v5_relay_demo.json / btc_v5_relay_demo.json → (relay_id lô, relay_id BUY_LIMIT, relay_id SELL_LIMIT).
+    File cũ chỉ có relay_id: cả ba cùng giá trị (hoặc buy/sell fallback về lô).
+    """
+    batch = str(payload.get("relay_id") or "").strip()
+    rb = str(payload.get("relay_id_buy_limit") or "").strip()
+    rs = str(payload.get("relay_id_sell_limit") or "").strip()
+    if not batch and (rb or rs):
+        batch = rb or rs
+    if not rb:
+        rb = batch
+    if not rs:
+        rs = batch
+    return batch, rb, rs
+
+
+def inverse_order_invgrid_comment(
+    step_val: float, leg_relay_id: str, *, max_len: int = 31
+) -> str:
+    """
+    Comment MT5 cho một chân inverse: luôn bắt đầu InvGrid_* để cancel_inv_limit_pendings nhận diện.
+    Gắn 8 ký tự đầu (không dấu gạch) của leg relay_id; cắt gọn nếu vượt max_len.
+    """
+    s = str(leg_relay_id or "").replace("-", "")
+    tag = (s[:8] if len(s) >= 8 else s) or "________"
+    base = f"InvGrid_{step_val:g}_"
+    if len(base) + len(tag) > max_len:
+        tag = tag[: max(4, max_len - len(base))]
+    return base + tag
 
 
 def _step_from_config(config: Dict[str, Any]) -> float:

@@ -23,6 +23,8 @@ from typing import Any, Dict, Optional, Set, Tuple
 
 import MetaTrader5 as mt5
 
+import signal_relay
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "config_grid_step_inverse_btc_live.json")
 RELAY_DEMO_PATH = os.path.join(SCRIPT_DIR, "btc_v5_relay_demo.json")
@@ -129,10 +131,6 @@ def save_consumed_id(relay_id: str, existing: Set[str]) -> None:
     _atomic_write(CONSUMED_IDS_PATH, {"consumed_relay_ids": lst})
 
 
-def _comment_inv(step: float) -> str:
-    return f"InvGrid_{step}"
-
-
 def cancel_inv_limit_pendings(symbol: str, magic: int) -> int:
     orders = mt5.orders_get(symbol=symbol) or []
     n_ok = 0
@@ -184,11 +182,16 @@ def _mark_consumed_after_pair_fail(r1: Any, r2: Any) -> bool:
 
 
 def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool, str, bool]:
-    from utils import has_same_price_inverse_duplicate, place_buy_limit, place_sell_limit
+    from utils import (
+        has_same_price_inverse_duplicate,
+        normalize_inverse_limit_prices,
+        place_buy_limit,
+        place_sell_limit,
+    )
 
     symbol = str(payload.get("symbol") or "").strip()
     magic = int(payload.get("magic") or 0)
-    relay_id = str(payload.get("relay_id") or "")
+    relay_batch, relay_id_buy_leg, relay_id_sell_leg = signal_relay.demo_relay_order_relay_ids(payload)
 
     gpr = payload.get("grid_preview") if isinstance(payload.get("grid_preview"), dict) else {}
     try:
@@ -229,7 +232,8 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
         vol = max(vol, volume_min)
 
     filling = mt5.ORDER_FILLING_IOC if (getattr(info, "filling_mode", 0) & 2) else mt5.ORDER_FILLING_FOK
-    comment = _comment_inv(step_val)
+    comment_buy = signal_relay.inverse_order_invgrid_comment(step_val, relay_id_buy_leg)
+    comment_sell = signal_relay.inverse_order_invgrid_comment(step_val, relay_id_sell_leg)
 
     sl_buy = round(px_buy_lim - step_val, digits)
     tp_buy = round(px_buy_lim + step_val, digits)
@@ -240,21 +244,17 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     if tick is not None:
         tick_hint = f" | thị trường bid={tick.bid} ask={tick.ask}"
     print(
-        f"📤 {LOG_PREFIX} relay={relay_id[:8]}… | {symbol} | "
-        f"BUY_LIMIT@{px_buy_lim} SL={sl_buy} TP={tp_buy} | "
-        f"SELL_LIMIT@{px_sell_lim} SL={sl_sell} TP={tp_sell}"
-        f" | step={step_val} | vol={vol} | {comment}{tick_hint}"
+        f"📤 {LOG_PREFIX} batch={relay_batch[:8]}… buy_id={relay_id_buy_leg[:8]}… sell_id={relay_id_sell_leg[:8]}… | {symbol} | "
+        f"BUY_LIMIT@{px_buy_lim} SL={sl_buy} TP={tp_buy} ({comment_buy}) | "
+        f"SELL_LIMIT@{px_sell_lim} SL={sl_sell} TP={tp_sell} ({comment_sell})"
+        f" | step={step_val} | vol={vol}{tick_hint}"
     )
-    if tick is not None and (px_buy_lim >= float(tick.ask) or px_sell_lim <= float(tick.bid)):
-        print(
-            f"⚠️ {LOG_PREFIX} Giá có thể không hợp lệ MT5 (BUY_LIMIT phải < ask, SELL_LIMIT phải > bid) → 10015"
-        )
 
     r1 = place_buy_limit(
-        symbol, vol, px_buy_lim, sl_buy, tp_buy, magic, comment, digits=digits, type_filling=filling
+        symbol, vol, px_buy_lim, sl_buy, tp_buy, magic, comment_buy, digits=digits, type_filling=filling
     )
     r2 = place_sell_limit(
-        symbol, vol, px_sell_lim, sl_sell, tp_sell, magic, comment, digits=digits, type_filling=filling
+        symbol, vol, px_sell_lim, sl_sell, tp_sell, magic, comment_sell, digits=digits, type_filling=filling
     )
 
     if r1 is None or r2 is None:
@@ -314,6 +314,8 @@ def _as_place_payload(raw: Dict[str, Any], trade_symbol: Optional[str] = None) -
     sym = trade_symbol if (trade_symbol and str(trade_symbol).strip()) else raw.get("symbol")
     return {
         "relay_id": raw.get("relay_id"),
+        "relay_id_buy_limit": raw.get("relay_id_buy_limit"),
+        "relay_id_sell_limit": raw.get("relay_id_sell_limit"),
         "symbol": sym,
         "magic": raw.get("magic"),
         "step": step,
