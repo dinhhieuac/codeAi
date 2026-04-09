@@ -6,13 +6,16 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # Import local modules
-sys.path.append('..') # Add parent directory to path to find XAU_M1 modules if running from sub-folder
-from db import Database
+import os
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)  # Add current directory to path
 from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr
 
-# Initialize Database
-db = Database()
+# Initialize Database with absolute path
+db_path = os.path.join(script_dir, "trades.db")
+db = Database(db_path=db_path)
+print(f"📦 Database initialized: {db_path}")
 
 def check_trading_session(config):
     """
@@ -295,6 +298,92 @@ def check_chop_range(df_m1, atr_val, lookback=10, body_threshold=0.5, overlap_th
         return True, f"CHOP: body_avg={body_avg:.2f} < {body_threshold * atr_val:.2f}, overlap={avg_overlap:.1%} > {overlap_threshold:.1%}"
     return False, f"Not CHOP: body_avg={body_avg:.2f}, overlap={avg_overlap:.1%}"
 
+def check_atr_volatility_filter(df_m1, current_atr, atr_period=14, lookback_period=50, 
+                                 min_atr_multiplier=0.5, max_atr_multiplier=2.5, 
+                                 use_relative=True, min_absolute=None, max_absolute=None):
+    """
+    ATR VOLATILITY FILTER - Lọc các vùng thị trường có độ biến động quá thấp hoặc quá cao
+    
+    Logic:
+    - Nếu ATR quá thấp (< min_threshold): Thị trường quá yên tĩnh → NO TRADE
+    - Nếu ATR quá cao (> max_threshold): Thị trường quá biến động → NO TRADE
+    - Nếu ATR trong khoảng cho phép: OK → TRADE
+    
+    Parameters:
+    -----------
+    df_m1 : DataFrame
+        DataFrame chứa dữ liệu M1 với cột 'atr' đã được tính toán
+    current_atr : float
+        Giá trị ATR hiện tại
+    atr_period : int
+        Chu kỳ tính ATR (mặc định: 14)
+    lookback_period : int
+        Số nến để tính ATR trung bình (mặc định: 50)
+    min_atr_multiplier : float
+        Hệ số nhân tối thiểu so với ATR trung bình (mặc định: 0.5)
+        Ví dụ: 0.5 = ATR hiện tại phải >= 50% ATR trung bình
+    max_atr_multiplier : float
+        Hệ số nhân tối đa so với ATR trung bình (mặc định: 2.5)
+        Ví dụ: 2.5 = ATR hiện tại phải <= 250% ATR trung bình
+    use_relative : bool
+        True: So sánh với ATR trung bình (relative)
+        False: So sánh với giá trị tuyệt đối (absolute)
+    min_absolute : float
+        Ngưỡng ATR tối thiểu tuyệt đối (nếu use_relative=False)
+    max_absolute : float
+        Ngưỡng ATR tối đa tuyệt đối (nếu use_relative=False)
+    
+    Returns:
+    --------
+    tuple : (is_valid, message)
+        is_valid: True nếu ATR trong khoảng cho phép, False nếu quá thấp/quá cao
+        message: Thông báo mô tả kết quả kiểm tra
+    """
+    if len(df_m1) < max(lookback_period, atr_period):
+        return True, "Không đủ dữ liệu để kiểm tra ATR"
+    
+    if pd.isna(current_atr) or current_atr <= 0:
+        return True, "ATR không hợp lệ, bỏ qua filter"
+    
+    if use_relative:
+        # So sánh với ATR trung bình trong lookback period
+        if 'atr' not in df_m1.columns:
+            return True, "Không có cột ATR, bỏ qua filter"
+        
+        # Lấy ATR trung bình trong lookback period (không bao gồm nến cuối)
+        recent_atr = df_m1['atr'].iloc[-lookback_period:-1]
+        # Loại bỏ các giá trị NaN
+        recent_atr_clean = recent_atr.dropna()
+        if len(recent_atr_clean) == 0:
+            return True, "Không đủ dữ liệu ATR để so sánh (tất cả đều NaN)"
+        
+        avg_atr = recent_atr_clean.mean()
+        
+        if pd.isna(avg_atr) or avg_atr <= 0:
+            return True, "ATR trung bình không hợp lệ, bỏ qua filter"
+        
+        # Tính ngưỡng min và max
+        min_threshold = avg_atr * min_atr_multiplier
+        max_threshold = avg_atr * max_atr_multiplier
+        
+        # Kiểm tra
+        if current_atr < min_threshold:
+            return False, f"ATR quá thấp: {current_atr:.2f} < {min_threshold:.2f} ({min_atr_multiplier:.1f}x avg={avg_atr:.2f}) - Thị trường quá yên tĩnh"
+        elif current_atr > max_threshold:
+            return False, f"ATR quá cao: {current_atr:.2f} > {max_threshold:.2f} ({max_atr_multiplier:.1f}x avg={avg_atr:.2f}) - Thị trường quá biến động"
+        else:
+            return True, f"ATR OK: {current_atr:.2f} trong khoảng [{min_threshold:.2f}, {max_threshold:.2f}] (avg={avg_atr:.2f})"
+    else:
+        # So sánh với giá trị tuyệt đối
+        if min_absolute is not None and current_atr < min_absolute:
+            return False, f"ATR quá thấp: {current_atr:.2f} < {min_absolute:.2f} (ngưỡng tối thiểu)"
+        elif max_absolute is not None and current_atr > max_absolute:
+            return False, f"ATR quá cao: {current_atr:.2f} > {max_absolute:.2f} (ngưỡng tối đa)"
+        else:
+            min_str = f"{min_absolute:.2f}" if min_absolute is not None else "N/A"
+            max_str = f"{max_absolute:.2f}" if max_absolute is not None else "N/A"
+            return True, f"ATR OK: {current_atr:.2f} trong khoảng [{min_str}, {max_str}]"
+
 def strategy_1_logic(config, error_count=0):
     symbol = config['symbol']
     volume = config['volume']
@@ -411,6 +500,33 @@ def strategy_1_logic(config, error_count=0):
         recent_range = df_m1.iloc[-atr_period:]['high'].max() - df_m1.iloc[-atr_period:]['low'].min()
         atr_val = recent_range / atr_period if recent_range > 0 else 0.1
     
+    # V2: ATR Volatility Filter - Lọc vùng biến động quá thấp/quá cao
+    atr_volatility_filter_enabled = config['parameters'].get('atr_volatility_filter_enabled', True)  # Default: True
+    if atr_volatility_filter_enabled:
+        atr_lookback_period = config['parameters'].get('atr_lookback_period', 50)  # Default: 50 nến
+        atr_min_multiplier = config['parameters'].get('atr_min_multiplier', 0.5)  # Default: 0.5 (50% ATR trung bình)
+        atr_max_multiplier = config['parameters'].get('atr_max_multiplier', 2.5)  # Default: 2.5 (250% ATR trung bình)
+        atr_use_relative = config['parameters'].get('atr_use_relative', True)  # Default: True (so sánh relative)
+        atr_min_absolute = config['parameters'].get('atr_min_absolute', None)  # Optional: ngưỡng tuyệt đối
+        atr_max_absolute = config['parameters'].get('atr_max_absolute', None)  # Optional: ngưỡng tuyệt đối
+        
+        is_atr_valid, atr_msg = check_atr_volatility_filter(
+            df_m1, atr_val, atr_period=atr_period, 
+            lookback_period=atr_lookback_period,
+            min_atr_multiplier=atr_min_multiplier,
+            max_atr_multiplier=atr_max_multiplier,
+            use_relative=atr_use_relative,
+            min_absolute=atr_min_absolute,
+            max_absolute=atr_max_absolute
+        )
+        
+        if not is_atr_valid:
+            print(f"❌ ATR Volatility Filter: {atr_msg} (Skipping)")
+            return error_count, 0
+        print(f"✅ ATR Volatility Filter: {atr_msg}")
+    else:
+        print(f"⏭️  ATR Volatility Filter: Disabled (optional)")
+    
     # V2: CHOP/RANGE Filter (BẮT BUỘC)
     chop_lookback = config['parameters'].get('chop_lookback', 10)
     chop_body_threshold = config['parameters'].get('chop_body_threshold', 0.5)
@@ -422,18 +538,6 @@ def strategy_1_logic(config, error_count=0):
         print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
         return error_count, 0
     print(f"✅ CHOP Filter: {chop_msg}")
-    
-    # V3: ATR M1 Volatility Filter - Tránh trade khi market quá volatile
-    atr_max_threshold = config['parameters'].get('atr_max_threshold', 3.0)  # > 3.0 → BỎ TRADE
-    atr_caution_threshold = config['parameters'].get('atr_caution_threshold', 2.0)  # 2.0-3.0 → Cẩn trọng
-    
-    if atr_val > atr_max_threshold:
-        print(f"❌ ATR M1 Filter: ATR={atr_val:.2f} > {atr_max_threshold} (Market quá volatile - BỎ TRADE)")
-        return error_count, 0
-    elif atr_val >= atr_caution_threshold:
-        print(f"⚠️ ATR M1 Filter: ATR={atr_val:.2f} trong khoảng {atr_caution_threshold}-{atr_max_threshold} (Rất cẩn trọng)")
-    else:
-        print(f"✅ ATR M1 Filter: ATR={atr_val:.2f} < {atr_caution_threshold} (Điều kiện lý tưởng)")
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
@@ -449,9 +553,7 @@ def strategy_1_logic(config, error_count=0):
     print(f"💱 Price: {price:.2f} | Trend (M5): {current_trend} | ADX: {adx_value:.1f} | RSI: {last_ha['rsi']:.1f}")
     print(f"   HA Close: {last_ha['ha_close']:.2f} | HA Open: {last_ha['ha_open']:.2f}")
     print(f"   SMA55 High: {last_ha['sma55_high']:.2f} | SMA55 Low: {last_ha['sma55_low']:.2f}")
-    # ATR status (đã được check ở filter phía trên)
-    atr_status = "🟢 Lý tưởng" if atr_val < atr_caution_threshold else ("🟡 Cẩn trọng" if atr_val < atr_max_threshold else "🔴 Quá cao")
-    print(f"   ATR M1: {atr_val:.2f} ({atr_status}) | Session: {session_msg}")
+    print(f"   ATR: {atr_val:.2f} | Session: {session_msg}")
     
     # Track all filter status
     filter_status = []
@@ -728,12 +830,6 @@ def strategy_1_logic(config, error_count=0):
             buffer = atr_buffer_multiplier * atr_m5
             print(f"   📊 M5 ATR: {atr_m5:.2f} | Buffer: {buffer:.2f} ({atr_buffer_multiplier}x ATR) [V3: Tăng từ 1.5x]")
             
-            # FIX: Thêm Max Risk Distance để tránh SL quá xa khi market volatile
-            # Max risk = max_risk_atr_multiplier * ATR_M1 (dùng M1 vì phản ánh volatility hiện tại tốt hơn)
-            max_risk_atr_multiplier = config['parameters'].get('max_risk_atr_multiplier', 3.0)  # Default: 3.0x ATR M1
-            max_risk_distance = max_risk_atr_multiplier * atr_val  # atr_val là ATR M1 đã tính ở trên
-            print(f"   ⚠️ Max Risk Distance: {max_risk_distance:.2f} ({max_risk_atr_multiplier}x ATR M1: {atr_val:.2f})")
-            
             if signal == "BUY":
                 sl = prev_m5_low - buffer
                 # Check if SL is too close (safety) - min 10 pips
@@ -741,13 +837,7 @@ def strategy_1_logic(config, error_count=0):
                 if (price - sl) < min_dist:
                     sl = price - min_dist
                 
-                # FIX: Giới hạn risk distance tối đa
                 risk_dist = price - sl
-                if risk_dist > max_risk_distance:
-                    sl = price - max_risk_distance
-                    risk_dist = max_risk_distance
-                    print(f"   ⚠️ Risk quá lớn ({risk_dist:.2f} > {max_risk_distance:.2f}), dùng max risk: {max_risk_distance:.2f}")
-                
                 tp = price + (risk_dist * reward_ratio)
                 
             elif signal == "SELL":
@@ -757,16 +847,10 @@ def strategy_1_logic(config, error_count=0):
                 if (sl - price) < min_dist:
                     sl = price + min_dist
                 
-                # FIX: Giới hạn risk distance tối đa
                 risk_dist = sl - price
-                if risk_dist > max_risk_distance:
-                    sl = price + max_risk_distance
-                    risk_dist = max_risk_distance
-                    print(f"   ⚠️ Risk quá lớn ({risk_dist:.2f} > {max_risk_distance:.2f}), dùng max risk: {max_risk_distance:.2f}")
-                
                 tp = price - (risk_dist * reward_ratio)
             
-            print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio}) | Risk: {risk_dist:.2f}")
+            print(f"   📏 Auto M5 SL: {sl:.2f} (Prev High/Low ± {buffer:.2f} buffer) | TP: {tp:.2f} (R:R {reward_ratio})")
             
         else:
             # Fixed Pips (Legacy)
@@ -777,9 +861,13 @@ def strategy_1_logic(config, error_count=0):
             tp = price + tp_pips if signal == "BUY" else price - tp_pips
             
         # Log signal to DB
-        db.log_signal("Strategy_1_Trend_HA_V2", symbol, signal, price, sl, tp, 
-                      {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi']), "adx": float(adx_value), "atr": float(atr_val)}, 
-                      account_id=config['account'])
+        try:
+            db.log_signal("Strategy_1_Trend_HA_V2", symbol, signal, price, sl, tp, 
+                          {"trend": current_trend, "ha_close": float(last_ha['ha_close']), "sl_mode": sl_mode, "rsi": float(last_ha['rsi']), "adx": float(adx_value), "atr": float(atr_val)}, 
+                          account_id=config['account'])
+            print(f"✅ Signal logged to DB: {signal} at {price:.2f}")
+        except Exception as e:
+            print(f"⚠️ Failed to log signal to DB: {e}")
 
         # Send Order
         request = {
@@ -799,7 +887,11 @@ def strategy_1_logic(config, error_count=0):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
-            db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
+            try:
+                db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
+                print(f"✅ Order logged to DB: Ticket {result.order}")
+            except Exception as e:
+                print(f"⚠️ Failed to log order to DB: {e}")
             
             # Detailed Telegram Message
             msg = (
@@ -817,7 +909,7 @@ def strategy_1_logic(config, error_count=0):
                 f"• EMA50/200 M5: {ema50_m5:.2f}/{ema200_m5:.2f} ✅\n"
                 f"• Liquidity Sweep: PASS ✅\n"
                 f"• Displacement Candle: PASS ✅\n"
-                f"• ATR M1: {atr_val:.2f} ({atr_status})\n"
+                f"• ATR: {atr_val:.2f}\n"
                 f"• CHOP Filter: PASS ✅\n"
                 f"• Session: {session_msg}"
             )
@@ -843,8 +935,6 @@ if __name__ == "__main__":
         print("📋 V4 Improvements (Session & Losses):")
         print("   ✅ Session Filter (08:00 - 22:00 default)")
         print("   ✅ Consecutive Loss Stop (Max 3 losses default)")
-        print("   ✅ ATR M1 Volatility Filter (> 3.0 = BỎ TRADE, 2-3 = Cẩn trọng, < 2.0 = Lý tưởng)")
-        print("   ✅ Max Risk Distance (3.0x ATR M1) để tránh SL quá xa")
         print("📋 V3 Improvements (Already included):")
         print("   ✅ EMA200 calculation fixed (dùng EMA thực sự)")
         print("   ✅ ADX filter increased (>= 25)")
