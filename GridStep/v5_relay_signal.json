@@ -1,21 +1,21 @@
 {
-  "relay_id": "74666f65-d231-4aa9-9f5f-0b11c8a933b5",
-  "created_ts": 1775696721.4853928,
-  "expires_ts": 1775707521.4853928,
+  "relay_id": "ddb11b37-20c8-48f6-9dd8-d4bff4fea4bb",
+  "created_ts": 1775719683.6172893,
+  "expires_ts": 1775730483.6172893,
   "symbol": "XAUUSD",
   "magic": 100010,
-  "zone_key": 4720,
+  "zone_key": 4705,
   "zone_points": 5.0,
-  "entry_price": 4720.0,
-  "signal_type": "BUY",
+  "entry_price": 4705.0,
+  "signal_type": "SELL",
   "step": 5.0,
   "grid_preview": {
-    "buy_price": 4720.0,
-    "sell_price": 4710.0,
-    "ref": 4715.0,
+    "buy_price": 4715.0,
+    "sell_price": 4705.0,
+    "ref": 4710.0,
     "step": 5.0,
-    "anchor": 4715.0
+    "anchor": 4710.0
   },
-  "gate_score": 7,
+  "gate_score": 10,
   "gate_reason_snapshot": ""
 }
