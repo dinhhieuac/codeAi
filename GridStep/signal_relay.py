@@ -5,8 +5,8 @@ File:
 - v5_relay_signal.json — payload mới nhất chờ live
 - v5_relay_state.json — demo_relayed_zone_ts (zone → unix time relay cuối, dedupe theo TTL)
   + live_consumed_relay_ids
-- v5_relay_signal_history.jsonl — append mỗi lần ghi signal (lịch sử đầy đủ); đổi path qua configure_grid_step_v5_paths
-- v5_relay_demo.json — demo: sau khi đặt cặp BUY_STOP/SELL_STOP, ghi 2 mức ngược (đổi chiều lệnh, giữ giá).
+- v5_relay_signal_history.jsonl — base; khi payload có `symbol` → append vào **v5_relay_signal_history_<SYMBOL>.jsonl** (cùng quy tắc demo history); đổi path qua configure_grid_step_v5_paths
+- v5_relay_demo.json — mỗi tín hiệu: **ghi đè** file (xóa data cũ), relay_id mới; không merge.
   `relay_id` = id lô (sign_inverse consume); `relay_id_buy_limit` / `relay_id_sell_limit` = id từng chân inverse; đổi path qua configure_grid_step_v5_paths
 - v5_relay_demo_history_<SYMBOL>.jsonl — append mỗi lần ghi demo inverse (một file/symbol, từ base path v5_relay_demo_history.jsonl); đổi base qua configure_grid_step_v5_paths
 
@@ -79,9 +79,27 @@ def _atomic_write(path: str, obj: Any) -> None:
     os.replace(tmp, path)
 
 
+def _relay_signal_history_path_for_payload(payload: Dict[str, Any]) -> str:
+    """
+    Từ RELAY_SIGNAL_HISTORY_LOG (vd v5_relay_signal_history.jsonl) → v5_relay_signal_history_BTCUSD.jsonl
+    (cùng cách với v5_relay_demo_history_*.jsonl). Symbol rỗng → file base.
+    """
+    base = RELAY_SIGNAL_HISTORY_LOG
+    if not base:
+        return ""
+    sym = _symbol_safe_for_filename(str(payload.get("symbol") or ""))
+    if not sym:
+        return base
+    dirname, basename = os.path.split(base)
+    stem, ext = os.path.splitext(basename)
+    if not ext:
+        ext = ".jsonl"
+    return os.path.join(dirname, f"{stem}_{sym}{ext}")
+
+
 def _append_relay_signal_history(payload: Dict[str, Any]) -> None:
-    """Một dòng JSON = một tín hiệu đã ghi (append-only)."""
-    path = RELAY_SIGNAL_HISTORY_LOG
+    """Một dòng JSON = một tín hiệu đã ghi khi demo publish relay (append-only), tách file theo symbol như demo history."""
+    path = _relay_signal_history_path_for_payload(payload)
     if not path:
         return
     line = dict(payload)
@@ -142,10 +160,25 @@ def price_zone_key(price: float, zone_points: float) -> int:
         return 0
 
 
+def _overwrite_relay_demo_snapshot(out: Dict[str, Any]) -> None:
+    """
+    Thay thế hoàn toàn file snapshot demo inverse: xóa file cũ (nếu có) rồi ghi JSON mới.
+    Không merge — mỗi lần gọi là một bộ relay_id mới.
+    """
+    path = RELAY_DEMO_FILE
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+    _atomic_write(path, out)
+
+
 def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[str, Any]) -> None:
     """
     Ghi v5_relay_demo.json khi demo vừa đặt cặp pending stop (BUY_STOP + SELL_STOP).
     Hai tín hiệu ngược demo (cùng giá, đổi loại lệnh); grid_preview_inverse đổi buy_price/sell_price.
+    Mỗi lần ghi: xóa snapshot cũ, ghi lại toàn bộ — relay_id / relay_id_buy_limit / relay_id_sell_limit là UUID mới.
     """
     gpr = gate_features.get("grid_preview") if isinstance(gate_features.get("grid_preview"), dict) else {}
     try:
@@ -198,7 +231,7 @@ def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[st
         ],
         "grid_preview_inverse": inv_gpr,
     }
-    _atomic_write(RELAY_DEMO_FILE, out)
+    _overwrite_relay_demo_snapshot(out)
     _append_relay_demo_history(out)
 
 
