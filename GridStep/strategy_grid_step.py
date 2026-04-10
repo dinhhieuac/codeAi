@@ -25,6 +25,35 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown.json")
 PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause.json")
 
+# Optional: strategy_grid_step_v5 gán callable để ghi log khi đặt BUY_STOP/SELL_STOP thất bại (không import v5 ở đây).
+log_pending_stop_attempt = None
+# Optional: dict do caller gộp thêm (vd v5_role, grid_preview); đọc trong callback nếu cần.
+grid_pending_stop_log_context = None
+
+
+def _order_send_result_dict(r):
+    if r is None:
+        return None
+    return {
+        "retcode": int(getattr(r, "retcode", 0) or 0),
+        "comment": str(getattr(r, "comment", "") or ""),
+        "order": int(getattr(r, "order", 0) or 0),
+    }
+
+
+def _try_log_pending_stop_failure(payload):
+    fn = log_pending_stop_attempt
+    if not callable(fn):
+        return
+    try:
+        line = dict(payload)
+        ctx = grid_pending_stop_log_context
+        if isinstance(ctx, dict) and ctx:
+            line["log_context"] = ctx
+        fn(line)
+    except Exception:
+        pass
+
 
 def load_cooldown_levels(cooldown_minutes):
     """Trả về dict level_key -> timestamp (chỉ các mức còn trong thời gian cooldown)."""
@@ -668,13 +697,42 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     r1 = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
     r2 = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
 
+    def _pending_fail_base(failure):
+        le = mt5.last_error()
+        if le and len(le) >= 2:
+            le_out = {"code": int(le[0]), "message": str(le[1])}
+        else:
+            le_out = None
+        return {
+            "event": "pending_stop_pair_error",
+            "ok": False,
+            "failure": failure,
+            "symbol": symbol,
+            "magic": magic,
+            "strategy_name": strategy_name,
+            "step_label": _step_label,
+            "volume": volume,
+            "ref": ref,
+            "buy_price": buy_price,
+            "sell_price": sell_price,
+            "sl_buy": sl_buy,
+            "tp_buy": tp_buy,
+            "sl_sell": sl_sell,
+            "tp_sell": tp_sell,
+            "buy_stop": _order_send_result_dict(r1),
+            "sell_stop": _order_send_result_dict(r2),
+            "mt5_last_error": le_out,
+        }
+
     if r1 is None:
         err = mt5.last_error()
         print(f"❌ BUY_STOP order_send lỗi: {err}")
+        _try_log_pending_stop_failure(_pending_fail_base("buy_none"))
         return error_count + 1, getattr(err, 'code', 0)
     if r2 is None:
         err = mt5.last_error()
         print(f"❌ SELL_STOP order_send lỗi: {err}")
+        _try_log_pending_stop_failure(_pending_fail_base("sell_none"))
         return error_count + 1, getattr(err, 'code', 0)
 
     if r1.retcode == mt5.TRADE_RETCODE_DONE and r2.retcode == mt5.TRADE_RETCODE_DONE:
@@ -687,9 +745,15 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         return 0, 0
     if r1.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ BUY_STOP failed: {r1.retcode} {r1.comment}")
+        p = _pending_fail_base("buy_retcode")
+        p["mt5_last_error"] = None
+        _try_log_pending_stop_failure(p)
         return error_count + 1, r1.retcode
     if r2.retcode != mt5.TRADE_RETCODE_DONE:
         print(f"❌ SELL_STOP failed: {r2.retcode} {r2.comment}")
+        p = _pending_fail_base("sell_retcode")
+        p["mt5_last_error"] = None
+        _try_log_pending_stop_failure(p)
         return error_count + 1, r2.retcode
 
     return error_count, 0

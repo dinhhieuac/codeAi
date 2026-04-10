@@ -10,6 +10,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - v5_role=live: không đọc history / không chấm điểm trên account live — chỉ đăng nhập MT5 (account trong config),
   đọc file relay do demo ghi; flat → mirror relay; có grid → chỉ chạy base strategy (stub gate, không score).
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay, không dựng lại grid preview trên live.
+- `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
 """
 import copy
 import os
@@ -18,6 +19,7 @@ import time
 import json
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import strategy_grid_step as base
 import signal_relay
@@ -36,6 +38,7 @@ base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_v5.json")
 base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
 LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_live_state.json")
+V5_PENDING_PAIR_LOG_DIR = os.path.join(SCRIPT_DIR, "log")
 
 
 def configure_grid_step_v5_paths(
@@ -838,6 +841,81 @@ def _snapshot_bot_orders_positions(symbol, magic):
     return pending_tickets, position_tickets
 
 
+def _collect_pending_stop_pair(symbol: str, magic: int) -> Optional[dict]:
+    """
+    Cặp lưới: ít nhất một BUY_STOP và một SELL_STOP pending cùng symbol/magic.
+    Trả về dict chi tiết hoặc None nếu không đủ cặp.
+    """
+    orders = mt5.orders_get(symbol=symbol) or []
+    buy_stops: list = []
+    sell_stops: list = []
+    ot_buy = getattr(mt5, "ORDER_TYPE_BUY_STOP", 4)
+    ot_sell = getattr(mt5, "ORDER_TYPE_SELL_STOP", 5)
+    for o in orders:
+        if int(getattr(o, "magic", 0) or 0) != int(magic):
+            continue
+        ot = int(getattr(o, "type", -1))
+        ticket = int(getattr(o, "ticket", 0) or 0)
+        price_open = float(getattr(o, "price_open", 0) or 0)
+        vol = float(
+            getattr(o, "volume_initial", 0)
+            or getattr(o, "volume_current", 0)
+            or 0
+        )
+        cmt = str(getattr(o, "comment", "") or "")
+        row = {
+            "ticket": ticket,
+            "price_open": price_open,
+            "volume": vol,
+            "comment": cmt,
+        }
+        if ot == ot_buy:
+            buy_stops.append(row)
+        elif ot == ot_sell:
+            sell_stops.append(row)
+    if not buy_stops or not sell_stops:
+        return None
+    return {
+        "symbol": symbol,
+        "magic": magic,
+        "buy_stop_pending": buy_stops,
+        "sell_stop_pending": sell_stops,
+    }
+
+
+def _append_pending_stop_pair_daily_log(record: dict) -> None:
+    """Một dòng JSON / ngày — tên file theo ngày local."""
+    try:
+        os.makedirs(V5_PENDING_PAIR_LOG_DIR, exist_ok=True)
+    except OSError:
+        return
+    day = datetime.now().strftime("%Y-%m-%d")
+    path = os.path.join(V5_PENDING_PAIR_LOG_DIR, f"pending_stop_pair_{day}.jsonl")
+    line = dict(record)
+    line["_logged_ts"] = time.time()
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except IOError:
+        pass
+
+
+def _v5_append_pending_stop_failure_log(line: dict) -> None:
+    """Ghi cùng file pending_stop_pair_*.jsonl khi base.strategy_grid_step_logic đặt BUY_STOP/SELL_STOP lỗi."""
+    ctx = line.pop("log_context", None) or {}
+    if not bool(ctx.get("enabled", True)):
+        return
+    rec = dict(line)
+    if ctx.get("v5_role") is not None:
+        rec["v5_role"] = ctx.get("v5_role")
+    if "grid_preview" in ctx:
+        rec["grid_preview"] = ctx.get("grid_preview")
+    _append_pending_stop_pair_daily_log(rec)
+
+
+base.log_pending_stop_attempt = _v5_append_pending_stop_failure_log
+
+
 def _live_has_equivalent_order(symbol, magic, step_filter, signal_type, entry_price, price_threshold):
     """
     Live đã có lệnh/position tương ứng tín hiệu: cùng symbol/magic (đã lọc), cùng chiều,
@@ -1494,6 +1572,15 @@ def run():
                     else:
                         base.sync_closed_orders_from_mt5(config, strategy_name="Grid_Step")
 
+                base.grid_pending_stop_log_context = {
+                    "enabled": bool(params.get("v5_pending_pair_log_enabled", True)),
+                    "v5_role": v5_role,
+                    "grid_preview": (
+                        gate_features.get("grid_preview")
+                        if isinstance(gate_features, dict)
+                        else None
+                    ),
+                }
                 if steps_list is not None:
                     for step_val in steps_list:
                         consecutive_errors, last_error_code = base.strategy_grid_step_logic(
@@ -1507,6 +1594,30 @@ def run():
                 post_pending, post_positions = _snapshot_bot_orders_positions(sym, mag)
                 new_pending = [t for t in post_pending if t not in pre_pending]
                 new_positions = [t for t in post_positions if t not in pre_positions]
+
+                if bool(params.get("v5_pending_pair_log_enabled", True)) and (
+                    new_pending or new_positions
+                ):
+                    pair_snap = _collect_pending_stop_pair(sym, mag)
+                    if pair_snap is not None:
+                        gpr_log = (
+                            gate_features.get("grid_preview")
+                            if isinstance(gate_features, dict)
+                            else None
+                        )
+                        _append_pending_stop_pair_daily_log(
+                            {
+                                "v5_role": v5_role,
+                                "symbol": sym,
+                                "magic": mag,
+                                "new_pending_tickets": new_pending,
+                                "new_position_tickets": new_positions,
+                                "pending_count": len(post_pending),
+                                "position_count": len(post_positions),
+                                "grid_preview": gpr_log,
+                                "pending_stop_pair": pair_snap,
+                            }
+                        )
 
                 # Demo: vừa đặt cặp pending stop → ghi đè v5_relay_demo.json (xóa snapshot cũ, relay_id mới).
                 if v5_role == "demo" and (new_pending or new_positions) and isinstance(

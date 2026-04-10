@@ -216,6 +216,14 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
 
     px_buy_lim = key_buy
     px_sell_lim = key_sell
+    nb, ns, norm_note = normalize_inverse_limit_prices(info, tick, px_buy_lim, px_sell_lim, digits)
+    if nb is None or ns is None:
+        msg = norm_note or "không chuẩn hóa được giá limit"
+        print(f"⏭️ {LOG_PREFIX} Bỏ qua — {msg}")
+        return False, msg, False
+    px_buy_lim, px_sell_lim = nb, ns
+    if norm_note:
+        print(f"🔧 {LOG_PREFIX} Chuẩn hóa giá relay: {norm_note}")
 
     dup, dup_reason = has_same_price_inverse_duplicate(symbol, magic, px_buy_lim, px_sell_lim, digits)
     if dup:
@@ -263,7 +271,10 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     ok1 = r1.retcode == mt5.TRADE_RETCODE_DONE
     ok2 = r2.retcode == mt5.TRADE_RETCODE_DONE
     if ok1 and ok2:
-        print(f"✅ {LOG_PREFIX} Đã đặt cặp lệnh inverse relay_id={relay_id}")
+        print(
+            f"✅ {LOG_PREFIX} Đã đặt cặp lệnh inverse batch={relay_batch} | "
+            f"BUY_LIMIT relay_id={relay_id_buy_leg} | SELL_LIMIT relay_id={relay_id_sell_leg}"
+        )
         return True, "", False
 
     if not ok1:

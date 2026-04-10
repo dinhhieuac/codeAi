@@ -1,8 +1,8 @@
 {
-"account": 213341144,
+"account": 183967700,
     "password": "@Dinhhieu273",
-    "server": "Exness-MT5Real28",
+    "server": "Exness-MT5Real25",
     "mt5_path": "C:\\Program Files\\M9\\terminal64.exe",
-  "symbol": "BTCUSDm",
+  "symbol": "BTCUSDc",
   "volume": 0.01
 }

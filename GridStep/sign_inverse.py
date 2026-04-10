@@ -12,6 +12,7 @@ Clone luồng từ signal.py; khác:
 
 - **`symbol` trong config** = tên symbol MT5 khi đặt BUY_LIMIT/SELL_LIMIT (vd XAUUSDm). Giá vẫn lấy từ relay; nếu chỉ có `symbol` (không dùng `inverse_allowed_symbols`) thì không chặn relay vì lệch tên broker so với demo.
 - **spread_sl** (mặc định 0), **spread_tp** (mặc định −0.3): khi đặt BUY_LIMIT/SELL_LIMIT, `SL = SL + spread_sl`, `TP = TP + spread_tp` (sau công thức grid step).
+- **`log/inverse_limit_pair_YYYY-MM-DD.jsonl`**: mỗi lần đặt cặp limit (thành công hoặc lỗi MT5) — tắt: `inverse_pair_log_enabled`: false.
 - Có thể trỏ file khác: python sign_inverse.py --config path/to/config.json
 """
 
@@ -22,6 +23,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional, Set, Tuple
 
 import MetaTrader5 as mt5
@@ -29,6 +31,7 @@ import MetaTrader5 as mt5
 import signal_relay
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(SCRIPT_DIR, "log")
 DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "config_grid_step_inverse_live.json")
 # Chỉ nguồn tín hiệu inverse — không dùng v5_relay_signal.json (xem signal.py).
 RELAY_DEMO_PATH = os.path.join(SCRIPT_DIR, "v5_relay_demo.json")
@@ -55,6 +58,33 @@ def _atomic_write(path: str, obj: Any) -> None:
     os.replace(tmp, path)
 
 
+def _order_send_result_dict(r: Any) -> Optional[Dict[str, Any]]:
+    if r is None:
+        return None
+    return {
+        "retcode": int(getattr(r, "retcode", 0) or 0),
+        "comment": str(getattr(r, "comment", "") or ""),
+        "order": int(getattr(r, "order", 0) or 0),
+    }
+
+
+def _append_inverse_limit_daily_log(record: dict) -> None:
+    """Một dòng JSON / ngày — cùng thư mục log với V5 (`GridStep/log/`)."""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+    except OSError:
+        return
+    day = datetime.now().strftime("%Y-%m-%d")
+    path = os.path.join(LOG_DIR, f"inverse_limit_pair_{day}.jsonl")
+    line = dict(record)
+    line["_logged_ts"] = time.time()
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except IOError:
+        pass
+
+
 def _allowed_symbols_from_config(cfg: Dict[str, Any]) -> Optional[Set[str]]:
     """
     None = cho mọi symbol trong relay (không lọc).
@@ -73,7 +103,7 @@ def _allowed_symbols_from_config(cfg: Dict[str, Any]) -> Optional[Set[str]]:
 
 def load_sign_inverse_config(
     config_path: str,
-) -> Tuple[Dict[str, Any], float, Optional[Set[str]], float, float, Optional[str]]:
+) -> Tuple[Dict[str, Any], float, Optional[Set[str]], float, float, Optional[str], bool]:
     cfg = _load_json(config_path, None)
     if not isinstance(cfg, dict):
         raise FileNotFoundError(f"Không đọc được config: {config_path}")
@@ -95,7 +125,9 @@ def load_sign_inverse_config(
     raw_tp = cfg.get("spread_tp")
     spread_sl = 0.0 if raw_sl is None else float(raw_sl)
     spread_tp = -0.3 if raw_tp is None else float(raw_tp)
-    return creds, vol, allowed, spread_sl, spread_tp, trade_symbol
+    raw_log = cfg.get("inverse_pair_log_enabled")
+    pair_log_enabled = True if raw_log is None else bool(raw_log)
+    return creds, vol, allowed, spread_sl, spread_tp, trade_symbol, pair_log_enabled
 
 
 def connect_mt5_login_only(creds: Dict[str, Any]) -> bool:
@@ -197,6 +229,7 @@ def place_pair_from_inverse_relay(
     spread_sl: float = 0.0,
     spread_tp: float = -0.3,
     order_symbol: Optional[str] = None,
+    pair_log_enabled: bool = True,
 ) -> Tuple[bool, str, bool]:
     """
     BUY_LIMIT @ buy_price (SL=buy−step, TP=buy+step); SELL_LIMIT @ sell_price (SL=sell+step, TP=sell−step).
@@ -280,6 +313,31 @@ def place_pair_from_inverse_relay(
         f" | step={step_val} | vol={vol}{tick_hint}"
     )
 
+    def _base_log_common() -> Dict[str, Any]:
+        return {
+            "source": "sign_inverse",
+            "symbol": symbol,
+            "magic": magic,
+            "relay_batch": relay_batch,
+            "relay_id_buy_leg": relay_id_buy_leg,
+            "relay_id_sell_leg": relay_id_sell_leg,
+            "step": step_val,
+            "volume": vol,
+            "px_buy_limit": px_buy_lim,
+            "px_sell_limit": px_sell_lim,
+            "sl_buy": sl_buy,
+            "tp_buy": tp_buy,
+            "sl_sell": sl_sell,
+            "tp_sell": tp_sell,
+            "grid_preview": gpr,
+        }
+
+    def _mt5_last_err() -> Optional[Dict[str, Any]]:
+        le = mt5.last_error()
+        if le and len(le) >= 2:
+            return {"code": int(le[0]), "message": str(le[1])}
+        return None
+
     r1 = place_buy_limit(
         symbol, vol, px_buy_lim, sl_buy, tp_buy, magic, comment_buy, digits=digits, type_filling=filling
     )
@@ -288,6 +346,24 @@ def place_pair_from_inverse_relay(
     )
 
     if r1 is None or r2 is None:
+        if pair_log_enabled:
+            if r1 is None and r2 is None:
+                fail = "both_none"
+            elif r1 is None:
+                fail = "buy_none"
+            else:
+                fail = "sell_none"
+            _append_inverse_limit_daily_log(
+                {
+                    "event": "inverse_limit_pair_error",
+                    "ok": False,
+                    "failure": fail,
+                    **_base_log_common(),
+                    "buy_limit": _order_send_result_dict(r1),
+                    "sell_limit": _order_send_result_dict(r2),
+                    "mt5_last_error": _mt5_last_err(),
+                }
+            )
         return False, f"order_send None (buy={r1 is None}, sell={r2 is None})", False
 
     ok1 = r1.retcode == mt5.TRADE_RETCODE_DONE
@@ -297,12 +373,41 @@ def place_pair_from_inverse_relay(
             f"✅ [sign_inverse] Đã đặt cặp lệnh inverse batch={relay_batch} | "
             f"BUY_LIMIT relay_id={relay_id_buy_leg} | SELL_LIMIT relay_id={relay_id_sell_leg}"
         )
+        if pair_log_enabled:
+            _append_inverse_limit_daily_log(
+                {
+                    "event": "inverse_limit_pair",
+                    "ok": True,
+                    **_base_log_common(),
+                    "buy_limit": _order_send_result_dict(r1),
+                    "sell_limit": _order_send_result_dict(r2),
+                }
+            )
         return True, "", False
 
     if not ok1:
         print(f"❌ [sign_inverse] BUY_LIMIT: {r1.retcode} {r1.comment}")
     if not ok2:
         print(f"❌ [sign_inverse] SELL_LIMIT: {r2.retcode} {r2.comment}")
+
+    if pair_log_enabled:
+        if ok1 and not ok2:
+            fail = "sell_retcode"
+        elif not ok1 and ok2:
+            fail = "buy_retcode"
+        else:
+            fail = "both_retcode"
+        _append_inverse_limit_daily_log(
+            {
+                "event": "inverse_limit_pair_error",
+                "ok": False,
+                "failure": fail,
+                **_base_log_common(),
+                "buy_limit": _order_send_result_dict(r1),
+                "sell_limit": _order_send_result_dict(r2),
+                "mt5_last_error": None,
+            }
+        )
 
     err_detail = f"BUY {getattr(r1, 'retcode', '?')} SELL {getattr(r2, 'retcode', '?')}"
     consume = _mark_consumed_after_pair_fail(r1, r2)
@@ -375,14 +480,18 @@ def describe_inverse_wait_status(
 
 
 def run_loop(config_path: str) -> None:
-    creds, volume, allowed_symbols, spread_sl, spread_tp, trade_symbol = load_sign_inverse_config(
-        config_path
+    creds, volume, allowed_symbols, spread_sl, spread_tp, trade_symbol, pair_log_enabled = (
+        load_sign_inverse_config(config_path)
     )
     consumed = load_consumed_ids()
     print(f"📁 [sign_inverse] config login: {config_path}")
     print(f"📁 [sign_inverse] relay demo: {RELAY_DEMO_PATH}")
     print(f"📁 [sign_inverse] consumed ids: {CONSUMED_IDS_PATH} ({len(consumed)} id)")
     print(f"📌 [sign_inverse] spread_sl={spread_sl} spread_tp={spread_tp} (SL+=spread_sl, TP+=spread_tp)")
+    print(
+        f"📌 [sign_inverse] Ghi log cặp limit: {'bật' if pair_log_enabled else 'tắt'} "
+        f"(log/inverse_limit_pair_YYYY-MM-DD.jsonl)"
+    )
     if trade_symbol:
         print(
             f"📌 [sign_inverse] Đặt BUY_LIMIT/SELL_LIMIT trên symbol MT5: {trade_symbol} "
@@ -419,6 +528,7 @@ def run_loop(config_path: str) -> None:
                         spread_sl=spread_sl,
                         spread_tp=spread_tp,
                         order_symbol=trade_symbol,
+                        pair_log_enabled=pair_log_enabled,
                     )
                     if ok:
                         rid = str(payload["relay_id"])
