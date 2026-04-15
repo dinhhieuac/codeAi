@@ -6,28 +6,32 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
 - wrapper (vd strategy_grid_step_btc_v5) gọi configure_grid_step_v5_paths() để tách relay/live log.
-- Supervisor demo+live (BTC — logic `use_dual_supervisor` trong `strategy_grid_step_btc_v5.run()`, không nằm ở đây):
-  spawn hai worker `--btc-v5-child` khi **đồng thời** (1) argv = config demo mặc định `config_grid_step_btc_v5.json`,
-  (2) không có `--no-parallel-live`, (3) tồn tại `configs/config_grid_step_btc_v5_live.json`,
-  (4) `parameters.btc_v5_parallel_live` trong JSON demo không phải `false`.
-  Nếu không → một process gọi `run()` với config hiện tại (vd `--config ..._live.json` chỉ live).
-  Process cha không login MT5; hai terminal cần hai `mt5_path`. Log trộn: 📚 [V5 Gate] / Grid STOP = **demo**; inverse-only / InvGrid = **live**.
+- Supervisor XAU (trong **file này** — `run()`): `use_dual_supervisor` spawn hai worker `--v5-child` khi **đồng thời**
+  (1) argv = config demo mặc định `config_grid_step_v5.json`, (2) không có `--no-parallel-live`,
+  (3) tồn tại `configs/config_grid_step_inverse_live.json`, (4) `parameters.v5_parallel_inverse_live` trong JSON demo không phải `false`.
+  Live child dùng `config_grid_step_inverse_live.json` (tài khoản / `mt5_path` riêng). Cha không login MT5.
+- Supervisor BTC: vẫn dùng `strategy_grid_step_btc_v5.py` (`--btc-v5-child`, `btc_v5_parallel_live`, `config_grid_step_btc_v5_live.json`).
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
-- v5_role=live: không đọc history / không chấm điểm trên account live — chỉ đăng nhập MT5 (account trong config),
-  đọc file relay do demo ghi; flat → mirror relay; có grid → chỉ chạy base strategy (stub gate, không score).
-  Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay, không dựng lại grid preview trên live.
+- v5_role=live (không inverse-only): không đọc history trên live; mirror theo relay / zone; có grid → base strategy.
+  Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
 - `v5_live_inverse_limits_from_demo_file` (live): đọc `RELAY_DEMO_FILE` (vd btc_v5_relay_demo.json do demo ghi), đặt **BUY_LIMIT+SELL_LIMIT** trực tiếp trên account live — **symbol / magic / volume** lấy từ config live (không dùng symbol trong file relay để mở lệnh). Consumed: `btc_signal_inverse_consumed_relay_ids.json` (cùng bot `btc_sign_inverser` nếu chạy song song — nên tắt một trong hai).
-- `v5_live_inverse_only` (live): **chỉ** chạy bước inverse trên (đọc file demo khi demo có lệnh → ghi file), **không** kiểm tra relay tín hiệu / zone / score / cooldown / **không** gọi grid `strategy_grid_step_logic` (BUY_STOP/SELL_STOP).
+- `v5_live_inverse_only` (live): chỉ đặt InvGrid; **không** gate / relay tín hiệu (`v5_relay_signal.json`) / grid STOP.
+  - `v5_inverse_ipc_port` > 0 (cùng cổng trên demo + live): demo **đẩy** snapshot qua TCP localhost ngay khi có lệnh; live **lắng nghe** và mở lệnh — **không đọc** file snapshot `.json` trên live.
+  - `v5_inverse_ipc_port` = 0: live đọc `RELAY_DEMO_FILE` như cũ (fallback).
+  - `v5_inverse_ipc_host` (mặc định 127.0.0.1): host bind/listen và host push.
 - `relay_demo_file` / `relay_demo_history_log_file` (parameters): đường dẫn tương đối `GridStep/` hoặc tuyệt đối — để demo và live **cùng file** snapshot inverse (vd `btc_v5_relay_demo.json`); bắt buộc nếu chạy `strategy_grid_step_v5.py` trực tiếp thay vì `strategy_grid_step_btc_v5.py`.
 - `v5_demo_inverse_file_when_pair_and_missing_file` (demo): nếu **chưa có** file RELAY_DEMO nhưng MT5 đã có đủ cặp BUY_STOP+SELL_STOP → tự tạo `grid_preview` từ giá lệnh và ghi file (hữu ích khi bot demo restart mà lệnh vẫn còn).
 - `v5_live_inverse_log_skip` (live): in lý do bỏ qua inverse (đã consumed, thiếu file, …); mặc định true.
 """
 import copy
+import json
 import os
+import select
+import socket
+import subprocess
 import sys
 import time
-import json
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Set
@@ -45,6 +49,10 @@ _score_signal_detailed = xauusd_grid_step_v5_score_detailed
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Supervisor demo + inverse live (XAU V5) — cùng logic btc_v5 nhưng config/flag khác
+V5_SUPERVISOR_DEMO_CONFIG = "config_grid_step_v5.json"
+V5_SUPERVISOR_LIVE_CONFIG = "config_grid_step_inverse_live.json"
+V5_SUPERVISOR_CHILD_FLAG = "--v5-child"
 base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_v5.json")
 base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
 LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
@@ -1484,40 +1492,48 @@ def _v5_relay_demo_file_missing_or_bad(path: str) -> bool:
     return False
 
 
-def _v5_live_try_inverse_limits_from_demo_file(
+def _v5_inverse_ipc_port_value(params: Optional[Dict[str, Any]]) -> int:
+    params = params or {}
+    try:
+        p = int(params.get("v5_inverse_ipc_port") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return p if 0 < p <= 65535 else 0
+
+
+def _v5_inverse_ipc_host(params: Optional[Dict[str, Any]]) -> str:
+    h = str((params or {}).get("v5_inverse_ipc_host") or "127.0.0.1").strip()
+    return h or "127.0.0.1"
+
+
+def _v5_open_inverse_listener(host: str, port: int) -> Optional[socket.socket]:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((host, port))
+        s.listen(8)
+        s.setblocking(False)
+        print(f"📡 [V5 live] Inverse IPC: lắng nghe {host}:{port} — không đọc snapshot từ file .json.")
+        return s
+    except OSError as e:
+        print(f"❌ [V5 live] Không bind inverse IPC {host}:{port}: {e}")
+        return None
+
+
+def _v5_live_apply_inverse_payload(
     config: Dict[str, Any],
     consumed: Set[str],
-    params: Optional[Dict[str, Any]] = None,
+    params: Optional[Dict[str, Any]],
+    payload: Dict[str, Any],
+    *,
+    source_detail: str,
 ) -> None:
-    """
-    Đọc snapshot inverse (demo_write_inverse_relay_file) từ RELAY_DEMO_FILE;
-    đặt cặp limit trên session MT5 hiện tại với symbol/magic từ config live.
-    """
+    """Đặt InvGrid từ dict snapshot (file hoặc TCP); `source_detail` dùng trong log."""
     params = params or {}
     log_skip = bool(params.get("v5_live_inverse_log_skip", True))
     try:
         import btc_sign_inverser as _bi
     except ImportError:
-        return
-    path = signal_relay.RELAY_DEMO_FILE
-    if not os.path.isfile(path):
-        if log_skip:
-            _v5_throttle_print(
-                "inv_missing_file",
-                f"ℹ️ [V5 live] Chưa có file inverse: {path}\n"
-                f"   → Demo phải ghi file (cùng thư mục GridStep) hoặc copy btc_v5_relay_demo.json từ máy chạy demo.",
-                90.0,
-            )
-        return
-    payload = _v5_load_json_file(path, None)
-    if not isinstance(payload, dict) or not payload:
-        if log_skip:
-            _v5_throttle_print(
-                "inv_empty",
-                f"ℹ️ [V5 live] File inverse rỗng / lỗi đọc: {path}\n"
-                f"   → Đợi demo ghi snapshot hợp lệ (hoặc vừa ghi xong — thử lại sau vài giây).",
-                60.0,
-            )
         return
     skip = _bi.inverse_payload_ready(payload, consumed, None)
     rid = str(payload.get("relay_id") or "")
@@ -1533,7 +1549,7 @@ def _v5_live_try_inverse_limits_from_demo_file(
             else:
                 _v5_throttle_print(
                     f"inv_skip_{skip}",
-                    f"ℹ️ [V5 live] Inverse bỏ qua: {skip} (file={os.path.basename(path)})",
+                    f"ℹ️ [V5 live] Inverse bỏ qua: {skip} ({source_detail})",
                     45.0,
                 )
         return
@@ -1547,8 +1563,8 @@ def _v5_live_try_inverse_limits_from_demo_file(
     inv = payload.get("grid_preview_inverse") or {}
     print(
         f"📤 {inv_lp} Chuẩn bị InvGrid | {sym_live} magic={place_payload.get('magic')} vol={vol} | "
-        f"BUY_LIMIT giá file={inv.get('buy_price')} SELL_LIMIT giá file={inv.get('sell_price')} | "
-        f"relay={str(rid)[:8]}…"
+        f"BUY_LIMIT giá={inv.get('buy_price')} SELL_LIMIT giá={inv.get('sell_price')} | "
+        f"relay={str(rid)[:8]}… | nguồn={source_detail}"
     )
     ok, err, mark_consumed = _bi.place_pair_from_inverse_relay(
         place_payload, vol, log_prefix=inv_lp
@@ -1557,11 +1573,104 @@ def _v5_live_try_inverse_limits_from_demo_file(
         _bi.save_consumed_id(str(rid), consumed)
         consumed.add(str(rid))
     if ok:
-        print(f"✅ {inv_lp} Hoàn tất snapshot {os.path.basename(path)} relay={str(rid)[:8]}…")
+        print(f"✅ {inv_lp} Hoàn tất snapshot ({source_detail}) relay={str(rid)[:8]}…")
     elif mark_consumed and err and "thiếu" not in err:
         print(f"⚠️ {inv_lp} Inverse — consumed: {err}")
     elif not ok and not mark_consumed and err:
         print(f"⚠️ {inv_lp} Inverse đặt lệnh thất bại (sẽ thử lại): {err}")
+
+
+def _v5_live_poll_inverse_ipc(
+    config: Dict[str, Any],
+    consumed: Set[str],
+    params: Optional[Dict[str, Any]],
+    listener: socket.socket,
+    timeout_sec: float,
+) -> None:
+    """Một lần select + accept + nhận một dòng JSON snapshot từ demo."""
+    params = params or {}
+    try:
+        r, _, _ = select.select([listener], [], [], max(0.0, float(timeout_sec)))
+    except (ValueError, OSError):
+        return
+    if not r:
+        return
+    conn: Optional[socket.socket] = None
+    try:
+        conn, _ = listener.accept()
+    except BlockingIOError:
+        return
+    except OSError:
+        return
+    try:
+        conn.settimeout(12.0)
+        parts: list = []
+        total = 0
+        while total < 512 * 1024:
+            b = conn.recv(8192)
+            if not b:
+                break
+            parts.append(b)
+            total += len(b)
+            if b"\n" in b:
+                break
+        raw = b"".join(parts)
+        line = raw.split(b"\n", 1)[0].decode("utf-8", errors="replace")
+        payload = json.loads(line)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        _v5_throttle_print("inv_ipc_bad", f"⚠️ [V5 live] Inverse IPC payload lỗi: {e}", 45.0)
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+    if not isinstance(payload, dict) or not payload:
+        return
+    _v5_live_apply_inverse_payload(
+        config, consumed, params, payload, source_detail="IPC localhost"
+    )
+
+
+def _v5_live_try_inverse_limits_from_demo_file(
+    config: Dict[str, Any],
+    consumed: Set[str],
+    params: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Đọc snapshot inverse (demo_write_inverse_relay_file) từ RELAY_DEMO_FILE;
+    đặt cặp limit trên session MT5 hiện tại với symbol/magic từ config live.
+    """
+    params = params or {}
+    log_skip = bool(params.get("v5_live_inverse_log_skip", True))
+    path = signal_relay.RELAY_DEMO_FILE
+    if not os.path.isfile(path):
+        if log_skip:
+            _v5_throttle_print(
+                "inv_missing_file",
+                f"ℹ️ [V5 live] Chưa có file inverse: {path}\n"
+                f"   → Demo phải ghi file (cùng thư mục GridStep) hoặc bật v5_inverse_ipc_port (TCP) để không dùng file.",
+                90.0,
+            )
+        return
+    payload = _v5_load_json_file(path, None)
+    if not isinstance(payload, dict) or not payload:
+        if log_skip:
+            _v5_throttle_print(
+                "inv_empty",
+                f"ℹ️ [V5 live] File inverse rỗng / lỗi đọc: {path}\n"
+                f"   → Đợi demo ghi snapshot hợp lệ (hoặc vừa ghi xong — thử lại sau vài giây).",
+                60.0,
+            )
+        return
+    _v5_live_apply_inverse_payload(
+        config,
+        consumed,
+        params,
+        payload,
+        source_detail=f"file {os.path.basename(path)}",
+    )
 
 
 def _v5_normalize_config_trade_keys(config: Dict[str, Any]) -> None:
@@ -1586,7 +1695,101 @@ def _v5_normalize_config_trade_keys(config: Dict[str, Any]) -> None:
             config["magic"] = 0
 
 
+def _v5_argv_config_basename() -> str:
+    a = sys.argv[1:]
+    if not a:
+        return V5_SUPERVISOR_DEMO_CONFIG
+    if a[0].strip() == "--config" and len(a) >= 2:
+        return os.path.basename(a[1].strip())
+    if a[0].strip().endswith(".json"):
+        return os.path.basename(a[0].strip())
+    return V5_SUPERVISOR_DEMO_CONFIG
+
+
+def _v5_strip_supervisor_flags() -> None:
+    sys.argv = [
+        sys.argv[0],
+        *[x for x in sys.argv[1:] if x not in ("--no-parallel-live", V5_SUPERVISOR_CHILD_FLAG)],
+    ]
+
+
+def _v5_parallel_inverse_live_enabled(demo_config_path: str) -> bool:
+    try:
+        with open(demo_config_path, encoding="utf-8") as f:
+            demo_cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return True
+    return bool(demo_cfg.get("parameters", {}).get("v5_parallel_inverse_live", True))
+
+
 def run():
+    args = sys.argv[1:]
+    if args and args[0].strip() == "--check-db":
+        base.check_grid_step_db()
+        sys.exit(0)
+
+    if V5_SUPERVISOR_CHILD_FLAG in sys.argv:
+        _v5_strip_supervisor_flags()
+        _run_v5_bot()
+        return
+
+    if len(sys.argv) == 1:
+        sys.argv.extend(["--config", V5_SUPERVISOR_DEMO_CONFIG])
+
+    no_parallel = "--no-parallel-live" in sys.argv
+    cfg_base = _v5_argv_config_basename()
+    live_path = os.path.join(SCRIPT_DIR, "configs", V5_SUPERVISOR_LIVE_CONFIG)
+    demo_path = os.path.join(SCRIPT_DIR, "configs", V5_SUPERVISOR_DEMO_CONFIG)
+    demo_selected = cfg_base == V5_SUPERVISOR_DEMO_CONFIG
+    if no_parallel:
+        print("📌 [V5] --no-parallel-live: chỉ chạy một process (config hiện tại).")
+    _v5_strip_supervisor_flags()
+
+    use_dual_supervisor = (
+        demo_selected
+        and not no_parallel
+        and os.path.isfile(live_path)
+        and _v5_parallel_inverse_live_enabled(demo_path)
+    )
+
+    if use_dual_supervisor:
+        script = os.path.abspath(__file__)
+        py = sys.executable
+        cmd_demo = [py, script, "--config", V5_SUPERVISOR_DEMO_CONFIG, V5_SUPERVISOR_CHILD_FLAG]
+        cmd_live = [py, script, "--config", V5_SUPERVISOR_LIVE_CONFIG, V5_SUPERVISOR_CHILD_FLAG]
+        print(
+            f"🚀 [V5] Supervisor: demo ({V5_SUPERVISOR_DEMO_CONFIG}) + live inverse ({V5_SUPERVISOR_LIVE_CONFIG}). "
+            f"Hai terminal MT5 (mt5_path). Ctrl+C dừng cả hai."
+        )
+        p_demo = None
+        p_live = None
+        try:
+            p_demo = subprocess.Popen(cmd_demo, cwd=SCRIPT_DIR)
+            p_live = subprocess.Popen(cmd_live, cwd=SCRIPT_DIR)
+        except OSError as e:
+            print(f"⚠️ [V5] Không spawn process: {e}")
+            if p_demo is not None and p_demo.poll() is None:
+                p_demo.terminate()
+            return
+        try:
+            while p_demo.poll() is None or p_live.poll() is None:
+                time.sleep(0.4)
+        except KeyboardInterrupt:
+            print("\n🛑 [V5] Supervisor dừng (Ctrl+C)…")
+        finally:
+            for p in (p_demo, p_live):
+                if p is not None and p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+        return
+
+    _run_v5_bot()
+
+
+def _run_v5_bot():
     args = sys.argv[1:]
     if args and args[0].strip() == "--check-db":
         base.check_grid_step_db()
@@ -1623,19 +1826,25 @@ def run():
         print(f"✅ Grid Step Bot V5 - Started ({label})")
         loop_count = 0
         live_inverse_consumed: Optional[Set[str]] = None
+        inverse_ipc_listener: Optional[socket.socket] = None
         _p0 = config.get("parameters") or {}
         if str(_p0.get("v5_role", "")).lower().strip() == "live" and _v5_param_bool(
             _p0, "v5_live_inverse_only", False
         ):
+            ipc_p = _v5_inverse_ipc_port_value(_p0)
             print(
-                "📌 [V5] v5_live_inverse_only: live chỉ đặt InvGrid từ RELAY_DEMO_FILE khi demo ghi snapshot — "
-                "bỏ qua relay tín hiệu / gate / grid strategy."
+                "📌 [V5] v5_live_inverse_only: InvGrid khi demo có lệnh — bỏ qua relay tín hiệu / gate / grid strategy. "
+                + (
+                    f"Kênh TCP {_v5_inverse_ipc_host(_p0)}:{ipc_p} (không đọc file .json)."
+                    if ipc_p > 0
+                    else "Đọc snapshot từ RELAY_DEMO_FILE (file .json)."
+                )
             )
             ai0 = mt5.account_info()
             acct_s = str(ai0.login) if ai0 else "?"
             print(
                 f"💡 [V5 live inverse-only] MT5 account={acct_s} — process này không chạy [V5 Gate] hay Grid STOP. "
-                f"Nếu supervisor (demo+live), các dòng 📚 [V5 Gate] / 📤 Grid BTC là từ process DEMO (khác account)."
+                f"Nếu supervisor (demo+live), các dòng 📚 [V5 Gate] / 📤 Grid STOP là từ process DEMO (khác account)."
             )
 
         try:
@@ -1656,9 +1865,28 @@ def run():
                         import btc_sign_inverser as _btc_si
 
                         live_inverse_consumed = _btc_si.load_consumed_ids()
-                    _v5_live_try_inverse_limits_from_demo_file(
-                        config, live_inverse_consumed, params
-                    )
+                    ipc_port = _v5_inverse_ipc_port_value(params)
+                    if ipc_port > 0:
+                        if inverse_ipc_listener is None:
+                            inverse_ipc_listener = _v5_open_inverse_listener(
+                                _v5_inverse_ipc_host(params), ipc_port
+                            )
+                        if inverse_ipc_listener is not None:
+                            _v5_live_poll_inverse_ipc(
+                                config,
+                                live_inverse_consumed,
+                                params,
+                                inverse_ipc_listener,
+                                loop_interval_seconds,
+                            )
+                        else:
+                            _v5_live_try_inverse_limits_from_demo_file(
+                                config, live_inverse_consumed, params
+                            )
+                    else:
+                        _v5_live_try_inverse_limits_from_demo_file(
+                            config, live_inverse_consumed, params
+                        )
                     time.sleep(loop_interval_seconds)
                     continue
 

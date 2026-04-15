@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import time
 import uuid
 from typing import Any, Dict, Optional, Tuple
@@ -228,6 +229,28 @@ def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[st
     }
     _overwrite_relay_demo_snapshot(out)
     _append_relay_demo_history(out)
+    _maybe_push_inverse_snapshot_ipc(config, out)
+
+
+def _maybe_push_inverse_snapshot_ipc(config: Dict[str, Any], out: Dict[str, Any]) -> None:
+    """Khi `parameters.v5_inverse_ipc_port` > 0: gửi snapshot tới live (TCP), không phụ thuộc live đọc file."""
+    params = config.get("parameters") or {}
+    try:
+        port = int(params.get("v5_inverse_ipc_port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if port <= 0 or port > 65535:
+        return
+    host = str(params.get("v5_inverse_ipc_host") or "127.0.0.1").strip() or "127.0.0.1"
+    data = json.dumps(out, ensure_ascii=False).encode("utf-8") + b"\n"
+    for attempt in range(4):
+        try:
+            with socket.create_connection((host, port), timeout=3.0) as s:
+                s.sendall(data)
+            return
+        except OSError:
+            if attempt < 3:
+                time.sleep(0.35)
 
 
 def demo_relay_order_relay_ids(payload: Dict[str, Any]) -> Tuple[str, str, str]:

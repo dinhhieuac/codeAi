@@ -5,6 +5,22 @@
   "mt5_path": "C:\\\\Program Files\\\\M11\\\\terminal64.exe",
   "symbol": "XAUUSDc",
   "volume": 0.01,
+  "magic": 100010,
+  "max_positions": 5,
   "spread_sl": 0,
-  "spread_tp": -0.3
+  "spread_tp": -0.3,
+  "parameters": {
+    "v5_role": "live",
+    "v5_live_inverse_only": true,
+    "v5_live_inverse_limits_from_demo_file": true,
+    "v5_live_inverse_log_skip": true,
+    "v5_inverse_ipc_port": 17395,
+    "v5_inverse_ipc_host": "127.0.0.1",
+    "loop_interval_seconds": 10,
+    "relay_demo_file": "v5_relay_demo.json",
+    "relay_demo_history_log_file": "v5_relay_demo_history.jsonl",
+    "v5_structured_log": true,
+    "v5_log_debug": false,
+    "v5_compact_cycle_log": false
+  }
 }

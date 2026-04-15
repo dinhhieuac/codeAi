@@ -28,7 +28,7 @@
         "min_gap_minutes": 1,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
-        "loop_interval_seconds": 10,
+        "loop_interval_seconds": 2,
         "max_loss_streak": 2,
         "v5_hard_block_sum10_negative": false,
         "v5_hard_block_min_gap": false,
@@ -46,6 +46,11 @@
         "relay_zone_points": 5,
         "relay_zone_dedupe_ttl_minutes": 120,
         "relay_signal_ttl_minutes": 180,
-        "relay_verbose_log": true
+        "relay_verbose_log": true,
+        "v5_parallel_inverse_live": true,
+        "v5_inverse_ipc_port": 17395,
+        "v5_inverse_ipc_host": "127.0.0.1",
+        "relay_demo_file": "v5_relay_demo.json",
+        "relay_demo_history_log_file": "v5_relay_demo_history.jsonl"
     }
 }

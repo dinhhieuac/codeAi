@@ -19,7 +19,7 @@
         "consecutive_loss_pause_enabled": true,
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
-        "loop_interval_seconds": 10,
+        "loop_interval_seconds": 1,
         "entry_score_threshold": 4,
         "v5_structured_log": true,
         "v5_log_debug": false,

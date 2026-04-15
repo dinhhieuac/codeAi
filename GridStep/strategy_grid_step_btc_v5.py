@@ -39,6 +39,7 @@ Hai tài khoản (demo + live) cùng lúc:
 - Chỉ một role: `python ... --config config_grid_step_btc_v5_live.json` → một process live (không spawn demo).
 - Tắt cặp song song: `--no-parallel-live` hoặc `"btc_v5_parallel_live": false` trong `parameters` của config demo → chỉ **một** process (demo) trong process hiện tại.
 - Process worker dùng `--btc-v5-child` (không spawn thêm).
+- Vòng lặp kiểm tra: `parameters.loop_interval_seconds` trong JSON (demo + live; mặc định repo **1** giây).
 """
 import json
 import os
@@ -50,6 +51,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DEMO_CONFIG_NAME = "config_grid_step_btc_v5.json"
 LIVE_CONFIG_NAME = "config_grid_step_btc_v5_live.json"
+# Tần suất vòng lặp bot: `parameters.loop_interval_seconds` trong mỗi JSON (demo + live; mặc định repo 1s).
 
 import strategy_grid_step_v5 as core
 
