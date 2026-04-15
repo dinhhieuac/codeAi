@@ -162,16 +162,11 @@ def price_zone_key(price: float, zone_points: float) -> int:
 
 def _overwrite_relay_demo_snapshot(out: Dict[str, Any]) -> None:
     """
-    Thay thế hoàn toàn file snapshot demo inverse: xóa file cũ (nếu có) rồi ghi JSON mới.
+    Thay thế hoàn toàn file snapshot demo inverse: ghi atomic (tmp → replace).
+    Không xóa file trước — tránh cửa sổ race khi live đọc giữa lúc demo ghi (file rỗng / thiếu).
     Không merge — mỗi lần gọi là một bộ relay_id mới.
     """
-    path = RELAY_DEMO_FILE
-    try:
-        if os.path.isfile(path):
-            os.remove(path)
-    except OSError:
-        pass
-    _atomic_write(path, out)
+    _atomic_write(RELAY_DEMO_FILE, out)
 
 
 def demo_write_inverse_relay_file(config: Dict[str, Any], gate_features: Dict[str, Any]) -> None:

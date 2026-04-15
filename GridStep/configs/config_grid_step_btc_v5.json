@@ -43,6 +43,8 @@
         "relay_zone_points": 200,
         "relay_zone_dedupe_ttl_minutes": 120,
         "relay_signal_ttl_minutes": 180,
-        "relay_verbose_log": true
+        "relay_verbose_log": true,
+        "relay_demo_file": "btc_v5_relay_demo.json",
+        "relay_demo_history_log_file": "btc_v5_relay_demo_history.jsonl"
     }
 }

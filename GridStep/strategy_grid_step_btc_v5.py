@@ -20,12 +20,18 @@ Console log (cùng format V5):
 - [LIVE_CHECK] (demo): equivalent QUALIFIED/REJECT theo ngưỡng entry.
 - parameters: v5_structured_log, v5_compact_cycle_log; v5_verbose_no_order_log khi tắt structured.
 
-Relay Demo → Live:
-- gọi core.configure_grid_step_v5_paths(...) ngay sau import → cùng v5_relay_signal.json / v5_relay_state.json / v5_relay_signal_history.jsonl với XAU V5;
-  inverse demo chỉ ghi **btc_v5_relay_demo.json** (và lịch sử base btc_v5_relay_demo_history.jsonl → btc_v5_relay_demo_history_BTCUSD.jsonl), không ghi đè v5_relay_demo.json của XAU.
-- sign_inverse: đặt `relay_demo_file` trong config trỏ tới btc_v5_relay_demo.json khi mirror BTC.
-- Demo: kết_luận=đạt (strategy_grid_step_v5) thì ghi relay sớm; dedup theo zone; thử lại khi có lệnh MT5 mới.
-- Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).
+Relay Demo → Live (inverse file `btc_v5_relay_demo.json`):
+- Gọi core.configure_grid_step_v5_paths(...) ngay sau import; trong JSON dùng `relay_demo_file` / `relay_demo_history_log_file` (đồng bộ khi chạy thẳng strategy_grid_step_v5.py).
+
+Quy tắc InvGrid khi `v5_live_inverse_only` (live):
+- Live **không** áp gate / score / zone relay / cooldown “mở grid” — chỉ đọc snapshot demo đã ghi và gửi lệnh MT5 (kiểm tra kỹ thuật trong `btc_sign_inverser`: symbol, chuẩn hóa giá broker, trùng mức, v.v.).
+- Ánh xạ giá (trùng `signal_relay.demo_write_inverse_relay_file`):
+  - Trên **demo**, `grid_preview.buy_price` = giá lệnh **BUY_STOP** (mức cao), `sell_price` = giá **SELL_STOP** (mức thấp).
+  - Trên **live**: đặt **BUY_LIMIT** tại giá bằng **SELL_STOP** demo, **SELL_LIMIT** tại giá bằng **BUY_STOP** demo (đảo vai stop ↔ limit, giữ đúng hai mức giá).
+- Ví dụ: demo **SELL_STOP** @ 73800, **BUY_STOP** @ 74200 → live **BUY_LIMIT** @ 73800, **SELL_LIMIT** @ 74200.
+
+Chế độ khác:
+- Demo: kết_luận=đạt thì ghi relay sớm; dedup theo zone; tắt `v5_live_inverse_only` nếu cần mirror relay + grid V5 chuẩn.
 
 Hai tài khoản (demo + live) cùng lúc:
 - `run()` mặc định (`config_grid_step_btc_v5.json`): **supervisor** spawn **hai** process — một chạy demo, một chạy live — **song song**; process cha không login MT5.
@@ -43,7 +49,7 @@ import time
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DEMO_CONFIG_NAME = "config_grid_step_btc_v5.json"
-LIVE_CONFIG_NAME = "config_grid_step_inverse_btc_live.json"
+LIVE_CONFIG_NAME = "config_grid_step_btc_v5_live.json"
 
 import strategy_grid_step_v5 as core
 
@@ -67,6 +73,8 @@ from scores import (
 core.base = btc_base
 core.base.COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown_btc_v5.json")
 core.base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_btc_v5.json")
+core._grid_strategy_module = btc_base
+core.LIVE_INVERSE_LOG_PREFIX = "[BTC V5 live]"
 
 def _btc_is_blocked(features, max_loss_streak=2, **kwargs):
     """
@@ -144,6 +152,12 @@ def _demo_parallel_live_enabled(demo_config_path: str) -> bool:
 def run():
     if "--btc-v5-child" in sys.argv:
         _strip_parallel_cli_flags()
+        cfg_child = _argv_config_basename()
+        if cfg_child == LIVE_CONFIG_NAME or "btc_v5_live" in cfg_child.lower():
+            print(
+                "🔔 [BTC V5 p_live] InvGrid: log có prefix [BTC V5 live] — "
+                "Chuẩn bị → 📤 gửi lệnh → ✅ ticket BUY_LIMIT/SELL_LIMIT + MT5 login."
+            )
         core.run()
         return
 

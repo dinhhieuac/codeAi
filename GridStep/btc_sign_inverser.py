@@ -181,7 +181,14 @@ def _mark_consumed_after_pair_fail(r1: Any, r2: Any) -> bool:
     return not (rc1 in _RELAY_RETRY_IF_BOTH_FAILED and rc2 in _RELAY_RETRY_IF_BOTH_FAILED)
 
 
-def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tuple[bool, str, bool]:
+def place_pair_from_inverse_relay(
+    payload: Dict[str, Any],
+    volume: float,
+    *,
+    log_prefix: Optional[str] = None,
+) -> Tuple[bool, str, bool]:
+    """log_prefix: mặc định [btc_sign_inverse]; dùng "[BTC V5 live]" khi gọi từ strategy_grid_step_btc_v5 live."""
+    lp = log_prefix if log_prefix is not None else LOG_PREFIX
     from utils import (
         has_same_price_inverse_duplicate,
         normalize_inverse_limit_prices,
@@ -201,8 +208,10 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
 
     info = mt5.symbol_info(symbol)
     if not info:
+        print(f"❌ {lp} symbol_info({symbol}) = None — kiểm tra symbol trong config (vd BTCUSDc).")
         return False, f"symbol_info({symbol}) = None", False
     if not mt5.symbol_select(symbol, True):
+        print(f"❌ {lp} symbol_select({symbol}) thất bại")
         return False, f"symbol_select({symbol}) thất bại", False
 
     digits = int(getattr(info, "digits", 5) or 5)
@@ -219,15 +228,15 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     nb, ns, norm_note = normalize_inverse_limit_prices(info, tick, px_buy_lim, px_sell_lim, digits)
     if nb is None or ns is None:
         msg = norm_note or "không chuẩn hóa được giá limit"
-        print(f"⏭️ {LOG_PREFIX} Bỏ qua — {msg}")
+        print(f"⏭️ {lp} Bỏ qua — {msg}")
         return False, msg, False
     px_buy_lim, px_sell_lim = nb, ns
     if norm_note:
-        print(f"🔧 {LOG_PREFIX} Chuẩn hóa giá relay: {norm_note}")
+        print(f"🔧 {lp} Chuẩn hóa giá relay: {norm_note}")
 
     dup, dup_reason = has_same_price_inverse_duplicate(symbol, magic, px_buy_lim, px_sell_lim, digits)
     if dup:
-        print(f"⏭️ {LOG_PREFIX} Bỏ qua tín hiệu — {dup_reason} (trùng mức giá inverse) — đánh dấu relay đã xử lý")
+        print(f"⏭️ {lp} Bỏ qua tín hiệu — {dup_reason} (trùng mức giá inverse) — đánh dấu relay đã xử lý")
         return False, dup_reason, True
 
     cancel_inv_limit_pendings(symbol, magic)
@@ -251,8 +260,10 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     tick_hint = ""
     if tick is not None:
         tick_hint = f" | thị trường bid={tick.bid} ask={tick.ask}"
+    acc_i = mt5.account_info()
+    acc_s = str(acc_i.login) if acc_i is not None else "?"
     print(
-        f"📤 {LOG_PREFIX} batch={relay_batch[:8]}… buy_id={relay_id_buy_leg[:8]}… sell_id={relay_id_sell_leg[:8]}… | {symbol} | "
+        f"📤 {lp} MT5 login={acc_s} | batch={relay_batch[:8]}… buy_leg={relay_id_buy_leg[:8]}… sell_leg={relay_id_sell_leg[:8]}… | {symbol} | "
         f"BUY_LIMIT@{px_buy_lim} SL={sl_buy} TP={tp_buy} ({comment_buy}) | "
         f"SELL_LIMIT@{px_sell_lim} SL={sl_sell} TP={tp_sell} ({comment_sell})"
         f" | step={step_val} | vol={vol}{tick_hint}"
@@ -266,27 +277,31 @@ def place_pair_from_inverse_relay(payload: Dict[str, Any], volume: float) -> Tup
     )
 
     if r1 is None or r2 is None:
+        le = mt5.last_error()
+        print(f"❌ {lp} order_send None — BUY={r1 is None} SELL={r2 is None} | mt5.last_error()={le}")
         return False, f"order_send None (buy={r1 is None}, sell={r2 is None})", False
 
     ok1 = r1.retcode == mt5.TRADE_RETCODE_DONE
     ok2 = r2.retcode == mt5.TRADE_RETCODE_DONE
     if ok1 and ok2:
+        t_buy = int(getattr(r1, "order", 0) or 0)
+        t_sell = int(getattr(r2, "order", 0) or 0)
         print(
-            f"✅ {LOG_PREFIX} Đã đặt cặp lệnh inverse batch={relay_batch} | "
-            f"BUY_LIMIT relay_id={relay_id_buy_leg} | SELL_LIMIT relay_id={relay_id_sell_leg}"
+            f"✅ {lp} Đã mở InvGrid | MT5 login={acc_s} | "
+            f"BUY_LIMIT ticket={t_buy} @{px_buy_lim} | SELL_LIMIT ticket={t_sell} @{px_sell_lim} | batch={relay_batch}"
         )
         return True, "", False
 
     if not ok1:
-        print(f"❌ {LOG_PREFIX} BUY_LIMIT: {r1.retcode} {r1.comment}")
+        print(f"❌ {lp} BUY_LIMIT: {r1.retcode} {r1.comment}")
     if not ok2:
-        print(f"❌ {LOG_PREFIX} SELL_LIMIT: {r2.retcode} {r2.comment}")
+        print(f"❌ {lp} SELL_LIMIT: {r2.retcode} {r2.comment}")
 
     err_detail = f"BUY {getattr(r1, 'retcode', '?')} SELL {getattr(r2, 'retcode', '?')}"
     consume = _mark_consumed_after_pair_fail(r1, r2)
     if consume and (ok1 ^ ok2):
         cancel_inv_limit_pendings(symbol, magic)
-        print(f"🧹 {LOG_PREFIX} Đã hủy lệnh chờ còn lại (partial fail) — đánh dấu consumed.")
+        print(f"🧹 {lp} Đã hủy lệnh chờ còn lại (partial fail) — đánh dấu consumed.")
     return False, err_detail, consume
 
 

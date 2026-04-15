@@ -20,26 +20,53 @@ def load_config(config_path):
         return None
 
 def connect_mt5(config):
-    """Initialize MT5 connection using config"""
+    """Initialize MT5 connection using config (account, password, server; mt5_path tùy chọn)."""
     login = config.get("account")
-    password = config.get("password")
-    server = config.get("server")
-    path = config.get("mt5_path") # Optional custom path
+    password = (config.get("password") or "").strip()
+    server = (config.get("server") or "").strip()
+    path_raw = config.get("mt5_path")
+    path = (str(path_raw).strip() if path_raw else "") or None
 
-    if not all([login, password, server]):
-        print("❌ Missing MT5 credentials in config")
+    if login is None or not password or not server:
+        print("❌ Thiếu account / password / server trong config JSON")
         return False
 
     try:
+        login = int(login)
+    except (TypeError, ValueError):
+        print(f"❌ Số tài khoản (account) không hợp lệ: {login!r}")
+        return False
+
+    if path:
+        if not os.path.isfile(path):
+            print(f"❌ mt5_path không trỏ tới file tồn tại:\n   {path}")
+            print(
+                "   Dùng đường dẫn đầy đủ tới terminal64.exe của **đúng** terminal MT5 (live khác demo "
+                "→ thường cần bản cài riêng). Ví dụ: C:\\\\Program Files\\\\Exness MT5 Real\\\\terminal64.exe"
+            )
+            return False
+
+    try:
+        mt5.shutdown()
+    except Exception:
+        pass
+
+    try:
         if path:
-            if not mt5.initialize(path=path, login=login, password=password, server=server):
-                print(f"❌ MT5 Init failed with path: {mt5.last_error()}")
-                return False
+            ok = mt5.initialize(path=path, login=login, password=password, server=server)
         else:
-            if not mt5.initialize(login=login, password=password, server=server):
-                print(f"❌ MT5 Init failed: {mt5.last_error()}")
-                return False
-                
+            ok = mt5.initialize(login=login, password=password, server=server)
+        if not ok:
+            err = mt5.last_error()
+            print(f"❌ MT5 initialize thất bại: {err}")
+            print(
+                "   Gợi ý: (1) Mật khẩu tài khoản giao dịch (không dùng mật khẩu chỉ đọc/investor nếu broker chặn). "
+                "(2) Tên server đúng như trong MT5 (File → Login) — phân biệt Real/Demo. "
+                "(3) mt5_path trỏ terminal đã thêm **cùng** server đó. "
+                "(4) Đóng MT5 GUI đang mở cùng terminal nếu bị conflict."
+            )
+            return False
+
         print(f"✅ Connected to MT5 Account: {login}")
         return True
     except Exception as e:

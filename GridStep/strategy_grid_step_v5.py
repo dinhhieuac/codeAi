@@ -6,11 +6,22 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - dùng file config riêng: configs/config_grid_step_v5.json
 - tách file cooldown/pause riêng cho phiên bản v5
 - wrapper (vd strategy_grid_step_btc_v5) gọi configure_grid_step_v5_paths() để tách relay/live log.
+- Supervisor demo+live (BTC — logic `use_dual_supervisor` trong `strategy_grid_step_btc_v5.run()`, không nằm ở đây):
+  spawn hai worker `--btc-v5-child` khi **đồng thời** (1) argv = config demo mặc định `config_grid_step_btc_v5.json`,
+  (2) không có `--no-parallel-live`, (3) tồn tại `configs/config_grid_step_btc_v5_live.json`,
+  (4) `parameters.btc_v5_parallel_live` trong JSON demo không phải `false`.
+  Nếu không → một process gọi `run()` với config hiện tại (vd `--config ..._live.json` chỉ live).
+  Process cha không login MT5; hai terminal cần hai `mt5_path`. Log trộn: 📚 [V5 Gate] / Grid STOP = **demo**; inverse-only / InvGrid = **live**.
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
 - v5_role=live: không đọc history / không chấm điểm trên account live — chỉ đăng nhập MT5 (account trong config),
   đọc file relay do demo ghi; flat → mirror relay; có grid → chỉ chạy base strategy (stub gate, không score).
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay, không dựng lại grid preview trên live.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
+- `v5_live_inverse_limits_from_demo_file` (live): đọc `RELAY_DEMO_FILE` (vd btc_v5_relay_demo.json do demo ghi), đặt **BUY_LIMIT+SELL_LIMIT** trực tiếp trên account live — **symbol / magic / volume** lấy từ config live (không dùng symbol trong file relay để mở lệnh). Consumed: `btc_signal_inverse_consumed_relay_ids.json` (cùng bot `btc_sign_inverser` nếu chạy song song — nên tắt một trong hai).
+- `v5_live_inverse_only` (live): **chỉ** chạy bước inverse trên (đọc file demo khi demo có lệnh → ghi file), **không** kiểm tra relay tín hiệu / zone / score / cooldown / **không** gọi grid `strategy_grid_step_logic` (BUY_STOP/SELL_STOP).
+- `relay_demo_file` / `relay_demo_history_log_file` (parameters): đường dẫn tương đối `GridStep/` hoặc tuyệt đối — để demo và live **cùng file** snapshot inverse (vd `btc_v5_relay_demo.json`); bắt buộc nếu chạy `strategy_grid_step_v5.py` trực tiếp thay vì `strategy_grid_step_btc_v5.py`.
+- `v5_demo_inverse_file_when_pair_and_missing_file` (demo): nếu **chưa có** file RELAY_DEMO nhưng MT5 đã có đủ cặp BUY_STOP+SELL_STOP → tự tạo `grid_preview` từ giá lệnh và ghi file (hữu ích khi bot demo restart mà lệnh vẫn còn).
+- `v5_live_inverse_log_skip` (live): in lý do bỏ qua inverse (đã consumed, thiếu file, …); mặc định true.
 """
 import copy
 import os
@@ -19,7 +30,7 @@ import time
 import json
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional, Set
 
 import strategy_grid_step as base
 import signal_relay
@@ -39,6 +50,96 @@ base.PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause_v5.json")
 LIVE_LOG_FILE = os.path.join(SCRIPT_DIR, "v5_live_entry_log.jsonl")
 LIVE_STATE_FILE = os.path.join(SCRIPT_DIR, "v5_live_state.json")
 V5_PENDING_PAIR_LOG_DIR = os.path.join(SCRIPT_DIR, "log")
+# Gán từ strategy_grid_step_btc_v5: module có strategy_grid_step_logic (BTC). None = strategy_grid_step mặc định.
+_grid_strategy_module = None
+# Gán từ strategy_grid_step_btc_v5: prefix log khi live đặt InvGrid (vd "[BTC V5 live]").
+LIVE_INVERSE_LOG_PREFIX: Optional[str] = None
+_v5_inv_throttle_ts: Dict[str, float] = {}
+
+
+def _v5_throttle_print(key: str, msg: str, interval_sec: float = 45.0) -> None:
+    now = time.monotonic()
+    prev = _v5_inv_throttle_ts.get(key, 0.0)
+    if now - prev < interval_sec:
+        return
+    _v5_inv_throttle_ts[key] = now
+    print(msg)
+
+
+def _v5_param_bool(params: Optional[Dict[str, Any]], key: str, default: bool = False) -> bool:
+    """Đọc flag từ JSON/parameters — chấp nhận true/false, 0/1, 'true'/'yes' (khi sửa tay)."""
+    if not params:
+        return default
+    v = params.get(key, default)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("1", "true", "yes", "on"):
+            return True
+        if s in ("0", "false", "no", "off", ""):
+            return False
+    return bool(v)
+
+
+def _v5_synthetic_grid_preview_from_pair_snap(pair_snap: dict, step_val: float) -> Dict[str, Any]:
+    """Từ cặp BUY_STOP/SELL_STOP trên MT5 → grid_preview cho demo_write_inverse_relay_file khi gate không có gpr."""
+    bs = pair_snap.get("buy_stop_pending") or []
+    ss = pair_snap.get("sell_stop_pending") or []
+    if not bs or not ss:
+        return {}
+    try:
+        buy_px = max(float(x["price_open"]) for x in bs)
+        sell_px = min(float(x["price_open"]) for x in ss)
+    except (TypeError, ValueError, KeyError):
+        return {}
+    ref = round((buy_px + sell_px) / 2.0, 8)
+    return {
+        "buy_price": buy_px,
+        "sell_price": sell_px,
+        "step": float(step_val),
+        "ref": ref,
+    }
+# Live blind: bỏ qua cooldown / duplicate-skip khi các gate này (không chỉ live_relay_ok).
+_LIVE_BLIND_RELAX_REASONS = frozenset(
+    ("live_relay_ok", "live_blind_no_relay_file", "live_no_signal_relay")
+)
+
+
+def _invoke_strategy_grid_step_logic(config, consecutive_errors, step):
+    mod = _grid_strategy_module if _grid_strategy_module is not None else base
+    if step is not None:
+        return mod.strategy_grid_step_logic(config, consecutive_errors, step=step)
+    return mod.strategy_grid_step_logic(config, consecutive_errors, step=None)
+
+
+def _v5_apply_relay_paths_from_config(config: Dict[str, Any]) -> None:
+    """
+    Đồng bộ RELAY_DEMO_FILE (và history base) từ `parameters` trong JSON.
+    Cần khi chạy `strategy_grid_step_v5.py` trực tiếp: mặc định signal_relay dùng v5_relay_demo.json,
+    trong khi BTC V5 + live inverse cần cùng file btc_v5_relay_demo.json với wrapper strategy_grid_step_btc_v5.
+    """
+    params = config.get("parameters") or {}
+
+    def _resolve(p: Any) -> Optional[str]:
+        if p is None or not str(p).strip():
+            return None
+        s = str(p).strip()
+        return s if os.path.isabs(s) else os.path.join(SCRIPT_DIR, s)
+
+    rd = _resolve(params.get("relay_demo_file"))
+    if rd:
+        signal_relay.RELAY_DEMO_FILE = rd
+    rh = _resolve(params.get("relay_demo_history_log_file"))
+    if rh:
+        signal_relay.RELAY_DEMO_HISTORY_LOG = rh
+    if rd or rh:
+        print(
+            f"📁 [V5] relay paths từ config: demo_inverse={signal_relay.RELAY_DEMO_FILE}"
+            + (f" | history_base={signal_relay.RELAY_DEMO_HISTORY_LOG}" if rh else "")
+        )
 
 
 def configure_grid_step_v5_paths(
@@ -663,7 +764,27 @@ def _v5_history_score_gate(config):
             )
         except Exception:
             pass
-        return True, f"demo_insufficient_history:{len(closed)}", {"closed_count": len(closed), "role": v5_role}
+        # Phải có grid_preview (buy/sell stop dự kiến) — không thì demo không ghi được btc_v5_relay_demo.json
+        # khi vừa đặt lệnh (live inverse-only đọc file rỗng mãi).
+        preview_early = _v5_preview_grid_levels(config)
+        if preview_early is None:
+            return False, "preview_grid_failed", {"closed_count": len(closed), "role": v5_role}
+        feat_insuff = {
+            "closed_count": len(closed),
+            "role": v5_role,
+            "ready": True,
+            "grid_preview": preview_early,
+            "score": None,
+            "blocked": False,
+            "block_reason": None,
+            "score_breakdown": {
+                "decision": "REJECT",
+                "add": [],
+                "sub": [],
+                "note": "insufficient_history",
+            },
+        }
+        return True, f"demo_insufficient_history:{len(closed)}", feat_insuff
 
     sig = _closed_list_signature(closed)
     cache_key = _v5_gate_cache_key(config, v5_role)
@@ -1330,6 +1451,141 @@ def _v5_try_emit_cycle_log(ctx, params):
     run._last_v5_struct_log = (sig, now_m)
 
 
+def _v5_load_json_file(path: str, default: Any) -> Any:
+    if not os.path.isfile(path):
+        return default
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return default
+
+
+def _v5_relay_demo_file_missing_or_bad(path: str) -> bool:
+    """
+    True = chưa có snapshot inverse hợp lệ cho live (không file / 0 byte / JSON lỗi / thiếu grid_preview_inverse).
+    Dùng để bootstrap từ cặp STOP trên MT5 khi file tồn tại nhưng rỗng (từng tạo tay hoặc ghi dở).
+    """
+    if not os.path.isfile(path):
+        return True
+    try:
+        if os.path.getsize(path) == 0:
+            return True
+    except OSError:
+        return True
+    data = _v5_load_json_file(path, None)
+    if not isinstance(data, dict) or not data:
+        return True
+    inv = data.get("grid_preview_inverse")
+    if not isinstance(inv, dict):
+        return True
+    if inv.get("buy_price") is None or inv.get("sell_price") is None:
+        return True
+    return False
+
+
+def _v5_live_try_inverse_limits_from_demo_file(
+    config: Dict[str, Any],
+    consumed: Set[str],
+    params: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Đọc snapshot inverse (demo_write_inverse_relay_file) từ RELAY_DEMO_FILE;
+    đặt cặp limit trên session MT5 hiện tại với symbol/magic từ config live.
+    """
+    params = params or {}
+    log_skip = bool(params.get("v5_live_inverse_log_skip", True))
+    try:
+        import btc_sign_inverser as _bi
+    except ImportError:
+        return
+    path = signal_relay.RELAY_DEMO_FILE
+    if not os.path.isfile(path):
+        if log_skip:
+            _v5_throttle_print(
+                "inv_missing_file",
+                f"ℹ️ [V5 live] Chưa có file inverse: {path}\n"
+                f"   → Demo phải ghi file (cùng thư mục GridStep) hoặc copy btc_v5_relay_demo.json từ máy chạy demo.",
+                90.0,
+            )
+        return
+    payload = _v5_load_json_file(path, None)
+    if not isinstance(payload, dict) or not payload:
+        if log_skip:
+            _v5_throttle_print(
+                "inv_empty",
+                f"ℹ️ [V5 live] File inverse rỗng / lỗi đọc: {path}\n"
+                f"   → Đợi demo ghi snapshot hợp lệ (hoặc vừa ghi xong — thử lại sau vài giây).",
+                60.0,
+            )
+        return
+    skip = _bi.inverse_payload_ready(payload, consumed, None)
+    rid = str(payload.get("relay_id") or "")
+    if skip is not None:
+        if log_skip:
+            if skip == "already_consumed":
+                _v5_throttle_print(
+                    f"inv_consumed_{rid}",
+                    f"ℹ️ [V5 live] Inverse bỏ qua: relay_id đã consumed ({rid[:8]}…).\n"
+                    f"   → Mở btc_signal_inverse_consumed_relay_ids.json, xóa id này nếu muốn đặt lại cùng snapshot.",
+                    120.0,
+                )
+            else:
+                _v5_throttle_print(
+                    f"inv_skip_{skip}",
+                    f"ℹ️ [V5 live] Inverse bỏ qua: {skip} (file={os.path.basename(path)})",
+                    45.0,
+                )
+        return
+    sym_live = str(config.get("symbol") or "").strip()
+    if not sym_live:
+        return
+    place_payload = _bi._as_place_payload(payload, sym_live)
+    place_payload["magic"] = int(config.get("magic") or 0)
+    vol = float(config.get("volume") or 0.01)
+    inv_lp = LIVE_INVERSE_LOG_PREFIX or "[V5 live]"
+    inv = payload.get("grid_preview_inverse") or {}
+    print(
+        f"📤 {inv_lp} Chuẩn bị InvGrid | {sym_live} magic={place_payload.get('magic')} vol={vol} | "
+        f"BUY_LIMIT giá file={inv.get('buy_price')} SELL_LIMIT giá file={inv.get('sell_price')} | "
+        f"relay={str(rid)[:8]}…"
+    )
+    ok, err, mark_consumed = _bi.place_pair_from_inverse_relay(
+        place_payload, vol, log_prefix=inv_lp
+    )
+    if rid and (ok or mark_consumed):
+        _bi.save_consumed_id(str(rid), consumed)
+        consumed.add(str(rid))
+    if ok:
+        print(f"✅ {inv_lp} Hoàn tất snapshot {os.path.basename(path)} relay={str(rid)[:8]}…")
+    elif mark_consumed and err and "thiếu" not in err:
+        print(f"⚠️ {inv_lp} Inverse — consumed: {err}")
+    elif not ok and not mark_consumed and err:
+        print(f"⚠️ {inv_lp} Inverse đặt lệnh thất bại (sẽ thử lại): {err}")
+
+
+def _v5_normalize_config_trade_keys(config: Dict[str, Any]) -> None:
+    """Đảm bảo symbol/magic ở top-level (một số JSON chỉ khai báo trong parameters hoặc thiếu magic)."""
+    params = config.get("parameters") or {}
+    if not str(config.get("symbol") or "").strip():
+        alt = params.get("symbol")
+        if alt is not None and str(alt).strip():
+            config["symbol"] = str(alt).strip()
+    if "magic" not in config:
+        if "magic" in params:
+            try:
+                config["magic"] = int(params["magic"])
+            except (TypeError, ValueError):
+                config["magic"] = 0
+        else:
+            config["magic"] = 0
+    else:
+        try:
+            config["magic"] = int(config["magic"])
+        except (TypeError, ValueError):
+            config["magic"] = 0
+
+
 def run():
     args = sys.argv[1:]
     if args and args[0].strip() == "--check-db":
@@ -1346,6 +1602,9 @@ def run():
     config_path = os.path.join(SCRIPT_DIR, "configs", config_name)
     print(f"📁 [V5] using config: {config_path}")
     config = base.load_config(config_path)
+    if config:
+        _v5_normalize_config_trade_keys(config)
+        _v5_apply_relay_paths_from_config(config)
 
     consecutive_errors = 0
     if config and base.connect_mt5(config):
@@ -1363,6 +1622,21 @@ def run():
         consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
         print(f"✅ Grid Step Bot V5 - Started ({label})")
         loop_count = 0
+        live_inverse_consumed: Optional[Set[str]] = None
+        _p0 = config.get("parameters") or {}
+        if str(_p0.get("v5_role", "")).lower().strip() == "live" and _v5_param_bool(
+            _p0, "v5_live_inverse_only", False
+        ):
+            print(
+                "📌 [V5] v5_live_inverse_only: live chỉ đặt InvGrid từ RELAY_DEMO_FILE khi demo ghi snapshot — "
+                "bỏ qua relay tín hiệu / gate / grid strategy."
+            )
+            ai0 = mt5.account_info()
+            acct_s = str(ai0.login) if ai0 else "?"
+            print(
+                f"💡 [V5 live inverse-only] MT5 account={acct_s} — process này không chạy [V5 Gate] hay Grid STOP. "
+                f"Nếu supervisor (demo+live), các dòng 📚 [V5 Gate] / 📤 Grid BTC là từ process DEMO (khác account)."
+            )
 
         try:
             while True:
@@ -1370,62 +1644,100 @@ def run():
                 v5_role = str(params.get("v5_role", "demo")).lower().strip()
                 entry_thr = int(params.get("entry_score_threshold", 6))
                 relay_verbose = bool(params.get("relay_verbose_log", True))
-                sym = config["symbol"]
-                mag = config["magic"]
+                sym = str(config.get("symbol") or "").strip()
+                mag = int(config.get("magic") or 0)
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
                 live_relay_blind = bool(params.get("live_relay_blind_follow", False))
                 active_relay_id = None
 
+                if v5_role == "live" and _v5_param_bool(params, "v5_live_inverse_only", False):
+                    if live_inverse_consumed is None:
+                        import btc_sign_inverser as _btc_si
+
+                        live_inverse_consumed = _btc_si.load_consumed_ids()
+                    _v5_live_try_inverse_limits_from_demo_file(
+                        config, live_inverse_consumed, params
+                    )
+                    time.sleep(loop_interval_seconds)
+                    continue
+
+                if v5_role == "live" and bool(
+                    params.get("v5_live_inverse_limits_from_demo_file", False)
+                ):
+                    if live_inverse_consumed is None:
+                        import btc_sign_inverser as _btc_si
+
+                        live_inverse_consumed = _btc_si.load_consumed_ids()
+                    _v5_live_try_inverse_limits_from_demo_file(
+                        config, live_inverse_consumed, params
+                    )
+
                 if v5_role == "live":
                     if not has_grid:
-                        relay_payload = (
-                            signal_relay.relay_read_valid(config)
-                            if bool(params.get("signal_relay_enabled", False))
-                            else None
-                        )
-                        if not relay_payload:
-                            _v5_try_emit_cycle_log(
-                                {
-                                    "exit_kind": "no_relay_flat",
-                                    "v5_role": v5_role,
-                                    "entry_thr": entry_thr,
-                                    "max_positions": config.get("max_positions", 5),
-                                    "pre_np": len(pre_pending),
-                                    "pre_npos": len(pre_positions),
-                                    "gate_reason": "no_relay",
-                                    "gate_features": {},
-                                    "relay_enabled": bool(params.get("signal_relay_enabled", False)),
-                                    "relay_sent": False,
-                                    "relay_reason": "NO_RELAY",
-                                },
-                                params,
-                            )
-                            time.sleep(loop_interval_seconds)
-                            continue
-                        if not live_relay_blind and not _relay_zone_matches_current(config, relay_payload):
-                            _v5_try_emit_cycle_log(
-                                {
-                                    "exit_kind": "relay_zone_mismatch",
-                                    "v5_role": v5_role,
-                                    "entry_thr": entry_thr,
-                                    "max_positions": config.get("max_positions", 5),
-                                    "pre_np": len(pre_pending),
-                                    "pre_npos": len(pre_positions),
-                                    "gate_reason": "relay_zone_mismatch",
-                                    "gate_features": signal_relay.relay_to_gate_features(relay_payload),
-                                    "relay_enabled": bool(params.get("signal_relay_enabled", False)),
-                                    "relay_sent": False,
-                                    "relay_reason": "RELAY_ZONE_MISMATCH",
-                                },
-                                params,
-                            )
-                            time.sleep(loop_interval_seconds)
-                            continue
-                        allow_live = True
-                        gate_reason = "live_relay_ok"
-                        gate_features = signal_relay.relay_to_gate_features(relay_payload)
-                        active_relay_id = relay_payload.get("relay_id")
+                        use_signal_relay = bool(params.get("signal_relay_enabled", False))
+                        if use_signal_relay:
+                            relay_payload = signal_relay.relay_read_valid(config)
+                            if not relay_payload:
+                                if live_relay_blind and bool(
+                                    params.get("v5_live_run_grid_when_relay_missing", False)
+                                ):
+                                    allow_live = True
+                                    gate_reason = "live_blind_no_relay_file"
+                                    gate_features = _v5_live_gate_features_no_relay()
+                                    active_relay_id = None
+                                else:
+                                    _v5_try_emit_cycle_log(
+                                        {
+                                            "exit_kind": "no_relay_flat",
+                                            "v5_role": v5_role,
+                                            "entry_thr": entry_thr,
+                                            "max_positions": config.get("max_positions", 5),
+                                            "pre_np": len(pre_pending),
+                                            "pre_npos": len(pre_positions),
+                                            "gate_reason": "no_relay",
+                                            "gate_features": {},
+                                            "relay_enabled": True,
+                                            "relay_sent": False,
+                                            "relay_reason": "NO_RELAY",
+                                        },
+                                        params,
+                                    )
+                                    time.sleep(loop_interval_seconds)
+                                    continue
+                            elif not live_relay_blind and not _relay_zone_matches_current(
+                                config, relay_payload
+                            ):
+                                _v5_try_emit_cycle_log(
+                                    {
+                                        "exit_kind": "relay_zone_mismatch",
+                                        "v5_role": v5_role,
+                                        "entry_thr": entry_thr,
+                                        "max_positions": config.get("max_positions", 5),
+                                        "pre_np": len(pre_pending),
+                                        "pre_npos": len(pre_positions),
+                                        "gate_reason": "relay_zone_mismatch",
+                                        "gate_features": signal_relay.relay_to_gate_features(
+                                            relay_payload
+                                        ),
+                                        "relay_enabled": True,
+                                        "relay_sent": False,
+                                        "relay_reason": "RELAY_ZONE_MISMATCH",
+                                    },
+                                    params,
+                                )
+                                time.sleep(loop_interval_seconds)
+                                continue
+                            else:
+                                allow_live = True
+                                gate_reason = "live_relay_ok"
+                                gate_features = signal_relay.relay_to_gate_features(relay_payload)
+                                active_relay_id = relay_payload.get("relay_id")
+                        else:
+                            allow_live = True
+                            gate_reason = "live_no_signal_relay"
+                            gate_features = _v5_live_gate_features_no_relay()
+                            active_relay_id = None
                     else:
                         allow_live = True
                         gate_reason = "live_grid_maintenance"
@@ -1491,7 +1803,7 @@ def run():
                     remain_cd = _live_entry_cooldown_remaining_seconds(sym, mag, live_min_entry_gap_seconds)
                     # Chỉ chặn mở mới khi hệ thống đang flat (không position, không pending).
                     # Nếu đang có lệnh, để base strategy quản lý vòng đời bình thường.
-                    skip_live_cd = live_relay_blind and str(gate_reason) == "live_relay_ok"
+                    skip_live_cd = live_relay_blind and str(gate_reason) in _LIVE_BLIND_RELAX_REASONS
                     if (
                         remain_cd > 0
                         and (len(pre_pending) == 0 and len(pre_positions) == 0)
@@ -1518,7 +1830,7 @@ def run():
 
                 # Live: tín hiệu demo đủ điểm nhưng đã có cặp pending khớp tín hiệu → không gọi strategy (tránh thừa).
                 live_skip_dup = bool(params.get("live_skip_if_equivalent", True))
-                if live_relay_blind and str(gate_reason) == "live_relay_ok":
+                if live_relay_blind and str(gate_reason) in _LIVE_BLIND_RELAX_REASONS:
                     live_skip_dup = False
                 if (
                     v5_role == "live"
@@ -1583,12 +1895,12 @@ def run():
                 }
                 if steps_list is not None:
                     for step_val in steps_list:
-                        consecutive_errors, last_error_code = base.strategy_grid_step_logic(
-                            config, consecutive_errors, step=step_val
+                        consecutive_errors, last_error_code = _invoke_strategy_grid_step_logic(
+                            config, consecutive_errors, step_val
                         )
                 else:
-                    consecutive_errors, last_error_code = base.strategy_grid_step_logic(
-                        config, consecutive_errors, step=None
+                    consecutive_errors, last_error_code = _invoke_strategy_grid_step_logic(
+                        config, consecutive_errors, None
                     )
 
                 post_pending, post_positions = _snapshot_bot_orders_positions(sym, mag)
@@ -1619,15 +1931,41 @@ def run():
                             }
                         )
 
-                # Demo: vừa đặt cặp pending stop → ghi đè v5_relay_demo.json (xóa snapshot cũ, relay_id mới).
-                if v5_role == "demo" and (new_pending or new_positions) and isinstance(
-                    gate_features, dict
-                ):
+                # Demo: ghi file inverse — khi vừa có lệnh mới + gate có grid_preview;
+                # hoặc file chưa tồn tại nhưng MT5 đã có đủ cặp BUY_STOP+SELL_STOP (synthetic gpr).
+                if v5_role == "demo" and isinstance(gate_features, dict):
+                    path_inv = signal_relay.RELAY_DEMO_FILE
                     gpr = gate_features.get("grid_preview")
-                    if isinstance(gpr, dict) and gpr.get("buy_price") is not None and gpr.get(
-                        "sell_price"
-                    ) is not None:
+                    wrote = False
+                    if (
+                        (new_pending or new_positions)
+                        and isinstance(gpr, dict)
+                        and gpr.get("buy_price") is not None
+                        and gpr.get("sell_price") is not None
+                    ):
                         signal_relay.demo_write_inverse_relay_file(config, gate_features)
+                        wrote = True
+                    if not wrote and bool(
+                        params.get("v5_demo_inverse_file_when_pair_and_missing_file", True)
+                    ) and _v5_relay_demo_file_missing_or_bad(path_inv):
+                        pair_snap_w = _collect_pending_stop_pair(sym, mag)
+                        if pair_snap_w is not None:
+                            step_w = (
+                                float(steps_list[0])
+                                if steps_list
+                                else float(params.get("step", 5) or 5)
+                            )
+                            gpr_syn = _v5_synthetic_grid_preview_from_pair_snap(
+                                pair_snap_w, step_w
+                            )
+                            if gpr_syn.get("buy_price") is not None:
+                                gf_w = dict(gate_features)
+                                gf_w["grid_preview"] = gpr_syn
+                                signal_relay.demo_write_inverse_relay_file(config, gf_w)
+                                print(
+                                    f"📄 [V5 demo] Đã ghi {os.path.basename(path_inv)} từ cặp STOP trên MT5 "
+                                    f"(file thiếu / rỗng / lỗi — live có thể đọc)."
+                                )
 
                 relay_sent = relay_early_sent
                 relay_reason = relay_early_reason

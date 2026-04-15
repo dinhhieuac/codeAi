@@ -1,9 +1,9 @@
 {
-    "account": 463194753,
+   "account": 183967700,
     "password": "@Dinhhieu273",
-    "server": "Exness-MT5Trial17",
-    "mt5_path": "C:\\Program Files\\btclive\\terminal64.exe",
-    "symbol": "BTCUSD",
+    "server": "Exness-MT5Real25",
+    "mt5_path": "C:\\Program Files\\M9\\terminal64.exe",
+  "symbol": "BTCUSDc",
     "volume": 0.01,
     "magic": 100011,
     "max_positions": 5,
@@ -27,9 +27,13 @@
         "live_min_entry_gap_minutes": 1,
         "live_skip_if_equivalent": true,
         "live_duplicate_price_threshold": 0,
-        "signal_relay_enabled": true,
+        "signal_relay_enabled": false,
         "relay_zone_points": 200,
         "relay_verbose_log": true,
-        "live_relay_blind_follow": true
+        "live_relay_blind_follow": true,
+        "v5_live_inverse_only": true,
+        "v5_live_inverse_limits_from_demo_file": true,
+        "relay_demo_file": "btc_v5_relay_demo.json",
+        "relay_demo_history_log_file": "btc_v5_relay_demo_history.jsonl"
     }
 }
