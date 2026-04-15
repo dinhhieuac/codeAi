@@ -26,11 +26,24 @@ Relay Demo → Live:
 - sign_inverse: đặt `relay_demo_file` trong config trỏ tới btc_v5_relay_demo.json khi mirror BTC.
 - Demo: kết_luận=đạt (strategy_grid_step_v5) thì ghi relay sớm; dedup theo zone; thử lại khi có lệnh MT5 mới.
 - Live: chỉ mirror relay từ demo; không đọc history/score trên account live (zone check = mid giá vs zone_key relay nếu không blind).
+
+Hai tài khoản (demo + live) cùng lúc:
+- `run()` mặc định (`config_grid_step_btc_v5.json`): **supervisor** spawn **hai** process — một chạy demo, một chạy live — **song song**; process cha không login MT5.
+- Mỗi process con gọi `mt5.initialize` một lần — cần **hai terminal MT5 khác nhau** (`mt5_path` trong từng JSON).
+- Chỉ một role: `python ... --config config_grid_step_btc_v5_live.json` → một process live (không spawn demo).
+- Tắt cặp song song: `--no-parallel-live` hoặc `"btc_v5_parallel_live": false` trong `parameters` của config demo → chỉ **một** process (demo) trong process hiện tại.
+- Process worker dùng `--btc-v5-child` (không spawn thêm).
 """
+import json
 import os
+import subprocess
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DEMO_CONFIG_NAME = "config_grid_step_btc_v5.json"
+LIVE_CONFIG_NAME = "config_grid_step_inverse_btc_live.json"
 
 import strategy_grid_step_v5 as core
 
@@ -104,10 +117,90 @@ core._score_signal = lambda f: _btc_score_signal_detailed(f)[0]
 core._is_blocked = _btc_is_blocked
 
 
+def _argv_config_basename() -> str:
+    a = sys.argv[1:]
+    if not a:
+        return DEMO_CONFIG_NAME
+    if a[0].strip() == "--config" and len(a) >= 2:
+        return os.path.basename(a[1].strip())
+    if a[0].strip().endswith(".json"):
+        return os.path.basename(a[0].strip())
+    return DEMO_CONFIG_NAME
+
+
+def _strip_parallel_cli_flags() -> None:
+    sys.argv = [sys.argv[0]] + [x for x in sys.argv[1:] if x not in ("--no-parallel-live", "--btc-v5-child")]
+
+
+def _demo_parallel_live_enabled(demo_config_path: str) -> bool:
+    try:
+        with open(demo_config_path, encoding="utf-8") as f:
+            demo_cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return True
+    return bool(demo_cfg.get("parameters", {}).get("btc_v5_parallel_live", True))
+
+
 def run():
-    # Nếu user không truyền config thì mặc định BTC V5.
+    if "--btc-v5-child" in sys.argv:
+        _strip_parallel_cli_flags()
+        core.run()
+        return
+
     if len(sys.argv) == 1:
-        sys.argv.extend(["--config", "config_grid_step_btc_v5.json"])
+        sys.argv.extend(["--config", DEMO_CONFIG_NAME])
+
+    no_parallel = "--no-parallel-live" in sys.argv
+    cfg_base = _argv_config_basename()
+    live_path = os.path.join(SCRIPT_DIR, "configs", LIVE_CONFIG_NAME)
+    demo_path = os.path.join(SCRIPT_DIR, "configs", DEMO_CONFIG_NAME)
+    demo_selected = cfg_base == DEMO_CONFIG_NAME
+
+    if no_parallel:
+        print("📌 [BTC V5] --no-parallel-live: chỉ chạy một process (config hiện tại).")
+    _strip_parallel_cli_flags()
+
+    use_dual_supervisor = (
+        demo_selected
+        and not no_parallel
+        and os.path.isfile(live_path)
+        and _demo_parallel_live_enabled(demo_path)
+    )
+
+    if use_dual_supervisor:
+        script = os.path.abspath(__file__)
+        py = sys.executable
+        cmd_demo = [py, script, "--config", DEMO_CONFIG_NAME, "--btc-v5-child"]
+        cmd_live = [py, script, "--config", LIVE_CONFIG_NAME, "--btc-v5-child"]
+        print(
+            f"🚀 [BTC V5] Supervisor: 2 process song song — demo ({DEMO_CONFIG_NAME}) + live ({LIVE_CONFIG_NAME}). "
+            f"Hai terminal khác nhau (mt5_path). Ctrl+C dừng cả hai."
+        )
+        p_demo = None
+        p_live = None
+        try:
+            p_demo = subprocess.Popen(cmd_demo, cwd=SCRIPT_DIR)
+            p_live = subprocess.Popen(cmd_live, cwd=SCRIPT_DIR)
+        except OSError as e:
+            print(f"⚠️ [BTC V5] Không spawn process: {e}")
+            if p_demo is not None and p_demo.poll() is None:
+                p_demo.terminate()
+            return
+        try:
+            while p_demo.poll() is None or p_live.poll() is None:
+                time.sleep(0.4)
+        except KeyboardInterrupt:
+            print("\n🛑 [BTC V5] Supervisor dừng (Ctrl+C)…")
+        finally:
+            for p in (p_demo, p_live):
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+        return
+
     core.run()
 
 
