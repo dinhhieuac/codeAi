@@ -35,7 +35,7 @@ Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
 Đồng bộ **lệnh đã khớp** (position / deal), không phải pending:
 - InvGrid + file/TCP snapshot chỉ truyền **mức giá đặt LIMIT**; **không** có bước “demo vừa khớp deal → live mở ngay **market** tương ứng”. Hai tài khoản + STOP vs LIMIT + giá thị trường khác nhau → **không thể đảm bảo** khớp cùng lúc hay cùng nhánh chỉ bằng relay hiện tại.
 - Muốn bám **fill** demo: cần luồng riêng (ví dụ demo poll `history_deals_get` / position mới cùng magic+comment relay → gửi IPC JSON `{event:"demo_fill", side, volume, price, relay_id_leg}` → live gọi `order_send` **DEAL** market hoặc limit IOC theo quy tắc mirror đã định nghĩa). Đó là thiết kế copy-on-fill, không nằm trong `place_pair_from_inverse_relay`.
-- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), mỗi process MT5 (demo + live) hủy mọi pending + đóng position (`symbol`/`magic`), rồi một lệnh **market** `v5_weekend_flatten_direction` (BUY/SELL/NONE); state `v5_weekend_flatten_<account>.json` tránh lặp cùng Thứ Sáu.
+- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), mỗi process MT5 (demo + live) hủy mọi pending + đóng position (`symbol`/`magic`), rồi một lệnh **market** `v5_weekend_flatten_direction` (BUY/SELL hoặc khác = không market); state `v5_weekend_flatten_<account>.json` tránh lặp cùng Thứ Sáu — **sau đó process thoát** (`mt5.shutdown`).
 """
 import copy
 import json
@@ -165,7 +165,7 @@ def _v5_weekend_flatten_maybe(
 ) -> bool:
     """
     Thứ Sáu UTC, trong cửa sổ [close − minutes_before, close]: hủy mọi pending + đóng position
-    (symbol/magic), rồi một lệnh market BUY/SELL theo config. Trả True nếu đã xử lý (caller nên continue).
+    (symbol/magic), rồi một lệnh market BUY/SELL theo config (nếu có). Trả True nếu đã xử lý — caller nên thoát bot.
     """
     if not sym or not _v5_param_bool(params, "v5_weekend_flatten_enabled", False):
         return False
@@ -1971,8 +1971,8 @@ def _run_v5_bot():
                 sym = str(config.get("symbol") or "").strip()
                 mag = int(config.get("magic") or 0)
                 if sym and _v5_weekend_flatten_maybe(config, params, sym, mag):
-                    time.sleep(loop_interval_seconds)
-                    continue
+                    print("🛑 [V5 weekend] Hoàn tất — dừng bot (mt5.shutdown).")
+                    break
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
                 live_relay_blind = bool(params.get("live_relay_blind_follow", False))
@@ -2460,6 +2460,7 @@ def _run_v5_bot():
                 time.sleep(loop_interval_seconds)
         except KeyboardInterrupt:
             print("🛑 Grid Step Bot V5 Stopped")
+        finally:
             mt5.shutdown()
 
 
