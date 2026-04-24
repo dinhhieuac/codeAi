@@ -237,6 +237,7 @@ def place_pair_from_inverse_relay(
     order_symbol: từ config `symbol` — dùng cho MT5; nếu None thì dùng payload.symbol từ relay.
     """
     from utils import (
+        cancel_all_bot_limit_pendings,
         has_same_price_inverse_duplicate,
         normalize_inverse_limit_prices,
         place_buy_limit,
@@ -279,12 +280,21 @@ def place_pair_from_inverse_relay(
     if norm_note:
         print(f"🔧 [sign_inverse] Chuẩn hóa giá relay: {norm_note}")
 
-    dup, dup_reason = has_same_price_inverse_duplicate(symbol, magic, px_buy_lim, px_sell_lim, digits)
-    if dup:
-        print(f"⏭️ [sign_inverse] Bỏ qua tín hiệu — {dup_reason} (trùng mức giá inverse) — đánh dấu relay đã xử lý")
-        return False, dup_reason, True
+    n_rm = cancel_all_bot_limit_pendings(symbol, magic)
+    if n_rm:
+        print(
+            f"🧹 [sign_inverse] Đã hủy {n_rm} lệnh LIMIT cũ ({symbol} magic={magic}) — tín hiệu demo mới."
+        )
 
-    cancel_inv_limit_pendings(symbol, magic)
+    dup, dup_reason = has_same_price_inverse_duplicate(
+        symbol, magic, px_buy_lim, px_sell_lim, digits, check_positions=False
+    )
+    if dup:
+        print(
+            f"⏭️ [sign_inverse] Bỏ qua — {dup_reason} (vẫn trùng sau khi hủy LIMIT). "
+            f"Không đánh dấu relay consumed — thử lại vòng sau."
+        )
+        return False, dup_reason, False
 
     volume_min = float(getattr(info, "volume_min", 0.01) or 0.01)
     volume_step = float(getattr(info, "volume_step", 0.01) or 0.01)
@@ -412,10 +422,11 @@ def place_pair_from_inverse_relay(
     err_detail = f"BUY {getattr(r1, 'retcode', '?')} SELL {getattr(r2, 'retcode', '?')}"
     consume = _mark_consumed_after_pair_fail(r1, r2)
     if consume and (ok1 ^ ok2):
-        cancel_inv_limit_pendings(symbol, magic)
-        print(
-            "🧹 [sign_inverse] Đã hủy lệnh chờ còn lại (partial fail) — đánh dấu consumed."
-        )
+        n_cl = cancel_all_bot_limit_pendings(symbol, magic)
+        if n_cl:
+            print(
+                f"🧹 [sign_inverse] Đã hủy {n_cl} LIMIT còn lại (partial fail) — đánh dấu consumed."
+            )
     return False, err_detail, consume
 
 

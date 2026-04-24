@@ -23,6 +23,18 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - `relay_demo_file` / `relay_demo_history_log_file` (parameters): đường dẫn tương đối `GridStep/` hoặc tuyệt đối — để demo và live **cùng file** snapshot inverse (vd `btc_v5_relay_demo.json`); bắt buộc nếu chạy `strategy_grid_step_v5.py` trực tiếp thay vì `strategy_grid_step_btc_v5.py`.
 - `v5_demo_inverse_file_when_pair_and_missing_file` (demo): nếu **chưa có** file RELAY_DEMO nhưng MT5 đã có đủ cặp BUY_STOP+SELL_STOP → tự tạo `grid_preview` từ giá lệnh và ghi file (hữu ích khi bot demo restart mà lệnh vẫn còn).
 - `v5_live_inverse_log_skip` (live): in lý do bỏ qua inverse (đã consumed, thiếu file, …); mặc định true.
+
+Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
+- **SL/TP “giống nhau”** chỉ đúng theo nghĩa: cùng **khoảng step** quanh **giá vào của chính lệnh đó** (`strategy_grid_step`: BUY_STOP/SELL_STOP ± step; `sign_inverse.place_pair_from_inverse_relay`: BUY_LIMIT/SELL_LIMIT ± step rồi cộng `spread_sl`/`spread_tp` từ config live). Demo **không** dùng spread_tp mặc định −0.3 như inverse.
+- **Mức SL/TP tuyệt đối trên chart không trùng demo**: `grid_preview_inverse` hoán **buy_price/sell_price** so với demo; giá vào live sau `normalize_inverse_limit_prices` có thể lệch tick; vì vậy không thể kỳ vọng “khớp giống hệt” như hai lệnh cùng ticket — chỉ mirror **cấu trúc** lưới.
+- Demo đặt **BUY_STOP + SELL_STOP** (2 pending STOP); live InvGrid đặt **BUY_LIMIT + SELL_LIMIT** (2 pending LIMIT) — cùng một snapshot nhưng **loại lệnh khác**; giá chạm STOP vs LIMIT khác điều kiện kích hoạt → **thời điểm / nhánh khớp** không đồng bộ.
+- **Một chân live bị broker từ chối** (`place_pair_from_inverse_relay` trong `btc_sign_inverser`): margin, giá không hợp lệ sau `normalize_inverse_limit_prices`, IOC/FOK, symbol khác (vd BTCUSD vs BTCUSDc), freeze/stops level — một lệnh DONE một lệnh lỗi → trên tài khoản live có thể **chỉ còn 1 LIMIT**; code cố **hủy** phần còn lại (`cancel_inv_limit_pendings` khi partial fail) nhưng hủy có thể thất bại → vẫn thấy 1 lệnh.
+- **Không phải lỗi đếm**: position đã khớp một phần, hoặc lệnh cũ từ snapshot trước — kiểm tra log `❌ BUY_LIMIT` / `❌ SELL_LIMIT` và `🧹 … partial fail`.
+- Trước mỗi lần đặt InvGrid mới, `place_pair_from_inverse_relay` (**btc_sign_inverser** / **sign_inverse**) gọi `cancel_all_bot_limit_pendings` — hủy **mọi** BUY_LIMIT/SELL_LIMIT cùng symbol+magic, rồi mới `has_same_price_inverse_duplicate(..., check_positions=False)`: trùng **chỉ** khi còn pending LIMIT cùng mức — **không** chặn vì đã có **position** (vd SELL@4835 trong khi snapshot yêu cầu SELL_LIMIT@4835: một chân đã khớp, vẫn đặt lại cặp limit).
+
+Đồng bộ **lệnh đã khớp** (position / deal), không phải pending:
+- InvGrid + file/TCP snapshot chỉ truyền **mức giá đặt LIMIT**; **không** có bước “demo vừa khớp deal → live mở ngay **market** tương ứng”. Hai tài khoản + STOP vs LIMIT + giá thị trường khác nhau → **không thể đảm bảo** khớp cùng lúc hay cùng nhánh chỉ bằng relay hiện tại.
+- Muốn bám **fill** demo: cần luồng riêng (ví dụ demo poll `history_deals_get` / position mới cùng magic+comment relay → gửi IPC JSON `{event:"demo_fill", side, volume, price, relay_id_leg}` → live gọi `order_send` **DEAL** market hoặc limit IOC theo quy tắc mirror đã định nghĩa). Đó là thiết kế copy-on-fill, không nằm trong `place_pair_from_inverse_relay`.
 """
 import copy
 import json

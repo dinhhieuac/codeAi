@@ -1,39 +1,39 @@
 {
-  "relay_id": "de49c54c-aaf6-49ae-a1e3-b3aad4719efb",
-  "relay_id_buy_limit": "ee19d00e-d1cf-42b9-b921-922ba598e9f1",
-  "relay_id_sell_limit": "48736147-b9e8-4b8d-8ef9-e6ec0ae9c4fa",
-  "created_ts": 1776245428.592458,
+  "relay_id": "771717e4-6f26-4197-86d1-a6bbb981abfd",
+  "relay_id_buy_limit": "4122510c-c7b8-4414-a7df-2e751c6dc2bd",
+  "relay_id_sell_limit": "5c962811-ee34-4b32-bd10-eadd7801af93",
+  "created_ts": 1777018848.93691,
   "symbol": "XAUUSD",
   "magic": 100010,
   "note": "inverse_of_demo_pending_stops",
   "demo_grid_preview": {
-    "buy_price": 4805.0,
-    "sell_price": 4795.0,
-    "ref": 4800.0,
+    "buy_price": 4695.0,
+    "sell_price": 4685.0,
+    "ref": 4690.0,
     "step": 5.0,
-    "anchor": 4800.0
+    "anchor": 4689.609
   },
   "inverted_signals": [
     {
       "demo": "BUY_STOP",
-      "demo_price": 4805.0,
+      "demo_price": 4695.0,
       "inverse": "SELL_STOP",
-      "inverse_price": 4805.0,
-      "relay_id": "48736147-b9e8-4b8d-8ef9-e6ec0ae9c4fa"
+      "inverse_price": 4695.0,
+      "relay_id": "5c962811-ee34-4b32-bd10-eadd7801af93"
     },
     {
       "demo": "SELL_STOP",
-      "demo_price": 4795.0,
+      "demo_price": 4685.0,
       "inverse": "BUY_STOP",
-      "inverse_price": 4795.0,
-      "relay_id": "ee19d00e-d1cf-42b9-b921-922ba598e9f1"
+      "inverse_price": 4685.0,
+      "relay_id": "4122510c-c7b8-4414-a7df-2e751c6dc2bd"
     }
   ],
   "grid_preview_inverse": {
-    "buy_price": 4795.0,
-    "sell_price": 4805.0,
+    "buy_price": 4685.0,
+    "sell_price": 4695.0,
     "step": 5.0,
-    "ref": 4800.0,
-    "anchor": 4800.0
+    "ref": 4690.0,
+    "anchor": 4689.609
   }
 }

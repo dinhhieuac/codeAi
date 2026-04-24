@@ -460,11 +460,16 @@ def has_same_price_inverse_duplicate(
     px_buy_limit: float,
     px_sell_limit: float,
     digits: int,
+    *,
+    check_positions: bool = True,
 ) -> Tuple[bool, str]:
     """
-    Trước khi đặt cặp BUY_LIMIT + SELL_LIMIT inverse: kiểm tra đã có lệnh chờ hoặc vị thế
-    cùng magic tại đúng một trong hai mức giá (làm tròn theo digits) thì coi là trùng tín hiệu.
-    Dùng từ sign_inverse / btc_sign_inverser (signal_relay chỉ ghi file, không gọi MT5).
+    Trước khi đặt cặp BUY_LIMIT + SELL_LIMIT inverse: kiểm tra đã có **lệnh chờ** LIMIT cùng magic
+    tại đúng một trong hai mức giá (làm tròn theo digits) thì coi là trùng.
+
+    `check_positions=False` (dùng trong InvGrid từ demo): **không** coi vị thế BUY/SELL đã mở
+    là trùng — một chân có thể đã khớp (position) trong khi vẫn cần đặt/tái đặt LIMIT còn lại;
+    chỉ chặn khi đã có pending LIMIT cùng mức.
     """
     rb = round(float(px_buy_limit), digits)
     rs = round(float(px_sell_limit), digits)
@@ -487,21 +492,46 @@ def has_same_price_inverse_duplicate(
         if ot == sell_lim and op == rs:
             return True, f"đã có SELL_LIMIT@{op}"
 
-    positions = mt5.positions_get(symbol=symbol) or []
-    for p in positions:
-        if int(getattr(p, "magic", 0) or 0) != int(magic):
-            continue
-        try:
-            op = round(float(getattr(p, "price_open", 0) or 0), digits)
-        except (TypeError, ValueError):
-            continue
-        pt = int(getattr(p, "type", -1))
-        if pt == pos_buy and op == rb:
-            return True, f"đã có position BUY@{op}"
-        if pt == pos_sell and op == rs:
-            return True, f"đã có position SELL@{op}"
+    if check_positions:
+        positions = mt5.positions_get(symbol=symbol) or []
+        for p in positions:
+            if int(getattr(p, "magic", 0) or 0) != int(magic):
+                continue
+            try:
+                op = round(float(getattr(p, "price_open", 0) or 0), digits)
+            except (TypeError, ValueError):
+                continue
+            pt = int(getattr(p, "type", -1))
+            if pt == pos_buy and op == rb:
+                return True, f"đã có position BUY@{op}"
+            if pt == pos_sell and op == rs:
+                return True, f"đã có position SELL@{op}"
 
     return False, ""
+
+
+def cancel_all_bot_limit_pendings(symbol: str, magic: int) -> int:
+    """
+    Hủy mọi lệnh chờ BUY_LIMIT / SELL_LIMIT cùng symbol + magic (bất kỳ comment).
+    Gọi trước khi đặt cặp InvGrid mới từ tín hiệu demo để tránh `has_same_price_inverse_duplicate`
+    chặn oan vì lệnh cũ còn sót.
+    """
+    orders = mt5.orders_get(symbol=symbol) or []
+    n_ok = 0
+    buy_lim = getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2)
+    sell_lim = getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3)
+    for o in orders:
+        if int(getattr(o, "magic", 0) or 0) != int(magic):
+            continue
+        ot = int(getattr(o, "type", -1))
+        if ot not in (buy_lim, sell_lim):
+            continue
+        r = mt5.order_send(
+            {"action": mt5.TRADE_ACTION_REMOVE, "order": int(getattr(o, "ticket", 0) or 0)}
+        )
+        if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+            n_ok += 1
+    return n_ok
 
 
 def normalize_inverse_limit_prices(

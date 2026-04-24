@@ -24,7 +24,9 @@ Relay Demo → Live (inverse file `btc_v5_relay_demo.json`):
 - Gọi core.configure_grid_step_v5_paths(...) ngay sau import; trong JSON dùng `relay_demo_file` / `relay_demo_history_log_file` (đồng bộ khi chạy thẳng strategy_grid_step_v5.py).
 
 Quy tắc InvGrid khi `v5_live_inverse_only` (live):
-- Live **không** áp gate / score / zone relay / cooldown “mở grid” — chỉ đọc snapshot demo đã ghi và gửi lệnh MT5 (kiểm tra kỹ thuật trong `btc_sign_inverser`: symbol, chuẩn hóa giá broker, trùng mức, v.v.).
+- Live **không** áp gate / score / zone relay / cooldown “mở grid” — snapshot từ demo → `btc_sign_inverser.place_pair_from_inverse_relay` (symbol/magic/volume từ config live, vd BTCUSDc).
+- Trước mỗi lần đặt cặp mới: **`cancel_all_bot_limit_pendings`** (trong `utils`, gọi từ `btc_sign_inverser`) hủy mọi **BUY_LIMIT/SELL_LIMIT** cùng symbol+magic, rồi mới kiểm tra trùng. Nếu vẫn trùng (vd **position** cùng mức giá), **không** đánh dấu `relay_id` vào consumed — snapshot thử lại vòng sau; không cần xóa tay `btc_signal_inverse_consumed_relay_ids.json` vì lỗi trùng pending.
+- Tùy chọn (giống engine XAU `strategy_grid_step_v5`): `v5_inverse_ipc_port` + `v5_inverse_ipc_host` trong **cả** JSON demo và live (cùng cổng) → đẩy snapshot TCP; live inverse-only lắng nghe, không cần poll file. `port` = 0 → chỉ file `btc_v5_relay_demo.json`.
 - Ánh xạ giá (trùng `signal_relay.demo_write_inverse_relay_file`):
   - Trên **demo**, `grid_preview.buy_price` = giá lệnh **BUY_STOP** (mức cao), `sell_price` = giá **SELL_STOP** (mức thấp).
   - Trên **live**: đặt **BUY_LIMIT** tại giá bằng **SELL_STOP** demo, **SELL_LIMIT** tại giá bằng **BUY_STOP** demo (đảo vai stop ↔ limit, giữ đúng hai mức giá).
@@ -51,7 +53,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DEMO_CONFIG_NAME = "config_grid_step_btc_v5.json"
 LIVE_CONFIG_NAME = "config_grid_step_btc_v5_live.json"
-# Tần suất vòng lặp bot: `parameters.loop_interval_seconds` trong mỗi JSON (demo + live; mặc định repo 1s).
+# `parameters.loop_interval_seconds` trong JSON demo + live (mặc định repo 1s).
+# InvGrid: engine gọi `btc_sign_inverser` — hủy LIMIT cũ trước snapshot mới (xem docstring trên).
 
 import strategy_grid_step_v5 as core
 
@@ -157,8 +160,9 @@ def run():
         cfg_child = _argv_config_basename()
         if cfg_child == LIVE_CONFIG_NAME or "btc_v5_live" in cfg_child.lower():
             print(
-                "🔔 [BTC V5 p_live] InvGrid: log có prefix [BTC V5 live] — "
-                "Chuẩn bị → 📤 gửi lệnh → ✅ ticket BUY_LIMIT/SELL_LIMIT + MT5 login."
+                "🔔 [BTC V5 p_live] InvGrid — prefix log [BTC V5 live]. "
+                "Trước mỗi snapshot mới: hủy LIMIT cũ (cùng symbol/magic) → đặt cặp BUY_LIMIT + SELL_LIMIT "
+                "(xem btc_sign_inverser / utils.cancel_all_bot_limit_pendings)."
             )
         core.run()
         return
