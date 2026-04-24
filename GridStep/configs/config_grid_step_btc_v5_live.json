@@ -34,6 +34,15 @@
         "v5_live_inverse_only": true,
         "v5_live_inverse_limits_from_demo_file": true,
         "relay_demo_file": "btc_v5_relay_demo.json",
-        "relay_demo_history_log_file": "btc_v5_relay_demo_history.jsonl"
+        "relay_demo_history_log_file": "btc_v5_relay_demo_history.jsonl",
+        "v5_weekend_flatten_enabled": false,
+        "v5_weekend_close_utc_hour": 20,
+        "v5_weekend_close_utc_minute": 59,
+        "v5_weekend_flatten_minutes_before": 5,
+        "v5_weekend_flatten_direction": "SELL",
+        "v5_weekend_flatten_comment": "V5_weekend_flat",
+        "v5_weekend_flatten_sl": 0,
+        "v5_weekend_flatten_tp": 0,
+        "v5_weekend_flatten_deviation": 30
     }
 }

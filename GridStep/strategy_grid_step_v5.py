@@ -35,6 +35,7 @@ Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
 Đồng bộ **lệnh đã khớp** (position / deal), không phải pending:
 - InvGrid + file/TCP snapshot chỉ truyền **mức giá đặt LIMIT**; **không** có bước “demo vừa khớp deal → live mở ngay **market** tương ứng”. Hai tài khoản + STOP vs LIMIT + giá thị trường khác nhau → **không thể đảm bảo** khớp cùng lúc hay cùng nhánh chỉ bằng relay hiện tại.
 - Muốn bám **fill** demo: cần luồng riêng (ví dụ demo poll `history_deals_get` / position mới cùng magic+comment relay → gửi IPC JSON `{event:"demo_fill", side, volume, price, relay_id_leg}` → live gọi `order_send` **DEAL** market hoặc limit IOC theo quy tắc mirror đã định nghĩa). Đó là thiết kế copy-on-fill, không nằm trong `place_pair_from_inverse_relay`.
+- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), mỗi process MT5 (demo + live) hủy mọi pending + đóng position (`symbol`/`magic`), rồi một lệnh **market** `v5_weekend_flatten_direction` (BUY/SELL/NONE); state `v5_weekend_flatten_<account>.json` tránh lặp cùng Thứ Sáu.
 """
 import copy
 import json
@@ -50,6 +51,7 @@ from typing import Any, Dict, Optional, Set
 
 import strategy_grid_step as base
 import signal_relay
+from utils import cancel_all_pending_orders_magic, close_positions_bot, place_market_order
 from scores import (
     normalize_preferred_direction_v5,
     xauusd_grid_step_v5_is_blocked,
@@ -122,6 +124,107 @@ def _v5_synthetic_grid_preview_from_pair_snap(pair_snap: dict, step_val: float) 
         "step": float(step_val),
         "ref": ref,
     }
+
+
+def _v5_weekend_flatten_state_path(config: Dict[str, Any]) -> str:
+    acct = config.get("account")
+    acct_s = str(acct) if acct is not None else "unknown"
+    return os.path.join(SCRIPT_DIR, f"v5_weekend_flatten_{acct_s}.json")
+
+
+def _v5_weekend_flatten_load_state(path: str) -> Dict[str, Any]:
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _v5_weekend_flatten_save_state(path: str, friday_key: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "friday_utc_date": friday_key,
+                    "completed": True,
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except OSError as e:
+        print(f"⚠️ [V5 weekend] Không ghi state {path}: {e}")
+
+
+def _v5_weekend_flatten_maybe(
+    config: Dict[str, Any], params: Dict[str, Any], sym: str, mag: int
+) -> bool:
+    """
+    Thứ Sáu UTC, trong cửa sổ [close − minutes_before, close]: hủy mọi pending + đóng position
+    (symbol/magic), rồi một lệnh market BUY/SELL theo config. Trả True nếu đã xử lý (caller nên continue).
+    """
+    if not sym or not _v5_param_bool(params, "v5_weekend_flatten_enabled", False):
+        return False
+    now = datetime.now(timezone.utc)
+    if int(now.weekday()) != 4:
+        return False
+    hour = int(params.get("v5_weekend_close_utc_hour", 20))
+    minute = int(params.get("v5_weekend_close_utc_minute", 59))
+    mb = max(1, int(params.get("v5_weekend_flatten_minutes_before", 5)))
+    d = now.date()
+    close_begin = datetime(d.year, d.month, d.day, hour, minute, 0, 0, tzinfo=timezone.utc)
+    window_start = close_begin - timedelta(minutes=mb)
+    close_end = datetime(d.year, d.month, d.day, hour, minute, 59, 999999, tzinfo=timezone.utc)
+    if not (window_start <= now <= close_end):
+        return False
+    friday_key = d.isoformat()
+    st_path = _v5_weekend_flatten_state_path(config)
+    st = _v5_weekend_flatten_load_state(st_path)
+    if str(st.get("friday_utc_date") or "") == friday_key and st.get("completed"):
+        return False
+    vol = float(config.get("volume") or 0.01)
+    direction = str(params.get("v5_weekend_flatten_direction", "SELL") or "SELL").strip().upper()
+    cmt = str(params.get("v5_weekend_flatten_comment", "V5_weekend_flat") or "V5_weekend_flat")
+    dev = int(params.get("v5_weekend_flatten_deviation", 30))
+    sl_w = float(params.get("v5_weekend_flatten_sl", 0) or 0)
+    tp_w = float(params.get("v5_weekend_flatten_tp", 0) or 0)
+    ai = mt5.account_info()
+    acct_s = str(ai.login) if ai else "?"
+    print(
+        f"🕐 [V5 weekend] Thứ Sáu UTC {now.strftime('%H:%M')} — đóng pending+position {sym} magic={mag} "
+        f"(account={acct_s}), sau đó market {direction} vol={vol}"
+    )
+    n_rm = cancel_all_pending_orders_magic(sym, mag)
+    n_cl = close_positions_bot(sym, mag, comment=None)
+    print(f"🧹 [V5 weekend] Đã hủy {n_rm} pending, đóng {n_cl} position.")
+    if direction in ("BUY", "SELL"):
+        is_buy = direction == "BUY"
+        r = place_market_order(
+            sym,
+            vol,
+            is_buy,
+            mag,
+            cmt,
+            sl=sl_w,
+            tp=tp_w,
+            deviation=dev,
+        )
+        if r is None:
+            print("❌ [V5 weekend] order_send market = None")
+        elif int(getattr(r, "retcode", 0) or 0) != mt5.TRADE_RETCODE_DONE:
+            print(f"❌ [V5 weekend] Market {direction} retcode={r.retcode} {getattr(r, 'comment', '')}")
+        else:
+            print(f"✅ [V5 weekend] Market {direction} OK ticket={getattr(r, 'order', 0)}")
+    else:
+        print(f"⏭️ [V5 weekend] v5_weekend_flatten_direction={direction!r} — bỏ qua lệnh market (chỉ đóng lệnh).")
+    _v5_weekend_flatten_save_state(st_path, friday_key)
+    return True
+
+
 # Live blind: bỏ qua cooldown / duplicate-skip khi các gate này (không chỉ live_relay_ok).
 _LIVE_BLIND_RELAX_REASONS = frozenset(
     ("live_relay_ok", "live_blind_no_relay_file", "live_no_signal_relay")
@@ -1867,6 +1970,9 @@ def _run_v5_bot():
                 relay_verbose = bool(params.get("relay_verbose_log", True))
                 sym = str(config.get("symbol") or "").strip()
                 mag = int(config.get("magic") or 0)
+                if sym and _v5_weekend_flatten_maybe(config, params, sym, mag):
+                    time.sleep(loop_interval_seconds)
+                    continue
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
                 live_relay_blind = bool(params.get("live_relay_blind_follow", False))

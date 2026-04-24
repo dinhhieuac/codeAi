@@ -534,6 +534,81 @@ def cancel_all_bot_limit_pendings(symbol: str, magic: int) -> int:
     return n_ok
 
 
+def cancel_all_pending_orders_magic(symbol: str, magic: int) -> int:
+    """
+    Hủy mọi lệnh chờ (BUY/SELL LIMIT, BUY/SELL STOP, …) cùng symbol + magic.
+    Dùng trước đóng cuối tuần; không lọc theo comment.
+    """
+    orders = mt5.orders_get(symbol=symbol) or []
+    n_ok = 0
+    for o in orders:
+        if int(getattr(o, "magic", 0) or 0) != int(magic):
+            continue
+        tid = int(getattr(o, "ticket", 0) or 0)
+        if not tid:
+            continue
+        r = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": tid})
+        if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+            n_ok += 1
+    return n_ok
+
+
+def place_market_order(
+    symbol: str,
+    volume: float,
+    is_buy: bool,
+    magic: int,
+    comment: str,
+    *,
+    sl: float = 0.0,
+    tp: float = 0.0,
+    deviation: int = 30,
+    digits: Optional[int] = None,
+    type_filling=None,
+):
+    """
+    Mở position mới bằng lệnh thị trường (TRADE_ACTION_DEAL), BUY hoặc SELL.
+    Chuẩn hóa volume theo volume_min / volume_step của symbol.
+    """
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return None
+    if not mt5.symbol_select(symbol, True):
+        return None
+    if digits is None:
+        digits = int(getattr(info, "digits", 5) or 5)
+    tick = mt5.symbol_info_tick(symbol)
+    if not tick:
+        return None
+    price = float(tick.ask) if is_buy else float(tick.bid)
+    vol = max(float(volume), float(getattr(info, "volume_min", 0.01) or 0.01))
+    vst = float(getattr(info, "volume_step", 0.01) or 0.01)
+    if vst > 0:
+        vol = round(vol / vst) * vst
+        vol = max(vol, float(getattr(info, "volume_min", 0.01) or 0.01))
+    if type_filling is None:
+        type_filling = (
+            mt5.ORDER_FILLING_IOC if (getattr(info, "filling_mode", 0) & 2) else mt5.ORDER_FILLING_FOK
+        )
+    typ = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+    cmt = (comment or "").strip()[:31] or "Mkt"
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": vol,
+        "type": typ,
+        "price": round(price, digits),
+        "sl": round(float(sl), digits) if sl else 0.0,
+        "tp": round(float(tp), digits) if tp else 0.0,
+        "deviation": int(deviation),
+        "magic": int(magic),
+        "comment": cmt,
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": type_filling,
+    }
+    return mt5.order_send(req)
+
+
 def normalize_inverse_limit_prices(
     info: Any,
     tick: Any,
