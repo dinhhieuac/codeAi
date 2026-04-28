@@ -65,6 +65,9 @@ def check_consecutive_losses(symbol, magic, limit=3, lookback_hours=24):
     """
     Check if the last 'limit' closed trades were losses within the last 'lookback_hours'.
     Returns True if we should STOP trading (too many losses).
+
+    Config JSON (`parameters`): pause_on_losses (default true), max_consecutive_losses
+    (default 3; <=0 disables check), consecutive_loss_lookback_hours (default 24).
     """
     # Disable by setting limit <= 0
     if limit <= 0:
@@ -391,11 +394,23 @@ def strategy_1_logic(config, error_count=0):
     max_positions = config.get('max_positions', 1)
     
     # 0. Check Consecutive Losses Limit (Strategy Protection)
-    max_losses = config['parameters'].get('max_consecutive_losses', 3)
-    pause_on_losses = config['parameters'].get('pause_on_losses', True)
-    
+    # JSON: max_consecutive_losses (<=0 tắt), pause_on_losses, consecutive_loss_lookback_hours
+    try:
+        max_losses = int(config["parameters"].get("max_consecutive_losses", 3))
+    except (TypeError, ValueError):
+        max_losses = 3
+    pause_on_losses = config["parameters"].get("pause_on_losses", True)
+    try:
+        lookback_h = int(config["parameters"].get("consecutive_loss_lookback_hours", 24))
+    except (TypeError, ValueError):
+        lookback_h = 24
+    if lookback_h < 1:
+        lookback_h = 24
+
     if pause_on_losses:
-        should_stop, stop_msg = check_consecutive_losses(symbol, magic, max_losses)
+        should_stop, stop_msg = check_consecutive_losses(
+            symbol, magic, max_losses, lookback_hours=lookback_h
+        )
         if should_stop:
             print(f"🛑 [SAFETY STOP] {stop_msg}. Waiting user intervention or restart.")
             # We can return here to skip checking signals

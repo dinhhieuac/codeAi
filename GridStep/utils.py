@@ -534,6 +534,60 @@ def cancel_all_bot_limit_pendings(symbol: str, magic: int) -> int:
     return n_ok
 
 
+def cancel_all_pending_account() -> int:
+    """Hủy mọi lệnh chờ trên tài khoản MT5 hiện tại (mọi symbol/magic)."""
+    orders = mt5.orders_get() or []
+    n_ok = 0
+    for o in orders:
+        tid = int(getattr(o, "ticket", 0) or 0)
+        if not tid:
+            continue
+        r = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": tid})
+        if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+            n_ok += 1
+    return n_ok
+
+
+def close_all_positions_account() -> int:
+    """Đóng mọi position đang mở trên tài khoản (mọi symbol/magic)."""
+    positions = mt5.positions_get() or []
+    closed = 0
+    for p in positions:
+        sym = str(getattr(p, "symbol", "") or "").strip()
+        if not sym:
+            continue
+        info = mt5.symbol_info(sym)
+        if not info:
+            continue
+        if not mt5.symbol_select(sym, True):
+            continue
+        tick = mt5.symbol_info_tick(sym)
+        if not tick:
+            continue
+        digits = int(getattr(info, "digits", 5) or 5)
+        type_filling = (
+            mt5.ORDER_FILLING_IOC if (getattr(info, "filling_mode", 0) & 2) else mt5.ORDER_FILLING_FOK
+        )
+        price = float(tick.bid) if p.type == mt5.ORDER_TYPE_BUY else float(tick.ask)
+        mag = int(getattr(p, "magic", 0) or 0)
+        r = mt5.order_send(
+            {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": sym,
+                "volume": p.volume,
+                "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+                "position": p.ticket,
+                "price": round(price, digits),
+                "magic": mag,
+                "comment": "Close_AllAcct",
+                "type_filling": type_filling,
+            }
+        )
+        if r and r.retcode == mt5.TRADE_RETCODE_DONE:
+            closed += 1
+    return closed
+
+
 def cancel_all_pending_orders_magic(symbol: str, magic: int) -> int:
     """
     Hủy mọi lệnh chờ (BUY/SELL LIMIT, BUY/SELL STOP, …) cùng symbol + magic.

@@ -1,39 +1,39 @@
 {
-  "relay_id": "0b30ec5e-340f-427f-8f7c-2b41aa386d5b",
-  "relay_id_buy_limit": "80a8c732-7f28-41a6-8a4f-926e67546f89",
-  "relay_id_sell_limit": "d50acf69-5a57-41ff-8790-a0eef801d2eb",
-  "created_ts": 1777019659.9849203,
+  "relay_id": "e3c0dc52-d1d0-4bee-a5a5-a349f827e51c",
+  "relay_id_buy_limit": "c0918bd2-c0ae-47e2-a4ca-7fa09e9f2755",
+  "relay_id_sell_limit": "62274628-bd9e-4c1f-893c-28b93289b0cb",
+  "created_ts": 1777343948.4132907,
   "symbol": "BTCUSD",
   "magic": 100011,
   "note": "inverse_of_demo_pending_stops",
   "demo_grid_preview": {
-    "buy_price": 78200.0,
-    "sell_price": 77800.0,
-    "ref": 78000.0,
+    "buy_price": 77000.0,
+    "sell_price": 76600.0,
+    "ref": 76800.0,
     "step": 200.0,
-    "anchor": 78021.12000000001
+    "anchor": 76796.62
   },
   "inverted_signals": [
     {
       "demo": "BUY_STOP",
-      "demo_price": 78200.0,
+      "demo_price": 77000.0,
       "inverse": "SELL_STOP",
-      "inverse_price": 78200.0,
-      "relay_id": "d50acf69-5a57-41ff-8790-a0eef801d2eb"
+      "inverse_price": 77000.0,
+      "relay_id": "62274628-bd9e-4c1f-893c-28b93289b0cb"
     },
     {
       "demo": "SELL_STOP",
-      "demo_price": 77800.0,
+      "demo_price": 76600.0,
       "inverse": "BUY_STOP",
-      "inverse_price": 77800.0,
-      "relay_id": "80a8c732-7f28-41a6-8a4f-926e67546f89"
+      "inverse_price": 76600.0,
+      "relay_id": "c0918bd2-c0ae-47e2-a4ca-7fa09e9f2755"
     }
   ],
   "grid_preview_inverse": {
-    "buy_price": 77800.0,
-    "sell_price": 78200.0,
+    "buy_price": 76600.0,
+    "sell_price": 77000.0,
     "step": 200.0,
-    "ref": 78000.0,
-    "anchor": 78021.12000000001
+    "ref": 76800.0,
+    "anchor": 76796.62
   }
 }

@@ -36,6 +36,7 @@
         "relay_demo_file": "btc_v5_relay_demo.json",
         "relay_demo_history_log_file": "btc_v5_relay_demo_history.jsonl",
         "v5_weekend_flatten_enabled": false,
+        "v5_weekend_flatten_scope": "bot",
         "v5_weekend_close_utc_hour": 20,
         "v5_weekend_close_utc_minute": 59,
         "v5_weekend_flatten_minutes_before": 5,

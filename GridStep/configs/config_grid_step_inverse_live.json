@@ -19,17 +19,18 @@
     "loop_interval_seconds": 10,
     "relay_demo_file": "v5_relay_demo.json",
     "relay_demo_history_log_file": "v5_relay_demo_history.jsonl",
-        "v5_structured_log": true,
-        "v5_log_debug": false,
-        "v5_compact_cycle_log": false,
-        "v5_weekend_flatten_enabled": false,
-        "v5_weekend_close_utc_hour": 20,
-        "v5_weekend_close_utc_minute": 59,
-        "v5_weekend_flatten_minutes_before": 5,
-        "v5_weekend_flatten_direction": "SELL",
-        "v5_weekend_flatten_comment": "V5_weekend_flat",
-        "v5_weekend_flatten_sl": 0,
-        "v5_weekend_flatten_tp": 0,
-        "v5_weekend_flatten_deviation": 30
-    }
+    "v5_structured_log": true,
+    "v5_log_debug": false,
+    "v5_compact_cycle_log": false,
+    "v5_weekend_flatten_enabled": true,
+    "v5_weekend_flatten_scope": "account",
+    "v5_weekend_close_utc_hour": 20,
+    "v5_weekend_close_utc_minute": 59,
+    "v5_weekend_flatten_minutes_before": 5,
+    "v5_weekend_flatten_direction": "BUY",
+    "v5_weekend_flatten_comment": "V5_weekend_flat",
+    "v5_weekend_flatten_sl": 0,
+    "v5_weekend_flatten_tp": 0,
+    "v5_weekend_flatten_deviation": 30
+  }
 }

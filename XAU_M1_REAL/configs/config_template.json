@@ -10,6 +10,9 @@
     "telegram_token": "YOUR_TELEGRAM_TOKEN",
     "telegram_chat_id": "your_chat_id_here",
     "parameters": {
+        "pause_on_losses": true,
+        "max_consecutive_losses": 3,
+        "consecutive_loss_lookback_hours": 24,
         "sl_pips": 20,
         "tp_pips": 30,
         "atr_period": 14,

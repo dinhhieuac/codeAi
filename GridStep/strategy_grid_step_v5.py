@@ -35,7 +35,7 @@ Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
 Đồng bộ **lệnh đã khớp** (position / deal), không phải pending:
 - InvGrid + file/TCP snapshot chỉ truyền **mức giá đặt LIMIT**; **không** có bước “demo vừa khớp deal → live mở ngay **market** tương ứng”. Hai tài khoản + STOP vs LIMIT + giá thị trường khác nhau → **không thể đảm bảo** khớp cùng lúc hay cùng nhánh chỉ bằng relay hiện tại.
 - Muốn bám **fill** demo: cần luồng riêng (ví dụ demo poll `history_deals_get` / position mới cùng magic+comment relay → gửi IPC JSON `{event:"demo_fill", side, volume, price, relay_id_leg}` → live gọi `order_send` **DEAL** market hoặc limit IOC theo quy tắc mirror đã định nghĩa). Đó là thiết kế copy-on-fill, không nằm trong `place_pair_from_inverse_relay`.
-- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), mỗi process MT5 (demo + live) hủy mọi pending + đóng position (`symbol`/`magic`), rồi một lệnh **market** `v5_weekend_flatten_direction` (BUY/SELL hoặc khác = không market); state `v5_weekend_flatten_<account>.json` tránh lặp cùng Thứ Sáu — **sau đó process thoát** (`mt5.shutdown`).
+- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), **mỗi** process MT5 (demo **và** live — cần **bật flag trên cả hai** JSON) chạy **một lần / account / Thứ Sáu**: `v5_weekend_flatten_scope`=`bot` hoặc `account`; state `v5_weekend_flatten_<account>.json` — nếu đã `completed` cho ngày Thứ Sáu đó thì **không** chạy lại (process vẫn chạy grid bình thường); xóa file state để test lại — **sau khi flatten** process thoát (`mt5.shutdown`). Hai JSON nên cùng cửa sổ giờ UTC.
 """
 import copy
 import json
@@ -51,7 +51,13 @@ from typing import Any, Dict, Optional, Set
 
 import strategy_grid_step as base
 import signal_relay
-from utils import cancel_all_pending_orders_magic, close_positions_bot, place_market_order
+from utils import (
+    cancel_all_pending_account,
+    cancel_all_pending_orders_magic,
+    close_all_positions_account,
+    close_positions_bot,
+    place_market_order,
+)
 from scores import (
     normalize_preferred_direction_v5,
     xauusd_grid_step_v5_is_blocked,
@@ -164,8 +170,9 @@ def _v5_weekend_flatten_maybe(
     config: Dict[str, Any], params: Dict[str, Any], sym: str, mag: int
 ) -> bool:
     """
-    Thứ Sáu UTC, trong cửa sổ [close − minutes_before, close]: hủy mọi pending + đóng position
-    (symbol/magic), rồi một lệnh market BUY/SELL theo config (nếu có). Trả True nếu đã xử lý — caller nên thoát bot.
+    Thứ Sáu UTC, trong cửa sổ [close − minutes_before, close]: hủy pending + đóng position theo
+    `v5_weekend_flatten_scope` (bot = chỉ symbol/magic; account = cả tài khoản), rồi market BUY/SELL
+    trên `symbol` config (nếu có). Trả True nếu đã xử lý — caller thoát bot.
     """
     if not sym or not _v5_param_bool(params, "v5_weekend_flatten_enabled", False):
         return False
@@ -185,6 +192,14 @@ def _v5_weekend_flatten_maybe(
     st_path = _v5_weekend_flatten_state_path(config)
     st = _v5_weekend_flatten_load_state(st_path)
     if str(st.get("friday_utc_date") or "") == friday_key and st.get("completed"):
+        acct = config.get("account")
+        _v5_throttle_print(
+            f"wknd_done_{acct}",
+            f"ℹ️ [V5 weekend] Không hủy / không market lần này — mỗi account chỉ flatten một lần mỗi Thứ Sáu "
+            f"(đã ghi state {friday_key}, account={acct}). Lần đầu trong cửa sổ giờ đã chạy cancel+market+rồi thoát; "
+            f"sau khi bạn mở lại bot, vòng lặp chỉ in dòng này. Xóa `{os.path.basename(st_path)}` để ép chạy lại cùng ngày.",
+            120.0,
+        )
         return False
     vol = float(config.get("volume") or 0.01)
     direction = str(params.get("v5_weekend_flatten_direction", "SELL") or "SELL").strip().upper()
@@ -194,12 +209,21 @@ def _v5_weekend_flatten_maybe(
     tp_w = float(params.get("v5_weekend_flatten_tp", 0) or 0)
     ai = mt5.account_info()
     acct_s = str(ai.login) if ai else "?"
-    print(
-        f"🕐 [V5 weekend] Thứ Sáu UTC {now.strftime('%H:%M')} — đóng pending+position {sym} magic={mag} "
-        f"(account={acct_s}), sau đó market {direction} vol={vol}"
-    )
-    n_rm = cancel_all_pending_orders_magic(sym, mag)
-    n_cl = close_positions_bot(sym, mag, comment=None)
+    scope = str(params.get("v5_weekend_flatten_scope", "bot") or "bot").strip().lower()
+    if scope == "account":
+        print(
+            f"🕐 [V5 weekend] Thứ Sáu UTC {now.strftime('%H:%M')} | scope=account (mọi symbol/magic) "
+            f"| market {direction} {sym} vol={vol} | account={acct_s}"
+        )
+        n_rm = cancel_all_pending_account()
+        n_cl = close_all_positions_account()
+    else:
+        print(
+            f"🕐 [V5 weekend] Thứ Sáu UTC {now.strftime('%H:%M')} | scope=bot ({sym} magic={mag}) "
+            f"| market {direction} vol={vol} | account={acct_s}"
+        )
+        n_rm = cancel_all_pending_orders_magic(sym, mag)
+        n_cl = close_positions_bot(sym, mag, comment=None)
     print(f"🧹 [V5 weekend] Đã hủy {n_rm} pending, đóng {n_cl} position.")
     if direction in ("BUY", "SELL"):
         is_buy = direction == "BUY"
