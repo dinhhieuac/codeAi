@@ -16,9 +16,10 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
 - `v5_live_inverse_limits_from_demo_file` (live): đọc `RELAY_DEMO_FILE` (vd btc_v5_relay_demo.json do demo ghi), đặt **BUY_LIMIT+SELL_LIMIT** trực tiếp trên account live — **symbol / magic / volume** lấy từ config live (không dùng symbol trong file relay để mở lệnh). Consumed: `btc_signal_inverse_consumed_relay_ids.json` (cùng bot `btc_sign_inverser` nếu chạy song song — nên tắt một trong hai).
-- `v5_live_inverse_only` (live): **không** gate / relay tín hiệu / grid STOP; lắng nghe TCP (`v5_inverse_ipc_port`) — xử lý **`demo_fill`** (copy MARKET ngược chiều fill demo) và tùy chọn snapshot inverse LIMIT (`v5_live_inverse_limit_ipc`).
+- `v5_live_inverse_only` (live): **không** gate / relay tín hiệu / grid STOP; lắng nghe TCP (`v5_inverse_ipc_port`) — xử lý **`demo_fill`** (copy MARKET ngược chiều khi demo **khớp position**) và tùy chọn snapshot inverse LIMIT (`v5_live_inverse_limit_ipc`).
+  - **`v5_live_market_copy_demo_fill_enabled`** (live, mặc định true): bật/tắt copy MARKET từ event `demo_fill` (tắt = live nhận TCP nhưng không đặt lệnh).
   - `v5_inverse_ipc_port` > 0: demo **đẩy** (1) event `demo_fill` khi có **position mới** khớp; (2) snapshot inverse khi `demo_write_inverse_relay_file` (nếu live bật `v5_live_inverse_limit_ipc`). Live: `demo_fill` → `place_market_order` ngược chiều; consumed `v5_copy_fill_consumed_ids.json` theo `position_ticket` demo.
-  - `v5_demo_push_copy_fill_ipc` (demo, mặc định true): gửi `demo_fill` qua TCP chỉ khi **`new_positions`** (vừa khớp thêm position) — **không** gửi khi chỉ có cặp **pending** STOP chưa kích hoạt; live phải **bind** cổng IPC trước khi demo khớp (nếu không sẽ `gửi TCP thất bại` / log không đọc được position sau retry).
+  - `v5_demo_push_copy_fill_ipc` (demo, mặc định true): gửi `demo_fill` qua TCP khi xuất hiện **position ticket mới** (symbol/magic bot) so với snapshot đã công bố — so sánh **xuyên chu kỳ** (sau `sleep`), không chỉ `post−pre` trong cùng vòng (tránh lỡ khớp giữa hai vòng); **không** gửi khi chỉ có pending STOP chưa kích hoạt; live nên **bind** cổng IPC trước khi demo khớp (nếu không sẽ `gửi TCP thất bại` / log không đọc được position sau retry).
   - `v5_market_copy_deviation` (live): deviation market copy (mặc định 30).
   - `v5_inverse_ipc_port` = 0: live đọc `RELAY_DEMO_FILE` như cũ (fallback).
   - `v5_inverse_ipc_host` (mặc định 127.0.0.1): host bind/listen và host push.
@@ -48,7 +49,7 @@ import sys
 import time
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import strategy_grid_step as base
 import signal_relay
@@ -1688,20 +1689,46 @@ def _v5_push_ipc_json_line(host: str, port: int, obj: Dict[str, Any]) -> bool:
     return False
 
 
+def _v5_demo_copy_fill_fresh_tickets_cross_cycle(
+    position_tickets: List[int],
+    state: Dict[str, Any],
+) -> List[int]:
+    """
+    Demo copy-fill: ticket position **mới** so với trạng thái đã xử lý (xuyên chu kỳ sleep).
+
+    Vấn đề cũ: chỉ so `post_positions − pre_positions` trong một vòng — nếu khớp trong
+    `time.sleep` giữa hai vòng thì vòng sau `pre` đã có ticket → luôn rỗng, không gửi TCP.
+
+    Gọi sau snapshot `pre` và sau snapshot `post` (cùng vòng); `state` giữ `announced` + `ready`.
+    Ticket chỉ được thêm vào `announced` sau khi `_v5_demo_emit_copy_fill_ipc_events` trả về (TCP OK hoặc bỏ qua vĩnh viễn).
+    """
+    cur: Set[int] = set(int(t) for t in position_tickets)
+    ann: Set[int] = state.setdefault("announced", set())
+    if not state.get("ready"):
+        ann.clear()
+        ann.update(cur)
+        state["ready"] = True
+        return []
+    return sorted(t for t in cur if t not in ann)
+
+
 def _v5_demo_emit_copy_fill_ipc_events(
     config: Dict[str, Any],
     params: Dict[str, Any],
     sym: str,
     mag: int,
     new_tickets: list,
-) -> None:
+) -> Set[int]:
     """
     Demo: mỗi position mới (ticket) gửi event `demo_fill` qua inverse IPC port.
-    Chỉ chạy khi có **position đã khớp** trong `new_positions` — không gửi khi chỉ có lệnh chờ STOP/LIMIT.
+    Chỉ chạy khi có **position đã khớp** (danh sách ticket từ cross-cycle hoặc intracycle) — không gửi khi chỉ có lệnh chờ STOP/LIMIT.
+
+    Trả về ticket đã xử lý xong cho copy-fill (gửi TCP thành công, hoặc magic/symbol lệch — không nên lặp vô hạn).
     """
+    done: Set[int] = set()
     port = _v5_inverse_ipc_port_value(params)
     if port <= 0:
-        return
+        return done
     host = _v5_inverse_ipc_host(params)
     pos_buy = int(getattr(mt5, "POSITION_TYPE_BUY", 0))
     for tid in new_tickets:
@@ -1736,6 +1763,7 @@ def _v5_demo_emit_copy_fill_ipc_events(
                 f"⚠️ [V5 demo_fill] ticket={t_int} magic={getattr(p, 'magic', 0)} ≠ config {mag} — không gửi.",
                 60.0,
             )
+            done.add(t_int)
             continue
         p_sym = str(getattr(p, "symbol", "") or "").strip()
         if p_sym != sym:
@@ -1744,6 +1772,7 @@ def _v5_demo_emit_copy_fill_ipc_events(
                 f"⚠️ [V5 demo_fill] ticket={t_int} symbol position={p_sym!r} ≠ config {sym!r} — không gửi.",
                 60.0,
             )
+            done.add(t_int)
             continue
         ptype = int(getattr(p, "type", -1))
         side = "BUY" if ptype == pos_buy else "SELL"
@@ -1768,8 +1797,10 @@ def _v5_demo_emit_copy_fill_ipc_events(
                 f"📤 [V5 demo_fill] sent position_ticket={t_int} side={side} price={px} vol={vol} "
                 f"→ {host}:{port}"
             )
+            done.add(t_int)
         else:
             print(f"⚠️ [V5 demo_fill] gửi TCP thất bại ticket={t_int} → {host}:{port}")
+    return done
 
 
 def _v5_live_apply_demo_fill_market(
@@ -1781,8 +1812,16 @@ def _v5_live_apply_demo_fill_market(
     """
     Live: demo BUY → MARKET SELL; demo SELL → MARKET BUY. Symbol/magic/volume từ config live.
     Chỉ ghi consumed khi order_send DONE.
+    Tắt bằng `parameters.v5_live_market_copy_demo_fill_enabled`: false.
     """
     params = params or {}
+    if not _v5_param_bool(params, "v5_live_market_copy_demo_fill_enabled", True):
+        _v5_throttle_print(
+            "live_mkt_copy_disabled",
+            "ℹ️ [V5 live copy-fill] Tắt — v5_live_market_copy_demo_fill_enabled=false (không đặt MARKET).",
+            120.0,
+        )
+        return
     pid = str(payload.get("position_ticket") or "").strip()
     if not pid:
         return
@@ -2165,6 +2204,7 @@ def _run_v5_bot():
         consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
         print(f"✅ Grid Step Bot V5 - Started ({label})")
         loop_count = 0
+        demo_copy_fill_ipc_state: Dict[str, Any] = {"announced": set(), "ready": False}
         live_inverse_consumed: Optional[Set[str]] = None
         _p0 = config.get("parameters") or {}
         copy_fill_consumed: Set[str] = (
@@ -2206,6 +2246,19 @@ def _run_v5_bot():
                     print("🛑 [V5 weekend] Hoàn tất — dừng bot (mt5.shutdown).")
                     break
                 pre_pending, pre_positions = _snapshot_bot_orders_positions(sym, mag)
+                if (
+                    v5_role == "demo"
+                    and _v5_inverse_ipc_port_value(params) > 0
+                    and _v5_param_bool(params, "v5_demo_push_copy_fill_ipc", True)
+                ):
+                    _cf_fresh_pre = _v5_demo_copy_fill_fresh_tickets_cross_cycle(
+                        pre_positions, demo_copy_fill_ipc_state
+                    )
+                    if _cf_fresh_pre:
+                        _cf_done_pre = _v5_demo_emit_copy_fill_ipc_events(
+                            config, params, sym, mag, _cf_fresh_pre
+                        )
+                        demo_copy_fill_ipc_state["announced"].update(_cf_done_pre)
                 has_grid = len(pre_pending) > 0 or len(pre_positions) > 0
                 live_relay_blind = bool(params.get("live_relay_blind_follow", False))
                 active_relay_id = None
@@ -2490,11 +2543,15 @@ def _run_v5_bot():
                     v5_role == "demo"
                     and _v5_inverse_ipc_port_value(params) > 0
                     and _v5_param_bool(params, "v5_demo_push_copy_fill_ipc", True)
-                    and new_positions
                 ):
-                    _v5_demo_emit_copy_fill_ipc_events(
-                        config, params, sym, mag, new_positions
+                    _cf_fresh_post = _v5_demo_copy_fill_fresh_tickets_cross_cycle(
+                        post_positions, demo_copy_fill_ipc_state
                     )
+                    if _cf_fresh_post:
+                        _cf_done_post = _v5_demo_emit_copy_fill_ipc_events(
+                            config, params, sym, mag, _cf_fresh_post
+                        )
+                        demo_copy_fill_ipc_state["announced"].update(_cf_done_post)
 
                 if bool(params.get("v5_pending_pair_log_enabled", True)) and (
                     new_pending or new_positions

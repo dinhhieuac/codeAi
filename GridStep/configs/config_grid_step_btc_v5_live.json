@@ -32,6 +32,7 @@
         "relay_verbose_log": true,
         "live_relay_blind_follow": true,
         "v5_live_inverse_only": true,
+        "v5_live_market_copy_demo_fill_enabled": true,
         "v5_inverse_ipc_port": 17396,
         "v5_inverse_ipc_host": "127.0.0.1",
         "v5_live_inverse_limits_from_demo_file": false,

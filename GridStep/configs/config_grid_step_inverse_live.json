@@ -12,9 +12,10 @@
   "parameters": {
     "v5_role": "live",
     "v5_live_inverse_only": true,
-        "v5_live_inverse_limits_from_demo_file": false,
-        "v5_live_inverse_limit_ipc": false,
-        "v5_market_copy_deviation": 30,
+    "v5_live_market_copy_demo_fill_enabled": true,
+    "v5_live_inverse_limits_from_demo_file": false,
+    "v5_live_inverse_limit_ipc": false,
+    "v5_market_copy_deviation": 30,
     "v5_live_inverse_log_skip": true,
     "v5_inverse_ipc_port": 17395,
     "v5_inverse_ipc_host": "127.0.0.1",
