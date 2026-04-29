@@ -50,6 +50,7 @@
         "v5_parallel_inverse_live": true,
         "v5_inverse_ipc_port": 17395,
         "v5_inverse_ipc_host": "127.0.0.1",
+        "v5_demo_push_copy_fill_ipc": true,
         "relay_demo_file": "v5_relay_demo.json",
         "relay_demo_history_log_file": "v5_relay_demo_history.jsonl",
         "v5_weekend_flatten_enabled": true,
