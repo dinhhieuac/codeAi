@@ -21,6 +21,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
   - `v5_inverse_ipc_port` > 0: demo **đẩy** (1) event `demo_fill` khi có **position mới** khớp; (2) snapshot inverse khi `demo_write_inverse_relay_file` (nếu live bật `v5_live_inverse_limit_ipc`). Live: `demo_fill` → `place_market_order` ngược chiều; consumed `v5_copy_fill_consumed_ids.json` theo `position_ticket` demo.
   - `v5_demo_push_copy_fill_ipc` (demo, mặc định true): gửi `demo_fill` qua TCP khi xuất hiện **position ticket mới** (symbol/magic bot) so với snapshot đã công bố — so sánh **xuyên chu kỳ** (sau `sleep`), không chỉ `post−pre` trong cùng vòng (tránh lỡ khớp giữa hai vòng); **không** gửi khi chỉ có pending STOP chưa kích hoạt; live nên **bind** cổng IPC trước khi demo khớp (nếu không sẽ `gửi TCP thất bại` / log không đọc được position sau retry).
   - `v5_market_copy_deviation` (live): deviation market copy (mặc định 30).
+  - **`v5_market_copy_sl_tp_enabled`** (live, mặc định true): MARKET copy-fill có SL/TP như lưới — `entry` = bid/ask live tại lúc gửi, `step` = `v5_market_copy_sl_tp_step` hoặc `steps[0]` / `step`, cộng **`spread_sl` / `spread_tp` ở root config** (cùng quy ước `sign_inverse`: BUY sl=entry−step+spread_sl, tp=entry+step+spread_tp; SELL đối xứng). Nếu không hợp lệ (stops) → lệnh không gắn SL/TP.
   - `v5_inverse_ipc_port` = 0: live đọc `RELAY_DEMO_FILE` như cũ (fallback).
   - `v5_inverse_ipc_host` (mặc định 127.0.0.1): host bind/listen và host push.
 - `relay_demo_file` / `relay_demo_history_log_file` (parameters): đường dẫn tương đối `GridStep/` hoặc tuyệt đối — để demo và live **cùng file** snapshot inverse (vd `btc_v5_relay_demo.json`); bắt buộc nếu chạy `strategy_grid_step_v5.py` trực tiếp thay vì `strategy_grid_step_btc_v5.py`.
@@ -36,7 +37,7 @@ Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
 - Trước mỗi lần đặt InvGrid mới, `place_pair_from_inverse_relay` (**btc_sign_inverser** / **sign_inverse**) gọi `cancel_all_bot_limit_pendings` — hủy **mọi** BUY_LIMIT/SELL_LIMIT cùng symbol+magic, rồi mới `has_same_price_inverse_duplicate(..., check_positions=False)`: trùng **chỉ** khi còn pending LIMIT cùng mức — **không** chặn vì đã có **position** (vd SELL@4835 trong khi snapshot yêu cầu SELL_LIMIT@4835: một chân đã khớp, vẫn đặt lại cặp limit).
 
 Copy-on-fill **MARKET** (thay cho chỉ dựa LIMIT inverse khi tắt `v5_live_inverse_limit_ipc`):
-- Demo gửi TCP `{"event":"demo_fill", ...}` khi có position mới (cùng symbol/magic). Live mở **MARKET** ngược chiều (demo BUY → live SELL), symbol/magic/volume từ config live.
+- Demo gửi TCP `{"event":"demo_fill", ...}` khi có position mới (cùng symbol/magic). Live mở **MARKET** ngược chiều (demo BUY → live SELL), symbol/magic/volume từ config live; SL/TP theo `spread_sl`/`spread_tp` + step (xem `v5_market_copy_sl_tp_enabled` / `v5_market_copy_sl_tp_step`).
 - **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), **mỗi** process MT5 (demo **và** live — cần **bật flag trên cả hai** JSON) chạy **một lần / account / Thứ Sáu**: `v5_weekend_flatten_scope`=`bot` hoặc `account`; state `v5_weekend_flatten_<account>.json` — nếu đã `completed` cho ngày Thứ Sáu đó thì **không** chạy lại (process vẫn chạy grid bình thường); xóa file state để test lại — **sau khi flatten** process thoát (`mt5.shutdown`). Hai JSON nên cùng cửa sổ giờ UTC.
 """
 import copy
@@ -1803,6 +1804,101 @@ def _v5_demo_emit_copy_fill_ipc_events(
     return done
 
 
+def _v5_market_copy_step_price(params: Dict[str, Any]) -> float:
+    """Khoảng giá ±step cho SL/TP copy MARKET (ưu tiên v5_market_copy_sl_tp_step → steps[0] → step → 5)."""
+    raw = params.get("v5_market_copy_sl_tp_step")
+    if raw is not None:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    steps = params.get("steps")
+    if isinstance(steps, (list, tuple)) and steps:
+        try:
+            v = float(steps[0])
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    st = params.get("step")
+    if st is not None:
+        try:
+            v = float(st)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return 5.0
+
+
+def _v5_config_spread_sl_tp_root(config: Dict[str, Any]) -> tuple[float, float]:
+    """Giống sign_inverse: SL += spread_sl, TP += spread_tp (root JSON)."""
+    raw_sl = config.get("spread_sl")
+    raw_tp = config.get("spread_tp")
+    try:
+        spread_sl = 0.0 if raw_sl is None else float(raw_sl)
+    except (TypeError, ValueError):
+        spread_sl = 0.0
+    try:
+        spread_tp = -0.3 if raw_tp is None else float(raw_tp)
+    except (TypeError, ValueError):
+        spread_tp = -0.3
+    return spread_sl, spread_tp
+
+
+def _v5_live_market_copy_sl_tp_prices(
+    config: Dict[str, Any],
+    params: Dict[str, Any],
+    sym_live: str,
+    is_live_buy: bool,
+) -> tuple[float, float]:
+    """
+    SL/TP cho lệnh MARKET copy-fill: mốc entry = bid/ask live tại lúc gửi (khớp broker).
+    Công thức cùng nhánh với grid / sign_inverse (± step + spread_sl/spread_tp).
+    """
+    if not _v5_param_bool(params, "v5_market_copy_sl_tp_enabled", True):
+        return (0.0, 0.0)
+    step_val = _v5_market_copy_step_price(params)
+    if step_val <= 0:
+        return (0.0, 0.0)
+    tick = mt5.symbol_info_tick(sym_live)
+    if not tick:
+        return (0.0, 0.0)
+    entry_ref = float(tick.ask) if is_live_buy else float(tick.bid)
+    info = mt5.symbol_info(sym_live)
+    digits = int(getattr(info, "digits", 5) or 5) if info else 5
+    spread_sl, spread_tp = _v5_config_spread_sl_tp_root(config)
+    if is_live_buy:
+        sl = round(entry_ref - step_val + spread_sl, digits)
+        tp = round(entry_ref + step_val + spread_tp, digits)
+    else:
+        sl = round(entry_ref + step_val + spread_sl, digits)
+        tp = round(entry_ref - step_val + spread_tp, digits)
+    point = float(getattr(info, "point", 0) or 0) if info else 0
+    if point <= 0:
+        point = float(10 ** (-digits))
+    eps = point * 2.0
+    if is_live_buy:
+        if not (sl < entry_ref - eps and tp > entry_ref + eps):
+            _v5_throttle_print(
+                "mkt_copy_sl_tp_bad_buy",
+                f"⚠️ [V5 live copy-fill] SL/TP BUY không hợp lệ (step/spread/stops?) entry≈{entry_ref} sl={sl} tp={tp} — đặt MARKET không SL/TP.",
+                120.0,
+            )
+            return (0.0, 0.0)
+    else:
+        if not (tp < entry_ref - eps and sl > entry_ref + eps):
+            _v5_throttle_print(
+                "mkt_copy_sl_tp_bad_sell",
+                f"⚠️ [V5 live copy-fill] SL/TP SELL không hợp lệ entry≈{entry_ref} sl={sl} tp={tp} — đặt MARKET không SL/TP.",
+                120.0,
+            )
+            return (0.0, 0.0)
+    return (sl, tp)
+
+
 def _v5_live_apply_demo_fill_market(
     config: Dict[str, Any],
     payload: Dict[str, Any],
@@ -1811,6 +1907,7 @@ def _v5_live_apply_demo_fill_market(
 ) -> None:
     """
     Live: demo BUY → MARKET SELL; demo SELL → MARKET BUY. Symbol/magic/volume từ config live.
+    SL/TP từ spread_sl/spread_tp (root config) + step (`v5_market_copy_sl_tp_step` hoặc steps/step).
     Chỉ ghi consumed khi order_send DONE.
     Tắt bằng `parameters.v5_live_market_copy_demo_fill_enabled`: false.
     """
@@ -1848,14 +1945,15 @@ def _v5_live_apply_demo_fill_market(
     cmt = f"CopyFill_{pid}"[:31]
     is_live_buy = side == "SELL"
     live_dir = "BUY" if is_live_buy else "SELL"
+    sl_px, tp_px = _v5_live_market_copy_sl_tp_prices(config, params, sym_live, is_live_buy)
     r = place_market_order(
         sym_live,
         vol,
         is_live_buy,
         mag_live,
         cmt,
-        sl=0.0,
-        tp=0.0,
+        sl=sl_px,
+        tp=tp_px,
         deviation=dev,
     )
     if r is None:
@@ -1865,7 +1963,8 @@ def _v5_live_apply_demo_fill_market(
         print(f"❌ [V5 live copy-fill] MARKET {live_dir} retcode={getattr(r, 'retcode', 0)} {cm}")
     else:
         ot = int(getattr(r, "order", 0) or 0)
-        print(f"✅ [V5 live copy-fill] MARKET {live_dir} OK ticket={ot} (demo pos {pid})")
+        stp = f" sl={sl_px} tp={tp_px}" if (sl_px or tp_px) else " sl=0 tp=0"
+        print(f"✅ [V5 live copy-fill] MARKET {live_dir} OK ticket={ot} (demo pos {pid}){stp}")
         consumed.add(pid)
         _v5_save_copy_fill_consumed_disk(consumed)
 
