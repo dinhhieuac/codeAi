@@ -18,7 +18,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - `v5_live_inverse_limits_from_demo_file` (live): đọc `RELAY_DEMO_FILE` (vd btc_v5_relay_demo.json do demo ghi), đặt **BUY_LIMIT+SELL_LIMIT** trực tiếp trên account live — **symbol / magic / volume** lấy từ config live (không dùng symbol trong file relay để mở lệnh). Consumed: `btc_signal_inverse_consumed_relay_ids.json` (cùng bot `btc_sign_inverser` nếu chạy song song — nên tắt một trong hai).
 - `v5_live_inverse_only` (live): **không** gate / relay tín hiệu / grid STOP; lắng nghe TCP (`v5_inverse_ipc_port`) — xử lý **`demo_fill`** (copy MARKET ngược chiều fill demo) và tùy chọn snapshot inverse LIMIT (`v5_live_inverse_limit_ipc`).
   - `v5_inverse_ipc_port` > 0: demo **đẩy** (1) event `demo_fill` khi có **position mới** khớp; (2) snapshot inverse khi `demo_write_inverse_relay_file` (nếu live bật `v5_live_inverse_limit_ipc`). Live: `demo_fill` → `place_market_order` ngược chiều; consumed `v5_copy_fill_consumed_ids.json` theo `position_ticket` demo.
-  - `v5_demo_push_copy_fill_ipc` (demo, mặc định true): gửi `demo_fill` qua TCP khi `new_positions`.
+  - `v5_demo_push_copy_fill_ipc` (demo, mặc định true): gửi `demo_fill` qua TCP chỉ khi **`new_positions`** (vừa khớp thêm position) — **không** gửi khi chỉ có cặp **pending** STOP chưa kích hoạt; live phải **bind** cổng IPC trước khi demo khớp (nếu không sẽ `gửi TCP thất bại` / log không đọc được position sau retry).
   - `v5_market_copy_deviation` (live): deviation market copy (mặc định 30).
   - `v5_inverse_ipc_port` = 0: live đọc `RELAY_DEMO_FILE` như cũ (fallback).
   - `v5_inverse_ipc_host` (mặc định 127.0.0.1): host bind/listen và host push.
@@ -1695,7 +1695,10 @@ def _v5_demo_emit_copy_fill_ipc_events(
     mag: int,
     new_tickets: list,
 ) -> None:
-    """Demo: mỗi position mới (ticket) gửi event `demo_fill` qua inverse IPC port."""
+    """
+    Demo: mỗi position mới (ticket) gửi event `demo_fill` qua inverse IPC port.
+    Chỉ chạy khi có **position đã khớp** trong `new_positions` — không gửi khi chỉ có lệnh chờ STOP/LIMIT.
+    """
     port = _v5_inverse_ipc_port_value(params)
     if port <= 0:
         return
@@ -1706,7 +1709,12 @@ def _v5_demo_emit_copy_fill_ipc_events(
             t_int = int(tid)
         except (TypeError, ValueError):
             continue
-        plist = mt5.positions_get(ticket=t_int) or []
+        plist: list = []
+        for _retry in range(8):
+            plist = list(mt5.positions_get(ticket=t_int) or [])
+            if plist:
+                break
+            time.sleep(0.04)
         if not plist:
             plist = [
                 p
@@ -1714,11 +1722,28 @@ def _v5_demo_emit_copy_fill_ipc_events(
                 if int(getattr(p, "ticket", 0) or 0) == t_int
             ]
         if not plist:
+            _v5_throttle_print(
+                f"cf_emit_no_pos_{t_int}",
+                f"⚠️ [V5 demo_fill] Không đọc được position ticket={t_int} (symbol={sym}) sau retry — không gửi TCP. "
+                f"Live cần lắng nghe {host}:{port} trước khi khớp.",
+                60.0,
+            )
             continue
         p = plist[0]
         if int(getattr(p, "magic", 0) or 0) != int(mag):
+            _v5_throttle_print(
+                f"cf_emit_bad_magic_{t_int}",
+                f"⚠️ [V5 demo_fill] ticket={t_int} magic={getattr(p, 'magic', 0)} ≠ config {mag} — không gửi.",
+                60.0,
+            )
             continue
-        if str(getattr(p, "symbol", "") or "").strip() != sym:
+        p_sym = str(getattr(p, "symbol", "") or "").strip()
+        if p_sym != sym:
+            _v5_throttle_print(
+                f"cf_emit_bad_sym_{t_int}",
+                f"⚠️ [V5 demo_fill] ticket={t_int} symbol position={p_sym!r} ≠ config {sym!r} — không gửi.",
+                60.0,
+            )
             continue
         ptype = int(getattr(p, "type", -1))
         side = "BUY" if ptype == pos_buy else "SELL"

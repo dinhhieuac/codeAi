@@ -28,7 +28,7 @@
         "min_gap_minutes": 1,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
-        "loop_interval_seconds": 2,
+        "loop_interval_seconds": 1,
         "max_loss_streak": 2,
         "v5_hard_block_sum10_negative": false,
         "v5_hard_block_min_gap": false,
