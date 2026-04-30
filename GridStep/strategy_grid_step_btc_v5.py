@@ -23,10 +23,17 @@ Console log (cùng format V5):
 Relay Demo → Live (inverse file `btc_v5_relay_demo.json`):
 - Gọi core.configure_grid_step_v5_paths(...) ngay sau import; trong JSON dùng `relay_demo_file` / `relay_demo_history_log_file` (đồng bộ khi chạy thẳng strategy_grid_step_v5.py).
 
-Quy tắc InvGrid khi `v5_live_inverse_only` (live):
-- Live **không** áp gate / score / zone relay / cooldown “mở grid” — snapshot từ demo → `btc_sign_inverser.place_pair_from_inverse_relay` (symbol/magic/volume từ config live, vd BTCUSDc).
+Quy tắc `v5_live_inverse_only` (live) — engine chung `strategy_grid_step_v5` (BTC chỉ đổi base + score):
+- Live **không** áp gate / score / zone relay / cooldown “mở grid” trên nhánh inverse-only.
+- **`v5_inverse_ipc_port` > 0** + `v5_inverse_ipc_host` (trùng **demo** và **live**, vd 17396): TCP localhost.
+  - **`demo_fill`**: demo có position mới (symbol/magic bot) → live `place_market_order` **ngược chiều**; consumed `v5_copy_fill_consumed_ids.json` theo `position_ticket` demo. Phát hiện khớp **xuyên chu kỳ** (`sleep`), không chỉ so trong một vòng.
+  - **`demo_close`**: demo đóng position đã từng gửi `demo_fill` (TCP OK) → live `close_positions_bot` với comment `CopyFill_<demo_ticket>`.
+  - **`v5_live_inverse_limit_ipc`**: nếu **true**, cùng socket nhận snapshot InvGrid → `btc_sign_inverser.place_pair_from_inverse_relay` (symbol/magic/volume từ config live, vd BTCUSDc).
+- **`v5_inverse_ipc_port` = 0**: không TCP; live đọc file `btc_v5_relay_demo.json` như cũ.
+- Cờ copy MARKET / đóng (trong `parameters`, chi tiết đầy đủ ở docstring `strategy_grid_step_v5.py`): `v5_live_market_copy_demo_fill_enabled`, `v5_demo_push_copy_fill_ipc`, `v5_demo_push_copy_close_ipc`, `v5_live_market_copy_close_enabled`, `v5_market_copy_deviation`; SL/TP MARKET tùy chọn `v5_market_copy_sl_tp_enabled` (mặc định **false**), `v5_market_copy_sl_tp_step` / `steps[0]`, cộng `spread_sl`/`spread_tp` ở **root** JSON khi bật.
+
+InvGrid LIMIT (khi bật IPC snapshot hoặc đọc file — `btc_sign_inverser`):
 - Trước mỗi lần đặt cặp mới: **`cancel_all_bot_limit_pendings`** (trong `utils`, gọi từ `btc_sign_inverser`) hủy mọi **BUY_LIMIT/SELL_LIMIT** cùng symbol+magic, rồi mới kiểm tra trùng. Nếu vẫn trùng (vd **position** cùng mức giá), **không** đánh dấu `relay_id` vào consumed — snapshot thử lại vòng sau; không cần xóa tay `btc_signal_inverse_consumed_relay_ids.json` vì lỗi trùng pending.
-- Tùy chọn (giống engine XAU `strategy_grid_step_v5`): `v5_inverse_ipc_port` + `v5_inverse_ipc_host` trong **cả** JSON demo và live (cùng cổng) → đẩy snapshot TCP; live inverse-only lắng nghe, không cần poll file. `port` = 0 → chỉ file `btc_v5_relay_demo.json`.
 - Ánh xạ giá (trùng `signal_relay.demo_write_inverse_relay_file`):
   - Trên **demo**, `grid_preview.buy_price` = giá lệnh **BUY_STOP** (mức cao), `sell_price` = giá **SELL_STOP** (mức thấp).
   - Trên **live**: đặt **BUY_LIMIT** tại giá bằng **SELL_STOP** demo, **SELL_LIMIT** tại giá bằng **BUY_STOP** demo (đảo vai stop ↔ limit, giữ đúng hai mức giá).
@@ -160,9 +167,10 @@ def run():
         cfg_child = _argv_config_basename()
         if cfg_child == LIVE_CONFIG_NAME or "btc_v5_live" in cfg_child.lower():
             print(
-                "🔔 [BTC V5 p_live] InvGrid — prefix log [BTC V5 live]. "
-                "Trước mỗi snapshot mới: hủy LIMIT cũ (cùng symbol/magic) → đặt cặp BUY_LIMIT + SELL_LIMIT "
-                "(xem btc_sign_inverser / utils.cancel_all_bot_limit_pendings)."
+                "🔔 [BTC V5 p_live] Inverse-only — prefix [BTC V5 live]. "
+                "TCP (nếu `v5_inverse_ipc_port`>0): `demo_fill` → MARKET ngược; `demo_close` → đóng CopyFill_*; "
+                "tùy chọn InvGrid LIMIT qua `v5_live_inverse_limit_ipc`. "
+                "Trước mỗi snapshot LIMIT: hủy LIMIT cũ → đặt cặp (btc_sign_inverser / cancel_all_bot_limit_pendings)."
             )
         core.run()
         return

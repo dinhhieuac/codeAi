@@ -2014,6 +2014,63 @@ def _v5_live_apply_demo_fill_market(
         _v5_save_copy_fill_consumed_disk(consumed)
 
 
+def _v5_copyfill_comment_matches_live(cmt: str, demo_pid: str) -> bool:
+    """
+    So khớp comment position live với nhãn CopyFill_<demo_ticket> (chính xác hoặc broker cắt chuỗi).
+    """
+    c = (cmt or "").strip()
+    if not c.startswith("CopyFill_"):
+        return False
+    want = f"CopyFill_{demo_pid}"[:31]
+    if c == want:
+        return True
+    if len(c) <= len(want) and want[: len(c)] == c:
+        return True
+    if len(c) >= len(want) and c[: len(want)] == want:
+        return True
+    suf = c[len("CopyFill_") :]
+    return suf == demo_pid
+
+
+def _v5_close_copyfill_mirror_positions(sym_live: str, mag_live: int, demo_pid: str) -> int:
+    """Đóng mọi position live (symbol+magic) có comment khớp CopyFill cho ticket demo."""
+    info = mt5.symbol_info(sym_live)
+    type_filling = mt5.ORDER_FILLING_IOC
+    if info and getattr(info, "filling_mode", 0) & 2:
+        type_filling = mt5.ORDER_FILLING_IOC
+    positions = mt5.positions_get(symbol=sym_live, magic=mag_live) or []
+    closed = 0
+    for p in positions:
+        c = (getattr(p, "comment", "") or "").strip()
+        if not _v5_copyfill_comment_matches_live(c, demo_pid):
+            continue
+        tick = mt5.symbol_info_tick(sym_live)
+        if not tick:
+            continue
+        pt = int(getattr(p, "ticket", 0) or 0)
+        ptype = int(getattr(p, "type", -1))
+        vol = float(getattr(p, "volume", 0) or 0)
+        price = float(tick.bid) if ptype == getattr(mt5, "POSITION_TYPE_BUY", 0) else float(tick.ask)
+        r = mt5.order_send(
+            {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": sym_live,
+                "volume": vol,
+                "type": mt5.ORDER_TYPE_SELL
+                if ptype == getattr(mt5, "POSITION_TYPE_BUY", 0)
+                else mt5.ORDER_TYPE_BUY,
+                "position": pt,
+                "price": price,
+                "magic": mag_live,
+                "comment": "Close_CopyFill",
+                "type_filling": type_filling,
+            }
+        )
+        if r and int(getattr(r, "retcode", 0) or 0) == mt5.TRADE_RETCODE_DONE:
+            closed += 1
+    return closed
+
+
 def _v5_live_apply_demo_close_market(
     config: Dict[str, Any],
     payload: Dict[str, Any],
@@ -2030,22 +2087,30 @@ def _v5_live_apply_demo_close_market(
             120.0,
         )
         return
-    pid = str(payload.get("position_ticket") or "").strip()
+    raw = payload.get("position_ticket")
+    try:
+        pid = str(int(float(str(raw).strip())))
+    except (TypeError, ValueError):
+        pid = str(raw or "").strip()
     if not pid:
         return
     sym_live = str(config.get("symbol") or "").strip()
     if not sym_live:
         return
     mag_live = int(config.get("magic") or 0)
-    cmt = f"CopyFill_{pid}"[:31]
-    n = int(close_positions_bot(sym_live, mag_live, comment=cmt) or 0)
+    want = f"CopyFill_{pid}"[:31]
+    n = _v5_close_copyfill_mirror_positions(sym_live, mag_live, pid)
     if n > 0:
-        print(f"✅ [V5 live copy-close] Đã đóng {n} position | comment={cmt!r} (demo ticket {pid})")
+        print(f"✅ [V5 live copy-close] Đã đóng {n} position | nhãn≈{want!r} (demo ticket {pid})")
     else:
+        sample = []
+        for p in (mt5.positions_get(symbol=sym_live, magic=mag_live) or [])[:5]:
+            sample.append(str(getattr(p, "comment", "") or ""))
         _v5_throttle_print(
             f"live_close_miss_{pid}",
-            f"ℹ️ [V5 live copy-close] Không có position live comment={cmt!r} (demo đã đóng ticket {pid}).",
-            45.0,
+            f"ℹ️ [V5 live copy-close] Không khớp position (magic={mag_live}) cho demo ticket {pid}, "
+            f"nhãn mong đợi {want!r}. Mẫu comment đang mở: {sample}",
+            60.0,
         )
 
 
@@ -2134,7 +2199,7 @@ def _v5_live_poll_inverse_ipc(
     listener: socket.socket,
     timeout_sec: float,
 ) -> None:
-    """Một lần select + accept + nhận một dòng JSON từ demo (`demo_fill` hoặc snapshot inverse)."""
+    """select + drain mọi kết nối pending (demo có thể gửi demo_fill rồi demo_close liền)."""
     params = params or {}
     try:
         r, _, _ = select.select([listener], [], [], max(0.0, float(timeout_sec)))
@@ -2142,57 +2207,61 @@ def _v5_live_poll_inverse_ipc(
         return
     if not r:
         return
-    conn: Optional[socket.socket] = None
-    try:
-        conn, _ = listener.accept()
-    except BlockingIOError:
-        return
-    except OSError:
-        return
-    try:
-        conn.settimeout(12.0)
-        parts: list = []
-        total = 0
-        while total < 512 * 1024:
-            b = conn.recv(8192)
-            if not b:
-                break
-            parts.append(b)
-            total += len(b)
-            if b"\n" in b:
-                break
-        raw = b"".join(parts)
-        line = raw.split(b"\n", 1)[0].decode("utf-8", errors="replace")
-        payload = json.loads(line)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        _v5_throttle_print("inv_ipc_bad", f"⚠️ [V5 live] Inverse IPC payload lỗi: {e}", 45.0)
-        return
-    finally:
-        if conn is not None:
+
+    def _handle_one_payload(payload: Dict[str, Any]) -> None:
+        if not isinstance(payload, dict) or not payload:
+            return
+        ev = str(payload.get("event") or "").strip().lower()
+        if ev == "demo_fill":
+            _v5_live_apply_demo_fill_market(config, payload, copy_fill_consumed, params)
+            return
+        if ev == "demo_close":
+            _v5_live_apply_demo_close_market(config, payload, params)
+            return
+        if _v5_param_bool(params, "v5_live_inverse_limit_ipc", False):
+            _v5_live_apply_inverse_payload(
+                config, consumed, params, payload, source_detail="IPC localhost"
+            )
+        else:
+            _v5_throttle_print(
+                "inv_ipc_skip_non_fill",
+                "ℹ️ [V5 live] IPC: bỏ qua snapshot inverse LIMIT (v5_live_inverse_limit_ipc=false). "
+                "Chỉ xử lý demo_fill / demo_close.",
+                120.0,
+            )
+
+    while True:
+        try:
+            conn, _ = listener.accept()
+        except BlockingIOError:
+            break
+        except OSError:
+            break
+        try:
+            conn.settimeout(12.0)
+            parts: list = []
+            total = 0
+            while total < 512 * 1024:
+                b = conn.recv(8192)
+                if not b:
+                    break
+                parts.append(b)
+                total += len(b)
+                if b"\n" in b:
+                    break
+            raw = b"".join(parts)
+            line = raw.split(b"\n", 1)[0].decode("utf-8", errors="replace")
+            payload = json.loads(line)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            _v5_throttle_print("inv_ipc_bad", f"⚠️ [V5 live] Inverse IPC payload lỗi: {e}", 45.0)
+            payload = None
+        finally:
             try:
                 conn.close()
             except OSError:
                 pass
-    if not isinstance(payload, dict) or not payload:
-        return
-    ev = str(payload.get("event") or "").strip().lower()
-    if ev == "demo_fill":
-        _v5_live_apply_demo_fill_market(config, payload, copy_fill_consumed, params)
-        return
-    if ev == "demo_close":
-        _v5_live_apply_demo_close_market(config, payload, params)
-        return
-    if _v5_param_bool(params, "v5_live_inverse_limit_ipc", False):
-        _v5_live_apply_inverse_payload(
-            config, consumed, params, payload, source_detail="IPC localhost"
-        )
-    else:
-        _v5_throttle_print(
-            "inv_ipc_skip_non_fill",
-            "ℹ️ [V5 live] IPC: bỏ qua snapshot inverse LIMIT (v5_live_inverse_limit_ipc=false). "
-            "Chỉ xử lý demo_fill / demo_close.",
-            120.0,
-        )
+        if isinstance(payload, dict) and payload:
+            _handle_one_payload(payload)
 
 
 def _v5_live_try_inverse_limits_from_demo_file(
@@ -2590,6 +2659,12 @@ def _run_v5_bot():
                         },
                         params,
                     )
+                    # Gate chặn → không tới snapshot post; vẫn thử demo_close nếu position vừa biến mất trên demo.
+                    if v5_role == "demo" and _v5_inverse_ipc_port_value(params) > 0:
+                        _, _pos_gate = _snapshot_bot_orders_positions(sym, mag)
+                        _v5_demo_try_emit_demo_close_ipc(
+                            params, sym, mag, _pos_gate, demo_copy_fill_ipc_state
+                        )
                     time.sleep(loop_interval_seconds)
                     continue
 
