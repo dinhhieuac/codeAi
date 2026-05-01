@@ -19,7 +19,7 @@
     "v5_live_inverse_log_skip": true,
     "v5_inverse_ipc_port": 17395,
     "v5_inverse_ipc_host": "127.0.0.1",
-    "loop_interval_seconds": 10,
+    "loop_interval_seconds": 1,
     "relay_demo_file": "v5_relay_demo.json",
     "relay_demo_history_log_file": "v5_relay_demo_history.jsonl",
     "v5_structured_log": true,

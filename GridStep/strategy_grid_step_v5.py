@@ -12,6 +12,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
   Live child dùng `config_grid_step_inverse_live.json` (tài khoản / `mt5_path` riêng). Cha không login MT5.
 - Supervisor BTC: vẫn dùng `strategy_grid_step_btc_v5.py` (`--btc-v5-child`, `btc_v5_parallel_live`, `config_grid_step_btc_v5_live.json`).
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
+- **`loop_interval_seconds`** (mặc định 10, tối thiểu 1): `sleep` **cuối** mỗi vòng sau khi xử lý xong; chu kỳ thực ≈ thời gian MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng cách tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
 - v5_role=live (không inverse-only): không đọc history trên live; mirror theo relay / zone; có grid → base strategy.
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
@@ -820,23 +821,31 @@ def _v5_try_return_cached_gate_without_full_fetch(
         return None
     if _v5_peek_any_out_deal_after(symbol, magic, history_comment_prefix, lc_ts):
         return None
-    _v5_log_gate_no_new_close_throttled()
+    _v5_log_gate_no_new_close_throttled(config)
     feat = copy.deepcopy(c["features"])
     feat["v5_score_reused_no_new_close"] = True
     feat["v5_gate_history_skip"] = "peek_no_new_out_deal"
     return c["allow"], c["gate_reason"], feat
 
 
-def _v5_log_gate_no_new_close_throttled():
+def _v5_log_gate_no_new_close_throttled(config: Dict[str, Any]) -> None:
     """
-    Rule: chỉ tính lại score khi có lệnh đóng mới (demo). Nếu không → một dòng log ngắn, throttle ~30s.
+    Khi `v5_rescore_only_on_new_close`: tái dùng score, không fetch full history — log nhắc ngắn.
+    Dòng này **không** in mỗi vòng: khoảng tối thiểu giữa hai lần in = `parameters.v5_gate_no_new_close_log_seconds`
+    (mặc định 30, clamp 1–3600), khác `loop_interval_seconds` (sleep cuối mỗi vòng).
     """
+    params = (config or {}).get("parameters") or {}
+    try:
+        gap = float(params.get("v5_gate_no_new_close_log_seconds", 30.0))
+    except (TypeError, ValueError):
+        gap = 30.0
+    gap = max(1.0, min(gap, 3600.0))
     msg = "📚 [V5 Gate] chưa có lệnh đóng mới"
     now_m = time.monotonic()
     prev = getattr(run, "_v5_gate_no_close_log", None)
-    if prev is not None and prev[0] == msg and (now_m - prev[1]) < 30.0:
+    if prev is not None and prev[0] == msg and (now_m - prev[1]) < gap:
         return
-    print(msg)
+    print(f"{msg} (nhắc log tối đa 1 lần/{gap:.0f}s, không phải chu kỳ vòng lặp)")
     run._v5_gate_no_close_log = (msg, now_m)
 
 
@@ -3023,8 +3032,15 @@ def _run_v5_bot():
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
                     steps_info = steps_list if steps_list else "1"
+                    now_hb = time.monotonic()
+                    last_hb = getattr(run, "_v5_heartbeat_mono", None)
+                    avg_txt = ""
+                    if isinstance(last_hb, (int, float)) and (now_hb - float(last_hb)) > 0.05:
+                        avg_txt = f" | avg_loop≈{(now_hb - float(last_hb)) / 30.0:.2f}s (30 vòng)"
+                    run._v5_heartbeat_mono = now_hb
                     print(
-                        f"🔄 Grid Step V5 | Steps: {steps_info} | Positions: {len(pos)} | "
+                        f"🔄 Grid Step V5 | loop_interval={loop_interval_seconds}s{avg_txt} | "
+                        f"Steps: {steps_info} | Positions: {len(pos)} | "
                         f"Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}"
                     )
 
