@@ -12,7 +12,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
   Live child dùng `config_grid_step_inverse_live.json` (tài khoản / `mt5_path` riêng). Cha không login MT5.
 - Supervisor BTC: vẫn dùng `strategy_grid_step_btc_v5.py` (`--btc-v5-child`, `btc_v5_parallel_live`, `config_grid_step_btc_v5_live.json`).
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
-- **`loop_interval_seconds`**: `sleep` **cuối** mỗi vòng (mặc định 10 **giây**). Đơn vị mặc định là **giây** (float, tối thiểu **1 ms**): vd `0.1` = 100 ms. Để ghi **số nguyên mili giây** trên cùng key: đặt **`loop_interval_unit`**: `"ms"` (vd `100` hoặc `200` → 0.1s / 0.2s). Hoặc dùng **`loop_interval_ms`** (ưu tiên nếu có, >0). Chu kỳ thực ≈ MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng cách tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
+- **`loop_interval_seconds`**: `sleep` **cuối** mỗi vòng (mặc định 10 **giây**). Đơn vị mặc định là **giây** (float, tối thiểu **1 ms**): vd `0.1` = 100 ms. Để ghi **số nguyên mili giây** trên cùng key: đặt **`loop_interval_unit`**: `"ms"` (vd `100` hoặc `200` → 0.1s / 0.2s). Hoặc dùng **`loop_interval_ms`** (ưu tiên nếu có, >0). Chu kỳ thực ≈ MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30 **giây**, float, tối thiểu **1 ms**, tối đa 3600 s) hoặc **`v5_gate_no_new_close_log_ms`** (ưu tiên) / **`v5_gate_no_new_close_log_unit`**: `"ms"` (giá trị trên key `…_seconds` là ms, vd `500` → 0.5 s) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
 - v5_role=live (không inverse-only): không đọc history trên live; mirror theo relay / zone; có grid → base strategy.
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
@@ -156,6 +156,39 @@ def _v5_loop_interval_log_repr(sleep_s: float) -> str:
         return f"{sleep_s * 1000.0:.0f}ms"
     s = f"{sleep_s:.4f}".rstrip("0").rstrip(".")
     return f"{s}s"
+
+
+_V5_GATE_NO_NEW_LOG_MAX = 3600.0
+
+
+def _v5_gate_no_new_close_log_gap_seconds(params: Optional[Dict[str, Any]]) -> float:
+    """
+    Khoảng tối thiểu (giây) giữa hai lần in log 📚 Gate “chưa có lệnh đóng mới”.
+    - `v5_gate_no_new_close_log_ms` > 0: ghi đè (mili giây).
+    - `v5_gate_no_new_close_log_unit` = `ms`: `v5_gate_no_new_close_log_seconds` là ms.
+    - Mặc định: `v5_gate_no_new_close_log_seconds` là giây (float), clamp [1 ms, 3600 s].
+    """
+    p = params or {}
+    raw_ms = p.get("v5_gate_no_new_close_log_ms")
+    if raw_ms is not None and str(raw_ms).strip() != "":
+        try:
+            ms = float(raw_ms)
+            if ms > 0:
+                return max(_V5_LOOP_SLEEP_MIN, min(ms / 1000.0, _V5_GATE_NO_NEW_LOG_MAX))
+        except (TypeError, ValueError):
+            pass
+    unit = str(p.get("v5_gate_no_new_close_log_unit", "s") or "s").lower().strip()
+    try:
+        v = float(p.get("v5_gate_no_new_close_log_seconds", 30.0))
+    except (TypeError, ValueError):
+        v = 30.0
+    if v <= 0:
+        v = 30.0
+    if unit in ("ms", "millisecond", "milliseconds"):
+        sec = v / 1000.0
+    else:
+        sec = v
+    return max(_V5_LOOP_SLEEP_MIN, min(sec, _V5_GATE_NO_NEW_LOG_MAX))
 
 
 def _v5_synthetic_grid_preview_from_pair_snap(pair_snap: dict, step_val: float) -> Dict[str, Any]:
@@ -877,21 +910,19 @@ def _v5_try_return_cached_gate_without_full_fetch(
 def _v5_log_gate_no_new_close_throttled(config: Dict[str, Any]) -> None:
     """
     Khi `v5_rescore_only_on_new_close`: tái dùng score, không fetch full history — log nhắc ngắn.
-    Dòng này **không** in mỗi vòng: khoảng tối thiểu giữa hai lần in = `parameters.v5_gate_no_new_close_log_seconds`
-    (mặc định 30, clamp 1–3600), khác khoảng sleep cuối vòng (`loop_interval_seconds` / `loop_interval_ms` / `loop_interval_unit`).
+    Dòng này **không** in mỗi vòng: khoảng tối thiểu giữa hai lần in =
+    `v5_gate_no_new_close_log_seconds` / `v5_gate_no_new_close_log_ms` / `v5_gate_no_new_close_log_unit`
+    (mặc định 30 s, clamp 1 ms–3600 s), khác sleep cuối vòng (`loop_interval_*`).
     """
     params = (config or {}).get("parameters") or {}
-    try:
-        gap = float(params.get("v5_gate_no_new_close_log_seconds", 30.0))
-    except (TypeError, ValueError):
-        gap = 30.0
-    gap = max(1.0, min(gap, 3600.0))
+    gap = _v5_gate_no_new_close_log_gap_seconds(params)
     msg = "📚 [V5 Gate] chưa có lệnh đóng mới"
     now_m = time.monotonic()
     prev = getattr(run, "_v5_gate_no_close_log", None)
     if prev is not None and prev[0] == msg and (now_m - prev[1]) < gap:
         return
-    print(f"{msg} (nhắc log tối đa 1 lần/{gap:.0f}s, không phải chu kỳ vòng lặp)")
+    gap_lbl = _v5_loop_interval_log_repr(gap)
+    print(f"{msg} (nhắc log tối đa 1 lần/{gap_lbl}, không phải chu kỳ vòng lặp)")
     run._v5_gate_no_close_log = (msg, now_m)
 
 

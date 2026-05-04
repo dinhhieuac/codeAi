@@ -9,7 +9,7 @@ Reuse engine của strategy_grid_step_v5 nhưng:
 Gate / history (engine chung `strategy_grid_step_v5` — cấu hình trong JSON BTC demo/live):
 - `v5_rescore_only_on_new_close`: chỉ tính lại score khi có lệnh đóng mới (history account).
 - Khi tái dùng score, chưa có deal OUT mới: log `📚 [V5 Gate] chưa có lệnh đóng mới` — **throttle** bởi
-  **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600 trong engine), **không** phải chu kỳ vòng lặp.
+  **`v5_gate_no_new_close_log_seconds`** / **`v5_gate_no_new_close_log_ms`** / **`v5_gate_no_new_close_log_unit`** (`ms` — cùng engine V5, tối thiểu 1 ms, tối đa 3600 s), **không** phải chu kỳ vòng lặp.
 - **`loop_interval_seconds`** / **`loop_interval_ms`** / **`loop_interval_unit`** (`ms`): cùng engine V5 — sleep cuối vòng tối thiểu 1 ms (float giây hoặc số ms); xem docstring `strategy_grid_step_v5.py`. Log `🔄 … Loop #N` kèm `loop_interval=` và `avg_loop≈`.
 - `v5_quiet_structured_when_no_new_close` (mặc định true): không in block [V5]/[SIGNAL]/[SCORE]... khi tái dùng score;
   đặt false nếu cần full log mỗi vòng.
