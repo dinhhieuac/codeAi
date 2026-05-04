@@ -1,9 +1,11 @@
 import MetaTrader5 as mt5
 import time
 import sys
+import json
+import importlib.util
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Import local modules
 import os
@@ -11,6 +13,191 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, script_dir)  # Add current directory to path
 from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr
+
+# GridStep/utils.py — dùng cho weekend flatten (cùng rule v5_weekend_* như strategy_grid_step_v5)
+_gs_trade_utils = None
+
+
+def _load_gridstep_trade_utils():
+    """Load GridStep/utils.py (place_market_order, cancel/close) không đụng package `utils` của XAU_M1_REAL."""
+    global _gs_trade_utils
+    if _gs_trade_utils is not None:
+        return _gs_trade_utils
+    gs_path = os.path.normpath(os.path.join(script_dir, "..", "GridStep", "utils.py"))
+    if not os.path.isfile(gs_path):
+        print(f"⚠️ [HA weekend] Không tìm thấy GridStep utils: {gs_path}")
+        return None
+    spec = importlib.util.spec_from_file_location("gridstep_trade_utils", gs_path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _gs_trade_utils = mod
+    return _gs_trade_utils
+
+
+def _ha_param_bool(params, key, default=False):
+    if not params:
+        return default
+    v = params.get(key, default)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("1", "true", "yes", "on"):
+            return True
+        if s in ("0", "false", "no", "off", ""):
+            return False
+    return bool(v)
+
+
+def _ha_weekend_flatten_state_path(config):
+    acct = config.get("account")
+    acct_s = str(acct) if acct is not None else "unknown"
+    return os.path.join(script_dir, f"ha_weekend_flatten_{acct_s}.json")
+
+
+def _ha_weekend_flatten_load_state(path):
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _ha_weekend_flatten_save_state(path, friday_key):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "friday_utc_date": friday_key,
+                    "completed": True,
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except OSError as e:
+        print(f"⚠️ [HA weekend] Không ghi state {path}: {e}")
+
+
+def _ha_weekend_throttle_print(key, msg, gap_sec=120.0):
+    now = time.monotonic()
+    d = getattr(_ha_weekend_throttle_print, "_last", {})
+    prev = d.get(key)
+    if prev is not None and (now - prev) < gap_sec:
+        return
+    d[key] = now
+    _ha_weekend_throttle_print._last = d
+    print(msg)
+
+
+def weekend_flatten_maybe(config) -> bool:
+    """
+    Cùng rule `v5_weekend_flatten_*` như GridStep/strategy_grid_step_v5.py:
+    Thứ Sáu UTC, trong [close_utc − minutes_before, close_utc cuối phút], một lần / account / Thứ Sáu
+    (state `ha_weekend_flatten_<account>.json` trong thư mục bot). Trả True → caller nên dừng bot (shutdown).
+    Lot MARKET weekend: `parameters.v5_weekend_flatten_volume` (>0) thay `volume` root; không có thì dùng root.
+    """
+    params = config.get("parameters") or {}
+    sym = str(config.get("symbol") or "").strip()
+    try:
+        mag = int(config.get("magic") or 0)
+    except (TypeError, ValueError):
+        mag = 0
+    if not sym or not _ha_param_bool(params, "v5_weekend_flatten_enabled", False):
+        return False
+    gsu = _load_gridstep_trade_utils()
+    if gsu is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    if int(now.weekday()) != 4:
+        return False
+    hour = int(params.get("v5_weekend_close_utc_hour", 20))
+    minute = int(params.get("v5_weekend_close_utc_minute", 59))
+    mb = max(1, int(params.get("v5_weekend_flatten_minutes_before", 5)))
+    d = now.date()
+    close_begin = datetime(d.year, d.month, d.day, hour, minute, 0, 0, tzinfo=timezone.utc)
+    window_start = close_begin - timedelta(minutes=mb)
+    close_end = datetime(d.year, d.month, d.day, hour, minute, 59, 999999, tzinfo=timezone.utc)
+    if not (window_start <= now <= close_end):
+        return False
+
+    friday_key = d.isoformat()
+    st_path = _ha_weekend_flatten_state_path(config)
+    st = _ha_weekend_flatten_load_state(st_path)
+    if str(st.get("friday_utc_date") or "") == friday_key and st.get("completed"):
+        acct = config.get("account")
+        _ha_weekend_throttle_print(
+            f"wknd_done_{acct}",
+            f"ℹ️ [HA weekend] Đã flatten Thứ Sáu {friday_key} (account={acct}). "
+            f"Xóa `{os.path.basename(st_path)}` để chạy lại cùng ngày.",
+            120.0,
+        )
+        return False
+
+    raw_wv = params.get("v5_weekend_flatten_volume")
+    vol = float(config.get("volume") or 0.01)
+    if raw_wv is not None and str(raw_wv).strip() != "":
+        try:
+            wv = float(raw_wv)
+            if wv > 0:
+                vol = wv
+        except (TypeError, ValueError):
+            pass
+    direction = str(params.get("v5_weekend_flatten_direction", "SELL") or "SELL").strip().upper()
+    cmt = str(params.get("v5_weekend_flatten_comment", "HA_weekend_flat") or "HA_weekend_flat")
+    dev = int(params.get("v5_weekend_flatten_deviation", 30))
+    sl_w = float(params.get("v5_weekend_flatten_sl", 0) or 0)
+    tp_w = float(params.get("v5_weekend_flatten_tp", 0) or 0)
+    ai = mt5.account_info()
+    acct_s = str(ai.login) if ai else "?"
+    scope = str(params.get("v5_weekend_flatten_scope", "bot") or "bot").strip().lower()
+
+    if scope == "account":
+        print(
+            f"🕐 [HA weekend] Thứ Sáu UTC {now.strftime('%H:%M')} | scope=account | market {direction} {sym} vol={vol} | account={acct_s}"
+        )
+        n_rm = int(gsu.cancel_all_pending_account() or 0)
+        n_cl = int(gsu.close_all_positions_account() or 0)
+    else:
+        print(
+            f"🕐 [HA weekend] Thứ Sáu UTC {now.strftime('%H:%M')} | scope=bot ({sym} magic={mag}) | market {direction} vol={vol} | account={acct_s}"
+        )
+        n_rm = int(gsu.cancel_all_pending_orders_magic(sym, mag) or 0)
+        n_cl = int(gsu.close_positions_bot(sym, mag, comment=None) or 0)
+    print(f"🧹 [HA weekend] Đã hủy {n_rm} pending, đóng {n_cl} position.")
+
+    if direction in ("BUY", "SELL"):
+        is_buy = direction == "BUY"
+        r = gsu.place_market_order(
+            sym,
+            vol,
+            is_buy,
+            mag,
+            cmt,
+            sl=sl_w,
+            tp=tp_w,
+            deviation=dev,
+        )
+        if r is None:
+            print("❌ [HA weekend] order_send market = None")
+        elif int(getattr(r, "retcode", 0) or 0) != mt5.TRADE_RETCODE_DONE:
+            print(f"❌ [HA weekend] Market {direction} retcode={getattr(r, 'retcode', 0)} {getattr(r, 'comment', '')}")
+        else:
+            print(f"✅ [HA weekend] Market {direction} OK ticket={getattr(r, 'order', 0)}")
+    else:
+        print(f"⏭️ [HA weekend] v5_weekend_flatten_direction={direction!r} — chỉ đóng, không market.")
+
+    _ha_weekend_flatten_save_state(st_path, friday_key)
+    return True
 
 # Initialize Database with absolute path
 db_path = os.path.join(script_dir, "trades.db")
@@ -967,6 +1154,9 @@ if __name__ == "__main__":
         
         try:
             while True:
+                if weekend_flatten_maybe(config):
+                    print("🛑 [HA weekend] Hoàn tất flatten — dừng bot (mt5.shutdown).")
+                    break
                 consecutive_errors, last_error_code = strategy_1_logic(config, consecutive_errors)
                 
                 if consecutive_errors >= 5:
@@ -982,4 +1172,5 @@ if __name__ == "__main__":
                 time.sleep(1) # Scan every second
         except KeyboardInterrupt:
             print("🛑 Bot Stopped")
+        finally:
             mt5.shutdown()

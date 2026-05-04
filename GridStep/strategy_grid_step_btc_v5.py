@@ -6,12 +6,13 @@ Reuse engine của strategy_grid_step_v5 nhưng:
 - score = BTCUSD Grid Step 200.0 từ scores.py
 - file state/log riêng cho BTC v5
 
-Gate / history (strategy_grid_step_v5):
-- v5_rescore_only_on_new_close: chỉ tính lại score khi có lệnh đóng mới (trên session/account lấy history).
-- Nếu chưa có đóng mới: một dòng `📚 [V5 Gate] chưa có lệnh đóng mới` + giữ cache score; với account hiện tại
-  dùng peek deal OUT để không tải full history.
-- v5_quiet_structured_when_no_new_close (mặc định true): không in block [V5]/[SIGNAL]/[SCORE]... khi đang tái dùng
-  score (tránh spam); đặt false nếu cần xem full log mỗi vòng.
+Gate / history (engine chung `strategy_grid_step_v5` — cấu hình trong JSON BTC demo/live):
+- `v5_rescore_only_on_new_close`: chỉ tính lại score khi có lệnh đóng mới (history account).
+- Khi tái dùng score, chưa có deal OUT mới: log `📚 [V5 Gate] chưa có lệnh đóng mới` — **throttle** bởi
+  **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600 trong engine), **không** phải chu kỳ vòng lặp.
+- **`loop_interval_seconds`** / **`loop_interval_ms`** / **`loop_interval_unit`** (`ms`): cùng engine V5 — sleep cuối vòng tối thiểu 1 ms (float giây hoặc số ms); xem docstring `strategy_grid_step_v5.py`. Log `🔄 … Loop #N` kèm `loop_interval=` và `avg_loop≈`.
+- `v5_quiet_structured_when_no_new_close` (mặc định true): không in block [V5]/[SIGNAL]/[SCORE]... khi tái dùng score;
+  đặt false nếu cần full log mỗi vòng.
 
 Console log (cùng format V5):
 - Dòng đầu: [V5] RESULT=... | MAIN_REASON=...
@@ -48,7 +49,7 @@ Hai tài khoản (demo + live) cùng lúc:
 - Chỉ một role: `python ... --config config_grid_step_btc_v5_live.json` → một process live (không spawn demo).
 - Tắt cặp song song: `--no-parallel-live` hoặc `"btc_v5_parallel_live": false` trong `parameters` của config demo → chỉ **một** process (demo) trong process hiện tại.
 - Process worker dùng `--btc-v5-child` (không spawn thêm).
-- Vòng lặp kiểm tra: `parameters.loop_interval_seconds` trong JSON (demo + live; mặc định repo **1** giây).
+- Vòng lặp: `loop_interval_seconds` (và tùy chọn `loop_interval_ms` / `loop_interval_unit`) + `v5_gate_no_new_close_log_seconds` trong JSON demo/live.
 """
 import json
 import os
@@ -60,7 +61,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DEMO_CONFIG_NAME = "config_grid_step_btc_v5.json"
 LIVE_CONFIG_NAME = "config_grid_step_btc_v5_live.json"
-# `parameters.loop_interval_seconds` trong JSON demo + live (mặc định repo 1s).
+# `parameters.loop_interval_seconds` (+ tùy chọn ms / unit) trong JSON demo + live — engine V5.
 # InvGrid: engine gọi `btc_sign_inverser` — hủy LIMIT cũ trước snapshot mới (xem docstring trên).
 
 import strategy_grid_step_v5 as core

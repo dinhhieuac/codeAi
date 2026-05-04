@@ -12,7 +12,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
   Live child dùng `config_grid_step_inverse_live.json` (tài khoản / `mt5_path` riêng). Cha không login MT5.
 - Supervisor BTC: vẫn dùng `strategy_grid_step_btc_v5.py` (`--btc-v5-child`, `btc_v5_parallel_live`, `config_grid_step_btc_v5_live.json`).
 - parameters: v5_log_debug (alias logDebug, default false) — false: một dòng score/rules/kết luận; true: full [SIGNAL][SCORE]...
-- **`loop_interval_seconds`** (mặc định 10, tối thiểu 1): `sleep` **cuối** mỗi vòng sau khi xử lý xong; chu kỳ thực ≈ thời gian MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng cách tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
+- **`loop_interval_seconds`**: `sleep` **cuối** mỗi vòng (mặc định 10 **giây**). Đơn vị mặc định là **giây** (float, tối thiểu **1 ms**): vd `0.1` = 100 ms. Để ghi **số nguyên mili giây** trên cùng key: đặt **`loop_interval_unit`**: `"ms"` (vd `100` hoặc `200` → 0.1s / 0.2s). Hoặc dùng **`loop_interval_ms`** (ưu tiên nếu có, >0). Chu kỳ thực ≈ MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng cách tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30, clamp 1–3600) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
 - v5_role=live (không inverse-only): không đọc history trên live; mirror theo relay / zone; có grid → base strategy.
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
 - `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
@@ -41,7 +41,7 @@ Demo (p_demo) vs live (p_live) — vì sao số lệnh có thể lệch?
 
 Copy-on-fill **MARKET** (thay cho chỉ dựa LIMIT inverse khi tắt `v5_live_inverse_limit_ipc`):
 - Demo gửi TCP `{"event":"demo_fill", ...}` khi có position mới; `{"event":"demo_close", "position_ticket"}` khi position đó đã đóng trên demo (sau khi `demo_fill` gửi TCP OK). Live: MARKET copy ngược chiều; đóng position mirror khi nhận `demo_close` (comment `CopyFill_<ticket>`). SL/TP MARKET tùy chọn (`v5_market_copy_sl_tp_enabled`, mặc định tắt).
-- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), **mỗi** process MT5 (demo **và** live — cần **bật flag trên cả hai** JSON) chạy **một lần / account / Thứ Sáu**: `v5_weekend_flatten_scope`=`bot` hoặc `account`; state `v5_weekend_flatten_<account>.json` — nếu đã `completed` cho ngày Thứ Sáu đó thì **không** chạy lại (process vẫn chạy grid bình thường); xóa file state để test lại — **sau khi flatten** process thoát (`mt5.shutdown`). Hai JSON nên cùng cửa sổ giờ UTC.
+- **Đóng cuối tuần (UTC)**: `v5_weekend_flatten_enabled` — Thứ Sáu, trong khoảng **N phút** trước `v5_weekend_close_utc_hour`:`v5_weekend_close_utc_minute` (mặc định 20:59), **mỗi** process MT5 (demo **và** live — cần **bật flag trên cả hai** JSON) chạy **một lần / account / Thứ Sáu**: `v5_weekend_flatten_scope`=`bot` hoặc `account`; state `v5_weekend_flatten_<account>.json` — nếu đã `completed` cho ngày Thứ Sáu đó thì **không** chạy lại (process vẫn chạy grid bình thường); xóa file state để test lại — **sau khi flatten** process thoát (`mt5.shutdown`). Hai JSON nên cùng cửa sổ giờ UTC. Lot lệnh MARKET weekend: **`v5_weekend_flatten_volume`** trong `parameters` (nếu có và >0) thay cho `volume` root; không có thì dùng `volume` như cũ.
 """
 import copy
 import json
@@ -118,6 +118,44 @@ def _v5_param_bool(params: Optional[Dict[str, Any]], key: str, default: bool = F
         if s in ("0", "false", "no", "off", ""):
             return False
     return bool(v)
+
+
+_V5_LOOP_SLEEP_MIN = 0.001  # 1 ms (hệ điều hành có thể không ngủ chính xác hơn)
+
+
+def _v5_loop_sleep_seconds(params: Optional[Dict[str, Any]]) -> float:
+    """
+    Thời gian sleep cuối mỗi vòng main loop.
+    - `loop_interval_ms` > 0: dùng mili giây (ghi đè).
+    - `loop_interval_unit` = `ms`: `loop_interval_seconds` là mili giây (vd 100 → 0.1s).
+    - Mặc định: `loop_interval_seconds` là giây (float), tối thiểu 1 ms.
+    """
+    p = params or {}
+    raw_ms = p.get("loop_interval_ms")
+    if raw_ms is not None and str(raw_ms).strip() != "":
+        try:
+            ms = float(raw_ms)
+            if ms > 0:
+                return max(_V5_LOOP_SLEEP_MIN, ms / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    unit = str(p.get("loop_interval_unit", "s") or "s").lower().strip()
+    try:
+        v = float(p.get("loop_interval_seconds", 10))
+    except (TypeError, ValueError):
+        v = 10.0
+    if v <= 0:
+        v = 10.0
+    if unit in ("ms", "millisecond", "milliseconds"):
+        return max(_V5_LOOP_SLEEP_MIN, v / 1000.0)
+    return max(_V5_LOOP_SLEEP_MIN, v)
+
+
+def _v5_loop_interval_log_repr(sleep_s: float) -> str:
+    if sleep_s < 1.0:
+        return f"{sleep_s * 1000.0:.0f}ms"
+    s = f"{sleep_s:.4f}".rstrip("0").rstrip(".")
+    return f"{s}s"
 
 
 def _v5_synthetic_grid_preview_from_pair_snap(pair_snap: dict, step_val: float) -> Dict[str, Any]:
@@ -209,7 +247,15 @@ def _v5_weekend_flatten_maybe(
             120.0,
         )
         return False
+    raw_wv = params.get("v5_weekend_flatten_volume")
     vol = float(config.get("volume") or 0.01)
+    if raw_wv is not None and str(raw_wv).strip() != "":
+        try:
+            wv = float(raw_wv)
+            if wv > 0:
+                vol = wv
+        except (TypeError, ValueError):
+            pass
     direction = str(params.get("v5_weekend_flatten_direction", "SELL") or "SELL").strip().upper()
     cmt = str(params.get("v5_weekend_flatten_comment", "V5_weekend_flat") or "V5_weekend_flat")
     dev = int(params.get("v5_weekend_flatten_deviation", 30))
@@ -832,7 +878,7 @@ def _v5_log_gate_no_new_close_throttled(config: Dict[str, Any]) -> None:
     """
     Khi `v5_rescore_only_on_new_close`: tái dùng score, không fetch full history — log nhắc ngắn.
     Dòng này **không** in mỗi vòng: khoảng tối thiểu giữa hai lần in = `parameters.v5_gate_no_new_close_log_seconds`
-    (mặc định 30, clamp 1–3600), khác `loop_interval_seconds` (sleep cuối mỗi vòng).
+    (mặc định 30, clamp 1–3600), khác khoảng sleep cuối vòng (`loop_interval_seconds` / `loop_interval_ms` / `loop_interval_unit`).
     """
     params = (config or {}).get("parameters") or {}
     try:
@@ -2452,7 +2498,7 @@ def _run_v5_bot():
     consecutive_errors = 0
     if config and base.connect_mt5(config):
         params = config.get("parameters", {})
-        loop_interval_seconds = max(1.0, float(params.get("loop_interval_seconds", 10)))
+        loop_interval_seconds = _v5_loop_sleep_seconds(params)
         if "steps" in params and params["steps"] is not None:
             steps_config = params["steps"]
             if not isinstance(steps_config, list):
@@ -3039,7 +3085,7 @@ def _run_v5_bot():
                         avg_txt = f" | avg_loop≈{(now_hb - float(last_hb)) / 30.0:.2f}s (30 vòng)"
                     run._v5_heartbeat_mono = now_hb
                     print(
-                        f"🔄 Grid Step V5 | loop_interval={loop_interval_seconds}s{avg_txt} | "
+                        f"🔄 Grid Step V5 | loop_interval={_v5_loop_interval_log_repr(loop_interval_seconds)}{avg_txt} | "
                         f"Steps: {steps_info} | Positions: {len(pos)} | "
                         f"Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}"
                     )

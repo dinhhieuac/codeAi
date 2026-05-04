@@ -28,7 +28,7 @@
         "min_gap_minutes": 1,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
-        "loop_interval_seconds": 1,
+        "loop_interval_seconds": 0.3,
         "max_loss_streak": 2,
         "v5_hard_block_sum10_negative": false,
         "v5_hard_block_min_gap": false,
@@ -58,11 +58,12 @@
         "v5_weekend_flatten_scope": "account",
         "v5_weekend_close_utc_hour": 20,
         "v5_weekend_close_utc_minute": 59,
-        "v5_weekend_flatten_minutes_before": 5,
+        "v5_weekend_flatten_minutes_before": 2,
         "v5_weekend_flatten_direction": "SELL",
         "v5_weekend_flatten_comment": "V5_weekend_flat",
         "v5_weekend_flatten_sl": 0,
         "v5_weekend_flatten_tp": 0,
-        "v5_weekend_flatten_deviation": 30
+        "v5_weekend_flatten_deviation": 30,
+        "v5_weekend_flatten_volume": 0.03
     }
 }
