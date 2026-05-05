@@ -36,7 +36,7 @@
         "v5_log_debug": false,
         "v5_compact_cycle_log": false,
         "v5_rescore_only_on_new_close": true,
-        "v5_gate_no_new_close_log_seconds": 5,
+        "v5_gate_no_new_close_log_seconds": 1,
         "v5_quiet_structured_when_no_new_close": true,
         "v5_verbose_no_order_log": true,
         "signal_relay_enabled": true,

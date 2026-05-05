@@ -30,6 +30,8 @@
         "signal_relay_enabled": true,
         "relay_zone_points": 5,
         "relay_verbose_log": true,
-        "live_relay_blind_follow": true
+        "live_relay_blind_follow": true,
+                "v5_market_copy_sl_tp_enabled": true
+
     }
 }

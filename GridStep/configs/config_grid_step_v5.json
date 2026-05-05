@@ -28,7 +28,7 @@
         "min_gap_minutes": 1,
         "entry_score_threshold": 6,
         "medium_score_threshold": 5,
-        "loop_interval_seconds": 0.3,
+        "loop_interval_seconds": 0.1,
         "max_loss_streak": 2,
         "v5_hard_block_sum10_negative": false,
         "v5_hard_block_min_gap": false,
@@ -39,7 +39,7 @@
         "v5_log_debug": false,
         "v5_compact_cycle_log": false,
         "v5_rescore_only_on_new_close": true,
-        "v5_gate_no_new_close_log_seconds": 0.5,
+        "v5_gate_no_new_close_log_seconds": 0.1,
         "v5_quiet_structured_when_no_new_close": true,
         "v5_verbose_no_order_log": true,
         "signal_relay_enabled": true,
@@ -64,6 +64,7 @@
         "v5_weekend_flatten_sl": 0,
         "v5_weekend_flatten_tp": 0,
         "v5_weekend_flatten_deviation": 30,
-        "v5_weekend_flatten_volume": 0.03
+        "v5_weekend_flatten_volume": 0.03,
+        "v5_market_copy_sl_tp_enabled": false
     }
 }
