@@ -1,9 +1,9 @@
 {
-  "account": 183677261,
+  "account": 415688961,
   "password": "@Dinhhieu273",
-  "server": "Exness-MT5Real25",
+  "server": "Exness-MT5Trial14",
   "mt5_path": "C:\\\\Program Files\\\\M11\\\\terminal64.exe",
-  "symbol": "XAUUSDc",
+  "symbol": "XAUUSD",
   "volume": 0.01,
   "magic": 100010,
   "max_positions": 5,
@@ -36,7 +36,7 @@
     "v5_weekend_flatten_tp": 0,
     "v5_weekend_flatten_deviation": 30,
     "v5_weekend_flatten_volume": 0.03,
-    "v5_market_copy_sl_tp_enabled": false
+    "v5_market_copy_sl_tp_enabled": true
 
   }
 }

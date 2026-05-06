@@ -65,6 +65,6 @@
         "v5_weekend_flatten_tp": 0,
         "v5_weekend_flatten_deviation": 30,
         "v5_weekend_flatten_volume": 0.03,
-        "v5_market_copy_sl_tp_enabled": false
+        "v5_market_copy_sl_tp_enabled": true
     }
 }

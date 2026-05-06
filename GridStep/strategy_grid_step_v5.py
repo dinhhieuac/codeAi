@@ -15,7 +15,7 @@ V5 tái sử dụng toàn bộ logic từ strategy_grid_step.py, nhưng:
 - **`loop_interval_seconds`**: `sleep` **cuối** mỗi vòng (mặc định 10 **giây**). Đơn vị mặc định là **giây** (float, tối thiểu **1 ms**): vd `0.1` = 100 ms. Để ghi **số nguyên mili giây** trên cùng key: đặt **`loop_interval_unit`**: `"ms"` (vd `100` hoặc `200` → 0.1s / 0.2s). Hoặc dùng **`loop_interval_ms`** (ưu tiên nếu có, >0). Chu kỳ thực ≈ MT5/history/score + sleep. **`v5_rescore_only_on_new_close`**: dòng `📚 [V5 Gate] chưa có lệnh đóng mới` bị **throttle** — khoảng tối thiểu giữa hai lần in: **`v5_gate_no_new_close_log_seconds`** (mặc định 30 **giây**, float, tối thiểu **1 ms**, tối đa 3600 s) hoặc **`v5_gate_no_new_close_log_ms`** (ưu tiên) / **`v5_gate_no_new_close_log_unit`**: `"ms"` (giá trị trên key `…_seconds` là ms, vd `500` → 0.5 s) — **không** phải tần suất vòng lặp. Log `🔄 … Loop #N` mỗi 30 vòng kèm `avg_loop≈` (đo thực).
 - v5_role=live (không inverse-only): không đọc history trên live; mirror theo relay / zone; có grid → base strategy.
   Kiểm tra zone (nếu không blind) = so giá mid với zone_key trong relay.
-- `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp BUY_STOP+SELL_STOP khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
+- `log/pending_stop_pair_YYYY-MM-DD.jsonl`: cặp lệnh chờ grid (BUY+SELL: STOP hoặc LIMIT tùy base) khi có lệnh/position mới (tắt: `v5_pending_pair_log_enabled`: false).
 - `v5_live_inverse_limits_from_demo_file` (live): đọc `RELAY_DEMO_FILE` (vd btc_v5_relay_demo.json do demo ghi), đặt **BUY_LIMIT+SELL_LIMIT** trực tiếp trên account live — **symbol / magic / volume** lấy từ config live (không dùng symbol trong file relay để mở lệnh). Consumed: `btc_signal_inverse_consumed_relay_ids.json` (cùng bot `btc_sign_inverser` nếu chạy song song — nên tắt một trong hai).
 - `v5_live_inverse_only` (live): **không** gate / relay tín hiệu / grid STOP; lắng nghe TCP (`v5_inverse_ipc_port`) — xử lý **`demo_fill`** (copy MARKET ngược chiều khi demo **khớp position**) và tùy chọn snapshot inverse LIMIT (`v5_live_inverse_limit_ipc`).
   - **`v5_live_market_copy_demo_fill_enabled`** (live, mặc định true): bật/tắt copy MARKET từ event `demo_fill` (tắt = live nhận TCP nhưng không đặt lệnh).
@@ -537,7 +537,7 @@ def _v5_gate_step_val(config):
 
 def _v5_preview_grid_levels(config):
     """
-    Giá BUY_STOP / SELL_STOP dự kiến (cùng công thức anchor + ref như strategy_grid_step),
+    Giá BUY_LIMIT / SELL_LIMIT dự kiến (cùng công thức anchor + ref như strategy_grid_step),
     không hủy pending — chỉ đọc giá để chấm entry score.
     """
     symbol = config["symbol"]
@@ -550,8 +550,8 @@ def _v5_preview_grid_levels(config):
     current_price = base.get_grid_anchor_price(symbol, magic, step_filter)
     ref = round(current_price / step_val) * step_val
     ref = round(ref, info.digits)
-    buy_price = round(ref + step_val, info.digits)
-    sell_price = round(ref - step_val, info.digits)
+    buy_price = round(ref - step_val, info.digits)
+    sell_price = round(ref + step_val, info.digits)
     return {
         "buy_price": buy_price,
         "sell_price": sell_price,
@@ -1204,14 +1204,17 @@ def _snapshot_bot_orders_positions(symbol, magic):
 
 def _collect_pending_stop_pair(symbol: str, magic: int) -> Optional[dict]:
     """
-    Cặp lưới: ít nhất một BUY_STOP và một SELL_STOP pending cùng symbol/magic.
+    Cặp lưới: ít nhất một lệnh mua chờ và một lệnh bán chờ cùng symbol/magic
+    (BUY_STOP hoặc BUY_LIMIT; SELL_STOP hoặc SELL_LIMIT — strategy_grid_step dùng LIMIT).
     Trả về dict chi tiết hoặc None nếu không đủ cặp.
     """
     orders = mt5.orders_get(symbol=symbol) or []
     buy_stops: list = []
     sell_stops: list = []
-    ot_buy = getattr(mt5, "ORDER_TYPE_BUY_STOP", 4)
-    ot_sell = getattr(mt5, "ORDER_TYPE_SELL_STOP", 5)
+    ot_buy_stop = getattr(mt5, "ORDER_TYPE_BUY_STOP", 4)
+    ot_sell_stop = getattr(mt5, "ORDER_TYPE_SELL_STOP", 5)
+    ot_buy_lim = getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2)
+    ot_sell_lim = getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3)
     for o in orders:
         if int(getattr(o, "magic", 0) or 0) != int(magic):
             continue
@@ -1230,9 +1233,9 @@ def _collect_pending_stop_pair(symbol: str, magic: int) -> Optional[dict]:
             "volume": vol,
             "comment": cmt,
         }
-        if ot == ot_buy:
+        if ot in (ot_buy_stop, ot_buy_lim):
             buy_stops.append(row)
-        elif ot == ot_sell:
+        elif ot in (ot_sell_stop, ot_sell_lim):
             sell_stops.append(row)
     if not buy_stops or not sell_stops:
         return None
@@ -1262,7 +1265,7 @@ def _append_pending_stop_pair_daily_log(record: dict) -> None:
 
 
 def _v5_append_pending_stop_failure_log(line: dict) -> None:
-    """Ghi cùng file pending_stop_pair_*.jsonl khi base.strategy_grid_step_logic đặt BUY_STOP/SELL_STOP lỗi."""
+    """Ghi cùng file pending_stop_pair_*.jsonl khi base.strategy_grid_step_logic đặt BUY_LIMIT/SELL_LIMIT lỗi."""
     ctx = line.pop("log_context", None) or {}
     if not bool(ctx.get("enabled", True)):
         return
@@ -2975,7 +2978,7 @@ def _run_v5_bot():
                                 gf_w["grid_preview"] = gpr_syn
                                 signal_relay.demo_write_inverse_relay_file(config, gf_w)
                                 print(
-                                    f"📄 [V5 demo] Đã ghi {os.path.basename(path_inv)} từ cặp STOP trên MT5 "
+                                    f"📄 [V5 demo] Đã ghi {os.path.basename(path_inv)} từ cặp lệnh chờ trên MT5 "
                                     f"(file thiếu / rỗng / lỗi — live có thể đọc)."
                                 )
 
