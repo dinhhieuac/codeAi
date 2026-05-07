@@ -3,7 +3,7 @@
     "password": "@Dinhhieu273",
     "server": "Exness-MT5Real25",
     "mt5_path": "C:\\Program Files\\M9\\terminal64.exe",
-    "symbol": "BTCUSD",
+    "symbol": "BTCUSDc",
     "volume": 0.01,
     "magic": 100011,
     "max_positions": 5,
@@ -11,6 +11,7 @@
     "telegram_chat_id": "270589269",
     "parameters": {
         "loop_interval_seconds": 1,
+        "loop_log_every_n": 1,
         "steps": [200],
         "min_distance_points": 5,
         "target_profit": 50.0,
@@ -20,6 +21,7 @@
         "consecutive_loss_count": 2,
         "consecutive_loss_pause_minutes": 5,
         "single_loss_reset_enabled": true,
-        "single_loss_reset_pause_minutes": 2
+        "single_loss_reset_pause_minutes": 2,
+        "single_loss_reset_min_loss_abs": 1.0
     }
 }

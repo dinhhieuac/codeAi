@@ -287,7 +287,9 @@ def bootstrap_single_loss_reset_session(mt5_now, enabled, pause_minutes):
     print("🔄 [single_loss_kill] Phiên bot mới: reset last_handled; pause kill cũ đã xóa (nếu có).")
 
 
-def check_single_loss_should_trigger(symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc):
+def check_single_loss_should_trigger(
+    symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc, min_loss_abs
+):
     """
     MT5 history: lệnh đóng gần nhất của bot (comment GridStep*) là thua,
     deal không quá cũ (so với now_utc), và chưa xử lý (close > last_handled).
@@ -296,7 +298,13 @@ def check_single_loss_should_trigger(symbol, magic, now_utc, history_max_age_min
     profits, last_close_time_str = get_last_n_closed_profits_bot(
         symbol, magic, 1, days_back=1, comment_prefix="GridStep"
     )
-    if len(profits) < 1 or (profits[0] or 0) >= 0 or not last_close_time_str:
+    try:
+        min_abs = float(min_loss_abs)
+    except (TypeError, ValueError):
+        min_abs = 1.0
+    if min_abs < 0:
+        min_abs = 0.0
+    if len(profits) < 1 or (profits[0] or 0) >= -min_abs or not last_close_time_str:
         return False, None, None
     last_close_dt = None
     try:
@@ -574,6 +582,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     single_loss_reset_enabled = params.get('single_loss_reset_enabled', False)
     single_loss_reset_pause_minutes = int(params.get('single_loss_reset_pause_minutes', 0) or 0)
     single_loss_reset_history_max_age_minutes = params.get('single_loss_reset_history_max_age_minutes', 1440)
+    single_loss_reset_min_loss_abs = params.get('single_loss_reset_min_loss_abs', 1.0)
 
     mt5_now = get_mt5_time_utc(symbol)
     bootstrap_single_loss_reset_session(mt5_now, single_loss_reset_enabled, single_loss_reset_pause_minutes)
@@ -636,6 +645,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             mt5_now,
             single_loss_reset_history_max_age_minutes,
             _single_loss_last_handled_close_utc,
+            single_loss_reset_min_loss_abs,
         )
         if react and last_close_ts and last_close_dt is not None:
             if not is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):

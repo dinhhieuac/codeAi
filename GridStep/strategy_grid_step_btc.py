@@ -227,7 +227,9 @@ def bootstrap_single_loss_reset_session(mt5_now, enabled, pause_minutes):
     print("🔄 [BTC single_loss_kill] Phiên bot mới: reset last_handled; pause kill cũ đã xóa (nếu có).")
 
 
-def check_single_loss_should_trigger(symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc):
+def check_single_loss_should_trigger(
+    symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc, min_loss_abs
+):
     """
     Lệnh đóng gần nhất (GridStep*) là thua, chưa xử lý trước đó, và không quá cũ.
     Trả về (True, last_close_time_str, last_close_dt_utc) hoặc (False, None, None).
@@ -235,7 +237,13 @@ def check_single_loss_should_trigger(symbol, magic, now_utc, history_max_age_min
     profits, last_close_time_str = get_last_n_closed_profits_bot(
         symbol, magic, 1, days_back=1, comment_prefix="GridStep"
     )
-    if len(profits) < 1 or (profits[0] or 0) >= 0 or not last_close_time_str:
+    try:
+        min_abs = float(min_loss_abs)
+    except (TypeError, ValueError):
+        min_abs = 1.0
+    if min_abs < 0:
+        min_abs = 0.0
+    if len(profits) < 1 or (profits[0] or 0) >= -min_abs or not last_close_time_str:
         return False, None, None
     last_close_dt = None
     try:
@@ -482,6 +490,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     single_loss_reset_enabled = params.get('single_loss_reset_enabled', False)
     single_loss_reset_pause_minutes = int(params.get('single_loss_reset_pause_minutes', 0) or 0)
     single_loss_reset_history_max_age_minutes = params.get('single_loss_reset_history_max_age_minutes', 1440)
+    single_loss_reset_min_loss_abs = params.get('single_loss_reset_min_loss_abs', 1.0)
 
     mt5_now = get_mt5_time_utc(symbol)
     bootstrap_single_loss_reset_session(mt5_now, single_loss_reset_enabled, single_loss_reset_pause_minutes)
@@ -537,6 +546,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             mt5_now,
             single_loss_reset_history_max_age_minutes,
             _single_loss_last_handled_close_utc,
+            single_loss_reset_min_loss_abs,
         )
         if react and last_close_ts and last_close_dt is not None:
             if not is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):
@@ -758,6 +768,18 @@ def _loop_interval_log_repr(sleep_s):
     return f"{s}s"
 
 
+def btc_loop_log_every_n(params):
+    """In heartbeat mỗi N vòng. 1=mỗi vòng, 30=mặc định, 0=tắt."""
+    p = params or {}
+    try:
+        n = int(p.get("loop_log_every_n", 30))
+    except (TypeError, ValueError):
+        n = 30
+    if n < 0:
+        n = 30
+    return n
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].strip() == "--check-db":
         check_grid_step_btc_db()
@@ -772,6 +794,7 @@ if __name__ == "__main__":
     if config and connect_mt5(config):
         params = config.get("parameters", {})
         loop_sleep_s = btc_loop_sleep_seconds(params)
+        loop_log_every_n = btc_loop_log_every_n(params)
         if "steps" in params and params["steps"] is not None:
             steps_config = params["steps"]
             if not isinstance(steps_config, list):
@@ -781,7 +804,11 @@ if __name__ == "__main__":
             steps_list = None
         label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
         consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
-        print(f"✅ Grid Step BTC Bot - Started ({label}) | loop_interval={_loop_interval_log_repr(loop_sleep_s)}")
+        log_n_txt = "off" if loop_log_every_n == 0 else f"every {loop_log_every_n} loop(s)"
+        print(
+            f"✅ Grid Step BTC Bot - Started ({label}) | loop_interval={_loop_interval_log_repr(loop_sleep_s)} "
+            f"| loop_log={log_n_txt}"
+        )
         loop_count = 0
         try:
             while True:
@@ -797,7 +824,7 @@ if __name__ == "__main__":
                 else:
                     consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=None)
                 loop_count += 1
-                if loop_count % 30 == 0:
+                if loop_log_every_n > 0 and loop_count % loop_log_every_n == 0:
                     sym = config["symbol"]
                     mag = config["magic"]
                     pos = mt5.positions_get(symbol=sym, magic=mag) or []
