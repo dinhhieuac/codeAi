@@ -929,6 +929,27 @@ def _format_last_two_closed_for_heartbeat(symbol, magic):
     return "closed: " + " | ".join(parts)
 
 
+def _format_top_pending_heartbeat(orders, max_n=2):
+    """Tóm tắt tối đa max_n lệnh chờ (type + giá + comment ngắn)."""
+    if not orders:
+        return "pend: —"
+    bits = []
+    for o in orders[:max_n]:
+        ot = int(getattr(o, "type", -1))
+        bl = getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2)
+        slm = getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3)
+        if ot == bl:
+            tname = "BLIM"
+        elif ot == slm:
+            tname = "SLIM"
+        else:
+            tname = str(ot)
+        px = float(getattr(o, "price_open", 0) or 0)
+        cmt = (getattr(o, "comment", "") or "").strip()[:12]
+        bits.append(f"{tname}@{px:.2f}" + (f"({cmt})" if cmt else ""))
+    return "pend: " + ", ".join(bits)
+
+
 def grid_step_loop_log_every_n(params):
     """
     In dòng 🔄 Grid Step mỗi N vòng (sau sleep trước đó, tức sau khi chạy logic).
@@ -1003,10 +1024,11 @@ if __name__ == "__main__":
                     spread = (tick.ask - tick.bid) if tick else 0
                     steps_info = steps_list if steps_list else "1"
                     last2 = _format_last_two_closed_for_heartbeat(sym, mag)
+                    pend2 = _format_top_pending_heartbeat(ords, max_n=2)
                     print(
                         f"🔄 Grid Step | loop_interval={_loop_interval_log_repr(loop_sleep_s)} | "
                         f"Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | "
-                        f"Spread: {spread:.2f} | {last2} | Loop #{loop_count}"
+                        f"Spread: {spread:.2f} | {last2} | {pend2} | Loop #{loop_count}"
                     )
 
                 if consecutive_errors >= 5:

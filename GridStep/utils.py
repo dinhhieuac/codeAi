@@ -812,6 +812,56 @@ def modify_pending_stop(symbol, order_ticket, price, sl, tp, digits=None, type_f
     return mt5.order_send(req)
 
 
+def _history_deals_select_and_get(from_date, to_date):
+    """
+    Nạp history account rồi lấy deals (MT5 thường cần history_select trước history_deals_get).
+    from_date / to_date: datetime.
+    """
+    try:
+        mt5.history_select(from_date, to_date)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    return deals or ()
+
+
+def _closed_position_rows_from_deals(deals, symbol, magic, comment_prefix):
+    """
+    Gom theo position_id: symbol + magic khớp; nếu comment_prefix có thì position được tính nếu
+    BẤT KỲ deal IN/OUT nào của position có comment bắt đầu bằng prefix (deal OUT đôi khi không có comment).
+    Trả về list (net_profit, out_time_unix) đã đóng (có deal OUT), mới đóng trước.
+    """
+    mag_i = int(magic)
+    by_position = {}
+    for d in deals:
+        if int(getattr(d, "magic", 0) or 0) != mag_i:
+            continue
+        if getattr(d, "symbol", "") != symbol:
+            continue
+        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {"out_profit": 0.0, "out_time": None, "tag": False}
+        c = (getattr(d, "comment", "") or "").strip()
+        if comment_prefix is None or c.startswith(comment_prefix):
+            by_position[pid]["tag"] = True
+        if d.entry == mt5.DEAL_ENTRY_OUT:
+            by_position[pid]["out_profit"] += (
+                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
+            )
+            by_position[pid]["out_time"] = getattr(d, "time", None)
+    rows = []
+    for _pid, v in by_position.items():
+        if not v["tag"] or v["out_time"] is None:
+            continue
+        rows.append((v["out_profit"], v["out_time"]))
+    rows.sort(key=lambda x: x[1], reverse=True)
+    return rows
+
+
 def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=None):
     """
     Lấy N lệnh đóng gần nhất chỉ của bot: symbol + magic; nếu comment_prefix có thì chỉ deal có comment bắt đầu bằng prefix.
@@ -819,37 +869,10 @@ def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=
     """
     to_date = datetime.now()
     from_date = to_date - timedelta(days=days_back)
-    deals = mt5.history_deals_get(from_date, to_date)
-    if deals is None:
-        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    deals = _history_deals_select_and_get(from_date, to_date)
     if not deals:
         return [], None
-    by_position = {}
-    for d in deals:
-        if getattr(d, "magic", 0) != magic:
-            continue
-        if getattr(d, "symbol", "") != symbol:
-            continue
-        if comment_prefix is not None:
-            c = (getattr(d, "comment", "") or "").strip()
-            if not c.startswith(comment_prefix):
-                continue
-        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
-        if not pid:
-            continue
-        if pid not in by_position:
-            by_position[pid] = {"out_profit": 0.0, "out_time": None}
-        if d.entry == mt5.DEAL_ENTRY_OUT:
-            by_position[pid]["out_profit"] += (
-                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
-            )
-            by_position[pid]["out_time"] = getattr(d, "time", None)
-    positions = []
-    for pid, v in by_position.items():
-        if v["out_time"] is None:
-            continue
-        positions.append((v["out_profit"], v["out_time"]))
-    positions.sort(key=lambda x: x[1], reverse=True)
+    positions = _closed_position_rows_from_deals(deals, symbol, magic, comment_prefix)
     first_n = positions[:n]
     profits = [p[0] for p in first_n]
     last_close_time_str = None
@@ -871,37 +894,10 @@ def get_last_n_closed_summaries_bot(symbol, magic, n, days_back=1, comment_prefi
         return []
     to_date = datetime.now()
     from_date = to_date - timedelta(days=days_back)
-    deals = mt5.history_deals_get(from_date, to_date)
-    if deals is None:
-        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    deals = _history_deals_select_and_get(from_date, to_date)
     if not deals:
         return []
-    by_position = {}
-    for d in deals:
-        if getattr(d, "magic", 0) != magic:
-            continue
-        if getattr(d, "symbol", "") != symbol:
-            continue
-        if comment_prefix is not None:
-            c = (getattr(d, "comment", "") or "").strip()
-            if not c.startswith(comment_prefix):
-                continue
-        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
-        if not pid:
-            continue
-        if pid not in by_position:
-            by_position[pid] = {"out_profit": 0.0, "out_time": None}
-        if d.entry == mt5.DEAL_ENTRY_OUT:
-            by_position[pid]["out_profit"] += (
-                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
-            )
-            by_position[pid]["out_time"] = getattr(d, "time", None)
-    rows = []
-    for pid, v in by_position.items():
-        if v["out_time"] is None:
-            continue
-        rows.append((v["out_profit"], v["out_time"]))
-    rows.sort(key=lambda x: x[1], reverse=True)
+    rows = _closed_position_rows_from_deals(deals, symbol, magic, comment_prefix)
     out = []
     for profit, ts in rows[:n]:
         try:
@@ -922,28 +918,26 @@ def get_recent_closed_entry_prices_bot(symbol, magic, lookback_minutes, days_bac
         return []
     to_date = datetime.now()
     from_date = to_date - timedelta(days=days_back)
-    deals = mt5.history_deals_get(from_date, to_date)
-    if deals is None:
-        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    deals = _history_deals_select_and_get(from_date, to_date)
     if not deals:
         return []
     now_ts = datetime.now().timestamp()
     cutoff = now_ts - lookback_minutes * 60
+    mag_i = int(magic)
     by_position = {}
     for d in deals:
-        if getattr(d, "magic", 0) != magic:
+        if int(getattr(d, "magic", 0) or 0) != mag_i:
             continue
         if getattr(d, "symbol", "") != symbol:
             continue
-        if comment_prefix is not None:
-            c = (getattr(d, "comment", "") or "").strip()
-            if not c.startswith(comment_prefix):
-                continue
         pid = getattr(d, "position_id", None) or getattr(d, "position", None)
         if not pid:
             continue
         if pid not in by_position:
-            by_position[pid] = {"in_price": None, "out_time": None}
+            by_position[pid] = {"in_price": None, "out_time": None, "tag": False}
+        c = (getattr(d, "comment", "") or "").strip()
+        if comment_prefix is None or c.startswith(comment_prefix):
+            by_position[pid]["tag"] = True
         if d.entry == mt5.DEAL_ENTRY_IN:
             by_position[pid]["in_price"] = getattr(d, "price", None)
         elif d.entry == mt5.DEAL_ENTRY_OUT:
@@ -954,6 +948,8 @@ def get_recent_closed_entry_prices_bot(symbol, magic, lookback_minutes, days_bac
                     by_position[pid]["out_time"] = t
     rows = []
     for pid, v in by_position.items():
+        if not v.get("tag"):
+            continue
         op = v.get("out_time")
         ip = v.get("in_price")
         if op is None or ip is None:
@@ -972,26 +968,24 @@ def get_closed_deals_bot(symbol, magic, days_back=1, comment_prefix=None):
     """
     to_date = datetime.now()
     from_date = to_date - timedelta(days=days_back)
-    deals = mt5.history_deals_get(from_date, to_date)
-    if deals is None:
-        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    deals = _history_deals_select_and_get(from_date, to_date)
     if not deals:
         return {}
+    mag_i = int(magic)
     by_position = {}
     for d in deals:
-        if getattr(d, "magic", 0) != magic:
+        if int(getattr(d, "magic", 0) or 0) != mag_i:
             continue
         if getattr(d, "symbol", "") != symbol:
             continue
-        if comment_prefix is not None:
-            c = (getattr(d, "comment", "") or "").strip()
-            if not c.startswith(comment_prefix):
-                continue
         pid = getattr(d, "position_id", None) or getattr(d, "position", None)
         if not pid:
             continue
         if pid not in by_position:
-            by_position[pid] = {"out_profit": 0.0, "out_price": 0.0, "out_time": None}
+            by_position[pid] = {"out_profit": 0.0, "out_price": 0.0, "out_time": None, "tag": False}
+        c = (getattr(d, "comment", "") or "").strip()
+        if comment_prefix is None or c.startswith(comment_prefix):
+            by_position[pid]["tag"] = True
         if d.entry == mt5.DEAL_ENTRY_OUT:
             by_position[pid]["out_profit"] += (
                 getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
@@ -1000,6 +994,8 @@ def get_closed_deals_bot(symbol, magic, days_back=1, comment_prefix=None):
             by_position[pid]["out_time"] = getattr(d, "time", None)
     result = {}
     for pid, v in by_position.items():
+        if not v.get("tag"):
+            continue
         if v["out_profit"] != 0 or v["out_price"] != 0:
             out_ts = v.get("out_time")
             close_time_str = None
