@@ -4,6 +4,8 @@ Grid Step Trading Bot - Theo tài liệu grid_step_trading_bot_strategy.md
 Khi 1 lệnh kích hoạt → hủy lệnh còn lại, dịch grid, đặt cặp mới.
 Không dùng indicator (EMA, ADX, RSI, Heiken Ashi...).
 Có cooldown mức grid để giảm whipsaw sideways.
+Tùy chọn: một lệnh đóng thua (MT5 history) → hủy toàn bộ pending, đóng mọi position cùng symbol/magic, tạm dừng X phút (single_loss_reset_*).
+Mỗi lần start process: xóa pause kill cũ; không lặp kill cho cùng một lần đóng (last_handled). Deal quá cũ (history_max_age) bỏ qua.
 """
 import MetaTrader5 as mt5
 import time
@@ -17,13 +19,19 @@ from db import Database
 from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, cancel_pending_orders_bot,
-    place_buy_limit, place_sell_limit, get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
+    place_buy_limit, place_sell_limit, get_last_n_closed_profits_bot, get_last_n_closed_summaries_bot,
+    get_closed_deals_bot, close_positions_bot,
 )
 
 db = Database()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COOLDOWN_FILE = os.path.join(SCRIPT_DIR, "grid_cooldown.json")
 PAUSE_FILE = os.path.join(SCRIPT_DIR, "grid_pause.json")
+# Pause chung mọi step: khi bật single_loss_reset — tránh step khác vẫn giao dịch.
+SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY = "Grid_Step_single_loss_kill"
+_single_loss_session_bootstrapped = False
+# Deal đóng (UTC) đã xử lý kill — tránh lặp mỗi vòng; reset khi bootstrap phiên.
+_single_loss_last_handled_close_utc = None
 
 # Optional: strategy_grid_step_v5 gán callable để ghi log khi đặt BUY_LIMIT/SELL_LIMIT thất bại (không import v5 ở đây).
 log_pending_stop_attempt = None
@@ -261,6 +269,63 @@ def check_consecutive_losses_and_pause(strategy_name, account_id, consecutive_lo
         last_close_time = first_n[0].get("close_time")
         return True, last_close_time
     return False, None
+
+
+def bootstrap_single_loss_reset_session(mt5_now, enabled, pause_minutes):
+    """
+    Một lần mỗi process khi bật single_loss_reset: reset last_handled, xóa pause kill cũ trong grid_pause.json.
+    """
+    global _single_loss_last_handled_close_utc, _single_loss_session_bootstrapped
+    if not enabled or pause_minutes <= 0 or _single_loss_session_bootstrapped:
+        return
+    _single_loss_session_bootstrapped = True
+    _single_loss_last_handled_close_utc = None
+    state = load_pause_state(clean_expired=True, now_utc=mt5_now)
+    if SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY in state:
+        state.pop(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, None)
+        save_pause_state(state)
+    print("🔄 [single_loss_kill] Phiên bot mới: reset last_handled; pause kill cũ đã xóa (nếu có).")
+
+
+def check_single_loss_should_trigger(symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc):
+    """
+    MT5 history: lệnh đóng gần nhất của bot (comment GridStep*) là thua,
+    deal không quá cũ (so với now_utc), và chưa xử lý (close > last_handled).
+    Trả về (True, last_close_time_str, last_close_dt_utc) hoặc (False, None, None).
+    """
+    profits, last_close_time_str = get_last_n_closed_profits_bot(
+        symbol, magic, 1, days_back=1, comment_prefix="GridStep"
+    )
+    if len(profits) < 1 or (profits[0] or 0) >= 0 or not last_close_time_str:
+        return False, None, None
+    last_close_dt = None
+    try:
+        last_close_dt = datetime.strptime(
+            last_close_time_str.strip(), "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    if last_close_dt is None:
+        return False, None, None
+    now = now_utc
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        max_age = float(history_max_age_minutes)
+    except (TypeError, ValueError):
+        max_age = 1440.0
+    if max_age <= 0:
+        max_age = 1440.0
+    cutoff = now - timedelta(minutes=max_age)
+    if last_close_dt < cutoff:
+        return False, None, None
+    if last_handled_close_utc is not None:
+        lh = last_handled_close_utc
+        if lh.tzinfo is None:
+            lh = lh.replace(tzinfo=timezone.utc)
+        if last_close_dt <= lh:
+            return False, None, None
+    return True, last_close_time_str, last_close_dt
 
 
 def sync_closed_orders_from_mt5(config, strategy_name=None):
@@ -506,6 +571,26 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     consecutive_loss_pause_enabled = params.get('consecutive_loss_pause_enabled', True)
     consecutive_loss_count = params.get('consecutive_loss_count', 2)
     consecutive_loss_pause_minutes = params.get('consecutive_loss_pause_minutes', 5)
+    single_loss_reset_enabled = params.get('single_loss_reset_enabled', False)
+    single_loss_reset_pause_minutes = int(params.get('single_loss_reset_pause_minutes', 0) or 0)
+    single_loss_reset_history_max_age_minutes = params.get('single_loss_reset_history_max_age_minutes', 1440)
+
+    mt5_now = get_mt5_time_utc(symbol)
+    bootstrap_single_loss_reset_session(mt5_now, single_loss_reset_enabled, single_loss_reset_pause_minutes)
+    if single_loss_reset_enabled and single_loss_reset_pause_minutes > 0:
+        if is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):
+            if not hasattr(strategy_grid_step_logic, "_last_sl_kill_log") or strategy_grid_step_logic._last_sl_kill_log != SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY:
+                print(
+                    f"⏸️ [single_loss_kill] Tạm dừng mọi step sau 1 lệnh thua — cửa sổ {single_loss_reset_pause_minutes} phút từ giờ đóng lệnh."
+                )
+                strategy_grid_step_logic._last_sl_kill_log = SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY
+            remaining = get_pause_remaining(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now)
+            if remaining is not None:
+                mins = int(remaining.total_seconds() // 60)
+                secs = int(remaining.total_seconds() % 60)
+                print(f"⏸️ [single_loss_kill] Còn lại: {mins} phút {secs} giây")
+            return error_count, 0
+        strategy_grid_step_logic._last_sl_kill_log = None
 
     info = mt5.symbol_info(symbol)
     if not info:
@@ -541,6 +626,42 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         msg = f"✅ Grid Step {step}: Basket TP hit. Profit={profit:.2f} | Closed all."
         send_telegram(msg, config.get('telegram_token'), config.get('telegram_chat_id'))
         return 0, 0
+
+    # 2c. Một lệnh đóng thua (history) → hủy toàn bộ pending + đóng mọi position (mọi step), pause chung X phút
+    if single_loss_reset_enabled and single_loss_reset_pause_minutes > 0:
+        global _single_loss_last_handled_close_utc
+        react, last_close_ts, last_close_dt = check_single_loss_should_trigger(
+            symbol,
+            magic,
+            mt5_now,
+            single_loss_reset_history_max_age_minutes,
+            _single_loss_last_handled_close_utc,
+        )
+        if react and last_close_ts and last_close_dt is not None:
+            if not is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):
+                n_cancelled = cancel_all_pending(
+                    symbol, magic, strategy_name, config.get("account"), step=None
+                )
+                n_closed = close_all_positions(symbol, magic, step=None)
+                set_paused(
+                    SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY,
+                    single_loss_reset_pause_minutes,
+                    from_time=last_close_ts,
+                )
+                _single_loss_last_handled_close_utc = last_close_dt
+                print(
+                    f"🛑 [single_loss_kill] 1 lệnh thua (MT5 history, GridStep*) "
+                    f"→ đã hủy {n_cancelled} pending, đóng {n_closed} position (mọi comment step). "
+                    f"Pause {single_loss_reset_pause_minutes} phút từ giờ đóng lệnh."
+                )
+                msg = (
+                    f"🛑 Grid Step — single_loss_kill ({symbol})\n"
+                    f"1 lệnh đóng thua gần nhất (GridStep*).\n"
+                    f"Hủy {n_cancelled} lệnh chờ, đóng {n_closed} vị thế.\n"
+                    f"Tạm dừng {single_loss_reset_pause_minutes} phút từ giờ đóng lệnh thua."
+                )
+                send_telegram(msg, config.get("telegram_token"), config.get("telegram_chat_id"))
+            return error_count, 0
 
     # 2b. Tạm dừng khi có N lệnh thua liên tiếp (on/off: consecutive_loss_pause_enabled, số lệnh: consecutive_loss_count, thời gian: consecutive_loss_pause_minutes)
     if consecutive_loss_pause_enabled and consecutive_loss_pause_minutes > 0 and consecutive_loss_count > 0:
@@ -759,6 +880,72 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     return error_count, 0
 
 
+_GRID_STEP_LOOP_SLEEP_MIN = 0.001  # 1 ms
+
+
+def grid_step_loop_sleep_seconds(params):
+    """
+    Sleep cuối mỗi vòng main loop (`python strategy_grid_step.py`).
+    - `loop_interval_ms` > 0: dùng mili giây (ghi đè).
+    - `loop_interval_unit` = `ms`: `loop_interval_seconds` là mili giây (vd 500 → 0.5s).
+    - Mặc định: `loop_interval_seconds` là giây (float), mặc định 1 (như sleep cũ), tối thiểu 1 ms.
+    """
+    p = params or {}
+    raw_ms = p.get("loop_interval_ms")
+    if raw_ms is not None and str(raw_ms).strip() != "":
+        try:
+            ms = float(raw_ms)
+            if ms > 0:
+                return max(_GRID_STEP_LOOP_SLEEP_MIN, ms / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    unit = str(p.get("loop_interval_unit", "s") or "s").lower().strip()
+    try:
+        v = float(p.get("loop_interval_seconds", 1))
+    except (TypeError, ValueError):
+        v = 1.0
+    if v <= 0:
+        v = 1.0
+    if unit in ("ms", "millisecond", "milliseconds"):
+        return max(_GRID_STEP_LOOP_SLEEP_MIN, v / 1000.0)
+    return max(_GRID_STEP_LOOP_SLEEP_MIN, v)
+
+
+def _loop_interval_log_repr(sleep_s):
+    if sleep_s < 1.0:
+        return f"{sleep_s * 1000.0:.0f}ms"
+    s = f"{sleep_s:.4f}".rstrip("0").rstrip(".")
+    return f"{s}s"
+
+
+def _format_last_two_closed_for_heartbeat(symbol, magic):
+    """Chuỗi ngắn: 2 position đóng gần nhất (GridStep*), profit + giờ đóng UTC."""
+    rows = get_last_n_closed_summaries_bot(symbol, magic, 2, days_back=1, comment_prefix="GridStep")
+    if not rows:
+        return "closed: —"
+    parts = []
+    for i, (net, ts) in enumerate(rows, start=1):
+        parts.append(f"#{i} net={net:+.2f} @{ts}")
+    return "closed: " + " | ".join(parts)
+
+
+def grid_step_loop_log_every_n(params):
+    """
+    In dòng 🔄 Grid Step mỗi N vòng (sau sleep trước đó, tức sau khi chạy logic).
+    - Mặc định 30 (như cũ).
+    - 1 = mỗi vòng.
+    - 0 = tắt heartbeat (chỉ còn log từ strategy_grid_step_logic).
+    """
+    p = params or {}
+    try:
+        n = int(p.get("loop_log_every_n", 30))
+    except (TypeError, ValueError):
+        n = 30
+    if n < 0:
+        n = 30
+    return n
+
+
 if __name__ == "__main__":
     import os
     if len(sys.argv) > 1 and sys.argv[1].strip() == "--check-db":
@@ -773,6 +960,8 @@ if __name__ == "__main__":
 
     if config and connect_mt5(config):
         params = config.get("parameters", {})
+        loop_sleep_s = grid_step_loop_sleep_seconds(params)
+        loop_log_every_n = grid_step_loop_log_every_n(params)
         if "steps" in params and params["steps"] is not None:
             steps_config = params["steps"]
             if not isinstance(steps_config, list):
@@ -782,7 +971,11 @@ if __name__ == "__main__":
             steps_list = None  # legacy: 1 step từ "step", gọi logic với step=None
         label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
         consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
-        print(f"✅ Grid Step Bot - Started ({label})")
+        log_n_txt = "off" if loop_log_every_n == 0 else f"every {loop_log_every_n} loop(s)"
+        print(
+            f"✅ Grid Step Bot - Started ({label}) | loop_interval={_loop_interval_log_repr(loop_sleep_s)} "
+            f"| loop_log={log_n_txt}"
+        )
         loop_count = 0
         try:
             while True:
@@ -799,8 +992,8 @@ if __name__ == "__main__":
                 else:
                     consecutive_errors, last_error_code = strategy_grid_step_logic(config, consecutive_errors, step=None)
                 loop_count += 1
-                # Heartbeat mỗi ~30 giây
-                if loop_count % 30 == 0:
+                # Heartbeat: mỗi N vòng (loop_log_every_n; 0 = tắt)
+                if loop_log_every_n > 0 and loop_count % loop_log_every_n == 0:
                     sym = config["symbol"]
                     mag = config["magic"]
                     pos = mt5.positions_get(symbol=sym, magic=mag) or []
@@ -809,7 +1002,12 @@ if __name__ == "__main__":
                     tick = mt5.symbol_info_tick(sym)
                     spread = (tick.ask - tick.bid) if tick else 0
                     steps_info = steps_list if steps_list else "1"
-                    print(f"🔄 Grid Step | Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | Spread: {spread:.2f} | Loop #{loop_count}")
+                    last2 = _format_last_two_closed_for_heartbeat(sym, mag)
+                    print(
+                        f"🔄 Grid Step | loop_interval={_loop_interval_log_repr(loop_sleep_s)} | "
+                        f"Steps: {steps_info} | Positions: {len(pos)} | Pending: {len(ords)} | "
+                        f"Spread: {spread:.2f} | {last2} | Loop #{loop_count}"
+                    )
 
                 if consecutive_errors >= 5:
                     error_msg = get_mt5_error_message(last_error_code)
@@ -820,7 +1018,7 @@ if __name__ == "__main__":
                     consecutive_errors = 0
                     continue
 
-                time.sleep(1)
+                time.sleep(loop_sleep_s)
         except KeyboardInterrupt:
             print("🛑 Grid Step Bot Stopped")
             mt5.shutdown()

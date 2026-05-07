@@ -862,6 +862,56 @@ def get_last_n_closed_profits_bot(symbol, magic, n, days_back=1, comment_prefix=
     return profits, last_close_time_str
 
 
+def get_last_n_closed_summaries_bot(symbol, magic, n, days_back=1, comment_prefix=None):
+    """
+    N position đóng gần nhất (theo deal OUT cuối): list (net_profit, close_time_str UTC "YYYY-MM-DD HH:MM:SS"),
+    mới trước. Cùng filter symbol/magic/comment_prefix như get_last_n_closed_profits_bot.
+    """
+    if n <= 0:
+        return []
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days_back)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        deals = mt5.history_deals_get(from_date, to_date, group="*")
+    if not deals:
+        return []
+    by_position = {}
+    for d in deals:
+        if getattr(d, "magic", 0) != magic:
+            continue
+        if getattr(d, "symbol", "") != symbol:
+            continue
+        if comment_prefix is not None:
+            c = (getattr(d, "comment", "") or "").strip()
+            if not c.startswith(comment_prefix):
+                continue
+        pid = getattr(d, "position_id", None) or getattr(d, "position", None)
+        if not pid:
+            continue
+        if pid not in by_position:
+            by_position[pid] = {"out_profit": 0.0, "out_time": None}
+        if d.entry == mt5.DEAL_ENTRY_OUT:
+            by_position[pid]["out_profit"] += (
+                getattr(d, "profit", 0) + getattr(d, "swap", 0) + getattr(d, "commission", 0)
+            )
+            by_position[pid]["out_time"] = getattr(d, "time", None)
+    rows = []
+    for pid, v in by_position.items():
+        if v["out_time"] is None:
+            continue
+        rows.append((v["out_profit"], v["out_time"]))
+    rows.sort(key=lambda x: x[1], reverse=True)
+    out = []
+    for profit, ts in rows[:n]:
+        try:
+            tstr = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, OSError):
+            tstr = "?"
+        out.append((float(profit or 0), tstr))
+    return out
+
+
 def get_recent_closed_entry_prices_bot(symbol, magic, lookback_minutes, days_back=1, comment_prefix=None):
     """
     Giá vào (DEAL_ENTRY_IN) của các position đã đóng trong lookback_minutes gần nhất.
