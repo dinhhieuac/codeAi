@@ -1,0 +1,29 @@
+{
+    "account": 263414751,
+    "password": "@Dinhhieu273",
+    "server": "Exness-MT5Real37",
+    "mt5_path": "C:\\Program Files\\M15\\terminal64.exe",
+    "symbol": "XAUUSDc",
+    "volume": 0.01,
+    "magic": 100010,
+    "max_positions": 5,
+    "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
+    "telegram_chat_id": "270589269",
+    "parameters": {
+        "loop_interval_seconds": 1,
+        "loop_log_every_n": 1,
+        "steps": [5],
+        "min_distance_points": 5,
+        "target_profit": 50.0,
+        "spread_max": 0.5,
+        "cooldown_minutes": 0,
+        "consecutive_loss_pause_enabled": false,
+        "consecutive_loss_count": 2,
+        "consecutive_loss_pause_minutes": 5,
+        "single_loss_reset_enabled": true,
+        "single_loss_reset_pause_minutes": 5,
+        "single_loss_reset_min_loss_abs": 2.0,
+        "single_loss_reset_ignore_win_below": 2.0,
+        "single_loss_reset_history_scan_max": 3
+    }
+}
