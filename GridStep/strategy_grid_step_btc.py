@@ -15,7 +15,7 @@ from db import Database
 from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, place_buy_stop, place_sell_stop,
-    get_last_n_closed_profits_bot, get_closed_deals_bot, close_positions_bot,
+    get_last_n_closed_profits_bot, get_last_n_closed_summaries_bot, get_closed_deals_bot, close_positions_bot,
 )
 
 db = Database()
@@ -228,14 +228,27 @@ def bootstrap_single_loss_reset_session(mt5_now, enabled, pause_minutes):
 
 
 def check_single_loss_should_trigger(
-    symbol, magic, now_utc, history_max_age_minutes, last_handled_close_utc, min_loss_abs
+    symbol,
+    magic,
+    now_utc,
+    history_max_age_minutes,
+    last_handled_close_utc,
+    min_loss_abs,
+    ignore_win_below=1.0,
+    history_scan_max=50,
 ):
     """
-    Lệnh đóng gần nhất (GridStep*) là thua, chưa xử lý trước đó, và không quá cũ.
-    Trả về (True, last_close_time_str, last_close_dt_utc) hoặc (False, None, None).
+    GridStep*: bỏ qua thắng nhỏ 0 < profit < ignore_win_below; lệnh đóng đầu tiên còn lại
+    mới dùng cho rule thua đủ lớn (|loss| > min_loss_abs).
     """
-    profits, last_close_time_str = get_last_n_closed_profits_bot(
-        symbol, magic, 1, days_back=1, comment_prefix="GridStep"
+    try:
+        scan = int(history_scan_max)
+    except (TypeError, ValueError):
+        scan = 50
+    if scan < 1:
+        scan = 50
+    rows = get_last_n_closed_summaries_bot(
+        symbol, magic, scan, days_back=1, comment_prefix="GridStep"
     )
     try:
         min_abs = float(min_loss_abs)
@@ -243,15 +256,11 @@ def check_single_loss_should_trigger(
         min_abs = 1.0
     if min_abs < 0:
         min_abs = 0.0
-    if len(profits) < 1 or (profits[0] or 0) >= -min_abs or not last_close_time_str:
-        return False, None, None
-    last_close_dt = None
     try:
-        last_close_dt = datetime.strptime(last_close_time_str.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        pass
-    if last_close_dt is None:
-        return False, None, None
+        ign = float(ignore_win_below)
+    except (TypeError, ValueError):
+        ign = 1.0
+
     now = now_utc if now_utc.tzinfo is not None else now_utc.replace(tzinfo=timezone.utc)
     try:
         max_age = float(history_max_age_minutes)
@@ -259,13 +268,39 @@ def check_single_loss_should_trigger(
         max_age = 1440.0
     if max_age <= 0:
         max_age = 1440.0
-    if last_close_dt < now - timedelta(minutes=max_age):
+    cutoff = now - timedelta(minutes=max_age)
+
+    chosen_net = None
+    chosen_ts_str = None
+    for net, ts_str in rows:
+        p = float(net or 0)
+        if ign > 0 and p > 0 and p < ign:
+            continue
+        chosen_net = p
+        chosen_ts_str = ts_str
+        break
+
+    if chosen_net is None or not chosen_ts_str:
+        return False, None, None
+    if chosen_net >= -min_abs:
+        return False, None, None
+
+    last_close_dt = None
+    try:
+        last_close_dt = datetime.strptime(
+            chosen_ts_str.strip(), "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    if last_close_dt is None:
+        return False, None, None
+    if last_close_dt < cutoff:
         return False, None, None
     if last_handled_close_utc is not None:
         lh = last_handled_close_utc if last_handled_close_utc.tzinfo is not None else last_handled_close_utc.replace(tzinfo=timezone.utc)
         if last_close_dt <= lh:
             return False, None, None
-    return True, last_close_time_str, last_close_dt
+    return True, chosen_ts_str, last_close_dt
 
 
 def sync_closed_orders_from_mt5(config, strategy_name=None):
@@ -491,6 +526,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     single_loss_reset_pause_minutes = int(params.get('single_loss_reset_pause_minutes', 0) or 0)
     single_loss_reset_history_max_age_minutes = params.get('single_loss_reset_history_max_age_minutes', 1440)
     single_loss_reset_min_loss_abs = params.get('single_loss_reset_min_loss_abs', 1.0)
+    single_loss_reset_ignore_win_below = params.get('single_loss_reset_ignore_win_below', 1.0)
+    try:
+        single_loss_reset_history_scan_max = int(params.get('single_loss_reset_history_scan_max', 50) or 50)
+    except (TypeError, ValueError):
+        single_loss_reset_history_scan_max = 50
+    if single_loss_reset_history_scan_max < 1:
+        single_loss_reset_history_scan_max = 50
 
     mt5_now = get_mt5_time_utc(symbol)
     bootstrap_single_loss_reset_session(mt5_now, single_loss_reset_enabled, single_loss_reset_pause_minutes)
@@ -547,6 +589,8 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             single_loss_reset_history_max_age_minutes,
             _single_loss_last_handled_close_utc,
             single_loss_reset_min_loss_abs,
+            single_loss_reset_ignore_win_below,
+            single_loss_reset_history_scan_max,
         )
         if react and last_close_ts and last_close_dt is not None:
             if not is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):

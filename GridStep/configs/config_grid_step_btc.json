@@ -22,6 +22,8 @@
         "consecutive_loss_pause_minutes": 5,
         "single_loss_reset_enabled": true,
         "single_loss_reset_pause_minutes": 2,
-        "single_loss_reset_min_loss_abs": 1.0
+        "single_loss_reset_min_loss_abs": 1.0,
+        "single_loss_reset_ignore_win_below": 1.0,
+        "single_loss_reset_history_scan_max": 3
     }
 }
