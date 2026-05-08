@@ -629,6 +629,15 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     bootstrap_single_loss_reset_session(mt5_now, single_loss_reset_enabled, single_loss_reset_pause_minutes)
     if single_loss_reset_enabled and single_loss_reset_pause_minutes > 0:
         if is_paused(SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY, now_utc=mt5_now):
+            n_cancelled = cancel_all_pending(
+                symbol, magic, strategy_name, config.get("account"), step=None
+            )
+            n_closed = close_all_positions(symbol, magic, step=None)
+            if n_cancelled or n_closed:
+                print(
+                    f"🧹 [single_loss_kill] Đang pause -> đã dọn {n_cancelled} pending LIMIT, "
+                    f"đóng {n_closed} position còn sót."
+                )
             if not hasattr(strategy_grid_step_logic, "_last_sl_kill_log") or strategy_grid_step_logic._last_sl_kill_log != SINGLE_LOSS_RESET_PAUSE_STRATEGY_KEY:
                 print(
                     f"⏸️ [single_loss_kill] Tạm dừng mọi step sau 1 lệnh thua — cửa sổ {single_loss_reset_pause_minutes} phút từ giờ đóng lệnh."
