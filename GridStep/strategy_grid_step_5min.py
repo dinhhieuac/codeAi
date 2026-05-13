@@ -1,6 +1,7 @@
 """
 Grid Step Trading Bot - Theo tài liệu grid_step_trading_bot_strategy.md
-Đặt 2 lệnh chờ: BUY LIMIT = ref − bước, SELL LIMIT = ref + bước (ref làm mức tham chiếu; MT5: BUY_LIMIT < ask, SELL_LIMIT > bid).
+Đặt 2 lệnh chờ (mặc định LIMIT): BUY LIMIT = ref − bước, SELL LIMIT = ref + bước (ref làm mức tham chiếu; MT5: BUY_LIMIT < ask, SELL_LIMIT > bid).
+Tùy chọn `grid_pending_stop_enabled`: BUY STOP = ref + bước, SELL STOP = ref − bước; SL/TP vẫn entry ± bước như LIMIT.
 Khi 1 lệnh kích hoạt → hủy lệnh còn lại, dịch grid, đặt cặp mới.
 Không dùng indicator (EMA, ADX, RSI, Heiken Ashi...).
 Có cooldown mức grid để giảm whipsaw sideways.
@@ -20,7 +21,8 @@ from db import Database
 from utils import (
     load_config, connect_mt5, send_telegram, get_mt5_error_message,
     get_positions_bot, get_pending_orders_bot, cancel_pending_orders_bot,
-    place_buy_limit, place_sell_limit, get_last_n_closed_profits_bot, get_last_n_closed_summaries_bot,
+    place_buy_limit, place_sell_limit, place_buy_stop, place_sell_stop,
+    get_last_n_closed_profits_bot, get_last_n_closed_summaries_bot,
     get_closed_deals_bot, close_positions_bot,
 )
 
@@ -609,6 +611,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     max_positions = config.get('max_positions', 5)
     target_profit = params.get('target_profit', 50.0)
     spread_max = params.get('spread_max', 0.5)
+    grid_pending_stop_enabled = bool(params.get("grid_pending_stop_enabled", False))
     # Tạm dừng khi N lệnh thua liên tiếp: on/off + số lệnh + thời gian dừng (phút)
     consecutive_loss_pause_enabled = params.get('consecutive_loss_pause_enabled', True)
     consecutive_loss_count = params.get('consecutive_loss_count', 2)
@@ -836,13 +839,17 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
-    # ref = mức grid gần giá nhất (round). VD giá 5110 → ref=5110 → BUY 5105, SELL 5115
+    # ref = mức grid gần giá nhất (round). VD ref=4505, step=5:
+    # LIMIT: BUY ref−step, SELL ref+step | STOP: BUY ref+step, SELL ref−step
     ref = round(current_price / grid_step_price) * grid_step_price
     ref = round(ref, info.digits)
 
-    # BUY LIMIT = ref − 1 bước, SELL LIMIT = ref + 1 bước (đối xứng quanh ref)
-    buy_price = round(ref - grid_step_price, info.digits)
-    sell_price = round(ref + grid_step_price, info.digits)
+    if grid_pending_stop_enabled:
+        buy_price = round(ref + grid_step_price, info.digits)
+        sell_price = round(ref - grid_step_price, info.digits)
+    else:
+        buy_price = round(ref - grid_step_price, info.digits)
+        sell_price = round(ref + grid_step_price, info.digits)
 
     # Grid zone lock: không đặt nếu đã có position tại mức đó
     if position_at_level(positions, buy_price, point):
@@ -876,9 +883,18 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     tp_sell = sell_price - step_val
 
     _step_label = step_filter if step_filter is not None else step_val
-    print(f"📤 [step={_step_label}] BUY_LIMIT @ {buy_price} (SL={sl_buy}, TP={tp_buy}), SELL_LIMIT @ {sell_price} (SL={sl_sell}, TP={tp_sell})")
-    r1 = place_buy_limit(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
-    r2 = place_sell_limit(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
+    _buy_ot = "BUY_STOP" if grid_pending_stop_enabled else "BUY_LIMIT"
+    _sell_ot = "SELL_STOP" if grid_pending_stop_enabled else "SELL_LIMIT"
+    print(
+        f"📤 [step={_step_label}] {_buy_ot} @ {buy_price} (SL={sl_buy}, TP={tp_buy}), "
+        f"{_sell_ot} @ {sell_price} (SL={sl_sell}, TP={tp_sell}) | ref={ref}"
+    )
+    if grid_pending_stop_enabled:
+        r1 = place_buy_stop(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
+        r2 = place_sell_stop(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
+    else:
+        r1 = place_buy_limit(symbol, volume, buy_price, sl_buy, tp_buy, magic, comment, digits=info.digits, type_filling=filling)
+        r2 = place_sell_limit(symbol, volume, sell_price, sl_sell, tp_sell, magic, comment, digits=info.digits, type_filling=filling)
 
     def _pending_fail_base(failure):
         le = mt5.last_error()
@@ -890,6 +906,7 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             "event": "pending_limit_pair_error",
             "ok": False,
             "failure": failure,
+            "grid_pending_stop": grid_pending_stop_enabled,
             "symbol": symbol,
             "magic": magic,
             "strategy_name": strategy_name,
@@ -909,31 +926,31 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     if r1 is None:
         err = mt5.last_error()
-        print(f"❌ BUY_LIMIT order_send lỗi: {err}")
+        print(f"❌ {_buy_ot} order_send lỗi: {err}")
         _try_log_pending_stop_failure(_pending_fail_base("buy_none"))
         return error_count + 1, getattr(err, 'code', 0)
     if r2 is None:
         err = mt5.last_error()
-        print(f"❌ SELL_LIMIT order_send lỗi: {err}")
+        print(f"❌ {_sell_ot} order_send lỗi: {err}")
         _try_log_pending_stop_failure(_pending_fail_base("sell_none"))
         return error_count + 1, getattr(err, 'code', 0)
 
     if r1.retcode == mt5.TRADE_RETCODE_DONE and r2.retcode == mt5.TRADE_RETCODE_DONE:
-        print(f"✅ Grid step={_step_label}: BUY_LIMIT @ {buy_price:.2f}, SELL_LIMIT @ {sell_price:.2f} | ref={ref}")
+        print(f"✅ Grid step={_step_label}: {_buy_ot} @ {buy_price:.2f}, {_sell_ot} @ {sell_price:.2f} | ref={ref}")
         if cooldown_minutes > 0:
             save_cooldown_levels([buy_price, sell_price], step_filter)
         acc = config.get('account')
-        db.log_grid_pending(r1.order, strategy_name, symbol, "BUY_LIMIT", buy_price, sl_buy, tp_buy, volume, acc)
-        db.log_grid_pending(r2.order, strategy_name, symbol, "SELL_LIMIT", sell_price, sl_sell, tp_sell, volume, acc)
+        db.log_grid_pending(r1.order, strategy_name, symbol, _buy_ot, buy_price, sl_buy, tp_buy, volume, acc)
+        db.log_grid_pending(r2.order, strategy_name, symbol, _sell_ot, sell_price, sl_sell, tp_sell, volume, acc)
         return 0, 0
     if r1.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ BUY_LIMIT failed: {r1.retcode} {r1.comment}")
+        print(f"❌ {_buy_ot} failed: {r1.retcode} {r1.comment}")
         p = _pending_fail_base("buy_retcode")
         p["mt5_last_error"] = None
         _try_log_pending_stop_failure(p)
         return error_count + 1, r1.retcode
     if r2.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ SELL_LIMIT failed: {r2.retcode} {r2.comment}")
+        print(f"❌ {_sell_ot} failed: {r2.retcode} {r2.comment}")
         p = _pending_fail_base("sell_retcode")
         p["mt5_last_error"] = None
         _try_log_pending_stop_failure(p)
@@ -1000,10 +1017,16 @@ def _format_top_pending_heartbeat(orders, max_n=2):
         ot = int(getattr(o, "type", -1))
         bl = getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2)
         slm = getattr(mt5, "ORDER_TYPE_SELL_LIMIT", 3)
+        bs = getattr(mt5, "ORDER_TYPE_BUY_STOP", 4)
+        ss = getattr(mt5, "ORDER_TYPE_SELL_STOP", 5)
         if ot == bl:
             tname = "BLIM"
         elif ot == slm:
             tname = "SLIM"
+        elif ot == bs:
+            tname = "BSTOP"
+        elif ot == ss:
+            tname = "SSTOP"
         else:
             tname = str(ot)
         px = float(getattr(o, "price_open", 0) or 0)
@@ -1055,8 +1078,9 @@ if __name__ == "__main__":
         label = f"steps: {steps_list}" if steps_list is not None else "single step (legacy)"
         consecutive_loss_pause_enabled = params.get("consecutive_loss_pause_enabled", True)
         log_n_txt = "off" if loop_log_every_n == 0 else f"every {loop_log_every_n} loop(s)"
+        _pend_mode = "STOP" if bool(params.get("grid_pending_stop_enabled", False)) else "LIMIT"
         print(
-            f"✅ Grid Step Bot - Started ({label}) | loop_interval={_loop_interval_log_repr(loop_sleep_s)} "
+            f"✅ Grid Step Bot - Started ({label}) | pending={_pend_mode} | loop_interval={_loop_interval_log_repr(loop_sleep_s)} "
             f"| loop_log={log_n_txt}"
         )
         loop_count = 0
