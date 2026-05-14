@@ -8,6 +8,8 @@ Có cooldown mức grid để giảm whipsaw sideways.
 Tùy chọn: một lệnh đóng thua (MT5 history) → hủy toàn bộ pending, đóng mọi position cùng symbol/magic, tạm dừng X phút (single_loss_reset_*).
 Mỗi lần start process: xóa pause kill cũ; không lặp kill cho cùng một lần đóng (last_handled). Deal quá cũ (history_max_age) bỏ qua.
 single_loss_reset: bỏ qua thắng nhỏ 0 < profit < ignore_win_below (scan history), chỉ xét lệnh đủ “ý nghĩa” đầu tiên.
+
+Khi ``grid_pending_stop_enabled`` và có position: ``pending_stop_float_gate_phase`` (grid_zone_reentry_fsm) — PnL nổi vs ``pending_stop_float_gate_x`` / ``_y`` (mặc định -1 / 1): yếu thì hủy pending không đặt; mạnh thì giữ/đặt lại cặp; vùng giữa thì không đặt mới nếu chưa có đủ 2 pending.
 """
 import MetaTrader5 as mt5
 import time
@@ -25,6 +27,8 @@ from utils import (
     get_last_n_closed_profits_bot, get_last_n_closed_summaries_bot,
     get_closed_deals_bot, close_positions_bot,
 )
+
+from grid_zone_reentry_fsm import pending_stop_float_gate_phase
 
 db = Database()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -612,6 +616,14 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
     target_profit = params.get('target_profit', 50.0)
     spread_max = params.get('spread_max', 0.5)
     grid_pending_stop_enabled = bool(params.get("grid_pending_stop_enabled", False))
+    try:
+        pending_stop_float_gate_x = float(params.get("pending_stop_float_gate_x", -1))
+    except (TypeError, ValueError):
+        pending_stop_float_gate_x = -1.0
+    try:
+        pending_stop_float_gate_y = float(params.get("pending_stop_float_gate_y", 1))
+    except (TypeError, ValueError):
+        pending_stop_float_gate_y = 1.0
     # Tạm dừng khi N lệnh thua liên tiếp: on/off + số lệnh + thời gian dừng (phút)
     consecutive_loss_pause_enabled = params.get('consecutive_loss_pause_enabled', True)
     consecutive_loss_count = params.get('consecutive_loss_count', 2)
@@ -822,22 +834,66 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
 
     # 4. Quy tắc: KHÔNG update lệnh chờ đang có. Chỉ đặt lệnh mới khi:
     #    - Chưa có lệnh chờ (0 pendings) → đặt cặp đầu tiên
-    #    - Có position (vừa có lệnh khớp) → hủy lệnh chờ còn lại, đặt cặp mới quanh giá khớp
+    #    - Có position (LIMIT grid): hủy pending, đặt cặp mới quanh anchor
+    #    - Có position + STOP grid: pending_stop_float_gate_phase (PnL vs x / y)
     if len(positions) >= max_positions:
         return error_count, 0
 
-    # Đã có 2 lệnh chờ → không làm gì, chờ một lệnh được khớp (mở position)
-    if len(pendings) == 2:
-        return error_count, 0
-
-    # Có ít nhất 1 position → hủy pending của step này, đặt cặp mới quanh anchor
-    if positions:
-        cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+    if grid_pending_stop_enabled and positions:
+        fpnl = total_profit(symbol, magic, step_filter)
+        phase = pending_stop_float_gate_phase(
+            fpnl, pending_stop_float_gate_x, pending_stop_float_gate_y
+        )
+        if phase == "weak":
+            n_can = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+            _wg = (step_filter, round(fpnl, 2), "weak")
+            if not hasattr(strategy_grid_step_logic, "_ps_float_log") or strategy_grid_step_logic._ps_float_log != _wg:
+                print(
+                    f"⏸️ [pending_stop_float] [{strategy_name}] step={step_filter} float={fpnl:.2f} < x={pending_stop_float_gate_x:.2f} "
+                    f"→ đã hủy {n_can} pending, không đặt mới."
+                )
+                strategy_grid_step_logic._ps_float_log = _wg
+            return error_count, 0
+        if phase == "neutral":
+            strategy_grid_step_logic._ps_float_log = None
+            if len(pendings) == 2:
+                return error_count, 0
+            if len(pendings) == 1:
+                n_can = cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
+                _wg = (step_filter, round(fpnl, 2), "neutral", 1)
+                if not hasattr(strategy_grid_step_logic, "_ps_float_neutral_log") or strategy_grid_step_logic._ps_float_neutral_log != _wg:
+                    print(
+                        f"⏸️ [pending_stop_float] [{strategy_name}] step={step_filter} float={fpnl:.2f} trong [x={pending_stop_float_gate_x:.2f}, "
+                        f"y={pending_stop_float_gate_y:.2f}] → 1 pending lệch, đã hủy {n_can}, không đặt mới."
+                    )
+                    strategy_grid_step_logic._ps_float_neutral_log = _wg
+                return error_count, 0
+            _wg0 = (step_filter, round(fpnl, 2), "neutral", 0)
+            if not hasattr(strategy_grid_step_logic, "_ps_float_neutral_log0") or strategy_grid_step_logic._ps_float_neutral_log0 != _wg0:
+                print(
+                    f"⏸️ [pending_stop_float] [{strategy_name}] step={step_filter} float={fpnl:.2f} trong [x={pending_stop_float_gate_x:.2f}, "
+                    f"y={pending_stop_float_gate_y:.2f}] → chưa có pending, chờ float > y để đặt cặp."
+                )
+                strategy_grid_step_logic._ps_float_neutral_log0 = _wg0
+            return error_count, 0
+        strategy_grid_step_logic._ps_float_log = None
+        strategy_grid_step_logic._ps_float_neutral_log = None
+        strategy_grid_step_logic._ps_float_neutral_log0 = None
+        if len(pendings) == 2:
+            return error_count, 0
+        if len(pendings) == 1:
+            cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
         current_price = get_grid_anchor_price(symbol, magic, step_filter)
     else:
-        if pendings:
+        if len(pendings) == 2:
+            return error_count, 0
+        if positions:
             cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
-        current_price = get_grid_anchor_price(symbol, magic, step_filter)
+            current_price = get_grid_anchor_price(symbol, magic, step_filter)
+        else:
+            if pendings:
+                cancel_all_pending(symbol, magic, strategy_name, config.get('account'), step_filter)
+            current_price = get_grid_anchor_price(symbol, magic, step_filter)
 
     # ref = mức grid gần giá nhất (round). VD ref=4505, step=5:
     # LIMIT: BUY ref−step, SELL ref+step | STOP: BUY ref+step, SELL ref−step

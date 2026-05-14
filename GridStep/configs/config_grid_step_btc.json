@@ -12,7 +12,7 @@
     "parameters": {
         "loop_interval_seconds": 1,
         "loop_log_every_n": 1,
-        "steps": [200],
+        "steps": [100],
         "min_distance_points": 5,
         "target_profit": 50.0,
         "spread_max": 15.0,

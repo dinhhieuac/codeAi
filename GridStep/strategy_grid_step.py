@@ -370,6 +370,32 @@ def check_single_loss_should_trigger(
     return True, chosen_ts_str, last_close_dt
 
 
+def _strategy_name_variants_for_sync(strategy_name):
+    """
+    Bot có thể ghi DB Grid_Step_6 hoặc Grid_Step_6.0 — trả về danh sách tên để sync profit khớp update_db.
+    """
+    if not strategy_name:
+        return [strategy_name]
+    out = [strategy_name]
+    if "_" not in str(strategy_name):
+        return out
+    last = str(strategy_name).rsplit("_", 1)[-1]
+    try:
+        v = float(last)
+        prefix = str(strategy_name).rsplit("_", 1)[0]
+        out.append(f"{prefix}_{int(v)}")
+        out.append(f"{prefix}_{v}")
+    except (ValueError, TypeError):
+        pass
+    seen = set()
+    uniq = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
+
 def sync_closed_orders_from_mt5(config, strategy_name=None):
     """Đồng bộ lệnh đã đóng từ MT5 history vào bảng orders (profit, close_time). Giúp kiểm tra consecutive loss ngay trong bot.
     strategy_name: nếu None thì dùng config.get('strategy_name','Grid_Step'); khi dùng steps thì gọi sync cho từng 'Grid_Step_{step}'."""
@@ -377,12 +403,15 @@ def sync_closed_orders_from_mt5(config, strategy_name=None):
     if not closed:
         return 0
     sn = strategy_name if strategy_name is not None else config.get("strategy_name", "Grid_Step")
-    account_id = config.get("account", 0)
+    account_id = int(config.get("account", 0) or 0)
+    name_variants = _strategy_name_variants_for_sync(sn)
+    placeholders = ",".join("?" * len(name_variants))
     conn = sqlite3.connect(db.db_path)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT ticket FROM orders WHERE strategy_name = ? AND profit IS NULL AND account_id = ?",
-        (sn, account_id),
+        f"SELECT ticket FROM orders WHERE strategy_name IN ({placeholders}) "
+        "AND profit IS NULL AND (account_id = ? OR account_id = 0)",
+        (*name_variants, account_id),
     )
     tickets_pending = {row[0] for row in cursor.fetchall()}
     conn.close()

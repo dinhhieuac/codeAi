@@ -45,6 +45,11 @@ def _get_closed_positions_from_history(config, days_back=90, debug=False):
     from_date = now - timedelta(days=days_back)
     to_date = now
     magic = config.get('magic', 0)
+    # MT5 thường cần history_select trước khi history_deals_get trả deal (giống utils._history_deals_select_and_get).
+    try:
+        mt5.history_select(from_date, to_date)
+    except (TypeError, ValueError, AttributeError):
+        pass
     deals = mt5.history_deals_get(from_date, to_date)
     if deals is None:
         deals = mt5.history_deals_get(from_date, to_date, group="*")
@@ -128,7 +133,12 @@ def update_trades_for_strategy(db, config, strategy_name):
 
     # 2. Lấy deals đã đóng từ history (theo khoảng thời gian, tránh history_deals_get(position=ticket) trả về None)
     closed = _get_closed_positions_from_history(config, days_back=90, debug=True)
-    if not closed and (strategy_name == "Grid_Step" or strategy_name.startswith("Grid_Step_BTC")):
+    if not closed and (
+        strategy_name == "Grid_Step"
+        or strategy_name.startswith("Grid_Step_BTC")
+        or strategy_name == "Grid_ZoneLock"
+        or strategy_name.startswith("Grid_ZoneLock_")
+    ):
         print(f"ℹ️ No closed deals in history for magic {magic} ({strategy_name})")
 
     # 3. Orders trong DB có profit IS NULL (match bằng int để khớp với position_id từ MT5)
@@ -187,6 +197,30 @@ def update_trades_for_strategy(db, config, strategy_name):
                                  float(volume), op, sl, tp, "GridStep", account_id)
                     db.update_order_profit(position_id, close_price, profit, close_time)
                     print(f"✅ Backfill Grid_Step position {position_id}: Profit=${profit:.2f}")
+                    updated += 1
+
+    # 4a. Grid_ZoneLock: giống Grid_Step (comment MT5 GridZone).
+    if strategy_name == "Grid_ZoneLock" and closed:
+        steps = config.get("parameters", {}).get("steps")
+        if steps is not None and len(steps) > 0:
+            pass
+        else:
+            p = config.get("parameters", {})
+            step = float(p.get("sl_tp_price") or p.get("step") or 5.0)
+            for position_id, row in closed.items():
+                profit, close_price, symbol, volume, order_type, open_price = row[0], row[1], row[2], row[3], row[4], row[5]
+                close_time = row[6] if len(row) > 6 else None
+                if not db.order_exists(position_id):
+                    order_type_str = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
+                    op = float(open_price)
+                    if order_type == mt5.ORDER_TYPE_BUY:
+                        sl, tp = op - step, op + step
+                    else:
+                        sl, tp = op + step, op - step
+                    db.log_order(position_id, strategy_name, symbol or config.get('symbol', 'XAUUSD'), order_type_str,
+                                 float(volume), op, sl, tp, "GridZone", account_id)
+                    db.update_order_profit(position_id, close_price, profit, close_time)
+                    print(f"✅ Backfill Grid_ZoneLock position {position_id}: Profit=${profit:.2f}")
                     updated += 1
 
     # 4b. Grid_21_Step: tương tự Grid_Step — khi config có "steps" thì không backfill với "Grid_21_Step".
@@ -314,6 +348,7 @@ def update_trades_for_strategy(db, config, strategy_name):
     conn.close()
     _skip_msg = (
         (strategy_name == "Grid_Step" and closed)
+        or (strategy_name == "Grid_ZoneLock" and closed)
         or (strategy_name == "Grid_21_Step" and closed)
         or (strategy_name == "Grid_22_Step" and closed)
         or (strategy_name == "Grid_3_Step" and closed)
@@ -388,6 +423,8 @@ def load_strategy_configs(script_dir):
                             strategy_name = "Grid_Step_BTC_V2"
                         elif "btc" in filename.lower():
                             strategy_name = "Grid_Step_BTC"
+                        elif "zone_lock" in filename.lower():
+                            strategy_name = "Grid_ZoneLock"
                         else:
                             strategy_name = "Grid_Step"
                     # Method 3: Other strategy configs (config_1, config_2, ...)
@@ -419,14 +456,8 @@ def load_strategy_configs(script_dir):
     if not strategies:
         print("⚠️ No strategies auto-detected, using default mapping")
         strategies = {
-            "Strategy_1_Trend_HA": os.path.join(script_dir, "configs", "config_1.json"),
-            "Strategy_1_Trend_HA_V2": os.path.join(script_dir, "configs", "config_1_v2.json"),
-            "Strategy_1_Trend_HA_V2.1": os.path.join(script_dir, "configs", "config_1_v2.1.json"),
-            "Strategy_1_Trend_HA_V11": os.path.join(script_dir, "configs", "config_1_v11.json"),
-            "Strategy_2_EMA_ATR": os.path.join(script_dir, "configs", "config_2.json"),
-            "Strategy_3_PA_Volume": os.path.join(script_dir, "configs", "config_3.json"),
-            "Strategy_4_UT_Bot": os.path.join(script_dir, "configs", "config_4.json"),
-            "Strategy_5_Filter_First": os.path.join(script_dir, "configs", "config_5.json")
+            "Grid_Step_v5": os.path.join(script_dir, "configs", "config_grid_step.json"),
+           
         }
     
     return strategies
@@ -474,7 +505,8 @@ def main(db_path=None):
                 print(f"\n--- Processing {strat_name} ---")
                 update_trades_for_strategy(db, config, "Grid_Step_BTC_V2")
         # Grid_Step (base): bot dùng parameters.steps → ghi DB Grid_Step_5.0, Grid_Step_200.0, ...
-        elif strat_name == "Grid_Step":
+        # Grid_Step_V5: strategy_configs.json từng dùng key này cho config_grid_step_5min — bot vẫn ghi Grid_Step / Grid_Step_{step}, không phải Grid_Step_V5.
+        elif strat_name == "Grid_Step" or strat_name == "Grid_Step_V5":
             steps = config.get("parameters", {}).get("steps")
             if steps is not None and len(steps) > 0:
                 for step in steps:
@@ -482,8 +514,18 @@ def main(db_path=None):
                     print(f"\n--- Processing {sn} (Grid Step) ---")
                     update_trades_for_strategy(db, config, sn)
             else:
-                print(f"\n--- Processing {strat_name} ---")
+                print(f"\n--- Processing Grid_Step (config key={strat_name}) ---")
                 update_trades_for_strategy(db, config, "Grid_Step")
+        elif strat_name == "Grid_ZoneLock":
+            steps = config.get("parameters", {}).get("steps")
+            if steps is not None and len(steps) > 0:
+                for step in steps:
+                    sn = f"Grid_ZoneLock_{float(step)}"
+                    print(f"\n--- Processing {sn} (Grid Zone-Lock) ---")
+                    update_trades_for_strategy(db, config, sn)
+            else:
+                print(f"\n--- Processing Grid_ZoneLock ---")
+                update_trades_for_strategy(db, config, "Grid_ZoneLock")
         # Grid_3_Step: bot ghi Grid_3_Step_5.0 khi có steps
         elif strat_name == "Grid_3_Step":
             steps = config.get("parameters", {}).get("steps")

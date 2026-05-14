@@ -1,6 +1,4 @@
 {
-    "Grid_Step_V5": "configs/config_grid_step_v5.json",
-    "Grid_Step_V5_Live": "configs/config_grid_step_inverse_live.json",
-    "description": "Mapping of strategy names to their config files. Add new strategies here when you create a new bot. The path is relative to the GridStep directory."
+    "Grid_Step": "configs\\config_grid_step_5min.json",
+    "description": "Mapping strategy_name (phải khớp tên bot ghi vào DB: Grid_Step hoặc Grid_Step_{step}) → file JSON. Key cũ Grid_Step_V5 đã đổi thành Grid_Step vì bot không dùng tên Grid_Step_V5 trong bảng orders."
 }
-
