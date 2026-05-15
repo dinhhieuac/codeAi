@@ -1,20 +1,7 @@
 {
   "5.0": {
-    "active": true,
-    "mid": 4610.108,
-    "step": 5.0,
-    "lower_zone": 4605.108,
-    "upper_zone": 4615.108,
-    "buffer": 0.01,
-    "bar_sec": 10.0,
+    "active": false,
     "last_sl_deal_ticket": 3047267066,
-    "last_sl_position_id": 3294649370,
-    "bar_bucket_end": 0.0,
-    "cur_bar": null,
-    "closed_bars": [],
-    "locked_sl_when": "2026-05-15 02:31 UTC",
-    "display_digits": 3,
-    "sl_deal_max_age_s": 28800.0,
-    "lock_heartbeat_phase": "in_corridor"
+    "last_sl_position_id": 3294649370
   }
 }

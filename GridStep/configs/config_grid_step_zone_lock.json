@@ -13,12 +13,18 @@
         "zone_reentry_after_sl_enabled": true,
         "zone_lock_state_path": "",
         "zone_bar_seconds": 10,
+        "zone_lock_half_width_multiplier": 1.5,
+        "zone_unlock_mode": "both",
+        "zone_unlock_lite_bars": 4,
+        "post_unlock_require_trend": true,
+        "zone_lock_debug_detail": false,
         "zone_break_buffer_price": -1,
         "zone_sl_deal_max_age_seconds": 28800,
         "grid_pending_stop_enabled": true,
         "loop_interval_seconds": 1,
         "loop_log_every_n": 10,
         "steps": [5],
+        "sl_tp_offset_price": 8,
         "min_distance_points": 5,
         "target_profit": 50.0,
         "spread_max": 0.5,
@@ -31,12 +37,12 @@
         "single_loss_reset_min_loss_abs": 2.0,
         "single_loss_reset_ignore_win_below": 2.0,
         "single_loss_reset_history_scan_max": 50,
-        "trend_gate_enabled": false,
+        "trend_gate_enabled": true,
         "trend_gate_timeframe": "M1",
         "trend_gate_lookback_bars": 16,
         "trend_gate_min_efficiency": 0.2,
         "trend_gate_min_net_move_factor": 1.2,
         "pending_stop_float_gate_x": -1,
-        "pending_stop_float_gate_y": 1
+        "pending_stop_float_gate_y": 2
     }
 }

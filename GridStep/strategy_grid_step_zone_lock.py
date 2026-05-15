@@ -19,6 +19,15 @@ Chỉ áp dụng lúc flat (có position thì không chặn để quản lý lư
 
 parameters.pending_stop_float_gate_x / _y (STOP grid + có position): PnL nổi < x → hủy pending, không đặt;
 PnL > y → giữ/đặt lại cặp 2 pending; giữa [x,y] → không đặt mới nếu 0 pending (mặc định x=-1, y=1).
+
+**Zone lock (FSM) vs chop khi idle:** ``zone_reentry_after_sl_enabled`` chỉ chặn **đặt lưới mới** sau SL thua
+cho đến khi thoát rule vùng; **không** đóng position đang mở, **không** chặn chop khi đã idle (chưa lock).
+Giảm +5/-5 khi idle: bật ``trend_gate_enabled``, tăng ``sl_tp_offset_price``, chỉnh ``pending_stop_float_gate_*``.
+
+**Tham số zone nâng cao (``grid_zone_reentry_fsm.zone_lock_tick``):** ``zone_lock_half_width_multiplier`` (corridor
+rộng hơn mặc định ±1×step), ``zone_unlock_mode`` = ``break`` / ``lite`` / ``both``, ``zone_unlock_lite_bars``,
+``post_unlock_require_trend`` (sau mở khóa bắt buộc pass cùng logic ``trend_gate_eval`` trước khi đặt lệnh),
+``zone_lock_debug_detail`` (suffix lý do trên ``reason`` / state ``last_tick_detail``).
 """
 import MetaTrader5 as mt5
 import time
@@ -37,7 +46,12 @@ from utils import (
     get_closed_deals_bot, close_positions_bot,
 )
 
-from grid_zone_reentry_fsm import zone_lock_tick, get_zone_lock_status_line, pending_stop_float_gate_phase
+from grid_zone_reentry_fsm import (
+    zone_lock_tick,
+    get_zone_lock_status_line,
+    pending_stop_float_gate_phase,
+    zone_idle_post_unlock_requires_trend,
+)
 from strategy_grid_step import _strategy_name_variants_for_sync
 
 db = Database()
@@ -727,6 +741,17 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         zone_bar_seconds = float(params.get("zone_bar_seconds", 15) or 15)
     except (TypeError, ValueError):
         zone_bar_seconds = 15.0
+    try:
+        zone_lock_half_width_mult = float(params.get("zone_lock_half_width_multiplier", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        zone_lock_half_width_mult = 1.0
+    zone_unlock_mode = str(params.get("zone_unlock_mode", "break") or "break").strip().lower()
+    try:
+        zone_unlock_lite_bars = int(params.get("zone_unlock_lite_bars", 4) or 4)
+    except (TypeError, ValueError):
+        zone_unlock_lite_bars = 4
+    post_unlock_require_trend = bool(params.get("post_unlock_require_trend", False))
+    zone_lock_debug_detail = bool(params.get("zone_lock_debug_detail", False))
     if zone_lock_enabled:
         consecutive_loss_pause_enabled = False
 
@@ -929,6 +954,24 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
         buf = zone_buffer_cfg
         if buf < 0:
             buf = float(info.point) * 10.0
+        idle_trend_pass = None
+        idle_skip_post = bool(positions)
+        if zone_idle_post_unlock_requires_trend(zone_state_path, step_filter):
+            if not positions:
+                mn_tg = (
+                    float(grid_step_price) * trend_gate_min_net_move_factor
+                    if trend_gate_min_net_move_factor > 0
+                    else 0.0
+                )
+                idle_trend_pass, _ = trend_gate_eval(
+                    symbol,
+                    trend_gate_timeframe,
+                    trend_gate_lookback_bars,
+                    trend_gate_min_efficiency,
+                    mn_tg,
+                )
+            else:
+                idle_skip_post = True
         allowed, zreason, just_locked = zone_lock_tick(
             state_path=zone_state_path,
             symbol=symbol,
@@ -941,6 +984,13 @@ def strategy_grid_step_logic(config, error_count=0, step=None):
             tick_mid=mid_px,
             comment_prefix=ORDER_COMMENT_PREFIX,
             sl_deal_max_age_seconds=zone_sl_deal_max_age,
+            half_width_multiplier=zone_lock_half_width_mult,
+            zone_unlock_mode=zone_unlock_mode,
+            zone_unlock_lite_bars=zone_unlock_lite_bars,
+            post_unlock_require_trend=post_unlock_require_trend,
+            zone_lock_debug_detail=zone_lock_debug_detail,
+            idle_trend_gate_pass=idle_trend_pass,
+            idle_skip_post_unlock_trend=idle_skip_post,
         )
         if just_locked:
             cancel_all_pending(symbol, magic, strategy_name, config.get("account"), step_filter)
