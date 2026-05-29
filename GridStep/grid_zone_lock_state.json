@@ -1,7 +1,8 @@
 {
   "5.0": {
     "active": false,
-    "last_sl_deal_ticket": 3047267066,
-    "last_sl_position_id": 3294649370
+    "last_sl_deal_ticket": 3069099549,
+    "last_sl_position_id": 3318420143,
+    "require_trend_after_zone_clear": false
   }
 }
