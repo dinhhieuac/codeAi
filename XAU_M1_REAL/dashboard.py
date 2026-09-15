@@ -5,9 +5,91 @@ import sqlite3
 import os
 import csv
 import io
+import sys
+import subprocess
+import os
+
+# Thêm thư mục hiện tại vào sys.path để import utils, db, update_db dù chạy từ bất kỳ đâu
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import MetaTrader5 as mt5
 from utils import connect_mt5, load_config
 from update_db import load_strategy_configs
+
+# Định nghĩa các bot giao dịch và script hỗ trợ
+VALID_BOTS = {
+    'strategy_1_trend_ha_v2.py': {
+        'name': 'HA v2.0',
+        'version': 'V2.0 (Khuyên dùng)',
+        'desc': 'ADX, CHOP filter, ATR-based SL & trailing',
+        'badge': 'bg-success'
+    },
+    'strategy_1_trend_ha_v1.1.py': {
+        'name': 'HA v1.1',
+        'version': 'V1.1',
+        'desc': 'Trend Heiken Ashi v1.1',
+        'badge': 'bg-primary'
+    },
+    'strategy_1_trend_ha_v2.1.py': {
+        'name': 'HA v2.1',
+        'version': 'V2.1',
+        'desc': 'Trend Heiken Ashi v2.1',
+        'badge': 'bg-info'
+    },
+    'strategy_1_trend_ha_v3.py': {
+        'name': 'HA v3.0',
+        'version': 'V3.0',
+        'desc': 'Trend Heiken Ashi v3.0 (Strict Entry)',
+        'badge': 'bg-warning text-dark'
+    },
+    'strategy_1_trend_ha.py': {
+        'name': 'HA Original',
+        'version': 'Gốc',
+        'desc': 'Trend Heiken Ashi bản khởi tạo',
+        'badge': 'bg-secondary'
+    },
+    'update_db.py': {
+        'name': 'Update DB',
+        'version': 'Sync Tool',
+        'desc': 'Đồng bộ lịch sử lệnh từ MT5 vào trades.db',
+        'badge': 'bg-dark'
+    },
+}
+
+def get_running_bots():
+    """Kiểm tra xem các bot nào đang chạy trên hệ thống"""
+    running = {}
+    if not psutil:
+        return running
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                cmdline = proc.info.get('cmdline') or []
+                cmdline_str = " ".join(cmdline).lower()
+                for bot_file in VALID_BOTS:
+                    if bot_file.lower() in cmdline_str:
+                        running[bot_file] = proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception as e:
+        print(f"Lỗi kiểm tra tiến trình bot: {e}")
+    return running
+
+def _launch_bot_process(bot_file, label):
+    """Khởi chạy bot trong cửa sổ Command Prompt riêng biệt"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.normpath(os.path.join(base_dir, '..', '.venv', 'Scripts', 'python.exe'))
+    python_exe = venv_python if os.path.exists(venv_python) else sys.executable
+    script_path = os.path.join(base_dir, bot_file)
+    
+    cmd = f'start "XAU Bot - {label}" cmd /k "chcp 65001 >nul && cd /d "{base_dir}" && title XAU_M1_REAL - {label} && "{python_exe}" -X utf8 "{script_path}""'
+    subprocess.Popen(cmd, shell=True)
 
 app = Flask(__name__)
 # Use absolute path to ensure we always find the correct trades.db
@@ -182,7 +264,9 @@ def index():
                            current_filter=current_filter,
                            filter_label=filter_label,
                            from_date=from_date_param if from_date_param else '',
-                           to_date=to_date_param if to_date_param else '')
+                           to_date=to_date_param if to_date_param else '',
+                           valid_bots=VALID_BOTS,
+                           running_bots=get_running_bots())
 
 @app.route('/atr_analysis')
 def atr_analysis_page():
@@ -1220,6 +1304,94 @@ def export_orders():
             'Content-Type': 'text/csv; charset=utf-8'
         }
     )
+
+# ==========================================
+# BOT CONTROL APIS (START / STOP / STATUS)
+# ==========================================
+
+@app.route('/api/bot_status')
+def api_bot_status():
+    """Lấy trạng thái thực tế của tất cả các bot"""
+    running = get_running_bots()
+    bots_info = []
+    for filename, meta in VALID_BOTS.items():
+        is_running = filename in running
+        bots_info.append({
+            'file': filename,
+            'name': meta['name'],
+            'version': meta['version'],
+            'desc': meta['desc'],
+            'badge': meta.get('badge', 'bg-secondary'),
+            'running': is_running,
+            'pid': running.get(filename)
+        })
+    return jsonify({
+        'success': True,
+        'bots': bots_info,
+        'running_count': len(running)
+    })
+
+@app.route('/api/start_bot', methods=['POST'])
+def api_start_bot():
+    """Khởi chạy một bot hoặc tất cả các bot"""
+    data = request.get_json() or {}
+    bot_file = data.get('bot')
+    
+    if bot_file == 'all':
+        started = []
+        running = get_running_bots()
+        for b, meta in VALID_BOTS.items():
+            if b != 'update_db.py' and b not in running:
+                _launch_bot_process(b, meta['name'])
+                started.append(meta['name'])
+        if started:
+            return jsonify({'success': True, 'message': f"Đã gửi lệnh khởi chạy: {', '.join(started)}"})
+        return jsonify({'success': True, 'message': "Tất cả các chiến lược giao dịch đã đang chạy!"})
+        
+    if bot_file not in VALID_BOTS:
+        return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
+        
+    running = get_running_bots()
+    if bot_file in running:
+        return jsonify({'success': False, 'message': f"Bot {VALID_BOTS[bot_file]['name']} đang chạy rồi (PID: {running[bot_file]})"})
+        
+    _launch_bot_process(bot_file, VALID_BOTS[bot_file]['name'])
+    return jsonify({'success': True, 'message': f"Đã khởi chạy thành công {VALID_BOTS[bot_file]['name']} trong cửa sổ riêng!"})
+
+@app.route('/api/stop_bot', methods=['POST'])
+def api_stop_bot():
+    """Dừng bot bằng PID"""
+    data = request.get_json() or {}
+    bot_file = data.get('bot')
+    running = get_running_bots()
+    
+    if bot_file == 'all':
+        stopped = []
+        for b, pid in running.items():
+            try:
+                if psutil:
+                    p = psutil.Process(pid)
+                    for child in p.children(recursive=True):
+                        child.terminate()
+                    p.terminate()
+                    stopped.append(VALID_BOTS.get(b, {}).get('name', b))
+            except Exception as e:
+                print(f"Lỗi khi dừng PID {pid}: {e}")
+        return jsonify({'success': True, 'message': f"Đã dừng {len(stopped)} bot ({', '.join(stopped)})"})
+        
+    if bot_file in running:
+        pid = running[bot_file]
+        try:
+            if psutil:
+                p = psutil.Process(pid)
+                for child in p.children(recursive=True):
+                    child.terminate()
+                p.terminate()
+            return jsonify({'success': True, 'message': f"Đã dừng bot {VALID_BOTS.get(bot_file, {}).get('name', bot_file)} (PID: {pid})"})
+        except Exception as e:
+            return jsonify({'success': False, 'message': f"Lỗi khi dừng bot: {e}"}), 500
+            
+    return jsonify({'success': False, 'message': f"Bot {bot_file} hiện không chạy!"}), 400
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5007")

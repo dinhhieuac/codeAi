@@ -36,21 +36,99 @@
 </head>
 
 <body>
-    <nav class="navbar navbar-dark bg-dark mb-4">
+    <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
         <div class="container-fluid">
-            <span class="navbar-brand mb-0 h1">🤖 XAUUSD_M1_REAL Trading Bot Dashboard</span>
-            <div>
-                <a href="/signals" class="btn btn-outline-light btn-sm me-2">
-                    <i class="fas fa-signal"></i> Signals Analysis
+            <span class="navbar-brand mb-0 h1"><i class="fas fa-robot text-warning me-2"></i>XAUUSD_M1_REAL Bot Dashboard</span>
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <!-- NÚT START BOT CHÍNH TRÊN NAVBAR -->
+                <button class="btn btn-success btn-sm fw-bold px-3 shadow" onclick="openStartBotModal()">
+                    <i class="fas fa-play me-1"></i> Start Bot
+                </button>
+                <button class="btn btn-outline-warning btn-sm" onclick="toggleBotPanel()">
+                    <i class="fas fa-sliders-h me-1"></i> Quản Lý Bot <span class="badge bg-danger ms-1" id="runningBotBadge">0</span>
+                </button>
+                <a href="/signals" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-signal"></i> Signals
                 </a>
-                <a href="/atr_analysis" class="btn btn-outline-light btn-sm me-2">
-                    <i class="fas fa-chart-bar"></i> ATR Analysis
+                <a href="/atr_analysis" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-chart-bar"></i> ATR
                 </a>
-                <span class="text-white"><i class="fas fa-sync"></i> Auto-refreshing usually requires JS, hit F5
-                    manually</span>
             </div>
         </div>
     </nav>
+
+    <!-- BẢNG ĐIỀU KHIỂN & TRẠNG THÁI BOT (BOT CONTROL PANEL) -->
+    <div class="container mb-4" id="botControlPanel">
+        <div class="card border-0 shadow" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #f8fafc; border-radius: 14px;">
+            <div class="card-body p-3 p-md-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
+                    <div>
+                        <h5 class="mb-1 fw-bold text-warning d-flex align-items-center gap-2">
+                            <i class="fas fa-terminal"></i> Bảng Điều Khiển Bot Giao Dịch
+                            <span class="badge bg-success" id="runningBotCountBadge">0 Bot Đang Chạy</span>
+                        </h5>
+                        <small class="text-light opacity-75">Khởi chạy, dừng và theo dõi các chiến lược giao dịch tự động</small>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
+                        <button class="btn btn-sm btn-outline-light" onclick="fetchBotStatus(true)">
+                            <i class="fas fa-sync-alt" id="refreshBotIcon"></i> Làm mới
+                        </button>
+                        <button class="btn btn-sm btn-success fw-bold shadow-sm" onclick="startBot('strategy_1_trend_ha_v2.py')">
+                            <i class="fas fa-play me-1"></i> Chạy Nhanh HA v2.0
+                        </button>
+                        <button class="btn btn-sm btn-primary" onclick="startBot('all')">
+                            <i class="fas fa-rocket me-1"></i> Chạy Tất Cả
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="stopBot('all')">
+                            <i class="fas fa-stop-circle me-1"></i> Dừng Tất Cả
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Alert Thông Báo Tác Vụ Bot -->
+                <div id="botActionAlert" class="alert alert-dismissible fade d-none mb-3 py-2 px-3 small" role="alert">
+                    <span id="botActionAlertMsg"></span>
+                    <button type="button" class="btn-close py-2" onclick="hideBotAlert()"></button>
+                </div>
+
+                <!-- Danh Sách Các Chiến Lược -->
+                <div class="row g-3" id="botCardsGrid">
+                    {% for filename, meta in valid_bots.items() %}
+                    {% set is_running = filename in running_bots %}
+                    <div class="col-md-6 col-lg-4">
+                        <div class="card h-100 border-secondary bg-dark text-light shadow-sm" style="border-radius: 10px;" id="card-{{ filename|replace('.', '_') }}">
+                            <div class="card-body p-3 d-flex flex-column justify-content-between">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <span class="badge {{ meta.badge }}">{{ meta.version }}</span>
+                                        <span class="badge {% if is_running %}bg-success{% else %}bg-secondary opacity-75{% endif %}" id="status-badge-{{ filename|replace('.', '_') }}">
+                                            {% if is_running %}
+                                            <i class="fas fa-circle text-white me-1" style="font-size: 8px;"></i> Đang Chạy (PID: {{ running_bots[filename] }})
+                                            {% else %}
+                                            <i class="far fa-circle text-white me-1" style="font-size: 8px;"></i> Đang Dừng
+                                            {% endif %}
+                                        </span>
+                                    </div>
+                                    <h6 class="card-title fw-bold text-white mb-1">{{ meta.name }}</h6>
+                                    <p class="card-subtitle text-light opacity-50 small mb-2 font-monospace">{{ filename }}</p>
+                                    <p class="card-text small text-light opacity-75 mb-3">{{ meta.desc }}</p>
+                                </div>
+                                <div class="d-flex gap-2 mt-auto pt-2 border-top border-secondary">
+                                    <button class="btn btn-sm btn-success flex-grow-1 {% if is_running %}disabled{% endif %}" id="btn-start-{{ filename|replace('.', '_') }}" onclick="startBot('{{ filename }}')">
+                                        <i class="fas fa-play me-1"></i> Khởi Chạy
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger {% if not is_running %}disabled{% endif %}" id="btn-stop-{{ filename|replace('.', '_') }}" onclick="stopBot('{{ filename }}')">
+                                        <i class="fas fa-stop me-1"></i> Dừng
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="container mb-4">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
@@ -399,8 +477,291 @@
         </div>
     </div>
 
+    <!-- MODAL CHỌN BOT ĐỂ KHỞI CHẠY (START BOT MODAL) -->
+    <div class="modal fade" id="startBotModal" tabindex="-1" aria-labelledby="startBotModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title" id="startBotModalLabel">
+                        <i class="fas fa-play-circle text-success me-2"></i> Khởi Chạy Bot Giao Dịch
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <p class="text-muted small mb-3">Chọn chiến lược bot bạn muốn khởi chạy trong cửa sổ riêng biệt:</p>
+                    
+                    <div class="list-group mb-3" id="modalBotOptionList">
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3 border-success active" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v2.py" checked>
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">strategy_1_trend_ha_v2.py</strong>
+                                    <span class="badge bg-warning text-dark">V2.0 Khuyên dùng</span>
+                                </div>
+                                <small class="text-white-50 d-block mt-1">Chiến lược HA v2.0 có ADX, CHOP filter, ATR trailing stop</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v1.1.py">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">strategy_1_trend_ha_v1.1.py</strong>
+                                    <span class="badge bg-primary">V1.1</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Chiến lược Trend HA phiên bản 1.1</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v2.1.py">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">strategy_1_trend_ha_v2.1.py</strong>
+                                    <span class="badge bg-info">V2.1</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Chiến lược Trend HA phiên bản 2.1</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v3.py">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">strategy_1_trend_ha_v3.py</strong>
+                                    <span class="badge bg-warning text-dark">V3.0</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Chiến lược Trend HA phiên bản 3.0 với bộ lọc vào lệnh chặt chẽ</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha.py">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">strategy_1_trend_ha.py</strong>
+                                    <span class="badge bg-secondary">Gốc</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Phiên bản ban đầu</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="all">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0 text-success">Chạy TẤT CẢ 5 chiến lược</strong>
+                                    <span class="badge bg-success">Tất cả</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Khởi chạy toàn bộ 5 bot trong từng cửa sổ riêng</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="update_db.py">
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0">update_db.py</strong>
+                                    <span class="badge bg-dark">Sync Tool</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Đồng bộ lịch sử lệnh từ MT5 vào database</small>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div id="modalBotAlert" class="alert alert-info py-2 small d-none mb-0"></div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
+                    <button type="button" class="btn btn-success fw-bold px-4" id="modalStartBtn" onclick="submitModalStartBot()">
+                        <i class="fas fa-play me-1"></i> Khởi Chạy Ngay
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- JAVASCRIPT ĐIỀU KHIỂN VÀ THEO DÕI BOT -->
+    <script>
+        let botModalInstance = null;
+
+        function openStartBotModal() {
+            if (!botModalInstance) {
+                botModalInstance = new bootstrap.Modal(document.getElementById('startBotModal'));
+            }
+            // Update active state on click
+            const radioItems = document.querySelectorAll('#modalBotOptionList label');
+            radioItems.forEach(item => {
+                item.onclick = function() {
+                    radioItems.forEach(r => {
+                        r.classList.remove('active', 'border-success');
+                        const small = r.querySelector('small');
+                        if (small) {
+                            small.classList.remove('text-white-50');
+                            small.classList.add('text-muted');
+                        }
+                    });
+                    this.classList.add('active', 'border-success');
+                    const small = this.querySelector('small');
+                    if (small) {
+                        small.classList.remove('text-muted');
+                        small.classList.add('text-white-50');
+                    }
+                    const radio = this.querySelector('input[type="radio"]');
+                    if (radio) radio.checked = true;
+                };
+            });
+            botModalInstance.show();
+        }
+
+        function toggleBotPanel() {
+            const panel = document.getElementById('botControlPanel');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+            } else {
+                panel.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        function showBotAlert(msg, type = 'success') {
+            const alert = document.getElementById('botActionAlert');
+            const alertMsg = document.getElementById('botActionAlertMsg');
+            if (!alert || !alertMsg) return;
+            alert.className = `alert alert-${type} alert-dismissible fade show mb-3 py-2 px-3 small`;
+            alertMsg.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1"></i> ${msg}`;
+            alert.classList.remove('d-none');
+            setTimeout(() => {
+                hideBotAlert();
+            }, 6000);
+        }
+
+        function hideBotAlert() {
+            const alert = document.getElementById('botActionAlert');
+            if (alert) alert.classList.add('d-none');
+        }
+
+        async function startBot(botFile) {
+            try {
+                showBotAlert(`Đang gửi lệnh khởi chạy ${botFile}...`, 'info');
+                const res = await fetch('/api/start_bot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botFile })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showBotAlert(data.message, 'success');
+                } else {
+                    showBotAlert(data.message || 'Lỗi khi khởi chạy bot', 'danger');
+                }
+                setTimeout(() => fetchBotStatus(), 1500);
+            } catch (err) {
+                showBotAlert(`Lỗi kết nối: ${err.message}`, 'danger');
+            }
+        }
+
+        async function stopBot(botFile) {
+            if (!confirm(`Bạn có chắc chắn muốn dừng bot ${botFile}?`)) return;
+            try {
+                showBotAlert(`Đang gửi lệnh dừng ${botFile}...`, 'info');
+                const res = await fetch('/api/stop_bot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botFile })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showBotAlert(data.message, 'warning');
+                } else {
+                    showBotAlert(data.message || 'Lỗi khi dừng bot', 'danger');
+                }
+                setTimeout(() => fetchBotStatus(), 1500);
+            } catch (err) {
+                showBotAlert(`Lỗi kết nối: ${err.message}`, 'danger');
+            }
+        }
+
+        async function submitModalStartBot() {
+            const selected = document.querySelector('input[name="selectedBotRadio"]:checked');
+            if (!selected) return;
+            const botFile = selected.value;
+            const startBtn = document.getElementById('modalStartBtn');
+            const originalText = startBtn.innerHTML;
+            startBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Đang chạy...`;
+            startBtn.disabled = true;
+
+            await startBot(botFile);
+
+            startBtn.innerHTML = originalText;
+            startBtn.disabled = false;
+            if (botModalInstance) botModalInstance.hide();
+        }
+
+        async function fetchBotStatus(showToast = false) {
+            const icon = document.getElementById('refreshBotIcon');
+            if (icon) icon.classList.add('fa-spin');
+            try {
+                const res = await fetch('/api/bot_status');
+                const data = await res.json();
+                if (data.success) {
+                    const count = data.running_count || 0;
+                    
+                    // Update badges
+                    const countBadge = document.getElementById('runningBotCountBadge');
+                    if (countBadge) {
+                        countBadge.textContent = `${count} Bot Đang Chạy`;
+                        countBadge.className = count > 0 ? 'badge bg-success' : 'badge bg-secondary';
+                    }
+                    const navBadge = document.getElementById('runningBotBadge');
+                    if (navBadge) {
+                        navBadge.textContent = count;
+                        navBadge.className = count > 0 ? 'badge bg-success ms-1' : 'badge bg-secondary ms-1';
+                    }
+
+                    // Update each bot card in grid
+                    data.bots.forEach(bot => {
+                        const safeId = bot.file.replace(/\./g, '_');
+                        const statusBadge = document.getElementById(`status-badge-${safeId}`);
+                        const btnStart = document.getElementById(`btn-start-${safeId}`);
+                        const btnStop = document.getElementById(`btn-stop-${safeId}`);
+
+                        if (statusBadge) {
+                            if (bot.running) {
+                                statusBadge.className = 'badge bg-success';
+                                statusBadge.innerHTML = `<i class="fas fa-circle text-white me-1" style="font-size: 8px;"></i> Đang Chạy (PID: ${bot.pid})`;
+                            } else {
+                                statusBadge.className = 'badge bg-secondary opacity-75';
+                                statusBadge.innerHTML = `<i class="far fa-circle text-white me-1" style="font-size: 8px;"></i> Đang Dừng`;
+                            }
+                        }
+
+                        if (btnStart) {
+                            if (bot.running) {
+                                btnStart.classList.add('disabled');
+                            } else {
+                                btnStart.classList.remove('disabled');
+                            }
+                        }
+
+                        if (btnStop) {
+                            if (bot.running) {
+                                btnStop.classList.remove('disabled');
+                            } else {
+                                btnStop.classList.add('disabled');
+                            }
+                        }
+                    });
+
+                    if (showToast) showBotAlert(`Đã cập nhật trạng thái: Có ${count} bot đang chạy.`, 'info');
+                }
+            } catch (err) {
+                console.error("Lỗi cập nhật trạng thái bot:", err);
+            } finally {
+                if (icon) icon.classList.remove('fa-spin');
+            }
+        }
+
+        // Tự động kiểm tra trạng thái bot mỗi 5 giây
+        setInterval(() => fetchBotStatus(false), 5000);
+        document.addEventListener('DOMContentLoaded', () => fetchBotStatus(false));
+    </script>
 
     <script>
         {% for bot in bot_stats %}

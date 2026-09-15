@@ -4,7 +4,7 @@
     "server": "Exness-MT5Real37",
     "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
     "symbol": "XAUUSDc",
-    "volume": 0.04,
+    "volume": 0.01,
     "magic": 100002,
     "max_positions": 1,
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
