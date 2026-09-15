@@ -752,27 +752,45 @@
                                 <div class="card-body p-3">
                                     <div class="row g-3">
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Cặp Giao Dịch (Symbol)</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Cặp Giao Dịch (Symbol)
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Cặp sản phẩm giao dịch trên MT5 (ví dụ: XAUUSDc cho tài khoản Cent/Raw, XAUUSD cho Standard)"></i>
+                                            </label>
                                             <input type="text" class="form-control form-control-sm font-monospace" id="cfgInputSymbol">
                                         </div>
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Khối Lượng Lệnh (Volume/Lot)</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Khối Lượng Lệnh (Lot)
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Khối lượng vào lệnh mặc định theo đơn vị Lot (ví dụ: 0.01 lot)"></i>
+                                            </label>
                                             <input type="number" step="0.01" class="form-control form-control-sm" id="cfgInputVolume">
                                         </div>
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Số Lệnh Tối Đa (Max Positions)</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Số Lệnh Tối Đa
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Số lượng lệnh tối đa bot được phép giữ mở cùng một thời điểm (thường là 1 để quản lý vốn an toàn)"></i>
+                                            </label>
                                             <input type="number" step="1" class="form-control form-control-sm" id="cfgInputMaxPos">
                                         </div>
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Magic Number</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Magic Number
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Mã định danh duy nhất của bot để quản lý đúng lệnh của bot mình, không đụng lệnh bot khác hay đánh tay"></i>
+                                            </label>
                                             <input type="number" step="1" class="form-control form-control-sm font-monospace" id="cfgInputMagic">
                                         </div>
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Tài Khoản MT5 (Login)</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Tài Khoản MT5 (Login)
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Số tài khoản MetaTrader 5 thực tế dùng để giao dịch (ví dụ: 263581981)"></i>
+                                            </label>
                                             <input type="number" class="form-control form-control-sm font-monospace" id="cfgInputAccount">
                                         </div>
                                         <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">Máy Chủ MT5 (Server)</label>
+                                            <label class="form-label small fw-bold mb-1">
+                                                Máy Chủ MT5 (Server)
+                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Tên máy chủ broker Exness trên MT5 (ví dụ: Exness-MT5Real37)"></i>
+                                            </label>
                                             <input type="text" class="form-control form-control-sm" id="cfgInputServer">
                                         </div>
                                     </div>
@@ -904,9 +922,111 @@
                 // Điền parameters động
                 renderDynamicParams(data.config_data.parameters || {});
 
+                // Khởi tạo tooltips cho các trường thông số cơ bản & parameters
+                setTimeout(() => {
+                    const tooltipTriggerList = [].slice.call(document.querySelectorAll('#botConfigModal [data-bs-toggle="tooltip"]'));
+                    tooltipTriggerList.forEach(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl, { trigger: 'hover' }));
+                }, 100);
+
             } catch (err) {
                 showCfgAlert(`Lỗi kết nối tải cấu hình: ${err.message}`, 'danger');
             }
+        }
+
+        // TỪ ĐIỂN GIẢI THÍCH CHI TIẾT TẤT CẢ CÁC PARAMETER CỦA BOT
+        const PARAM_DESCRIPTIONS = {
+            // Thông số cơ bản
+            "symbol": "Cặp tài sản giao dịch trên MT5 (ví dụ: XAUUSDc cho tài khoản Cent/Raw, XAUUSD cho Standard)",
+            "volume": "Khối lượng vào lệnh mặc định theo đơn vị Lot (ví dụ: 0.01 lot)",
+            "max_positions": "Số lượng lệnh tối đa bot được phép mở cùng lúc (thường là 1 để quản lý vốn)",
+            "magic": "Mã định danh duy nhất (Magic Number) của bot để không can thiệp vào lệnh của bot khác hay lệnh tay",
+            "account": "Số tài khoản MetaTrader 5 dùng để giao dịch",
+            "server": "Tên máy chủ MetaTrader 5 của sàn giao dịch (ví dụ: Exness-MT5Real37)",
+
+            // Stop Loss & Take Profit
+            "sl_mode": "Chế độ tính Stop Loss: 'auto_m5' (theo đáy/đỉnh nến M5 gần nhất), 'atr' (theo biến động ATR), hoặc 'fixed' (cố định số pips)",
+            "reward_ratio": "Tỷ lệ Lời/Lỗ (Risk:Reward). Ví dụ 1.5 nghĩa là TP = 1.5 lần khoảng cách SL",
+            "sl_pips": "Khoảng cách Dừng Lỗ (Stop Loss) cố định tính bằng pips (1 pip vàng = 0.1 USD hoặc 10 points)",
+            "tp_pips": "Khoảng cách Chốt Lời (Take Profit) cố định tính bằng pips",
+
+            // Chỉ báo RSI & ADX
+            "rsi_period": "Số chu kỳ nến để tính chỉ báo sức mạnh tương đối RSI (mặc định 14)",
+            "rsi_buy_threshold": "Ngưỡng RSI tối thiểu để cho phép lệnh BUY (ví dụ > 58: thị trường có lực mua mạnh)",
+            "rsi_sell_threshold": "Ngưỡng RSI tối đa để cho phép lệnh SELL (ví dụ < 42: thị trường có lực bán mạnh)",
+            "adx_period": "Số chu kỳ nến để tính chỉ báo độ mạnh xu hướng ADX (mặc định 14)",
+            "adx_min_threshold": "Ngưỡng ADX tối thiểu để vào lệnh. Chỉ vào lệnh khi ADX vượt ngưỡng này để tránh thị trường đi ngang (sideway)",
+            "adx_threshold": "Ngưỡng ADX tối thiểu để xác nhận thị trường có xu hướng rõ ràng",
+
+            // Chỉ báo ATR & Biến động
+            "atr_period": "Số chu kỳ nến để đo độ biến động thị trường ATR (mặc định 14)",
+            "atr_buffer_multiplier": "Hệ số nhân ATR cộng thêm vào mức SL để tránh bị quét râu nến (quét thanh khoản)",
+            "max_risk_atr_multiplier": "Khoảng cách SL tối đa cho phép theo bội số ATR. Lệnh có SL xa hơn mức này sẽ bị hủy bỏ",
+            "atr_max_threshold": "Ngưỡng trần ATR. Khi thị trường giật quá mạnh (tin tức đỏ) vượt ngưỡng này, bot sẽ dừng vào lệnh",
+            "atr_caution_threshold": "Ngưỡng biến động ATR cảnh báo kích hoạt bộ lọc phòng vệ rủi ro",
+
+            // Lọc thị trường đi ngang (Choppiness)
+            "chop_lookback": "Số nến quá khứ dùng để phân tích xem thị trường có đang đi ngang giằng co hay không",
+            "chop_body_threshold": "Tỷ lệ thân nến tối thiểu so với cả cây nến, thân nến quá bé (Doji) thể hiện thị trường lưỡng lự",
+            "chop_overlap_threshold": "Tỷ lệ phần thân nến trùng lặp nhau. Trùng lặp càng cao thể hiện thị trường đang nghẽn biên độ hẹp",
+
+            // Quản lý rủi ro & Chống spam lệnh
+            "spam_filter_seconds": "Khoảng thời gian chờ tối thiểu (tính bằng giây) giữa 2 lần vào lệnh liên tiếp để tránh nhồi lệnh liên tục",
+            "pause_on_losses": "Bật/Tắt chế độ tự động tạm dừng bot nếu gặp chuỗi lệnh thua liên tiếp",
+            "max_consecutive_losses": "Số lệnh thua liên tiếp tối đa để kích hoạt tự động dừng bot bảo vệ tài khoản",
+            "consecutive_loss_lookback_hours": "Khoảng thời gian nhìn lại (giờ) để kiểm tra số lệnh thua liên tiếp",
+
+            // Nến xác nhận & SMC / Price Action
+            "confirmation_enabled": "Bật/Tắt yêu cầu phải có nến tiếp theo đóng cửa duy trì xu hướng trước khi vào lệnh",
+            "confirmation_candles": "Số cây nến cần thiết để xác nhận tín hiệu",
+            "liquidity_sweep_required": "Yêu cầu phải có hiện tượng quét râu nến phá đỉnh/đáy cũ (quét thanh khoản) trước khi đảo chiều",
+            "liquidity_sweep_buffer": "Khoảng cách quét qua đỉnh/đáy cũ (pips) để xác nhận tín hiệu quét thanh khoản",
+            "liquidity_sweep_wick_multiplier": "Tỷ lệ chiều dài râu nến so với thân nến để xác nhận lực từ chối giá rút chân",
+            "displacement_required": "Yêu cầu phải có nến bứt phá mạnh (Displacement) với thân nến dài và động lượng dứt khoát",
+            "displacement_body_multiplier": "Bội số độ lớn thân nến bứt phá so với độ lớn nến trung bình",
+            "h1_trend_confirmation_required": "Yêu cầu xu hướng khung lớn H1 phải đồng thuận với tín hiệu khung nhỏ M1",
+            "ema50_ema200_required": "Yêu cầu EMA50 phải nằm trên EMA200 (khi Buy) hoặc dưới EMA200 (khi Sell) để lọc hướng",
+            "volume_confirmation_required": "Yêu cầu khối lượng giao dịch (Tick Volume) tăng đột biến xác nhận dòng tiền vào",
+            "volume_confirmation_multiplier": "Hệ số nhân khối lượng tối thiểu so với khối lượng trung bình (ví dụ 1.1x)",
+
+            // Dời SL (Trailing Stop) & Kéo Hòa Vốn (Break-Even)
+            "trailing_enabled": "Bật/Tắt tính năng Dời Dừng Lỗ tự động (Trailing Stop) bám theo giá dương để gồng lời",
+            "breakeven_enabled": "Bật/Tắt tính năng Tự động dời SL về điểm vào lệnh (Break-Even) khi giá đã chạy có lãi",
+            "breakeven_trigger_pips": "Khoảng cách lãi đạt được (pips) để kéo SL về hòa vốn ('auto' hoặc số pips cụ thể)",
+            "breakeven_trigger_percent": "Tỷ lệ phần trăm chặng đường tới TP (ví dụ 0.5 = 50% TP) để tự động dời SL về hòa vốn",
+            "trailing_trigger_pips": "Khoảng cách lãi cần đạt để bắt đầu kích hoạt cơ chế Trailing Stop",
+            "trailing_trigger_multiplier": "Bội số biến động để bắt đầu kích hoạt Trailing Stop",
+            "trailing_mode": "Chế độ trailing: 'atr' (bám theo biến động ATR) hoặc 'fixed' (cố định số pips)",
+            "trailing_atr_timeframe": "Khung thời gian dùng để tính độ biến động ATR cho Trailing (ví dụ: M5, M1)",
+            "trailing_distance_pips": "Khoảng cách bám sau giá của Trailing Stop tính bằng pips",
+            "trailing_atr_multiplier": "Bội số ATR dùng làm khoảng cách Trailing Stop bám sau giá",
+            "trailing_min_pips": "Khoảng cách Trailing tối thiểu cho phép (pips)",
+            "trailing_max_pips": "Khoảng cách Trailing tối đa cho phép (pips)",
+
+            // Dọn dẹp lệnh cuối tuần (Weekend Flatten)
+            "v5_weekend_flatten_enabled": "Tự động đóng hết lệnh mở trước giờ đóng cửa cuối tuần (đêm thứ 6) tránh rủi ro Gap giá thứ 2",
+            "v5_weekend_flatten_scope": "Phạm vi đóng lệnh cuối tuần: 'bot' (chỉ đóng lệnh của bot này) hoặc 'all' (đóng toàn bộ lệnh)",
+            "v5_weekend_close_utc_hour": "Giờ UTC thứ 6 để tiến hành đóng lệnh cuối tuần (ví dụ: 20 là 20h UTC = 3h sáng thứ 7 VN)",
+            "v5_weekend_close_utc_minute": "Phút để tiến hành đóng lệnh cuối tuần",
+            "v5_weekend_flatten_minutes_before": "Số phút trước giờ đóng cửa sàn để bắt đầu thanh lý lệnh",
+            "v5_weekend_flatten_direction": "Hướng xử lý lệnh cuối tuần",
+            "v5_weekend_flatten_comment": "Ghi chú gắn vào lệnh khi đóng dọn dẹp cuối tuần",
+            "v5_weekend_flatten_sl": "Mức SL áp dụng khi dọn dẹp lệnh cuối tuần",
+            "v5_weekend_flatten_tp": "Mức TP áp dụng khi dọn dẹp lệnh cuối tuần",
+            "v5_weekend_flatten_deviation": "Độ trượt giá cho phép khi đóng lệnh cuối tuần",
+            "v5_weekend_flatten_volume": "Khối lượng xử lý khi đóng dọn dẹp",
+
+            // Các tham số đường trung bình EMA & Khác
+            "fast_ema": "Chu kỳ đường trung bình động ngắn hạn Fast EMA",
+            "slow_ema": "Chu kỳ đường trung bình động dài hạn Slow EMA",
+            "donchian_period": "Chu kỳ nến của kênh Donchian Channel để xác định biên hỗ trợ / kháng cự",
+            "buffer_multiplier": "Hệ số nhân biên độ vùng đệm an toàn"
+        };
+
+        function getParamDesc(key) {
+            if (PARAM_DESCRIPTIONS[key]) return PARAM_DESCRIPTIONS[key];
+            // Format tự động nếu chưa có trong từ điển
+            const clean = key.replace(/_/g, ' ');
+            return `Tham số chiến lược: ${clean}`;
         }
 
         function renderDynamicParams(params) {
@@ -922,32 +1042,48 @@
 
             keys.forEach(k => {
                 const val = params[k];
+                const desc = getParamDesc(k).replace(/"/g, '&quot;');
                 const col = document.createElement('div');
                 col.className = 'col-md-6 col-lg-4 mb-2';
 
                 let inputHtml = '';
+                const infoBtn = `<i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="${desc}"></i>`;
+
                 if (typeof val === 'boolean') {
                     inputHtml = `
                         <div class="form-check form-switch mt-1">
                             <input class="form-check-input dynamic-param-input" type="checkbox" id="param_${k}" data-key="${k}" data-type="boolean" ${val ? 'checked' : ''}>
                             <label class="form-check-label small font-monospace" for="param_${k}">${k}</label>
+                            ${infoBtn}
                         </div>
                     `;
                 } else if (typeof val === 'number') {
                     const step = Number.isInteger(val) ? '1' : '0.01';
                     inputHtml = `
-                        <label class="form-label small font-monospace mb-1 text-truncate w-100" title="${k}">${k}</label>
+                        <label class="form-label small font-monospace mb-1 text-truncate w-100 d-flex justify-content-between align-items-center">
+                            <span title="${k}">${k}</span>
+                            ${infoBtn}
+                        </label>
                         <input type="number" step="${step}" class="form-control form-control-sm dynamic-param-input" id="param_${k}" data-key="${k}" data-type="number" value="${val}">
                     `;
                 } else {
                     inputHtml = `
-                        <label class="form-label small font-monospace mb-1 text-truncate w-100" title="${k}">${k}</label>
+                        <label class="form-label small font-monospace mb-1 text-truncate w-100 d-flex justify-content-between align-items-center">
+                            <span title="${k}">${k}</span>
+                            ${infoBtn}
+                        </label>
                         <input type="text" class="form-control form-control-sm dynamic-param-input" id="param_${k}" data-key="${k}" data-type="string" value="${val !== undefined ? val : ''}">
                     `;
                 }
                 col.innerHTML = inputHtml;
                 container.appendChild(col);
             });
+
+            // Khởi tạo tooltips cho tất cả icon info vừa tạo
+            setTimeout(() => {
+                const tooltipTriggerList = [].slice.call(document.querySelectorAll('#botConfigModal [data-bs-toggle="tooltip"]'));
+                tooltipTriggerList.forEach(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl, { trigger: 'hover' }));
+            }, 60);
         }
 
         function syncFormToRaw() {
