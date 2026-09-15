@@ -36,10 +36,43 @@
 </head>
 
 <body>
-    <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
+    <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm sticky-top">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1"><i class="fas fa-robot text-warning me-2"></i>XAUUSD_M1_REAL Bot Dashboard</span>
             <div class="d-flex align-items-center flex-wrap gap-2">
+                <!-- MT5 Account Status Badge -->
+                {% if account_info and account_info.connected %}
+                <span class="badge bg-success py-2 px-3 shadow-sm border border-success d-flex align-items-center gap-1" id="mt5AccountBadge" title="Tài khoản MT5 đã kết nối">
+                    <i class="fas fa-link"></i>
+                    <span>MT5: <strong>{{ account_info.account }}</strong> ({{ account_info.server }})</span>
+                    <span class="ms-1 border-start border-light ps-2">Bal: <strong>${{ "%.2f"|format(account_info.balance) }}</strong></span>
+                    <span class="badge {% if account_info.floating_profit >= 0 %}bg-dark text-success{% else %}bg-dark text-danger{% endif %} ms-1">
+                        Float: {{ "%+.2f"|format(account_info.floating_profit) }}$
+                    </span>
+                </span>
+                {% else %}
+                <span class="badge bg-secondary py-2 px-3 shadow-sm d-flex align-items-center gap-1" id="mt5AccountBadge" title="Chưa kết nối MT5">
+                    <i class="fas fa-unlink"></i> MT5 Chưa Kết Nối
+                </span>
+                {% endif %}
+
+                <!-- Quick Sync DB Button -->
+                <button class="btn btn-outline-info btn-sm fw-bold shadow-sm" id="btnSyncDb" onclick="syncDatabase()" title="Đồng bộ lệnh mới nhất từ MT5 vào CSDL">
+                    <i class="fas fa-sync" id="syncDbIcon"></i> Đồng Bộ MT5
+                </button>
+
+                <!-- Auto Refresh Interval Dropdown -->
+                <div class="d-flex align-items-center gap-1 bg-dark bg-opacity-75 p-1 px-2 rounded border border-secondary shadow-sm">
+                    <i class="fas fa-clock text-warning" style="font-size: 13px;"></i>
+                    <select id="autoRefreshSelect" class="form-select form-select-sm bg-transparent text-light border-0 py-0 ps-1 pe-4" style="width: auto; font-size: 12px; cursor: pointer;" onchange="changeAutoRefresh(this.value)">
+                        <option value="0" class="bg-dark text-light">Tự tải: Tắt</option>
+                        <option value="10" class="bg-dark text-light">Tự tải: 10s</option>
+                        <option value="30" class="bg-dark text-light" selected>Tự tải: 30s</option>
+                        <option value="60" class="bg-dark text-light">Tự tải: 60s</option>
+                    </select>
+                    <span id="refreshCountdown" class="badge bg-secondary" style="font-size: 10px; min-width: 26px;">30s</span>
+                </div>
+
                 <!-- NÚT START BOT CHÍNH TRÊN NAVBAR -->
                 <button class="btn btn-success btn-sm fw-bold px-3 shadow" onclick="openStartBotModal()">
                     <i class="fas fa-play me-1"></i> Start Bot
@@ -69,8 +102,8 @@
                         </h5>
                         <small class="text-light opacity-75">Khởi chạy, dừng và theo dõi các chiến lược giao dịch tự động</small>
                     </div>
-                    <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
-                        <button class="btn btn-sm btn-outline-light" onclick="fetchBotStatus(true)">
+                    <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0 align-items-center">
+                        <button class="btn btn-sm btn-outline-light" onclick="fetchBotStatus(true)" title="Cập nhật trạng thái tiến trình">
                             <i class="fas fa-sync-alt" id="refreshBotIcon"></i> Làm mới
                         </button>
                         <button class="btn btn-sm btn-success fw-bold shadow-sm" onclick="startBot('strategy_1_trend_ha_v2.py')">
@@ -82,6 +115,9 @@
                         <button class="btn btn-sm btn-outline-danger" onclick="stopBot('all')">
                             <i class="fas fa-stop-circle me-1"></i> Dừng Tất Cả
                         </button>
+                        <button class="btn btn-sm btn-outline-secondary text-light px-2" id="btnToggleCollapseBotPanel" onclick="toggleBotPanelCollapse()" title="Thu gọn / Mở rộng bảng bot">
+                            <i class="fas fa-chevron-up" id="botCollapseIcon"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -91,7 +127,7 @@
                     <button type="button" class="btn-close py-2" onclick="hideBotAlert()"></button>
                 </div>
 
-                <!-- Danh Sách Các Chiến Lược -->
+                <!-- Danh Sách Các Chiến Lược (Collapsible) -->
                 <div class="row g-3" id="botCardsGrid">
                     {% for filename, meta in valid_bots.items() %}
                     {% set is_running = filename in running_bots %}
@@ -127,6 +163,82 @@
                     {% endfor %}
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- MT5 LIVE POSITIONS & ACCOUNT SUMMARY -->
+    <div class="container mb-4">
+        <div class="card border-0 shadow-sm" style="border-radius: 12px; overflow: hidden;">
+            <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center border-bottom">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge {% if account_info and account_info.connected %}bg-success{% else %}bg-secondary{% endif %} p-2 rounded-circle">
+                        <i class="fas fa-satellite-dish text-white"></i>
+                    </span>
+                    <div>
+                        <h6 class="mb-0 fw-bold">MT5 Live Account & Lệnh Đang Mở (Open Positions)</h6>
+                        <small class="text-muted">
+                            {% if account_info and account_info.connected %}
+                            Tài khoản: <strong>{{ account_info.account }}</strong> | Server: <strong>{{ account_info.server }}</strong> | Số dư: <strong>${{ "%.2f"|format(account_info.balance) }}</strong> | Vốn (Equity): <strong>${{ "%.2f"|format(account_info.equity) }}</strong>
+                            {% else %}
+                            Chưa kết nối đến terminal MT5 hoặc tài khoản chưa mở
+                            {% endif %}
+                        </small>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2 mt-md-0">
+                    <span class="badge {% if account_info and account_info.floating_profit >= 0 %}bg-success{% else %}bg-danger{% endif %} px-3 py-2 fs-6">
+                        Lãi/Lỗ tạm tính: {{ "%+.2f"|format(account_info.floating_profit if account_info else 0.0) }} $
+                    </span>
+                </div>
+            </div>
+            {% if account_info and account_info.positions and account_info.positions|length > 0 %}
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 text-center">
+                        <thead class="table-light small">
+                            <tr>
+                                <th>Ticket</th>
+                                <th>Symbol</th>
+                                <th>Loại lệnh</th>
+                                <th>Volume</th>
+                                <th>Giá vào</th>
+                                <th>Giá hiện tại</th>
+                                <th>SL</th>
+                                <th>TP</th>
+                                <th>Lãi/Lỗ ($)</th>
+                                <th>Ghi chú / Bot</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pos in account_info.positions %}
+                            <tr>
+                                <td class="font-monospace fw-bold">{{ pos.ticket }}</td>
+                                <td><span class="badge bg-light text-dark border">{{ pos.symbol }}</span></td>
+                                <td>
+                                    <span class="badge {% if pos.type == 'BUY' %}badge-buy{% else %}badge-sell{% endif %}">
+                                        {{ pos.type }}
+                                    </span>
+                                </td>
+                                <td class="fw-bold">{{ pos.volume }}</td>
+                                <td>{{ pos.open_price }}</td>
+                                <td>{{ pos.current_price }}</td>
+                                <td>{{ pos.sl if pos.sl else '-' }}</td>
+                                <td>{{ pos.tp if pos.tp else '-' }}</td>
+                                <td class="fw-bold {% if pos.profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
+                                    {{ "%+.2f"|format(pos.profit) }} $
+                                </td>
+                                <td class="small text-muted">{{ pos.comment or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% else %}
+            <div class="card-body py-3 text-center text-muted small bg-light bg-opacity-50">
+                <i class="fas fa-check-circle text-success me-1"></i> Hiện không có lệnh nào đang mở trên MT5 (0 Open Positions).
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -758,9 +870,125 @@
             }
         }
 
+        // THU GỌN / MỞ RỘNG BẢNG ĐIỀU KHIỂN BOT VỚI LOCALSTORAGE
+        function toggleBotPanelCollapse() {
+            const grid = document.getElementById('botCardsGrid');
+            const icon = document.getElementById('botCollapseIcon');
+            if (!grid) return;
+            const isHidden = grid.classList.contains('d-none');
+            if (isHidden) {
+                grid.classList.remove('d-none');
+                if (icon) icon.className = 'fas fa-chevron-up';
+                localStorage.setItem('bot_panel_collapsed', 'false');
+            } else {
+                grid.classList.add('d-none');
+                if (icon) icon.className = 'fas fa-chevron-down';
+                localStorage.setItem('bot_panel_collapsed', 'true');
+            }
+        }
+
+        // ĐỒNG BỘ CSDL VỚI MT5 TRỰC TIẾP TỪ GIAO DIỆN
+        async function syncDatabase() {
+            const btn = document.getElementById('btnSyncDb');
+            const icon = document.getElementById('syncDbIcon');
+            if (btn) btn.disabled = true;
+            if (icon) icon.classList.add('fa-spin');
+            showBotAlert("Đang kết nối MT5 để đồng bộ dữ liệu giao dịch vào CSDL...", "info");
+            try {
+                const res = await fetch('/api/sync_db', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showBotAlert(data.message || "Đồng bộ MT5 thành công!", "success");
+                    setTimeout(() => window.location.reload(), 1200);
+                } else {
+                    showBotAlert(data.message || "Lỗi khi đồng bộ MT5", "danger");
+                }
+            } catch (e) {
+                showBotAlert("Lỗi kết nối đồng bộ: " + e.message, "danger");
+            } finally {
+                if (btn) btn.disabled = false;
+                if (icon) icon.classList.remove('fa-spin');
+            }
+        }
+
+        // TỰ ĐỘNG TẢI LẠI TRANG CÓ ĐẾM NGƯỢC
+        let refreshSecondsLeft = 30;
+        let refreshIntervalSec = 30;
+
+        function changeAutoRefresh(val) {
+            refreshIntervalSec = parseInt(val, 10) || 0;
+            refreshSecondsLeft = refreshIntervalSec;
+            localStorage.setItem('dashboard_auto_refresh_sec', refreshIntervalSec);
+            const badge = document.getElementById('refreshCountdown');
+            if (refreshIntervalSec <= 0) {
+                if (badge) {
+                    badge.textContent = 'Tắt';
+                    badge.className = 'badge bg-secondary';
+                }
+            } else {
+                if (badge) {
+                    badge.textContent = `${refreshSecondsLeft}s`;
+                    badge.className = 'badge bg-info text-dark';
+                }
+            }
+        }
+
+        function initAutoRefresh() {
+            const saved = localStorage.getItem('dashboard_auto_refresh_sec');
+            const select = document.getElementById('autoRefreshSelect');
+            if (saved !== null && select) {
+                select.value = saved;
+                refreshIntervalSec = parseInt(saved, 10);
+            } else {
+                refreshIntervalSec = 30;
+            }
+            refreshSecondsLeft = refreshIntervalSec;
+
+            const badge = document.getElementById('refreshCountdown');
+            if (refreshIntervalSec <= 0) {
+                if (badge) {
+                    badge.textContent = 'Tắt';
+                    badge.className = 'badge bg-secondary';
+                }
+            } else {
+                if (badge) {
+                    badge.textContent = `${refreshSecondsLeft}s`;
+                    badge.className = 'badge bg-info text-dark';
+                }
+            }
+
+            setInterval(() => {
+                if (refreshIntervalSec <= 0) return;
+                refreshSecondsLeft--;
+                const badgeEl = document.getElementById('refreshCountdown');
+                if (badgeEl) {
+                    badgeEl.textContent = `${refreshSecondsLeft}s`;
+                    if (refreshSecondsLeft <= 5) {
+                        badgeEl.className = 'badge bg-warning text-dark';
+                    } else {
+                        badgeEl.className = 'badge bg-info text-dark';
+                    }
+                }
+                if (refreshSecondsLeft <= 0) {
+                    window.location.reload();
+                }
+            }, 1000);
+        }
+
         // Tự động kiểm tra trạng thái bot mỗi 5 giây
         setInterval(() => fetchBotStatus(false), 5000);
-        document.addEventListener('DOMContentLoaded', () => fetchBotStatus(false));
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchBotStatus(false);
+            initAutoRefresh();
+
+            // Khôi phục trạng thái thu gọn bot panel
+            if (localStorage.getItem('bot_panel_collapsed') === 'true') {
+                const grid = document.getElementById('botCardsGrid');
+                const icon = document.getElementById('botCollapseIcon');
+                if (grid) grid.classList.add('d-none');
+                if (icon) icon.className = 'fas fa-chevron-down';
+            }
+        });
     </script>
 
     <script>

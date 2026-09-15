@@ -14,6 +14,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 try:
     import psutil
 except ImportError:
@@ -90,6 +97,80 @@ def _launch_bot_process(bot_file, label):
     
     cmd = f'start "XAU Bot - {label}" cmd /k "chcp 65001 >nul && cd /d "{base_dir}" && title XAU_M1_REAL - {label} && "{python_exe}" -X utf8 "{script_path}""'
     subprocess.Popen(cmd, shell=True)
+
+def get_mt5_account_and_positions():
+    """Lấy thông tin tài khoản và các vị thế đang mở từ MT5"""
+    result = {
+        'connected': False,
+        'account': None,
+        'server': None,
+        'balance': 0.0,
+        'equity': 0.0,
+        'floating_profit': 0.0,
+        'positions_count': 0,
+        'positions': []
+    }
+    
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    primary_config = os.path.join(base_dir, "configs", "config_1_v2.json")
+    config = None
+    if os.path.exists(primary_config):
+        config = load_config(primary_config)
+    
+    if not config:
+        config_dir = os.path.join(base_dir, "configs")
+        if os.path.exists(config_dir):
+            for f in os.listdir(config_dir):
+                if f.endswith(".json") and f != "config_template.json":
+                    config = load_config(os.path.join(config_dir, f))
+                    if config:
+                        break
+                    
+    if not config:
+        return result
+        
+    result['account'] = config.get('account')
+    result['server'] = config.get('server')
+    
+    try:
+        acc_info = mt5.account_info()
+        if acc_info is None or (acc_info.login != config.get('account')):
+            if not connect_mt5(config):
+                return result
+            acc_info = mt5.account_info()
+            
+        if acc_info:
+            result['connected'] = True
+            result['account'] = acc_info.login
+            result['server'] = acc_info.server
+            result['balance'] = round(acc_info.balance, 2)
+            result['equity'] = round(acc_info.equity, 2)
+            
+            positions = mt5.positions_get()
+            pos_list = []
+            total_profit = 0.0
+            for p in (positions or []):
+                total_profit += p.profit
+                pos_list.append({
+                    'ticket': p.ticket,
+                    'symbol': p.symbol,
+                    'type': 'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
+                    'volume': p.volume,
+                    'open_price': p.price_open,
+                    'current_price': p.price_current,
+                    'sl': p.sl,
+                    'tp': p.tp,
+                    'profit': round(p.profit, 2),
+                    'magic': p.magic,
+                    'comment': p.comment
+                })
+            result['positions_count'] = len(pos_list)
+            result['floating_profit'] = round(total_profit, 2)
+            result['positions'] = pos_list
+    except Exception as e:
+        print(f"Lỗi lấy thông tin MT5: {e}")
+        
+    return result
 
 app = Flask(__name__)
 # Use absolute path to ensure we always find the correct trades.db
@@ -236,21 +317,26 @@ def index():
         # Update the last added bot_stats entry with chart data
         bot_stats[-1]['chart_data'] = points
         
-    # Sort by Net Profit
-    # Sort by User Defined Order (1, V2, V3, 4, 2, 5)
+    # Sort by User Defined Order without filtering out unlisted strategies
     desired_order = [
         "Strategy_1_Trend_HA",
         "Strategy_1_Trend_HA_V1.1",
         "Strategy_1_Trend_HA_V2",
+        "Strategy_1_Trend_HA_V2.1",
         "Strategy_1_Trend_HA_V3",
         "Strategy_4_UT_Bot",
-        "Strategy_2_EMA_ATR", 
+        "Strategy_2_EMA_ATR",
+        "Strategy_3_PA_Volume",
         "Strategy_5_Filter_First"
     ]
     
-    # Filter only requested bots and sort
-    bot_stats = [b for b in bot_stats if b['raw_name'] in desired_order]
-    bot_stats.sort(key=lambda x: desired_order.index(x['raw_name']))
+    def sort_key(b):
+        raw = b.get('raw_name', '')
+        return (0, desired_order.index(raw)) if raw in desired_order else (1, raw)
+    bot_stats.sort(key=sort_key)
+
+    # Lấy thông tin MT5 tài khoản và vị thế đang mở
+    account_info = get_mt5_account_and_positions()
 
     return render_template('index.html', 
                            orders=orders, 
@@ -266,7 +352,8 @@ def index():
                            from_date=from_date_param if from_date_param else '',
                            to_date=to_date_param if to_date_param else '',
                            valid_bots=VALID_BOTS,
-                           running_bots=get_running_bots())
+                           running_bots=get_running_bots(),
+                           account_info=account_info)
 
 @app.route('/atr_analysis')
 def atr_analysis_page():
@@ -1392,6 +1479,21 @@ def api_stop_bot():
             return jsonify({'success': False, 'message': f"Lỗi khi dừng bot: {e}"}), 500
             
     return jsonify({'success': False, 'message': f"Bot {bot_file} hiện không chạy!"}), 400
+
+@app.route('/api/open_positions')
+def api_open_positions():
+    """Lấy danh sách lệnh đang mở và trạng thái tài khoản MT5"""
+    return jsonify(get_mt5_account_and_positions())
+
+@app.route('/api/sync_db', methods=['POST'])
+def api_sync_db():
+    """Thực thi update_db để đồng bộ dữ liệu MT5 vào trades.db trực tiếp từ Web"""
+    try:
+        from update_db import main as run_update_db
+        run_update_db()
+        return jsonify({'success': True, 'message': 'Đồng bộ MT5 vào Database thành công!'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ MT5: {str(e)}'}), 500
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5007")

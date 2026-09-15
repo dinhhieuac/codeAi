@@ -1,9 +1,17 @@
-import MetaTrader5 as mt5
+import sys
 import os
 import json
 import requests
 import pandas as pd
 import numpy as np
+import MetaTrader5 as mt5
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 def load_config(config_path):
     """Load configuration from JSON file"""
@@ -28,11 +36,21 @@ def connect_mt5(config):
         print("❌ Missing MT5 credentials in config")
         return False
 
+    # Tự động điều chỉnh đường dẫn MT5 nếu đường dẫn trong config không tồn tại
+    if path and not os.path.exists(path):
+        default_candidate = "C:/Program Files/MetaTrader 5/terminal64.exe"
+        if os.path.exists(default_candidate):
+            path = default_candidate
+        else:
+            path = None
+
     try:
         if path:
             if not mt5.initialize(path=path, login=login, password=password, server=server):
                 print(f"❌ MT5 Init failed with path: {mt5.last_error()}")
-                return False
+                # Thử fallback không dùng path
+                if not mt5.initialize(login=login, password=password, server=server):
+                    return False
         else:
             if not mt5.initialize(login=login, password=password, server=server):
                 print(f"❌ MT5 Init failed: {mt5.last_error()}")
