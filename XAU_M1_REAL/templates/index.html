@@ -61,16 +61,18 @@
                     <i class="fas fa-sync" id="syncDbIcon"></i> Đồng Bộ MT5
                 </button>
 
-                <!-- Auto Refresh Interval Dropdown -->
+                <!-- Auto Refresh Interval Dropdown (Mặc định: TẮT để bảo vệ Algo Trading MT5) -->
                 <div class="d-flex align-items-center gap-1 bg-dark bg-opacity-75 p-1 px-2 rounded border border-secondary shadow-sm">
-                    <i class="fas fa-clock text-warning" style="font-size: 13px;"></i>
+                    <i class="fas fa-clock text-secondary" style="font-size: 13px;"></i>
                     <select id="autoRefreshSelect" class="form-select form-select-sm bg-transparent text-light border-0 py-0 ps-1 pe-4" style="width: auto; font-size: 12px; cursor: pointer;" onchange="changeAutoRefresh(this.value)">
-                        <option value="0" class="bg-dark text-light">Tự tải: Tắt</option>
-                        <option value="10" class="bg-dark text-light">Tự tải: 10s</option>
-                        <option value="30" class="bg-dark text-light" selected>Tự tải: 30s</option>
+                        <option value="0" class="bg-dark text-light" selected>Tự tải: Tắt</option>
+                        <option value="30" class="bg-dark text-light">Tự tải: 30s</option>
                         <option value="60" class="bg-dark text-light">Tự tải: 60s</option>
                     </select>
-                    <span id="refreshCountdown" class="badge bg-secondary" style="font-size: 10px; min-width: 26px;">30s</span>
+                    <span id="refreshCountdown" class="badge bg-secondary" style="font-size: 10px; min-width: 26px;">Tắt</span>
+                    <button class="btn btn-outline-secondary btn-sm py-0 px-2 text-light" onclick="window.location.reload()" title="Tải lại trang thủ công (F5)">
+                        <i class="fas fa-redo-alt" style="font-size: 11px;"></i>
+                    </button>
                 </div>
 
                 <!-- NÚT START BOT CHÍNH TRÊN NAVBAR -->
@@ -911,9 +913,9 @@
             }
         }
 
-        // TỰ ĐỘNG TẢI LẠI TRANG CÓ ĐẾM NGƯỢC
-        let refreshSecondsLeft = 30;
-        let refreshIntervalSec = 30;
+        // TỰ ĐỘNG TẢI LẠI TRANG (MẶC ĐỊNH: TẮT ĐỂ BẢO VỆ ALGO TRADING MT5)
+        let refreshSecondsLeft = 0;
+        let refreshIntervalSec = 0;
 
         function changeAutoRefresh(val) {
             refreshIntervalSec = parseInt(val, 10) || 0;
@@ -934,13 +936,16 @@
         }
 
         function initAutoRefresh() {
+            // Mặc định ép Tắt (0) trừ khi người dùng chủ động chọn bật
             const saved = localStorage.getItem('dashboard_auto_refresh_sec');
             const select = document.getElementById('autoRefreshSelect');
-            if (saved !== null && select) {
+            if (saved !== null && select && parseInt(saved, 10) > 0) {
                 select.value = saved;
                 refreshIntervalSec = parseInt(saved, 10);
             } else {
-                refreshIntervalSec = 30;
+                refreshIntervalSec = 0;
+                if (select) select.value = "0";
+                localStorage.setItem('dashboard_auto_refresh_sec', '0');
             }
             refreshSecondsLeft = refreshIntervalSec;
 

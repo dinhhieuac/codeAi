@@ -14,21 +14,22 @@ def load_config(filepath):
         return json.load(f)
 
 def update_trades_for_strategy(db, config, strategy_name):
-    # 1. Connect to MT5 for this account
-    if not connect_mt5(config):
-        print(f"❌ Could not connect for {strategy_name}")
-        return
-
-    # Verify Strict Account Match
+    # Kiểm tra xem MT5 đã đang kết nối tới tài khoản nào
     current_account = mt5.account_info()
-    if current_account is None:
-        print(f"❌ Failed to retrieve account info.")
-        return
-
-    if current_account.login != config['account']:
-        print(f"⚠️ CRITICAL: Account Mismatch! Configured: {config['account']} but Active: {current_account.login}")
-        print(f"🛑 Aborting update for {strategy_name} to protect data.")
-        return
+    
+    if current_account is not None:
+        if current_account.login != config.get('account'):
+            print(f"ℹ️ Bỏ qua {strategy_name}: Config account ({config.get('account')}) khác với tài khoản đang hoạt động trên MT5 ({current_account.login})")
+            return
+    else:
+        # Nếu MT5 chưa kết nối tài khoản nào, mới tiến hành kết nối
+        if not connect_mt5(config):
+            print(f"❌ Không thể kết nối MT5 cho {strategy_name}")
+            return
+        current_account = mt5.account_info()
+        if current_account is None or current_account.login != config.get('account'):
+            print(f"🛑 Không thể xác thực tài khoản cho {strategy_name}")
+            return
 
     # 2. Get Pending Orders from DB for this strategy
     # Filter by strategy AND account_id (so we don't mix updates)
@@ -185,12 +186,6 @@ def main():
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted during update. Cleaning up...")
         raise  # Re-raise to be handled by outer try-catch
-    finally:
-        # Ensure MT5 is shut down even if interrupted
-        try:
-            mt5.shutdown()
-        except:
-            pass
 
 def signal_handler(sig, frame):
     """Handle SIGINT (Ctrl+C) gracefully"""

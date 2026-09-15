@@ -99,7 +99,9 @@ def _launch_bot_process(bot_file, label):
     subprocess.Popen(cmd, shell=True)
 
 def get_mt5_account_and_positions():
-    """Lấy thông tin tài khoản và các vị thế đang mở từ MT5"""
+    """Lấy thông tin tài khoản và các vị thế đang mở từ MT5 một cách THỤ ĐỘNG.
+    Tuyệt đối không gọi connect_mt5 kèm login/password để không kích hoạt cơ chế
+    bảo mật tự động tắt Algo Trading của phần mềm MetaTrader 5."""
     result = {
         'connected': False,
         'account': None,
@@ -111,64 +113,44 @@ def get_mt5_account_and_positions():
         'positions': []
     }
     
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    primary_config = os.path.join(base_dir, "configs", "config_1_v2.json")
-    config = None
-    if os.path.exists(primary_config):
-        config = load_config(primary_config)
-    
-    if not config:
-        config_dir = os.path.join(base_dir, "configs")
-        if os.path.exists(config_dir):
-            for f in os.listdir(config_dir):
-                if f.endswith(".json") and f != "config_template.json":
-                    config = load_config(os.path.join(config_dir, f))
-                    if config:
-                        break
-                    
-    if not config:
-        return result
-        
-    result['account'] = config.get('account')
-    result['server'] = config.get('server')
-    
     try:
+        # Chỉ attach vào terminal MT5 đang chạy (không truyền login/password)
+        if not mt5.initialize():
+            return result
+            
         acc_info = mt5.account_info()
-        if acc_info is None or (acc_info.login != config.get('account')):
-            if not connect_mt5(config):
-                return result
-            acc_info = mt5.account_info()
+        if not acc_info:
+            return result
             
-        if acc_info:
-            result['connected'] = True
-            result['account'] = acc_info.login
-            result['server'] = acc_info.server
-            result['balance'] = round(acc_info.balance, 2)
-            result['equity'] = round(acc_info.equity, 2)
-            
-            positions = mt5.positions_get()
-            pos_list = []
-            total_profit = 0.0
-            for p in (positions or []):
-                total_profit += p.profit
-                pos_list.append({
-                    'ticket': p.ticket,
-                    'symbol': p.symbol,
-                    'type': 'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
-                    'volume': p.volume,
-                    'open_price': p.price_open,
-                    'current_price': p.price_current,
-                    'sl': p.sl,
-                    'tp': p.tp,
-                    'profit': round(p.profit, 2),
-                    'magic': p.magic,
-                    'comment': p.comment
-                })
-            result['positions_count'] = len(pos_list)
-            result['floating_profit'] = round(total_profit, 2)
-            result['positions'] = pos_list
-    except Exception as e:
-        print(f"Lỗi lấy thông tin MT5: {e}")
+        result['connected'] = True
+        result['account'] = acc_info.login
+        result['server'] = acc_info.server
+        result['balance'] = round(acc_info.balance, 2)
+        result['equity'] = round(acc_info.equity, 2)
+        
+        positions = mt5.positions_get()
+        pos_list = []
+        total_profit = 0.0
+        for p in (positions or []):
+            total_profit += p.profit
+            pos_list.append({
+                'ticket': p.ticket,
+                'symbol': p.symbol,
+                'type': 'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
+                'volume': p.volume,
+                'open_price': p.price_open,
+                'current_price': p.price_current,
+                'sl': p.sl,
+                'tp': p.tp,
+                'profit': round(p.profit, 2),
+                'magic': p.magic,
+                'comment': p.comment
+            })
+        result['positions_count'] = len(pos_list)
+        result['floating_profit'] = round(total_profit, 2)
+        result['positions'] = pos_list
+    except Exception:
+        pass
         
     return result
 
@@ -1485,13 +1467,57 @@ def api_open_positions():
     """Lấy danh sách lệnh đang mở và trạng thái tài khoản MT5"""
     return jsonify(get_mt5_account_and_positions())
 
+def safe_sync_db():
+    """Đồng bộ lịch sử lệnh từ MT5 vào trades.db an toàn:
+    1. Chỉ kết nối thụ động vào terminal MT5 đang mở, tuyệt đối không re-login hoặc đổi account.
+    2. Tuyệt đối không gọi mt5.shutdown() để không làm gián đoạn bot hoặc tắt Algo Trading.
+    """
+    if not mt5.initialize():
+        return False, "Không thể kết nối với MetaTrader 5 (MT5 chưa được mở trên máy)"
+        
+    acc = mt5.account_info()
+    if not acc:
+        return False, "Không lấy được thông tin tài khoản MT5 đang hoạt động"
+        
+    active_login = acc.login
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT ticket, strategy_name FROM orders WHERE profit IS NULL")
+    pending = cur.fetchall()
+    
+    updated_count = 0
+    if pending:
+        for ticket, strat_name in pending:
+            deals = mt5.history_deals_get(position=ticket)
+            if deals:
+                total_profit = 0.0
+                close_price = 0.0
+                is_closed = False
+                close_time = None
+                for deal in deals:
+                    if deal.entry == mt5.DEAL_ENTRY_OUT:
+                        total_profit += (deal.profit + deal.swap + deal.commission)
+                        close_price = deal.price
+                        is_closed = True
+                        close_time = datetime.fromtimestamp(deal.time).strftime("%Y-%m-%d %H:%M:%S")
+                
+                if is_closed:
+                    cur.execute(
+                        "UPDATE orders SET close_price = ?, profit = ?, close_time = ? WHERE ticket = ?",
+                        (close_price, round(total_profit, 2), close_time, ticket)
+                    )
+                    updated_count += 1
+        conn.commit()
+    conn.close()
+    
+    return True, f"Đồng bộ thành công từ MT5 (TK: {active_login})! Đã cập nhật {updated_count} lệnh đóng."
+
 @app.route('/api/sync_db', methods=['POST'])
 def api_sync_db():
-    """Thực thi update_db để đồng bộ dữ liệu MT5 vào trades.db trực tiếp từ Web"""
+    """Thực thi đồng bộ an toàn dữ liệu MT5 vào trades.db trực tiếp từ Web"""
     try:
-        from update_db import main as run_update_db
-        run_update_db()
-        return jsonify({'success': True, 'message': 'Đồng bộ MT5 vào Database thành công!'})
+        success, msg = safe_sync_db()
+        return jsonify({'success': success, 'message': msg}), (200 if success else 400)
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ MT5: {str(e)}'}), 500
 
