@@ -29,43 +29,77 @@ import MetaTrader5 as mt5
 from utils import connect_mt5, load_config
 from update_db import load_strategy_configs
 
-# Định nghĩa các bot giao dịch và script hỗ trợ
+# Định nghĩa các bot giao dịch, script hỗ trợ và file cấu hình tương ứng
 VALID_BOTS = {
     'strategy_1_trend_ha_v2.py': {
         'name': 'HA v2.0',
         'version': 'V2.0 (Khuyên dùng)',
         'desc': 'ADX, CHOP filter, ATR-based SL & trailing',
-        'badge': 'bg-success'
+        'badge': 'bg-success',
+        'config': 'configs/config_1_v2.json'
     },
     'strategy_1_trend_ha_v1.1.py': {
         'name': 'HA v1.1',
         'version': 'V1.1',
         'desc': 'Trend Heiken Ashi v1.1',
-        'badge': 'bg-primary'
+        'badge': 'bg-primary',
+        'config': 'configs/config_1_v1.1.json'
     },
     'strategy_1_trend_ha_v2.1.py': {
         'name': 'HA v2.1',
         'version': 'V2.1',
         'desc': 'Trend Heiken Ashi v2.1',
-        'badge': 'bg-info'
+        'badge': 'bg-info',
+        'config': 'configs/config_1_v2.1.json'
     },
     'strategy_1_trend_ha_v3.py': {
         'name': 'HA v3.0',
         'version': 'V3.0',
         'desc': 'Trend Heiken Ashi v3.0 (Strict Entry)',
-        'badge': 'bg-warning text-dark'
+        'badge': 'bg-warning text-dark',
+        'config': 'configs/config_1_v3.json'
     },
     'strategy_1_trend_ha.py': {
         'name': 'HA Original',
         'version': 'Gốc',
         'desc': 'Trend Heiken Ashi bản khởi tạo',
-        'badge': 'bg-secondary'
+        'badge': 'bg-secondary',
+        'config': 'configs/config_1.json'
+    },
+    'strategy_2_ema_atr.py': {
+        'name': 'EMA ATR',
+        'version': 'Strategy 2',
+        'desc': 'EMA crossover kết hợp ATR trailing stop',
+        'badge': 'bg-primary',
+        'config': 'configs/config_2.json'
+    },
+    'strategy_3_pa_volume.py': {
+        'name': 'PA Volume',
+        'version': 'Strategy 3',
+        'desc': 'Price Action kết hợp volume breakout',
+        'badge': 'bg-info',
+        'config': 'configs/config_3.json'
+    },
+    'strategy_4_ut_bot.py': {
+        'name': 'UT Bot',
+        'version': 'Strategy 4',
+        'desc': 'UT Bot Alerts ATR trailing stop',
+        'badge': 'bg-secondary',
+        'config': 'configs/config_4.json'
+    },
+    'strategy_5_filter_first.py': {
+        'name': 'Filter First',
+        'version': 'Strategy 5',
+        'desc': 'Lọc đa khung thời gian trước khi vào lệnh',
+        'badge': 'bg-dark',
+        'config': 'configs/config_5.json'
     },
     'update_db.py': {
         'name': 'Update DB',
         'version': 'Sync Tool',
         'desc': 'Đồng bộ lịch sử lệnh từ MT5 vào trades.db',
-        'badge': 'bg-dark'
+        'badge': 'bg-dark',
+        'config': None
     },
 }
 
@@ -1391,6 +1425,7 @@ def api_bot_status():
             'version': meta['version'],
             'desc': meta['desc'],
             'badge': meta.get('badge', 'bg-secondary'),
+            'config': meta.get('config'),
             'running': is_running,
             'pid': running.get(filename)
         })
@@ -1520,6 +1555,128 @@ def api_sync_db():
         return jsonify({'success': success, 'message': msg}), (200 if success else 400)
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ MT5: {str(e)}'}), 500
+
+# =========================================================================
+# BOT CONFIGURATION APIS (GET CONFIG / SAVE CONFIG / RESTART BOT)
+# =========================================================================
+
+@app.route('/api/bot_config')
+def api_get_bot_config():
+    """Lấy nội dung cấu hình JSON của bot"""
+    bot_file = request.args.get('bot', '').strip()
+    if not bot_file or bot_file not in VALID_BOTS:
+        return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
+        
+    config_rel = VALID_BOTS[bot_file].get('config')
+    if not config_rel:
+        return jsonify({'success': False, 'message': f'Bot {bot_file} không có file cấu hình!'}), 400
+        
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.normpath(os.path.join(base_dir, config_rel))
+    
+    if not os.path.exists(config_path):
+        return jsonify({'success': False, 'message': f'Không tìm thấy file cấu hình: {config_rel}'}), 404
+        
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            raw_content = f.read()
+        parsed = json.loads(raw_content)
+        running = get_running_bots()
+        return jsonify({
+            'success': True,
+            'bot': bot_file,
+            'bot_name': VALID_BOTS[bot_file]['name'],
+            'config_path': config_rel,
+            'config_data': parsed,
+            'config_raw': raw_content,
+            'is_running': bot_file in running,
+            'pid': running.get(bot_file)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi đọc file cấu hình: {str(e)}'}), 500
+
+@app.route('/api/save_bot_config', methods=['POST'])
+def api_save_bot_config():
+    """Lưu và cập nhật lại file cấu hình JSON của bot"""
+    data = request.get_json() or {}
+    bot_file = data.get('bot', '').strip()
+    config_raw = data.get('config_raw')
+    config_data = data.get('config_data')
+    
+    if not bot_file or bot_file not in VALID_BOTS:
+        return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
+        
+    config_rel = VALID_BOTS[bot_file].get('config')
+    if not config_rel:
+        return jsonify({'success': False, 'message': f'Bot {bot_file} không hỗ trợ cấu hình!'}), 400
+        
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.normpath(os.path.join(base_dir, config_rel))
+    
+    # Kiểm tra JSON hợp lệ
+    parsed_json = None
+    if config_raw is not None:
+        try:
+            parsed_json = json.loads(config_raw)
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Cú pháp JSON không hợp lệ: {str(e)}'}), 400
+    elif config_data is not None:
+        parsed_json = config_data
+    else:
+        return jsonify({'success': False, 'message': 'Thiếu dữ liệu cấu hình để lưu!'}), 400
+        
+    try:
+        # Ghi file với mã hóa UTF-8 và format đẹp (indent=4)
+        formatted_json_str = json.dumps(parsed_json, indent=4, ensure_ascii=False)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(formatted_json_str)
+            
+        running = get_running_bots()
+        is_running = bot_file in running
+        
+        msg = f"Đã lưu thành công cấu hình {VALID_BOTS[bot_file]['name']} ({config_rel})!"
+        if is_running:
+            msg += f" (Lưu ý: Bot đang chạy với PID {running[bot_file]}, hãy khởi động lại bot để áp dụng cài đặt mới)."
+            
+        return jsonify({
+            'success': True,
+            'message': msg,
+            'is_running': is_running,
+            'pid': running.get(bot_file),
+            'config_data': parsed_json,
+            'config_raw': formatted_json_str
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi lưu file cấu hình: {str(e)}'}), 500
+
+@app.route('/api/restart_bot', methods=['POST'])
+def api_restart_bot():
+    """Khởi động lại bot (Dừng tiến trình cũ và mở lại tiến trình mới)"""
+    data = request.get_json() or {}
+    bot_file = data.get('bot', '').strip()
+    if not bot_file or bot_file not in VALID_BOTS:
+        return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
+        
+    running = get_running_bots()
+    if bot_file in running:
+        pid = running[bot_file]
+        try:
+            if psutil:
+                p = psutil.Process(pid)
+                for child in p.children(recursive=True):
+                    child.terminate()
+                p.terminate()
+        except Exception as e:
+            print(f"Lỗi khi dừng PID {pid}: {e}")
+            
+    import time
+    time.sleep(1)
+    _launch_bot_process(bot_file, VALID_BOTS[bot_file]['name'])
+    
+    return jsonify({
+        'success': True,
+        'message': f"Đã gửi lệnh khởi động lại bot {VALID_BOTS[bot_file]['name']}!"
+    })
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5007")

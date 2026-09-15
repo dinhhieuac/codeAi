@@ -158,6 +158,11 @@
                                     <button class="btn btn-sm btn-outline-danger {% if not is_running %}disabled{% endif %}" id="btn-stop-{{ filename|replace('.', '_') }}" onclick="stopBot('{{ filename }}')">
                                         <i class="fas fa-stop me-1"></i> Dừng
                                     </button>
+                                    {% if meta.config %}
+                                    <button class="btn btn-sm btn-outline-warning" id="btn-cfg-{{ filename|replace('.', '_') }}" onclick="openBotConfigModal('{{ filename }}')" title="Xem & Cập nhật file cấu hình {{ meta.config }}">
+                                        <i class="fas fa-cog"></i> Cấu hình
+                                    </button>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
@@ -689,12 +694,413 @@
         </div>
     </div>
 
+    <!-- MODAL CẤU HÌNH VÀ CẬP NHẬT CONFIGURE BOT -->
+    <div class="modal fade" id="botConfigModal" tabindex="-1" aria-labelledby="botConfigModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0" style="border-radius: 12px; overflow: hidden;">
+                <div class="modal-header bg-dark text-white py-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-sliders-h text-warning fs-5"></i>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0" id="botConfigModalLabel">Cấu Hình: <span id="cfgBotName" class="text-warning"></span></h5>
+                            <small class="text-light opacity-75 font-monospace" id="cfgBotFile"></small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-3 p-md-4 bg-light">
+                    <!-- Status & Alert Area -->
+                    <div id="cfgModalAlert" class="alert alert-dismissible fade d-none py-2 px-3 small mb-3" role="alert">
+                        <span id="cfgModalAlertMsg"></span>
+                        <button type="button" class="btn-close py-2" onclick="hideCfgAlert()"></button>
+                    </div>
+
+                    <!-- Bot Running Notice -->
+                    <div id="cfgRunningNotice" class="alert alert-warning py-2 px-3 small d-none mb-3 d-flex align-items-center justify-content-between">
+                        <div>
+                            <i class="fas fa-exclamation-triangle text-warning me-1"></i>
+                            <strong>Bot đang chạy (PID: <span id="cfgRunningPid">-</span>)</strong>. Sau khi lưu cấu hình, cần khởi động lại để áp dụng.
+                        </div>
+                        <button class="btn btn-sm btn-dark fw-bold py-1 px-3 shadow-sm" onclick="restartCurrentBot()">
+                            <i class="fas fa-redo me-1"></i> Khởi Động Lại Bot
+                        </button>
+                    </div>
+
+                    <!-- Tabs Header -->
+                    <ul class="nav nav-pills mb-3 border-bottom pb-2" id="cfgTab" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active py-1 px-3 fw-bold" id="cfg-form-tab" data-bs-toggle="pill" data-bs-target="#cfg-form-content" type="button" role="tab" onclick="syncRawToForm()">
+                                <i class="fas fa-edit me-1"></i> Form Cài Đặt Nhanh
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link py-1 px-3 fw-bold" id="cfg-raw-tab" data-bs-toggle="pill" data-bs-target="#cfg-raw-content" type="button" role="tab" onclick="syncFormToRaw()">
+                                <i class="fas fa-code me-1"></i> JSON Trực Tiếp
+                            </button>
+                        </li>
+                    </ul>
+
+                    <!-- Tabs Content -->
+                    <div class="tab-content" id="cfgTabContent">
+                        <!-- TAB 1: FORM CÀI ĐẶT NHANH -->
+                        <div class="tab-pane fade show active" id="cfg-form-content" role="tabpanel">
+                            <!-- Basic Account & Execution Settings -->
+                            <div class="card mb-3 border-0 shadow-sm">
+                                <div class="card-header bg-white py-2 fw-bold text-primary small">
+                                    <i class="fas fa-wallet me-1"></i> Thông Số Giao Dịch Cơ Bản
+                                </div>
+                                <div class="card-body p-3">
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Cặp Giao Dịch (Symbol)</label>
+                                            <input type="text" class="form-control form-control-sm font-monospace" id="cfgInputSymbol">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Khối Lượng Lệnh (Volume/Lot)</label>
+                                            <input type="number" step="0.01" class="form-control form-control-sm" id="cfgInputVolume">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Số Lệnh Tối Đa (Max Positions)</label>
+                                            <input type="number" step="1" class="form-control form-control-sm" id="cfgInputMaxPos">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Magic Number</label>
+                                            <input type="number" step="1" class="form-control form-control-sm font-monospace" id="cfgInputMagic">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Tài Khoản MT5 (Login)</label>
+                                            <input type="number" class="form-control form-control-sm font-monospace" id="cfgInputAccount">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small fw-bold mb-1">Máy Chủ MT5 (Server)</label>
+                                            <input type="text" class="form-control form-control-sm" id="cfgInputServer">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Strategy Parameters (sl, tp, rsi, adx, trailing, v.v.) -->
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-white py-2 fw-bold text-primary small d-flex justify-content-between align-items-center">
+                                    <span><i class="fas fa-chart-line me-1"></i> Tham Số Chiến Lược (Strategy Parameters)</span>
+                                    <small class="text-muted">Tự động nhận diện từ cấu hình</small>
+                                </div>
+                                <div class="card-body p-3">
+                                    <div class="row g-2" id="cfgDynamicParamsRow">
+                                        <!-- Rendered dynamically by JS -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: RAW JSON EDITOR -->
+                        <div class="tab-pane fade" id="cfg-raw-content" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <small class="text-muted"><i class="fas fa-info-circle me-1"></i> Chỉnh sửa trực tiếp file JSON cấu hình</small>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary btn-sm py-1" onclick="formatRawJson()" title="Làm đẹp cấu trúc JSON">
+                                        <i class="fas fa-align-left me-1"></i> Format JSON
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm py-1" onclick="validateRawJson()" title="Kiểm tra cú pháp JSON">
+                                        <i class="fas fa-check me-1"></i> Kiểm tra JSON
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea id="cfgRawTextarea" class="form-control font-monospace bg-dark text-light p-3" rows="18" style="font-size: 13px; border-radius: 8px; tab-size: 4;" spellcheck="false"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <div>
+                        <small class="text-muted" id="cfgFooterFileInfo"></small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
+                        <button type="button" class="btn btn-success fw-bold px-4" id="btnSaveConfig" onclick="saveBotConfig(false)">
+                            <i class="fas fa-save me-1"></i> Lưu Cấu Hình
+                        </button>
+                        <button type="button" class="btn btn-warning fw-bold px-3 d-none" id="btnSaveAndRestart" onclick="saveBotConfig(true)">
+                            <i class="fas fa-sync-alt me-1"></i> Lưu & Khởi Động Lại
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <!-- JAVASCRIPT ĐIỀU KHIỂN VÀ THEO DÕI BOT -->
     <script>
         let botModalInstance = null;
+        let botConfigModalInstance = null;
+        let currentConfigBot = null;
+        let currentConfigData = null;
+
+        function showCfgAlert(msg, type = 'success') {
+            const alert = document.getElementById('cfgModalAlert');
+            const alertMsg = document.getElementById('cfgModalAlertMsg');
+            if (!alert || !alertMsg) return;
+            alert.className = `alert alert-${type} alert-dismissible fade show py-2 px-3 small mb-3`;
+            alertMsg.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1"></i> ${msg}`;
+            alert.classList.remove('d-none');
+        }
+
+        function hideCfgAlert() {
+            const alert = document.getElementById('cfgModalAlert');
+            if (alert) alert.classList.add('d-none');
+        }
+
+        async function openBotConfigModal(botFile) {
+            currentConfigBot = botFile;
+            hideCfgAlert();
+            if (!botConfigModalInstance) {
+                botConfigModalInstance = new bootstrap.Modal(document.getElementById('botConfigModal'));
+            }
+
+            document.getElementById('cfgBotName').textContent = 'Đang tải...';
+            document.getElementById('cfgBotFile').textContent = botFile;
+            document.getElementById('cfgRawTextarea').value = 'Đang tải cấu hình...';
+            document.getElementById('cfgDynamicParamsRow').innerHTML = '<div class="col-12 text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-1"></span> Đang nạp tham số...</div>';
+
+            botConfigModalInstance.show();
+
+            try {
+                const res = await fetch(`/api/bot_config?bot=${encodeURIComponent(botFile)}`);
+                const data = await res.json();
+                if (!data.success) {
+                    showCfgAlert(data.message || 'Không thể tải cấu hình bot', 'danger');
+                    return;
+                }
+
+                currentConfigData = data.config_data;
+                document.getElementById('cfgBotName').textContent = data.bot_name;
+                document.getElementById('cfgBotFile').textContent = `${data.bot}  (${data.config_path})`;
+                document.getElementById('cfgFooterFileInfo').textContent = `File: ${data.config_path}`;
+                document.getElementById('cfgRawTextarea').value = data.config_raw;
+
+                // Cập nhật trạng thái đang chạy
+                const notice = document.getElementById('cfgRunningNotice');
+                const btnRestart = document.getElementById('btnSaveAndRestart');
+                const pidEl = document.getElementById('cfgRunningPid');
+                if (data.is_running) {
+                    if (notice) notice.classList.remove('d-none');
+                    if (btnRestart) btnRestart.classList.remove('d-none');
+                    if (pidEl) pidEl.textContent = data.pid || 'Active';
+                } else {
+                    if (notice) notice.classList.add('d-none');
+                    if (btnRestart) btnRestart.classList.add('d-none');
+                }
+
+                // Điền thông số cơ bản
+                document.getElementById('cfgInputSymbol').value = data.config_data.symbol || 'XAUUSDc';
+                document.getElementById('cfgInputVolume').value = data.config_data.volume !== undefined ? data.config_data.volume : 0.01;
+                document.getElementById('cfgInputMaxPos').value = data.config_data.max_positions !== undefined ? data.config_data.max_positions : 1;
+                document.getElementById('cfgInputMagic').value = data.config_data.magic || '';
+                document.getElementById('cfgInputAccount').value = data.config_data.account || '';
+                document.getElementById('cfgInputServer').value = data.config_data.server || '';
+
+                // Điền parameters động
+                renderDynamicParams(data.config_data.parameters || {});
+
+            } catch (err) {
+                showCfgAlert(`Lỗi kết nối tải cấu hình: ${err.message}`, 'danger');
+            }
+        }
+
+        function renderDynamicParams(params) {
+            const container = document.getElementById('cfgDynamicParamsRow');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const keys = Object.keys(params);
+            if (keys.length === 0) {
+                container.innerHTML = '<div class="col-12 text-muted small py-2">Chiến lược này không có thông số parameters phụ.</div>';
+                return;
+            }
+
+            keys.forEach(k => {
+                const val = params[k];
+                const col = document.createElement('div');
+                col.className = 'col-md-6 col-lg-4 mb-2';
+
+                let inputHtml = '';
+                if (typeof val === 'boolean') {
+                    inputHtml = `
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input dynamic-param-input" type="checkbox" id="param_${k}" data-key="${k}" data-type="boolean" ${val ? 'checked' : ''}>
+                            <label class="form-check-label small font-monospace" for="param_${k}">${k}</label>
+                        </div>
+                    `;
+                } else if (typeof val === 'number') {
+                    const step = Number.isInteger(val) ? '1' : '0.01';
+                    inputHtml = `
+                        <label class="form-label small font-monospace mb-1 text-truncate w-100" title="${k}">${k}</label>
+                        <input type="number" step="${step}" class="form-control form-control-sm dynamic-param-input" id="param_${k}" data-key="${k}" data-type="number" value="${val}">
+                    `;
+                } else {
+                    inputHtml = `
+                        <label class="form-label small font-monospace mb-1 text-truncate w-100" title="${k}">${k}</label>
+                        <input type="text" class="form-control form-control-sm dynamic-param-input" id="param_${k}" data-key="${k}" data-type="string" value="${val !== undefined ? val : ''}">
+                    `;
+                }
+                col.innerHTML = inputHtml;
+                container.appendChild(col);
+            });
+        }
+
+        function syncFormToRaw() {
+            if (!currentConfigData) return;
+            try {
+                currentConfigData.symbol = document.getElementById('cfgInputSymbol').value.trim();
+                currentConfigData.volume = parseFloat(document.getElementById('cfgInputVolume').value) || 0.01;
+                currentConfigData.max_positions = parseInt(document.getElementById('cfgInputMaxPos').value, 10) || 1;
+                currentConfigData.magic = parseInt(document.getElementById('cfgInputMagic').value, 10) || currentConfigData.magic;
+                
+                const accVal = document.getElementById('cfgInputAccount').value.trim();
+                if (accVal) currentConfigData.account = parseInt(accVal, 10) || accVal;
+                
+                const serverVal = document.getElementById('cfgInputServer').value.trim();
+                if (serverVal) currentConfigData.server = serverVal;
+
+                if (!currentConfigData.parameters) currentConfigData.parameters = {};
+                const dynamicInputs = document.querySelectorAll('.dynamic-param-input');
+                dynamicInputs.forEach(input => {
+                    const k = input.getAttribute('data-key');
+                    const type = input.getAttribute('data-type');
+                    if (type === 'boolean') {
+                        currentConfigData.parameters[k] = input.checked;
+                    } else if (type === 'number') {
+                        currentConfigData.parameters[k] = input.value.includes('.') ? parseFloat(input.value) : parseInt(input.value, 10);
+                    } else {
+                        currentConfigData.parameters[k] = input.value;
+                    }
+                });
+
+                document.getElementById('cfgRawTextarea').value = JSON.stringify(currentConfigData, null, 4);
+            } catch (err) {
+                console.error("Lỗi đồng bộ form sang raw:", err);
+            }
+        }
+
+        function syncRawToForm() {
+            const raw = document.getElementById('cfgRawTextarea').value;
+            try {
+                const parsed = JSON.parse(raw);
+                currentConfigData = parsed;
+
+                document.getElementById('cfgInputSymbol').value = parsed.symbol || '';
+                document.getElementById('cfgInputVolume').value = parsed.volume !== undefined ? parsed.volume : 0.01;
+                document.getElementById('cfgInputMaxPos').value = parsed.max_positions !== undefined ? parsed.max_positions : 1;
+                document.getElementById('cfgInputMagic').value = parsed.magic || '';
+                document.getElementById('cfgInputAccount').value = parsed.account || '';
+                document.getElementById('cfgInputServer').value = parsed.server || '';
+
+                renderDynamicParams(parsed.parameters || {});
+                hideCfgAlert();
+            } catch (err) {
+                showCfgAlert(`Cú pháp JSON chưa đúng: ${err.message}`, 'warning');
+            }
+        }
+
+        function formatRawJson() {
+            const textarea = document.getElementById('cfgRawTextarea');
+            try {
+                const parsed = JSON.parse(textarea.value);
+                textarea.value = JSON.stringify(parsed, null, 4);
+                showCfgAlert("Đã định dạng JSON chuẩn thành công!", "success");
+            } catch (err) {
+                showCfgAlert(`Lỗi định dạng JSON: ${err.message}`, "danger");
+            }
+        }
+
+        function validateRawJson() {
+            const textarea = document.getElementById('cfgRawTextarea');
+            try {
+                JSON.parse(textarea.value);
+                showCfgAlert("Cú pháp JSON hoàn toàn hợp lệ!", "success");
+            } catch (err) {
+                showCfgAlert(`JSON không hợp lệ: ${err.message}`, "danger");
+            }
+        }
+
+        async function saveBotConfig(restartAfter = false) {
+            if (!currentConfigBot) return;
+
+            const activeTab = document.querySelector('#cfgTab .nav-link.active');
+            if (activeTab && activeTab.id === 'cfg-form-tab') {
+                syncFormToRaw();
+            }
+
+            const rawText = document.getElementById('cfgRawTextarea').value;
+            try {
+                JSON.parse(rawText);
+            } catch (err) {
+                showCfgAlert(`Không thể lưu: Cú pháp JSON không hợp lệ (${err.message})`, 'danger');
+                return;
+            }
+
+            const btnSave = document.getElementById('btnSaveConfig');
+            const originalText = btnSave.innerHTML;
+            btnSave.disabled = true;
+            btnSave.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Đang lưu...`;
+
+            try {
+                const res = await fetch('/api/save_bot_config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: currentConfigBot,
+                        config_raw: rawText
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showCfgAlert(data.message, 'success');
+                    showBotAlert(data.message, 'success');
+                    currentConfigData = data.config_data;
+
+                    if (restartAfter) {
+                        await restartCurrentBot();
+                    } else if (data.is_running) {
+                        const notice = document.getElementById('cfgRunningNotice');
+                        const btnRestart = document.getElementById('btnSaveAndRestart');
+                        if (notice) notice.classList.remove('d-none');
+                        if (btnRestart) btnRestart.classList.remove('d-none');
+                    }
+                } else {
+                    showCfgAlert(data.message || 'Lỗi khi lưu cấu hình', 'danger');
+                }
+            } catch (err) {
+                showCfgAlert(`Lỗi kết nối lưu cấu hình: ${err.message}`, 'danger');
+            } finally {
+                btnSave.disabled = false;
+                btnSave.innerHTML = originalText;
+            }
+        }
+
+        async function restartCurrentBot() {
+            if (!currentConfigBot) return;
+            showCfgAlert(`Đang khởi động lại bot ${currentConfigBot}...`, 'info');
+            try {
+                const res = await fetch('/api/restart_bot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: currentConfigBot })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showCfgAlert(data.message, 'success');
+                    showBotAlert(data.message, 'success');
+                    setTimeout(() => fetchBotStatus(false), 1500);
+                } else {
+                    showCfgAlert(data.message || 'Lỗi khi khởi động lại bot', 'danger');
+                }
+            } catch (err) {
+                showCfgAlert(`Lỗi kết nối khởi động lại: ${err.message}`, 'danger');
+            }
+        }
 
         function openStartBotModal() {
             if (!botModalInstance) {
@@ -859,6 +1265,20 @@
                                 btnStop.classList.remove('disabled');
                             } else {
                                 btnStop.classList.add('disabled');
+                            }
+                        }
+
+                        if (currentConfigBot === bot.file) {
+                            const notice = document.getElementById('cfgRunningNotice');
+                            const btnRestart = document.getElementById('btnSaveAndRestart');
+                            const pidEl = document.getElementById('cfgRunningPid');
+                            if (bot.running) {
+                                if (notice) notice.classList.remove('d-none');
+                                if (btnRestart) btnRestart.classList.remove('d-none');
+                                if (pidEl) pidEl.textContent = bot.pid || 'Active';
+                            } else {
+                                if (notice) notice.classList.add('d-none');
+                                if (btnRestart) btnRestart.classList.add('d-none');
                             }
                         }
                     });
