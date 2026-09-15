@@ -9,9 +9,8 @@ Mở **`config.json`** và khai báo **`databases`** (mỗi key = tên tab, valu
 ```json
 {
     "databases": {
-        "XAU_M1": "../XAU_M1/trades.db",
-        "BTC_M1": "../BTC_M1/trades.db",
-        "EUR_M1_REAL": "../EUR_M1_REAL/trades.db"
+        "XAU_M1": "../XAU_M1_REAL/trades.db",
+        "BTC_M1": "../BTC_M1/trades.db"
     },
     "default": "XAU_M1"
 }
