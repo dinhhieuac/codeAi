@@ -13,14 +13,57 @@ if hasattr(sys.stdout, 'reconfigure'):
     except Exception:
         pass
 
+def get_accounts_file_path():
+    """Get the path to accounts.json"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    configs_path = os.path.join(base_dir, "configs", "accounts.json")
+    if os.path.exists(configs_path):
+        return configs_path
+    root_path = os.path.join(base_dir, "accounts.json")
+    if os.path.exists(root_path):
+        return root_path
+    return configs_path
+
+def load_accounts(accounts_path=None):
+    """Load MT5 accounts configuration dictionary"""
+    if not accounts_path:
+        accounts_path = get_accounts_file_path()
+    if not os.path.exists(accounts_path):
+        return {}
+    try:
+        with open(accounts_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("accounts", {})
+    except Exception as e:
+        print(f"⚠️ Error loading accounts.json: {e}")
+        return {}
+
 def load_config(config_path):
-    """Load configuration from JSON file"""
+    """Load configuration from JSON file and merge account credentials if account_id is specified"""
     if not os.path.exists(config_path):
         print(f"❌ Config file not found: {config_path}")
         return None
     try:
-        with open(config_path, 'r') as f:
-            return json.load(f)
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            
+        # Check if config specifies an account_id
+        account_id = config.get("account_id")
+        if account_id:
+            # Look up account details in accounts.json
+            config_dir = os.path.dirname(os.path.abspath(config_path))
+            candidate_accounts_file = os.path.join(config_dir, "accounts.json")
+            accounts = load_accounts(candidate_accounts_file if os.path.exists(candidate_accounts_file) else None)
+            
+            acc_info = accounts.get(account_id)
+            if acc_info:
+                # Merge account fields into config if not already explicitly overridden
+                for key in ["account", "password", "server", "mt5_path", "symbol"]:
+                    if key in acc_info and (key not in config or config[key] is None):
+                        config[key] = acc_info[key]
+            else:
+                print(f"⚠️ Account ID '{account_id}' not found in accounts.json!")
+        return config
     except Exception as e:
         print(f"❌ Error loading config: {e}")
         return None

@@ -7,11 +7,7 @@ import signal
 import sys
 from datetime import datetime
 from db import Database
-from utils import connect_mt5
-
-def load_config(filepath):
-    with open(filepath, 'r') as f:
-        return json.load(f)
+from utils import connect_mt5, load_config
 
 def update_trades_for_strategy(db, config, strategy_name):
     # Kiểm tra xem MT5 đã đang kết nối tới tài khoản nào
@@ -60,6 +56,7 @@ def update_trades_for_strategy(db, config, strategy_name):
         if deals:
             total_profit = 0.0
             close_price = 0.0
+            close_time = None
             is_closed = False
             
             for deal in deals:
@@ -68,10 +65,11 @@ def update_trades_for_strategy(db, config, strategy_name):
                     total_profit += deal.profit + deal.swap + deal.commission
                     close_price = deal.price
                     is_closed = True
+                    close_time = datetime.fromtimestamp(deal.time).strftime("%Y-%m-%d %H:%M:%S")
             
             if is_closed:
                 print(f"✅ Found CLOSED Trade {ticket}: Profit=${total_profit:.2f}")
-                db.update_order_profit(ticket, close_price, total_profit)
+                db.update_order_profit(ticket, close_price, total_profit, close_time)
         else:
             # Case: Maybe ticket is invalid or too old, or simply still open
             # We can check if position still exists

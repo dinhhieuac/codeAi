@@ -1,0 +1,29 @@
+{
+    "default_account": "acc_263581981",
+    "accounts": {
+        "acc_263581981": {
+            "name": "Exness Real - 263581981",
+            "account": 263581981,
+            "password": "@Dinhhieu273",
+            "server": "Exness-MT5Real37",
+            "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+            "symbol": "XAUUSDc"
+        },
+        "acc_183677261": {
+            "name": "Exness Real - 183677261",
+            "account": 183677261,
+            "password": "@Dinhhieu273",
+            "server": "Exness-MT5Real25",
+            "mt5_path": "C:/Program Files/MetaTrader 5 EXNESS/terminal64.exe",
+            "symbol": "XAUUSDc"
+        },
+        "acc_270589269": {
+            "name": "Exness Demo Trial - 270589269",
+            "account": 270589269,
+            "password": "@Dinhhieu273",
+            "server": "Exness-MT5Trial17",
+            "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
+            "symbol": "XAUUSD"
+        }
+    }
+}

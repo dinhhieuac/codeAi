@@ -1,9 +1,5 @@
 {
-    "account": 263581981,
-    "password": "@Dinhhieu273",
-    "server": "Exness-MT5Real37",
-    "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
-    "symbol": "XAUUSDc",
+    "account_id": "acc_263581981",
     "volume": 0.01,
     "magic": 100002,
     "max_positions": 1,

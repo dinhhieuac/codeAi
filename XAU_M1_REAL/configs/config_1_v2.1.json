@@ -1,9 +1,5 @@
 {
-    "account": 183677261,
-    "password": "@Dinhhieu273",
-    "server": "Exness-MT5Real25",
-    "mt5_path": "C:/Program Files/MetaTrader 5 EXNESS/terminal64.exe",
-    "symbol": "XAUUSDc",
+    "account_id": "acc_183677261",
     "volume": 0.01,
     "magic": 100003,
     "max_positions": 1,
@@ -46,4 +42,3 @@
     "version": "V2.1",
     "description": "Strategy 1 Trend HA V2.1 - Hard Gate Implementation: Strong Trend, Fresh Breakout+Confirm, SL Limit, State Machine, Session Filter, Consecutive Loss Guard"
 }
-

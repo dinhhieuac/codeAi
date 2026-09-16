@@ -26,7 +26,7 @@ try:
 except ImportError:
     psutil = None
 import MetaTrader5 as mt5
-from utils import connect_mt5, load_config
+from utils import connect_mt5, load_config, load_accounts, get_accounts_file_path
 from update_db import load_strategy_configs
 
 # Định nghĩa các bot giao dịch, script hỗ trợ và file cấu hình tương ứng
@@ -1527,8 +1527,8 @@ def safe_sync_db():
             if deals:
                 total_profit = 0.0
                 close_price = 0.0
-                is_closed = False
                 close_time = None
+                is_closed = False
                 for deal in deals:
                     if deal.entry == mt5.DEAL_ENTRY_OUT:
                         total_profit += (deal.profit + deal.swap + deal.commission)
@@ -1537,10 +1537,16 @@ def safe_sync_db():
                         close_time = datetime.fromtimestamp(deal.time).strftime("%Y-%m-%d %H:%M:%S")
                 
                 if is_closed:
-                    cur.execute(
-                        "UPDATE orders SET close_price = ?, profit = ?, close_time = ? WHERE ticket = ?",
-                        (close_price, round(total_profit, 2), close_time, ticket)
-                    )
+                    try:
+                        cur.execute(
+                            "UPDATE orders SET close_price = ?, profit = ?, close_time = ? WHERE ticket = ?",
+                            (close_price, round(total_profit, 2), close_time, ticket)
+                        )
+                    except sqlite3.OperationalError:
+                        cur.execute(
+                            "UPDATE orders SET close_price = ?, profit = ? WHERE ticket = ?",
+                            (close_price, round(total_profit, 2), ticket)
+                        )
                     updated_count += 1
         conn.commit()
     conn.close()
@@ -1555,6 +1561,129 @@ def api_sync_db():
         return jsonify({'success': success, 'message': msg}), (200 if success else 400)
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ MT5: {str(e)}'}), 500
+
+# =========================================================================
+# ACCOUNT CONFIGURATION APIS (GET / SAVE / DELETE)
+# =========================================================================
+
+@app.route('/api/accounts')
+def api_get_accounts():
+    """Lấy danh sách các tài khoản MT5 từ configs/accounts.json"""
+    accounts_path = get_accounts_file_path()
+    try:
+        if os.path.exists(accounts_path):
+            with open(accounts_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = {"accounts": {}, "default_account": None}
+            
+        accounts = data.get("accounts", {})
+        accounts_list = []
+        for acc_id, acc_info in accounts.items():
+            item = dict(acc_info)
+            item['id'] = acc_id
+            accounts_list.append(item)
+            
+        return jsonify({
+            'success': True,
+            'accounts': accounts,
+            'accounts_list': accounts_list,
+            'default_account': data.get("default_account")
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi đọc file accounts.json: {str(e)}'}), 500
+
+@app.route('/api/save_account', methods=['POST'])
+def api_save_account():
+    """Thêm mới hoặc cập nhật tài khoản MT5 vào configs/accounts.json"""
+    data = request.get_json() or {}
+    acc_id = data.get('id', '').strip()
+    name = data.get('name', '').strip()
+    account_no = data.get('account')
+    password = data.get('password', '').strip()
+    server = data.get('server', '').strip()
+    mt5_path = data.get('mt5_path', '').strip()
+    symbol = data.get('symbol', 'XAUUSDc').strip()
+    is_default = data.get('is_default', False)
+    
+    if not account_no or not server:
+        return jsonify({'success': False, 'message': 'Vui lòng nhập Số tài khoản và Server!'}), 400
+        
+    try:
+        account_no = int(account_no)
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Số tài khoản phải là số nguyên!'}), 400
+        
+    if not acc_id:
+        acc_id = f"acc_{account_no}"
+        
+    if not name:
+        name = f"Tài khoản {account_no} ({server})"
+        
+    accounts_path = get_accounts_file_path()
+    try:
+        raw_data = {"accounts": {}, "default_account": acc_id}
+        if os.path.exists(accounts_path):
+            with open(accounts_path, 'r', encoding='utf-8') as f:
+                raw_data = json.load(f)
+                
+        if "accounts" not in raw_data:
+            raw_data["accounts"] = {}
+            
+        raw_data["accounts"][acc_id] = {
+            "name": name,
+            "account": account_no,
+            "password": password,
+            "server": server,
+            "mt5_path": mt5_path or "C:/Program Files/MetaTrader 5/terminal64.exe",
+            "symbol": symbol or "XAUUSDc"
+        }
+        
+        if is_default or not raw_data.get("default_account"):
+            raw_data["default_account"] = acc_id
+            
+        with open(accounts_path, 'w', encoding='utf-8') as f:
+            json.dump(raw_data, f, indent=4, ensure_ascii=False)
+            
+        return jsonify({
+            'success': True,
+            'message': f'Đã lưu thành công tài khoản "{name}" ({account_no})!',
+            'account_id': acc_id,
+            'account': raw_data["accounts"][acc_id]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi ghi file accounts.json: {str(e)}'}), 500
+
+@app.route('/api/delete_account', methods=['POST'])
+def api_delete_account():
+    """Xóa tài khoản MT5"""
+    data = request.get_json() or {}
+    acc_id = data.get('id', '').strip()
+    if not acc_id:
+        return jsonify({'success': False, 'message': 'Thiếu mã tài khoản (id) cần xóa!'}), 400
+        
+    accounts_path = get_accounts_file_path()
+    try:
+        if not os.path.exists(accounts_path):
+            return jsonify({'success': False, 'message': 'Không tìm thấy file accounts.json!'}), 404
+            
+        with open(accounts_path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+            
+        accounts = raw_data.get("accounts", {})
+        if acc_id not in accounts:
+            return jsonify({'success': False, 'message': f'Tài khoản "{acc_id}" không tồn tại!'}), 404
+            
+        del accounts[acc_id]
+        if raw_data.get("default_account") == acc_id:
+            raw_data["default_account"] = next(iter(accounts.keys())) if accounts else None
+            
+        with open(accounts_path, 'w', encoding='utf-8') as f:
+            json.dump(raw_data, f, indent=4, ensure_ascii=False)
+            
+        return jsonify({'success': True, 'message': f'Đã xóa tài khoản {acc_id} thành công!'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi xóa tài khoản: {str(e)}'}), 500
 
 # =========================================================================
 # BOT CONFIGURATION APIS (GET CONFIG / SAVE CONFIG / RESTART BOT)
@@ -1582,6 +1711,8 @@ def api_get_bot_config():
             raw_content = f.read()
         parsed = json.loads(raw_content)
         running = get_running_bots()
+        accounts_dict = load_accounts()
+        accounts_list = [{'id': k, **v} for k, v in accounts_dict.items()]
         return jsonify({
             'success': True,
             'bot': bot_file,
@@ -1589,6 +1720,7 @@ def api_get_bot_config():
             'config_path': config_rel,
             'config_data': parsed,
             'config_raw': raw_content,
+            'accounts_list': accounts_list,
             'is_running': bot_file in running,
             'pid': running.get(bot_file)
         })

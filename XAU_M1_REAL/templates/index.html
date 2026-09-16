@@ -82,6 +82,9 @@
                 <button class="btn btn-outline-warning btn-sm" onclick="toggleBotPanel()">
                     <i class="fas fa-sliders-h me-1"></i> Quản Lý Bot <span class="badge bg-danger ms-1" id="runningBotBadge">0</span>
                 </button>
+                <button class="btn btn-outline-primary btn-sm" onclick="openAccountsModal()" title="Quản lý danh sách tài khoản MT5">
+                    <i class="fas fa-wallet me-1"></i> Tài Khoản MT5
+                </button>
                 <a href="/signals" class="btn btn-outline-light btn-sm">
                     <i class="fas fa-signal"></i> Signals
                 </a>
@@ -779,19 +782,18 @@
                                             </label>
                                             <input type="number" step="1" class="form-control form-control-sm font-monospace" id="cfgInputMagic">
                                         </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">
-                                                Tài Khoản MT5 (Login)
-                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Số tài khoản MetaTrader 5 thực tế dùng để giao dịch (ví dụ: 263581981)"></i>
+                                        <div class="col-md-8">
+                                            <label class="form-label small fw-bold mb-1 d-flex justify-content-between align-items-center">
+                                                <span>
+                                                    <i class="fas fa-wallet text-primary me-1"></i> Chọn Tài Khoản MT5
+                                                    <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Chọn tài khoản MT5 từ danh sách cấu hình tập trung (accounts.json)"></i>
+                                                </span>
+                                                <a href="javascript:void(0)" onclick="openAccountsModal()" class="small text-decoration-none"><i class="fas fa-cog me-1"></i> Quản lý tài khoản</a>
                                             </label>
-                                            <input type="number" class="form-control form-control-sm font-monospace" id="cfgInputAccount">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label small fw-bold mb-1">
-                                                Máy Chủ MT5 (Server)
-                                                <i class="fas fa-info-circle text-info ms-1" style="cursor: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" title="Tên máy chủ broker Exness trên MT5 (ví dụ: Exness-MT5Real37)"></i>
-                                            </label>
-                                            <input type="text" class="form-control form-control-sm" id="cfgInputServer">
+                                            <select class="form-select form-select-sm font-monospace" id="cfgSelectAccount" onchange="onBotAccountChanged(this.value)">
+                                                <!-- Dynamic accounts -->
+                                            </select>
+                                            <div id="cfgAccountDetailsPreview" class="small text-muted font-monospace mt-1" style="font-size: 11px;"></div>
                                         </div>
                                     </div>
                                 </div>
@@ -846,6 +848,112 @@
         </div>
     </div>
 
+    <!-- MODAL QUẢN LÝ TÀI KHOẢN MT5 (ACCOUNTS MANAGEMENT MODAL) -->
+    <div class="modal fade" id="accountsModal" tabindex="-1" aria-labelledby="accountsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0" style="border-radius: 12px; overflow: hidden;">
+                <div class="modal-header bg-dark text-white py-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-wallet text-warning fs-5"></i>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0" id="accountsModalLabel">Quản Lý Tài Khoản MT5</h5>
+                            <small class="text-light opacity-75 font-monospace">configs/accounts.json</small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-3 p-md-4 bg-light">
+                    <div id="accountModalAlert" class="alert alert-dismissible fade d-none py-2 px-3 small mb-3" role="alert">
+                        <span id="accountModalAlertMsg"></span>
+                        <button type="button" class="btn-close py-2" onclick="hideAccountAlert()"></button>
+                    </div>
+
+                    <!-- Danh sách các tài khoản -->
+                    <div class="card border-0 shadow-sm mb-4">
+                        <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                            <span class="fw-bold small text-primary"><i class="fas fa-list me-1"></i> Danh Sách Tài Khoản Đã Cấu Hình</span>
+                            <button class="btn btn-sm btn-outline-success py-1 px-2" onclick="resetAccountForm()">
+                                <i class="fas fa-plus me-1"></i> Thêm Tài Khoản Mới
+                            </button>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover table-sm align-middle mb-0" id="accountsTable">
+                                    <thead class="table-light small">
+                                        <tr>
+                                            <th class="ps-3">Tên & ID</th>
+                                            <th>Số Tài Khoản</th>
+                                            <th>Máy Chủ (Server)</th>
+                                            <th>Symbol</th>
+                                            <th class="text-end pe-3">Thao Tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="accountsTableBody">
+                                        <tr><td colspan="5" class="text-center py-3 text-muted">Đang tải danh sách tài khoản...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Form Thêm / Sửa Tài Khoản -->
+                    <div class="card border-0 shadow-sm" id="accountFormCard">
+                        <div class="card-header bg-white py-2 fw-bold small text-dark d-flex justify-content-between align-items-center">
+                            <span id="accountFormTitle"><i class="fas fa-edit me-1"></i> Thông Tin Tài Khoản</span>
+                            <button class="btn btn-sm btn-link text-muted p-0 text-decoration-none" onclick="resetAccountForm()">Nhập mới</button>
+                        </div>
+                        <div class="card-body p-3">
+                            <input type="hidden" id="accFormId">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label small fw-bold mb-1">Mã Định Danh (ID)</label>
+                                    <input type="text" class="form-control form-control-sm font-monospace" id="accFormCustomId" placeholder="acc_263581981">
+                                    <small class="text-muted" style="font-size: 11px;">Mã nội bộ dùng để tham chiếu trong cấu hình bot</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small fw-bold mb-1">Tên Gợi Nhớ (Display Name)</label>
+                                    <input type="text" class="form-control form-control-sm" id="accFormName" placeholder="Exness Real (263581981)">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold mb-1">Số Tài Khoản (Login) *</label>
+                                    <input type="number" class="form-control form-control-sm font-monospace" id="accFormAccount" required placeholder="263581981">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold mb-1">Mật Khẩu MT5 *</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="password" class="form-control" id="accFormPassword" placeholder="Nhập mật khẩu">
+                                        <button class="btn btn-outline-secondary" type="button" onclick="toggleAccPasswordVisibility()"><i class="fas fa-eye" id="accPwdIcon"></i></button>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold mb-1">Máy Chủ (Server) *</label>
+                                    <input type="text" class="form-control form-control-sm" id="accFormServer" required placeholder="Exness-MT5Real37">
+                                </div>
+                                <div class="col-md-8">
+                                    <label class="form-label small fw-bold mb-1">Đường Dẫn Terminal MT5</label>
+                                    <input type="text" class="form-control form-control-sm font-monospace" id="accFormMt5Path" placeholder="C:/Program Files/MetaTrader 5/terminal64.exe">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold mb-1">Cặp Giao Dịch Mặc Định</label>
+                                    <input type="text" class="form-control form-control-sm font-monospace" id="accFormSymbol" placeholder="XAUUSDc">
+                                </div>
+                            </div>
+                            <div class="mt-3 text-end">
+                                <button type="button" class="btn btn-sm btn-secondary me-2" onclick="resetAccountForm()">Nhập Lại</button>
+                                <button type="button" class="btn btn-sm btn-primary fw-bold px-3" onclick="submitAccountForm()">
+                                    <i class="fas fa-save me-1"></i> Lưu Tài Khoản
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -853,8 +961,10 @@
     <script>
         let botModalInstance = null;
         let botConfigModalInstance = null;
+        let accountsModalInstance = null;
         let currentConfigBot = null;
         let currentConfigData = null;
+        let cachedAccounts = {};
 
         function showCfgAlert(msg, type = 'success') {
             const alert = document.getElementById('cfgModalAlert');
@@ -869,6 +979,255 @@
             const alert = document.getElementById('cfgModalAlert');
             if (alert) alert.classList.add('d-none');
         }
+
+        // =========================================================================
+        // QUẢN LÝ TÀI KHOẢN MT5 (ACCOUNTS MANAGEMENT JAVASCRIPT)
+        // =========================================================================
+
+        function showAccountAlert(msg, type = 'success') {
+            const alert = document.getElementById('accountModalAlert');
+            const alertMsg = document.getElementById('accountModalAlertMsg');
+            if (!alert || !alertMsg) return;
+            alert.className = `alert alert-${type} alert-dismissible fade show py-2 px-3 small mb-3`;
+            alertMsg.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1"></i> ${msg}`;
+            alert.classList.remove('d-none');
+        }
+
+        function hideAccountAlert() {
+            const alert = document.getElementById('accountModalAlert');
+            if (alert) alert.classList.add('d-none');
+        }
+
+        function toggleAccPasswordVisibility() {
+            const pwdInput = document.getElementById('accFormPassword');
+            const icon = document.getElementById('accPwdIcon');
+            if (pwdInput.type === 'password') {
+                pwdInput.type = 'text';
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                pwdInput.type = 'password';
+                icon.className = 'fas fa-eye';
+            }
+        }
+
+        async function openAccountsModal() {
+            hideAccountAlert();
+            if (!accountsModalInstance) {
+                accountsModalInstance = new bootstrap.Modal(document.getElementById('accountsModal'));
+            }
+            accountsModalInstance.show();
+            await loadAccountsTable();
+        }
+
+        async function loadAccountsTable() {
+            const tbody = document.getElementById('accountsTableBody');
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted"><span class="spinner-border spinner-border-sm me-1"></span> Đang tải...</td></tr>';
+            try {
+                const res = await fetch('/api/accounts');
+                const data = await res.json();
+                if (data.success) {
+                    cachedAccounts = data.accounts || {};
+                    renderAccountsTable(data.accounts_list || [], data.default_account);
+                } else {
+                    showAccountAlert(data.message || 'Lỗi tải danh sách tài khoản', 'danger');
+                }
+            } catch (err) {
+                showAccountAlert(`Lỗi kết nối: ${err.message}`, 'danger');
+            }
+        }
+
+        function renderAccountsTable(list, defaultAccId) {
+            const tbody = document.getElementById('accountsTableBody');
+            if (!list || list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted">Chưa có tài khoản nào. Vui lòng thêm bên dưới.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = list.map(acc => {
+                const isDef = acc.id === defaultAccId;
+                return `
+                    <tr>
+                        <td class="ps-3">
+                            <strong>${acc.name || acc.id}</strong>
+                            ${isDef ? '<span class="badge bg-success ms-1">Mặc định</span>' : ''}
+                            <div class="small text-muted font-monospace">${acc.id}</div>
+                        </td>
+                        <td><span class="font-monospace fw-bold">${acc.account}</span></td>
+                        <td><span class="badge bg-secondary font-monospace">${acc.server}</span></td>
+                        <td><span class="badge bg-dark font-monospace">${acc.symbol || 'XAUUSDc'}</span></td>
+                        <td class="text-end pe-3">
+                            <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" onclick="editAccount('${acc.id}')" title="Chỉnh sửa tài khoản">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="deleteAccount('${acc.id}', '${acc.name || acc.account}')" title="Xóa tài khoản">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function resetAccountForm() {
+            document.getElementById('accFormId').value = '';
+            document.getElementById('accFormCustomId').value = '';
+            document.getElementById('accFormCustomId').readOnly = false;
+            document.getElementById('accFormName').value = '';
+            document.getElementById('accFormAccount').value = '';
+            document.getElementById('accFormPassword').value = '';
+            document.getElementById('accFormServer').value = '';
+            document.getElementById('accFormMt5Path').value = 'C:/Program Files/MetaTrader 5/terminal64.exe';
+            document.getElementById('accFormSymbol').value = 'XAUUSDc';
+            document.getElementById('accountFormTitle').innerHTML = '<i class="fas fa-plus-circle text-success me-1"></i> Thêm Tài Khoản MT5 Mới';
+            hideAccountAlert();
+        }
+
+        function editAccount(accId) {
+            const acc = cachedAccounts[accId];
+            if (!acc) return;
+            document.getElementById('accFormId').value = accId;
+            document.getElementById('accFormCustomId').value = accId;
+            document.getElementById('accFormCustomId').readOnly = true;
+            document.getElementById('accFormName').value = acc.name || '';
+            document.getElementById('accFormAccount').value = acc.account || '';
+            document.getElementById('accFormPassword').value = acc.password || '';
+            document.getElementById('accFormServer').value = acc.server || '';
+            document.getElementById('accFormMt5Path').value = acc.mt5_path || 'C:/Program Files/MetaTrader 5/terminal64.exe';
+            document.getElementById('accFormSymbol').value = acc.symbol || 'XAUUSDc';
+            document.getElementById('accountFormTitle').innerHTML = `<i class="fas fa-edit text-primary me-1"></i> Chỉnh Sửa: <strong>${acc.name || accId}</strong>`;
+            document.getElementById('accountFormCard').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function submitAccountForm() {
+            const accId = document.getElementById('accFormCustomId').value.trim();
+            const name = document.getElementById('accFormName').value.trim();
+            const accountNo = document.getElementById('accFormAccount').value.trim();
+            const password = document.getElementById('accFormPassword').value.trim();
+            const server = document.getElementById('accFormServer').value.trim();
+            const mt5Path = document.getElementById('accFormMt5Path').value.trim();
+            const symbol = document.getElementById('accFormSymbol').value.trim();
+
+            if (!accountNo || !server) {
+                showAccountAlert("Vui lòng điền Số tài khoản và Server!", "danger");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/save_account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: accId,
+                        name: name,
+                        account: accountNo,
+                        password: password,
+                        server: server,
+                        mt5_path: mt5Path,
+                        symbol: symbol
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showAccountAlert(data.message, 'success');
+                    resetAccountForm();
+                    await loadAccountsTable();
+                    if (currentConfigBot && currentConfigData) {
+                        await refreshBotAccountDropdown();
+                    }
+                } else {
+                    showAccountAlert(data.message || 'Lỗi khi lưu tài khoản', 'danger');
+                }
+            } catch (err) {
+                showAccountAlert(`Lỗi kết nối lưu: ${err.message}`, 'danger');
+            }
+        }
+
+        async function deleteAccount(accId, displayName) {
+            if (!confirm(`Bạn có chắc chắn muốn xóa tài khoản "${displayName}" (${accId})?\nLưu ý: Các bot đang liên kết với tài khoản này có thể bị mất cấu hình đăng nhập!`)) {
+                return;
+            }
+            try {
+                const res = await fetch('/api/delete_account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: accId })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showAccountAlert(data.message, 'success');
+                    await loadAccountsTable();
+                    if (currentConfigBot && currentConfigData) {
+                        await refreshBotAccountDropdown();
+                    }
+                } else {
+                    showAccountAlert(data.message || 'Lỗi khi xóa tài khoản', 'danger');
+                }
+            } catch (err) {
+                showAccountAlert(`Lỗi kết nối xóa: ${err.message}`, 'danger');
+            }
+        }
+
+        function populateBotAccountSelect(accountsList, selectedAccId) {
+            const sel = document.getElementById('cfgSelectAccount');
+            if (!sel) return;
+            sel.innerHTML = '';
+            
+            if (!accountsList || accountsList.length === 0) {
+                sel.innerHTML = '<option value="">(Chưa có tài khoản - Bấm Quản lý để thêm)</option>';
+                const preview = document.getElementById('cfgAccountDetailsPreview');
+                if (preview) preview.textContent = '';
+                return;
+            }
+
+            accountsList.forEach(acc => {
+                const opt = document.createElement('option');
+                opt.value = acc.id;
+                opt.textContent = `${acc.name || acc.id} [${acc.account} | ${acc.server} | ${acc.symbol || 'XAUUSDc'}]`;
+                if (acc.id === selectedAccId) {
+                    opt.selected = true;
+                }
+                sel.appendChild(opt);
+            });
+
+            if (!selectedAccId && accountsList.length > 0) {
+                sel.value = accountsList[0].id;
+            } else if (selectedAccId) {
+                sel.value = selectedAccId;
+            }
+
+            onBotAccountChanged(sel.value);
+        }
+
+        function onBotAccountChanged(accId) {
+            const preview = document.getElementById('cfgAccountDetailsPreview');
+            const acc = cachedAccounts[accId];
+            if (acc && preview) {
+                preview.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-1"></i>Số TK: <strong>${acc.account}</strong> | Máy chủ: <strong>${acc.server}</strong> | Symbol mặc định: <strong>${acc.symbol || 'XAUUSDc'}</strong></span>`;
+                const symbolInput = document.getElementById('cfgInputSymbol');
+                if (symbolInput && (!symbolInput.value || symbolInput.value.trim() === '')) {
+                    symbolInput.value = acc.symbol || 'XAUUSDc';
+                }
+            } else if (preview) {
+                preview.textContent = '';
+            }
+        }
+
+        async function refreshBotAccountDropdown() {
+            try {
+                const res = await fetch('/api/accounts');
+                const data = await res.json();
+                if (data.success) {
+                    cachedAccounts = data.accounts || {};
+                    const curVal = document.getElementById('cfgSelectAccount')?.value || currentConfigData?.account_id;
+                    populateBotAccountSelect(data.accounts_list || [], curVal);
+                }
+            } catch (e) {
+                console.error("Lỗi làm mới dropdown tài khoản:", e);
+            }
+        }
+
+        // =========================================================================
+        // BOT CONFIG MODAL
+        // =========================================================================
 
         async function openBotConfigModal(botFile) {
             currentConfigBot = botFile;
@@ -898,6 +1257,12 @@
                 document.getElementById('cfgFooterFileInfo').textContent = `File: ${data.config_path}`;
                 document.getElementById('cfgRawTextarea').value = data.config_raw;
 
+                // Cập nhật cachedAccounts từ server
+                if (data.accounts_list) {
+                    cachedAccounts = {};
+                    data.accounts_list.forEach(a => { cachedAccounts[a.id] = a; });
+                }
+
                 // Cập nhật trạng thái đang chạy
                 const notice = document.getElementById('cfgRunningNotice');
                 const btnRestart = document.getElementById('btnSaveAndRestart');
@@ -911,13 +1276,14 @@
                     if (btnRestart) btnRestart.classList.add('d-none');
                 }
 
+                // Điền danh sách tài khoản và chọn tài khoản bot đang dùng
+                populateBotAccountSelect(data.accounts_list || [], data.config_data.account_id);
+
                 // Điền thông số cơ bản
-                document.getElementById('cfgInputSymbol').value = data.config_data.symbol || 'XAUUSDc';
+                document.getElementById('cfgInputSymbol').value = data.config_data.symbol || '';
                 document.getElementById('cfgInputVolume').value = data.config_data.volume !== undefined ? data.config_data.volume : 0.01;
                 document.getElementById('cfgInputMaxPos').value = data.config_data.max_positions !== undefined ? data.config_data.max_positions : 1;
                 document.getElementById('cfgInputMagic').value = data.config_data.magic || '';
-                document.getElementById('cfgInputAccount').value = data.config_data.account || '';
-                document.getElementById('cfgInputServer').value = data.config_data.server || '';
 
                 // Điền parameters động
                 renderDynamicParams(data.config_data.parameters || {});
@@ -1089,16 +1455,27 @@
         function syncFormToRaw() {
             if (!currentConfigData) return;
             try {
-                currentConfigData.symbol = document.getElementById('cfgInputSymbol').value.trim();
+                const selAcc = document.getElementById('cfgSelectAccount').value;
+                if (selAcc) {
+                    currentConfigData.account_id = selAcc;
+                }
+                
+                const symVal = document.getElementById('cfgInputSymbol').value.trim();
+                if (symVal) {
+                    currentConfigData.symbol = symVal;
+                }
+                
                 currentConfigData.volume = parseFloat(document.getElementById('cfgInputVolume').value) || 0.01;
                 currentConfigData.max_positions = parseInt(document.getElementById('cfgInputMaxPos').value, 10) || 1;
                 currentConfigData.magic = parseInt(document.getElementById('cfgInputMagic').value, 10) || currentConfigData.magic;
                 
-                const accVal = document.getElementById('cfgInputAccount').value.trim();
-                if (accVal) currentConfigData.account = parseInt(accVal, 10) || accVal;
-                
-                const serverVal = document.getElementById('cfgInputServer').value.trim();
-                if (serverVal) currentConfigData.server = serverVal;
+                // Loại bỏ các trường đăng nhập dư thừa trong file bot nếu đã có account_id
+                if (currentConfigData.account_id) {
+                    delete currentConfigData.account;
+                    delete currentConfigData.password;
+                    delete currentConfigData.server;
+                    delete currentConfigData.mt5_path;
+                }
 
                 if (!currentConfigData.parameters) currentConfigData.parameters = {};
                 const dynamicInputs = document.querySelectorAll('.dynamic-param-input');
@@ -1126,12 +1503,18 @@
                 const parsed = JSON.parse(raw);
                 currentConfigData = parsed;
 
+                if (parsed.account_id) {
+                    const sel = document.getElementById('cfgSelectAccount');
+                    if (sel) {
+                        sel.value = parsed.account_id;
+                        onBotAccountChanged(parsed.account_id);
+                    }
+                }
+
                 document.getElementById('cfgInputSymbol').value = parsed.symbol || '';
                 document.getElementById('cfgInputVolume').value = parsed.volume !== undefined ? parsed.volume : 0.01;
                 document.getElementById('cfgInputMaxPos').value = parsed.max_positions !== undefined ? parsed.max_positions : 1;
                 document.getElementById('cfgInputMagic').value = parsed.magic || '';
-                document.getElementById('cfgInputAccount').value = parsed.account || '';
-                document.getElementById('cfgInputServer').value = parsed.server || '';
 
                 renderDynamicParams(parsed.parameters || {});
                 hideCfgAlert();

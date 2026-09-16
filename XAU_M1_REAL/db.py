@@ -50,6 +50,7 @@ class Database:
                 open_time DATETIME,
                 close_price REAL,
                 profit REAL,
+                close_time DATETIME,
                 comment TEXT,
                 account_id INTEGER DEFAULT 0
             )
@@ -59,7 +60,7 @@ class Database:
         conn.close()
 
     def _migrate_tables(self):
-        """Add account_id column to existing tables if missing"""
+        """Add account_id and close_time columns to existing tables if missing"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -69,6 +70,10 @@ class Database:
         if 'account_id' not in columns:
             print("📦 Migrating DB: Adding account_id to orders table...")
             cursor.execute("ALTER TABLE orders ADD COLUMN account_id INTEGER DEFAULT 0")
+            
+        if 'close_time' not in columns:
+            print("📦 Migrating DB: Adding close_time to orders table...")
+            cursor.execute("ALTER TABLE orders ADD COLUMN close_time DATETIME")
             
         # Check signals table
         cursor.execute("PRAGMA table_info(signals)")
@@ -110,16 +115,23 @@ class Database:
         conn.commit()
         conn.close()
     
-    def update_order_profit(self, ticket, close_price, profit):
-        """Update closed order with profit"""
+    def update_order_profit(self, ticket, close_price, profit, close_time=None):
+        """Update closed order with profit and optional close_time"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        cursor.execute('''
-            UPDATE orders 
-            SET close_price = ?, profit = ? 
-            WHERE ticket = ?
-        ''', (close_price, profit, ticket))
+        if close_time is not None:
+            cursor.execute('''
+                UPDATE orders 
+                SET close_price = ?, profit = ?, close_time = ? 
+                WHERE ticket = ?
+            ''', (close_price, profit, close_time, ticket))
+        else:
+            cursor.execute('''
+                UPDATE orders 
+                SET close_price = ?, profit = ? 
+                WHERE ticket = ?
+            ''', (close_price, profit, ticket))
         
         conn.commit()
         conn.close()
