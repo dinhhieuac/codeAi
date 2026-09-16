@@ -1,0 +1,1828 @@
+//+------------------------------------------------------------------+
+
+//| Strategy1_Trend_HA_V2.mq5                                         |
+
+//| Port of XAU_M1_REAL/strategy_1_trend_ha_v2.py (100% logic parity) |
+
+//+------------------------------------------------------------------+
+
+#property copyright "tradeexness"
+
+#property version   "2.00"
+
+
+
+#include "Strategy1_Trend_HA_V2_Utils.mqh"
+
+
+
+input string InpSymbol                         = "XAUUSDc";
+
+input double InpVolume                         = 0.1;
+
+input long   InpMagic                          = 100005;
+
+input int    InpMaxPositions                   = 1;
+
+
+
+input string InpAllowedSessions                = "08:00-22:00";
+
+input bool   InpPauseOnLosses                  = false;
+
+input int    InpMaxConsecutiveLosses           = 3;
+
+input int    InpConsecutiveLossLookbackHours   = 24;
+
+
+
+input string InpSlMode                         = "auto_m5";
+
+input double InpRewardRatio                    = 1.5;
+
+input double InpSlPips                         = 20.0;
+
+input double InpTpPips                         = 30.0;
+
+
+
+input int    InpRsiPeriod                      = 14;
+
+input double InpRsiBuyThreshold                = 58.0;
+
+input double InpRsiSellThreshold               = 42.0;
+
+input int    InpAdxPeriod                      = 14;
+
+input double InpAdxMinThreshold                = 22.0;
+
+input int    InpAtrPeriod                      = 14;
+
+input double InpAtrBufferMultiplier            = 1.5;
+
+
+
+input bool   InpAtrVolatilityFilterEnabled     = true;
+
+input int    InpAtrLookbackPeriod              = 50;
+
+input double InpAtrMinMultiplier               = 0.5;
+
+input double InpAtrMaxMultiplier               = 2.5;
+
+input bool   InpAtrUseRelative                 = true;
+
+input double InpAtrMinAbsolute                 = 0.0;
+
+input double InpAtrMaxAbsolute                 = 0.0;
+
+input bool   InpUseAtrMinAbsolute              = false;
+
+input bool   InpUseAtrMaxAbsolute              = false;
+
+
+
+input int    InpChopLookback                   = 10;
+
+input double InpChopBodyThreshold              = 0.5;
+
+input double InpChopOverlapThreshold           = 0.7;
+
+
+
+input int    InpSpamFilterSeconds              = 300;
+
+input bool   InpConfirmationEnabled            = true;
+
+input int    InpConfirmationCandles            = 1;
+
+
+
+input bool   InpLiquiditySweepRequired         = false;
+
+input double InpLiquiditySweepBuffer           = 1.0;
+
+input double InpLiquiditySweepWickMultiplier   = 1.2;
+
+
+
+input bool   InpDisplacementRequired           = false;
+
+input double InpDisplacementBodyMultiplier     = 1.0;
+
+
+
+input bool   InpH1TrendConfirmationRequired    = false;
+
+input bool   InpEma50Ema200Required            = false;
+
+input bool   InpVolumeConfirmationRequired     = false;
+
+input double InpVolumeConfirmationMultiplier   = 1.1;
+
+
+
+input bool   InpTrailingEnabled                = true;
+
+input bool   InpBreakevenEnabled               = true;
+
+input string InpBreakevenTriggerPips           = "auto";
+
+input double InpBreakevenTriggerPercent        = 0.5;
+
+input string InpTrailingTriggerPips              = "auto";
+
+input double InpTrailingTriggerMultiplier        = 1.2;
+
+input string InpTrailingMode                     = "atr";
+
+input string InpTrailingAtrTimeframe             = "M5";
+
+input double InpTrailingDistancePips             = 50.0;
+
+input double InpTrailingAtrMultiplier            = 1.5;
+
+input double InpTrailingMinPips                  = 30.0;
+
+input double InpTrailingMaxPips                  = 100.0;
+
+
+
+input bool   InpWeekendFlattenEnabled            = true;
+
+input string InpWeekendFlattenScope              = "bot";
+
+input int    InpWeekendCloseUtcHour              = 20;
+
+input int    InpWeekendCloseUtcMinute            = 59;
+
+input int    InpWeekendFlattenMinutesBefore      = 2;
+
+input string InpWeekendFlattenDirection          = "SELL";
+
+input string InpWeekendFlattenComment            = "HA_weekend_flat";
+
+input double InpWeekendFlattenSl                 = 0.0;
+
+input double InpWeekendFlattenTp                 = 0.0;
+
+input int    InpWeekendFlattenDeviation          = 30;
+
+input double InpWeekendFlattenVolume             = 0.03;
+
+input bool   InpUseWeekendFlattenVolume          = true;
+
+
+
+input int    InpTimerSeconds                     = 1;
+
+input bool   InpVerboseLog                       = true;
+
+
+
+CTrade g_trade;
+
+int    g_consecutive_errors = 0;
+
+datetime g_pause_until = 0;
+
+bool   g_shutdown = false;
+
+datetime g_last_logic_run = 0;
+
+string g_last_skip_reason = "";
+
+datetime g_last_skip_log = 0;
+
+
+
+void LogSkipThrottled(const string reason)
+
+{
+
+   if(!InpVerboseLog)
+
+      return;
+
+   const datetime now = TimeCurrent();
+
+   if(reason == g_last_skip_reason && (now - g_last_skip_log) < 60)
+
+      return;
+
+   g_last_skip_reason = reason;
+
+   g_last_skip_log = now;
+
+   Print("[SKIP] ", reason);
+
+}
+
+
+
+bool ShouldRunLogicNow()
+
+{
+
+   const datetime now = TimeCurrent();
+
+   if(now <= g_last_logic_run)
+
+      return false;
+
+   g_last_logic_run = now;
+
+   return true;
+
+}
+
+
+
+S1TrailConfig BuildTrailConfig()
+
+{
+
+   S1TrailConfig cfg;
+
+   cfg.trailing_enabled            = InpTrailingEnabled;
+
+   cfg.breakeven_enabled           = InpBreakevenEnabled;
+
+   cfg.breakeven_trigger_pips      = InpBreakevenTriggerPips;
+
+   cfg.breakeven_trigger_percent   = InpBreakevenTriggerPercent;
+
+   cfg.trailing_trigger_pips       = InpTrailingTriggerPips;
+
+   cfg.trailing_trigger_multiplier = InpTrailingTriggerMultiplier;
+
+   cfg.trailing_mode               = InpTrailingMode;
+
+   cfg.trailing_atr_timeframe      = InpTrailingAtrTimeframe;
+
+   cfg.trailing_distance_pips      = InpTrailingDistancePips;
+
+   cfg.trailing_atr_multiplier     = InpTrailingAtrMultiplier;
+
+   cfg.trailing_min_pips           = InpTrailingMinPips;
+
+   cfg.trailing_max_pips           = InpTrailingMaxPips;
+
+   return cfg;
+
+}
+
+
+
+void S1_FilterPush(string &filters[], string line)
+
+{
+
+   const int n = ArraySize(filters);
+
+   ArrayResize(filters, n + 1);
+
+   filters[n] = line;
+
+}
+
+
+
+int S1_CountFilterPass(const string &filters[])
+
+{
+
+   int pass = 0;
+
+   for(int i = 0; i < ArraySize(filters); i++)
+
+      if(StringFind(filters[i], "✅") >= 0)
+
+         pass++;
+
+   return pass;
+
+}
+
+
+
+int S1_CountFilterFail(const string &filters[])
+
+{
+
+   int fail = 0;
+
+   for(int i = 0; i < ArraySize(filters); i++)
+
+      if(StringFind(filters[i], "❌") >= 0)
+
+         fail++;
+
+   return fail;
+
+}
+
+
+
+// Phân tích + log giống strategy_1_trend_ha_v2.py (filter_status + chi tiết)
+
+int AnalyzeSignalWithLog(HaBar &ha[], const int ha_count, MqlRates &m1_rates[], const int m1_count,
+
+                         const double atr_val, const bool bullish,
+
+                         const double adx_value, const string session_msg,
+
+                         const string current_trend, const string h1_trend,
+
+                         const double ema50_m5, const double ema200_m5,
+
+                         const double price)
+
+{
+
+   const int last = ha_count - 1;
+
+   const int prev = ha_count - 2;
+
+   if(last < 1)
+
+      return 0;
+
+
+
+   HaBar last_ha = ha[last];
+
+   HaBar prev_ha = ha[prev];
+
+   string filters[];
+
+   int signal = 0;
+
+
+
+   if(InpVerboseLog)
+
+   {
+
+      Print("");
+
+      Print("================================================================================");
+
+      PrintFormat("[STRATEGY 1: TREND HA ANALYSIS] %s", InpSymbol);
+
+      Print("================================================================================");
+
+      PrintFormat("Price: %.2f | Trend (M5): %s | ADX: %.1f | RSI: %.1f",
+
+                  price, current_trend, adx_value, last_ha.rsi);
+
+      PrintFormat("   HA Close: %.2f | HA Open: %.2f", last_ha.ha_close, last_ha.ha_open);
+
+      PrintFormat("   SMA55 High: %.2f | SMA55 Low: %.2f", last_ha.sma55_high, last_ha.sma55_low);
+
+      PrintFormat("   ATR: %.2f | Session: %s", atr_val, session_msg);
+
+   }
+
+
+
+   if(bullish)
+
+   {
+
+      const bool is_green = last_ha.ha_close > last_ha.ha_open;
+
+      const bool is_above_channel = last_ha.ha_close > last_ha.sma55_high;
+
+      const bool is_fresh_breakout = prev_ha.ha_close <= prev_ha.sma55_high;
+
+      const bool is_solid_candle = !S1_IsDoji(last_ha.m1_open, last_ha.m1_high, last_ha.m1_low, last_ha.m1_close, 0.2);
+
+
+
+      S1_FilterPush(filters, "✅ M5 Trend: BULLISH");
+
+      S1_FilterPush(filters, StringFormat("%s HA Candle: %s", is_green ? "✅" : "❌", is_green ? "Green" : "Red"));
+
+      S1_FilterPush(filters, StringFormat("%s Above Channel: %.2f > %.2f",
+
+                     is_above_channel ? "✅" : "❌", last_ha.ha_close, last_ha.sma55_high));
+
+
+
+      if(is_green && is_above_channel)
+
+      {
+
+         S1_FilterPush(filters, StringFormat("%s Fresh Breakout: Prev HA Close %.2f <= SMA55 High %.2f",
+
+                        is_fresh_breakout ? "✅" : "❌", prev_ha.ha_close, prev_ha.sma55_high));
+
+         if(is_fresh_breakout)
+
+         {
+
+            S1_FilterPush(filters, StringFormat("%s Solid Candle: %s",
+
+                           is_solid_candle ? "✅" : "❌", is_solid_candle ? "Not Doji" : "Doji detected (Indecision)"));
+
+            if(is_solid_candle)
+
+            {
+
+               const bool rsi_ok = last_ha.rsi > InpRsiBuyThreshold;
+
+               S1_FilterPush(filters, StringFormat("%s RSI > %.0f: %.1f (V3: stricter)",
+
+                              rsi_ok ? "✅" : "❌", InpRsiBuyThreshold, last_ha.rsi));
+
+               if(rsi_ok)
+
+               {
+
+                  string sweep_msg = "Skipped (optional)";
+
+                  bool has_sweep = true;
+
+                  if(InpLiquiditySweepRequired)
+
+                  {
+
+                     double lows[];
+
+                     ArrayResize(lows, m1_count);
+
+                     for(int i = 0; i < m1_count; i++)
+
+                        lows[i] = m1_rates[i].low;
+
+                     const int cur_idx = m1_count - 1;
+
+                     has_sweep = S1_CheckLiquiditySweepBuy(m1_rates[cur_idx].open, m1_rates[cur_idx].high,
+
+                        m1_rates[cur_idx].low, m1_rates[cur_idx].close, lows, m1_count, atr_val,
+
+                        InpSymbol, InpLiquiditySweepBuffer, InpLiquiditySweepWickMultiplier, sweep_msg);
+
+                  }
+
+                  S1_FilterPush(filters, StringFormat("%s Liquidity Sweep: %s", has_sweep ? "✅" : "❌", sweep_msg));
+
+                  if(has_sweep)
+
+                  {
+
+                     string disp_msg = "Skipped (optional)";
+
+                     bool has_displacement = true;
+
+                     if(InpDisplacementRequired)
+
+                     {
+
+                        double highs[], lows[];
+
+                        ArrayResize(highs, m1_count);
+
+                        ArrayResize(lows, m1_count);
+
+                        for(int i = 0; i < m1_count; i++)
+
+                        {
+
+                           highs[i] = m1_rates[i].high;
+
+                           lows[i] = m1_rates[i].low;
+
+                        }
+
+                        const int cur_idx = m1_count - 1;
+
+                        has_displacement = S1_CheckDisplacement(m1_rates[cur_idx].open, m1_rates[cur_idx].close,
+
+                           highs, lows, m1_count, atr_val, true, InpDisplacementBodyMultiplier, disp_msg);
+
+                     }
+
+                     S1_FilterPush(filters, StringFormat("%s Displacement Candle: %s",
+
+                                    has_displacement ? "✅" : "❌", disp_msg));
+
+                     if(has_displacement)
+
+                     {
+
+                        bool has_volume = true;
+
+                        const double vol_ma = last_ha.vol_ma;
+
+                        const double vol_th = vol_ma * InpVolumeConfirmationMultiplier;
+
+                        if(InpVolumeConfirmationRequired)
+
+                           has_volume = ((double)last_ha.tick_volume > vol_th);
+
+                        S1_FilterPush(filters, StringFormat("%s Volume Confirmation: %.0f > %.0f (%.1fx avg)%s",
+
+                                       has_volume ? "✅" : "❌", (double)last_ha.tick_volume, vol_th,
+
+                                       InpVolumeConfirmationMultiplier,
+
+                                       InpVolumeConfirmationRequired ? "" : " (optional)"));
+
+                        if(has_volume)
+
+                        {
+
+                           if(InpConfirmationEnabled && ha_count >= InpConfirmationCandles + 1)
+
+                           {
+
+                              const double breakout_level = last_ha.sma55_high;
+
+                              bool all_confirmed = true;
+
+                              for(int i = 1; i <= InpConfirmationCandles; i++)
+
+                              {
+
+                                 const int idx = ha_count - i;
+
+                                 if(idx >= 0 && ha[idx].ha_close <= breakout_level)
+
+                                 {
+
+                                    all_confirmed = false;
+
+                                    break;
+
+                                 }
+
+                              }
+
+                              if(all_confirmed && ha[last].ha_close > breakout_level)
+
+                              {
+
+                                 signal = 1;
+
+                                 if(InpVerboseLog)
+
+                                    PrintFormat("\n[SIGNAL FOUND] BUY - Tat ca dieu kien dat (V3: %d nen confirmation)!",
+
+                                                InpConfirmationCandles);
+
+                              }
+
+                              else if(InpVerboseLog)
+
+                              {
+
+                                 if(!all_confirmed)
+
+                                    PrintFormat("\n[CHO CONFIRMATION] - Can %d nen confirmation", InpConfirmationCandles);
+
+                                 else
+
+                                    PrintFormat("\n[FALSE BREAKOUT] - Nen cuoi dong nguoc lai channel (%.2f <= %.2f)",
+
+                                                ha[last].ha_close, breakout_level);
+
+                              }
+
+                           }
+
+                           else
+
+                           {
+
+                              signal = 1;
+
+                              if(InpVerboseLog)
+
+                                 Print("\n[SIGNAL FOUND] BUY - Tat ca dieu kien dat!");
+
+                           }
+
+                        }
+
+                        else if(InpVerboseLog)
+
+                           PrintFormat("\n[KHONG CO TIN HIEU] - Volume khong dat (can > %.1fx average)", InpVolumeConfirmationMultiplier);
+
+                     }
+
+                     else if(InpVerboseLog)
+
+                        PrintFormat("\n[KHONG CO TIN HIEU] - %s", disp_msg);
+
+                  }
+
+                  else if(InpVerboseLog)
+
+                     PrintFormat("\n[KHONG CO TIN HIEU] - %s", sweep_msg);
+
+               }
+
+               else if(InpVerboseLog)
+
+                  PrintFormat("\n[KHONG CO TIN HIEU] - RSI khong dat (can > %.0f, hien tai: %.1f)",
+
+                              InpRsiBuyThreshold, last_ha.rsi);
+
+            }
+
+            else if(InpVerboseLog)
+
+               Print("\n[KHONG CO TIN HIEU] - Doji Candle detected");
+
+         }
+
+         else if(InpVerboseLog)
+
+            Print("\n[KHONG CO TIN HIEU] - Khong phai fresh breakout");
+
+      }
+
+      else if(InpVerboseLog)
+
+         Print("\n[KHONG CO TIN HIEU] - Dieu kien co ban khong dat");
+
+
+
+      if(signal == 0 && InpVerboseLog)
+
+      {
+
+         const bool is_above = last_ha.ha_close > last_ha.sma55_high;
+
+         const bool is_fresh = prev_ha.ha_close <= prev_ha.sma55_high;
+
+         Print("\n--------------------------------------------------------------------------------");
+
+         Print("[KHONG CO TIN HIEU] - Tom tat cac bo loc:");
+
+         Print("--------------------------------------------------------------------------------");
+
+         for(int i = 0; i < ArraySize(filters); i++)
+
+            PrintFormat("   %d. %s", i + 1, filters[i]);
+
+         Print("\n[CHI TIET GIA TRI]");
+
+         PrintFormat("   Price: %.2f", price);
+
+         PrintFormat("   M5 Trend: %s", current_trend);
+
+         PrintFormat("   HA Close: %.2f | HA Open: %.2f", last_ha.ha_close, last_ha.ha_open);
+
+         PrintFormat("   SMA55 High: %.2f | SMA55 Low: %.2f", last_ha.sma55_high, last_ha.sma55_low);
+
+         PrintFormat("   RSI: %.1f (V3: BUY can > %.0f, SELL can < %.0f)",
+
+                     last_ha.rsi, InpRsiBuyThreshold, InpRsiSellThreshold);
+
+         PrintFormat("   ADX: %.1f (can >= %.0f)", adx_value, InpAdxMinThreshold);
+
+         PrintFormat("   H1 Trend: %s (phai == M5 Trend: %s)", h1_trend, current_trend);
+
+         PrintFormat("   EMA50 M5: %.2f | EMA200 M5: %.2f", ema50_m5, ema200_m5);
+
+         PrintFormat("   ATR: %.2f", atr_val);
+
+         PrintFormat("   Above Channel: %.2f > %.2f = %s",
+
+                     last_ha.ha_close, last_ha.sma55_high, is_above ? "True" : "False");
+
+         PrintFormat("   Fresh Breakout: Prev %.2f <= %.2f = %s",
+
+                     prev_ha.ha_close, prev_ha.sma55_high, is_fresh ? "True" : "False");
+
+         PrintFormat("\nTong so filters da kiem tra: %d", ArraySize(filters));
+
+         PrintFormat("   PASS: %d", S1_CountFilterPass(filters));
+
+         PrintFormat("   FAIL: %d", S1_CountFilterFail(filters));
+
+         Print("--------------------------------------------------------------------------------\n");
+
+      }
+
+   }
+
+   else
+
+   {
+
+      const bool is_red = last_ha.ha_close < last_ha.ha_open;
+
+      const bool is_below_channel = last_ha.ha_close < last_ha.sma55_low;
+
+      const bool is_fresh_breakout = prev_ha.ha_close >= prev_ha.sma55_low;
+
+      const bool is_solid_candle = !S1_IsDoji(last_ha.m1_open, last_ha.m1_high, last_ha.m1_low, last_ha.m1_close, 0.2);
+
+
+
+      S1_FilterPush(filters, "✅ M5 Trend: BEARISH");
+
+      S1_FilterPush(filters, StringFormat("%s HA Candle: %s", is_red ? "✅" : "❌", is_red ? "Red" : "Green"));
+
+      S1_FilterPush(filters, StringFormat("%s Below Channel: %.2f < %.2f",
+
+                     is_below_channel ? "✅" : "❌", last_ha.ha_close, last_ha.sma55_low));
+
+
+
+      if(is_red && is_below_channel)
+
+      {
+
+         S1_FilterPush(filters, StringFormat("%s Fresh Breakout: Prev HA Close %.2f >= SMA55 Low %.2f",
+
+                        is_fresh_breakout ? "✅" : "❌", prev_ha.ha_close, prev_ha.sma55_low));
+
+         if(is_fresh_breakout)
+
+         {
+
+            S1_FilterPush(filters, StringFormat("%s Solid Candle: %s",
+
+                           is_solid_candle ? "✅" : "❌", is_solid_candle ? "Not Doji" : "Doji detected (Indecision)"));
+
+            if(is_solid_candle)
+
+            {
+
+               const bool rsi_ok = last_ha.rsi < InpRsiSellThreshold;
+
+               S1_FilterPush(filters, StringFormat("%s RSI < %.0f: %.1f (V3: stricter)",
+
+                              rsi_ok ? "✅" : "❌", InpRsiSellThreshold, last_ha.rsi));
+
+               if(rsi_ok)
+
+               {
+
+                  string sweep_msg = "Skipped (optional)";
+
+                  bool has_sweep = true;
+
+                  if(InpLiquiditySweepRequired)
+
+                  {
+
+                     double highs[];
+
+                     ArrayResize(highs, m1_count);
+
+                     for(int i = 0; i < m1_count; i++)
+
+                        highs[i] = m1_rates[i].high;
+
+                     const int cur_idx = m1_count - 1;
+
+                     has_sweep = S1_CheckLiquiditySweepSell(m1_rates[cur_idx].open, m1_rates[cur_idx].high,
+
+                        m1_rates[cur_idx].low, m1_rates[cur_idx].close, highs, m1_count, atr_val,
+
+                        InpSymbol, InpLiquiditySweepBuffer, InpLiquiditySweepWickMultiplier, sweep_msg);
+
+                  }
+
+                  S1_FilterPush(filters, StringFormat("%s Liquidity Sweep: %s", has_sweep ? "✅" : "❌", sweep_msg));
+
+                  if(has_sweep)
+
+                  {
+
+                     string disp_msg = "Skipped (optional)";
+
+                     bool has_displacement = true;
+
+                     if(InpDisplacementRequired)
+
+                     {
+
+                        double highs[], lows[];
+
+                        ArrayResize(highs, m1_count);
+
+                        ArrayResize(lows, m1_count);
+
+                        for(int i = 0; i < m1_count; i++)
+
+                        {
+
+                           highs[i] = m1_rates[i].high;
+
+                           lows[i] = m1_rates[i].low;
+
+                        }
+
+                        const int cur_idx = m1_count - 1;
+
+                        has_displacement = S1_CheckDisplacement(m1_rates[cur_idx].open, m1_rates[cur_idx].close,
+
+                           highs, lows, m1_count, atr_val, false, InpDisplacementBodyMultiplier, disp_msg);
+
+                     }
+
+                     S1_FilterPush(filters, StringFormat("%s Displacement Candle: %s",
+
+                                    has_displacement ? "✅" : "❌", disp_msg));
+
+                     if(has_displacement)
+
+                     {
+
+                        bool has_volume = true;
+
+                        const double vol_ma = last_ha.vol_ma;
+
+                        const double vol_th = vol_ma * InpVolumeConfirmationMultiplier;
+
+                        if(InpVolumeConfirmationRequired)
+
+                           has_volume = ((double)last_ha.tick_volume > vol_th);
+
+                        S1_FilterPush(filters, StringFormat("%s Volume Confirmation: %.0f > %.0f (%.1fx avg)%s",
+
+                                       has_volume ? "✅" : "❌", (double)last_ha.tick_volume, vol_th,
+
+                                       InpVolumeConfirmationMultiplier,
+
+                                       InpVolumeConfirmationRequired ? "" : " (optional)"));
+
+                        if(has_volume)
+
+                        {
+
+                           if(InpConfirmationEnabled && ha_count >= InpConfirmationCandles + 1)
+
+                           {
+
+                              const double breakout_level = last_ha.sma55_low;
+
+                              bool all_confirmed = true;
+
+                              for(int i = 1; i <= InpConfirmationCandles; i++)
+
+                              {
+
+                                 const int idx = ha_count - i;
+
+                                 if(idx >= 0 && ha[idx].ha_close >= breakout_level)
+
+                                 {
+
+                                    all_confirmed = false;
+
+                                    break;
+
+                                 }
+
+                              }
+
+                              if(all_confirmed && ha[last].ha_close < breakout_level)
+
+                              {
+
+                                 signal = -1;
+
+                                 if(InpVerboseLog)
+
+                                    PrintFormat("\n[SIGNAL FOUND] SELL - Tat ca dieu kien dat (V3: %d nen confirmation)!",
+
+                                                InpConfirmationCandles);
+
+                              }
+
+                              else if(InpVerboseLog)
+
+                              {
+
+                                 if(!all_confirmed)
+
+                                    PrintFormat("\n[CHO CONFIRMATION] - Can %d nen confirmation", InpConfirmationCandles);
+
+                                 else
+
+                                    PrintFormat("\n[FALSE BREAKOUT] - Nen cuoi dong nguoc lai channel (%.2f >= %.2f)",
+
+                                                ha[last].ha_close, breakout_level);
+
+                              }
+
+                           }
+
+                           else
+
+                           {
+
+                              signal = -1;
+
+                              if(InpVerboseLog)
+
+                                 Print("\n[SIGNAL FOUND] SELL - Tat ca dieu kien dat!");
+
+                           }
+
+                        }
+
+                        else if(InpVerboseLog)
+
+                           PrintFormat("\n[KHONG CO TIN HIEU] - Volume khong dat (can > %.1fx average)", InpVolumeConfirmationMultiplier);
+
+                     }
+
+                     else if(InpVerboseLog)
+
+                        PrintFormat("\n[KHONG CO TIN HIEU] - %s", disp_msg);
+
+                  }
+
+                  else if(InpVerboseLog)
+
+                     PrintFormat("\n[KHONG CO TIN HIEU] - %s", sweep_msg);
+
+               }
+
+               else if(InpVerboseLog)
+
+                  PrintFormat("\n[KHONG CO TIN HIEU] - RSI khong dat (can < %.0f, hien tai: %.1f)",
+
+                              InpRsiSellThreshold, last_ha.rsi);
+
+            }
+
+            else if(InpVerboseLog)
+
+               Print("\n[KHONG CO TIN HIEU] - Doji Candle detected");
+
+         }
+
+         else if(InpVerboseLog)
+
+            Print("\n[KHONG CO TIN HIEU] - Khong phai fresh breakout");
+
+      }
+
+      else if(InpVerboseLog)
+
+         Print("\n[KHONG CO TIN HIEU] - Dieu kien co ban khong dat");
+
+
+
+      if(signal == 0 && InpVerboseLog)
+
+      {
+
+         const bool is_below = last_ha.ha_close < last_ha.sma55_low;
+
+         const bool is_fresh = prev_ha.ha_close >= prev_ha.sma55_low;
+
+         Print("\n--------------------------------------------------------------------------------");
+
+         Print("[KHONG CO TIN HIEU] - Tom tat cac bo loc:");
+
+         Print("--------------------------------------------------------------------------------");
+
+         for(int i = 0; i < ArraySize(filters); i++)
+
+            PrintFormat("   %d. %s", i + 1, filters[i]);
+
+         Print("\n[CHI TIET GIA TRI]");
+
+         PrintFormat("   Price: %.2f", price);
+
+         PrintFormat("   M5 Trend: %s", current_trend);
+
+         PrintFormat("   HA Close: %.2f | HA Open: %.2f", last_ha.ha_close, last_ha.ha_open);
+
+         PrintFormat("   SMA55 High: %.2f | SMA55 Low: %.2f", last_ha.sma55_high, last_ha.sma55_low);
+
+         PrintFormat("   RSI: %.1f (V3: BUY can > %.0f, SELL can < %.0f)",
+
+                     last_ha.rsi, InpRsiBuyThreshold, InpRsiSellThreshold);
+
+         PrintFormat("   ADX: %.1f (can >= %.0f)", adx_value, InpAdxMinThreshold);
+
+         PrintFormat("   H1 Trend: %s (phai == M5 Trend: %s)", h1_trend, current_trend);
+
+         PrintFormat("   EMA50 M5: %.2f | EMA200 M5: %.2f", ema50_m5, ema200_m5);
+
+         PrintFormat("   ATR: %.2f", atr_val);
+
+         PrintFormat("   Below Channel: %.2f < %.2f = %s",
+
+                     last_ha.ha_close, last_ha.sma55_low, is_below ? "True" : "False");
+
+         PrintFormat("   Fresh Breakout: Prev %.2f >= %.2f = %s",
+
+                     prev_ha.ha_close, prev_ha.sma55_low, is_fresh ? "True" : "False");
+
+         PrintFormat("\nTong so filters da kiem tra: %d", ArraySize(filters));
+
+         PrintFormat("   PASS: %d", S1_CountFilterPass(filters));
+
+         PrintFormat("   FAIL: %d", S1_CountFilterFail(filters));
+
+         Print("--------------------------------------------------------------------------------\n");
+
+      }
+
+   }
+
+
+
+   return signal;
+
+}
+
+
+
+bool CalcSlTp(const int signal, const double price, MqlRates &m5_rates[], const int m5_count,
+
+              double &sl, double &tp)
+
+{
+
+   sl = 0.0;
+
+   tp = 0.0;
+
+   const double point = SymbolInfoDouble(InpSymbol, SYMBOL_POINT);
+
+
+
+   if(InpSlMode == "auto_m5")
+
+   {
+
+      if(m5_count < 3)
+
+         return false;
+
+
+
+      const int idx = m5_count - 2;
+
+      const double prev_m5_high = m5_rates[idx].high;
+
+      const double prev_m5_low = m5_rates[idx].low;
+
+
+
+      double high_a[], low_a[], close_a[];
+
+      ArrayResize(high_a, m5_count);
+
+      ArrayResize(low_a, m5_count);
+
+      ArrayResize(close_a, m5_count);
+
+      for(int i = 0; i < m5_count; i++)
+
+      {
+
+         high_a[i] = m5_rates[i].high;
+
+         low_a[i] = m5_rates[i].low;
+
+         close_a[i] = m5_rates[i].close;
+
+      }
+
+
+
+      double atr_m5 = S1_CalcATR(high_a, low_a, close_a, m5_count, InpAtrPeriod, 1);
+
+      if(atr_m5 <= 0.0)
+
+      {
+
+         const double m5_range = prev_m5_high - prev_m5_low;
+
+         atr_m5 = (m5_range > 0.0) ? m5_range / InpAtrPeriod : 0.1;
+
+      }
+
+
+
+      const double buffer = InpAtrBufferMultiplier * atr_m5;
+
+      const double min_dist = 100.0 * point;
+
+
+
+      if(signal > 0)
+
+      {
+
+         sl = prev_m5_low - buffer;
+
+         if((price - sl) < min_dist)
+
+            sl = price - min_dist;
+
+         const double risk_dist = price - sl;
+
+         tp = price + risk_dist * InpRewardRatio;
+
+      }
+
+      else
+
+      {
+
+         sl = prev_m5_high + buffer;
+
+         if((sl - price) < min_dist)
+
+            sl = price + min_dist;
+
+         const double risk_dist = sl - price;
+
+         tp = price - risk_dist * InpRewardRatio;
+
+      }
+
+      return true;
+
+   }
+
+
+
+   const double sl_dist = InpSlPips * point * 10.0;
+
+   const double tp_dist = InpTpPips * point * 10.0;
+
+   if(signal > 0)
+
+   {
+
+      sl = price - sl_dist;
+
+      tp = price + tp_dist;
+
+   }
+
+   else
+
+   {
+
+      sl = price + sl_dist;
+
+      tp = price - tp_dist;
+
+   }
+
+   return true;
+
+}
+
+
+
+void RunStrategyLogic()
+
+{
+
+   if(g_shutdown)
+
+      return;
+
+   if(TimeCurrent() < g_pause_until)
+
+   {
+
+      LogSkipThrottled("Paused after consecutive order failures");
+
+      return;
+
+   }
+
+
+
+   S1TrailConfig trail_cfg = BuildTrailConfig();
+
+
+
+   bool shutdown = false;
+
+   if(S1_WeekendFlattenMaybe(InpSymbol, InpMagic, InpVolume,
+
+                            InpWeekendFlattenEnabled, InpWeekendFlattenScope,
+
+                            InpWeekendCloseUtcHour, InpWeekendCloseUtcMinute,
+
+                            InpWeekendFlattenMinutesBefore,
+
+                            InpWeekendFlattenVolume, InpUseWeekendFlattenVolume,
+
+                            InpWeekendFlattenDirection, InpWeekendFlattenComment,
+
+                            InpWeekendFlattenDeviation, InpWeekendFlattenSl, InpWeekendFlattenTp,
+
+                            shutdown))
+
+   {
+
+      if(shutdown)
+
+      {
+
+         g_shutdown = true;
+
+         Print("[HA weekend] Flatten complete — stopping EA.");
+
+         ExpertRemove();
+
+      }
+
+      return;
+
+   }
+
+
+
+   if(InpPauseOnLosses)
+
+   {
+
+      string stop_msg;
+
+      int lookback = InpConsecutiveLossLookbackHours;
+
+      if(lookback < 1)
+
+         lookback = 24;
+
+      if(S1_CheckConsecutiveLosses(InpSymbol, InpMagic, InpMaxConsecutiveLosses, lookback, stop_msg))
+
+      {
+
+         Print("[SAFETY STOP] ", stop_msg);
+
+         return;
+
+      }
+
+   }
+
+
+
+   string session_msg;
+
+   if(!S1_CheckTradingSession(InpSymbol, InpAllowedSessions, session_msg))
+
+   {
+
+      LogSkipThrottled(session_msg);
+
+      return;
+
+   }
+
+
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+
+   {
+
+      const ulong ticket = PositionGetTicket(i);
+
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol)
+
+         continue;
+
+      if((long)PositionGetInteger(POSITION_MAGIC) != InpMagic)
+
+         continue;
+
+      S1_ManagePosition(ticket, InpSymbol, InpMagic, trail_cfg);
+
+   }
+
+
+
+   if(S1_CountPositions(InpSymbol, InpMagic) >= InpMaxPositions)
+
+   {
+
+      LogSkipThrottled(StringFormat("Max positions reached (%d), signal scan skipped",
+
+                                    InpMaxPositions));
+
+      return;
+
+   }
+
+
+
+   HaBar ha[];
+
+   int ha_count = 0;
+
+   if(!S1_BuildHaBars(InpSymbol, PERIOD_M1, 200, ha, ha_count, InpAtrPeriod, 14))
+
+   {
+
+      LogSkipThrottled("Failed to build HA bars (need >= 55 M1 candles)");
+
+      return;
+
+   }
+
+
+
+   MqlRates m1_rates[];
+
+   int m1_copied = 0;
+
+   if(!S1_CopyRatesChrono(InpSymbol, PERIOD_M1, 200, m1_rates, m1_copied, 55))
+
+   {
+
+      LogSkipThrottled(StringFormat("Failed to copy M1 rates (got %d, need >= 55)", m1_copied));
+
+      return;
+
+   }
+
+
+
+   MqlRates m5_rates[];
+
+   int m5_copied = 0;
+
+   if(!S1_CopyRatesChrono(InpSymbol, PERIOD_M5, 200, m5_rates, m5_copied, 50))
+
+   {
+
+      LogSkipThrottled(StringFormat("Failed to copy M5 rates (got %d, need >= 50)", m5_copied));
+
+      return;
+
+   }
+
+
+
+   MqlRates h1_rates[];
+
+   int h1_copied = 0;
+
+   if(!S1_CopyRatesChrono(InpSymbol, PERIOD_H1, 200, h1_rates, h1_copied, 50))
+
+   {
+
+      LogSkipThrottled(StringFormat("Failed to copy H1 rates (got %d, need >= 50)", h1_copied));
+
+      return;
+
+   }
+
+
+
+   double m5_close[];
+
+   ArrayResize(m5_close, m5_copied);
+
+   for(int i = 0; i < m5_copied; i++)
+
+      m5_close[i] = m5_rates[i].close;
+
+
+
+   const double ema200_m5 = S1_CalcEMA(m5_close, m5_copied, 200, 0);
+
+   const double ema50_m5  = S1_CalcEMA(m5_close, m5_copied, 50, 0);
+
+   const double m5_close_last = m5_close[m5_copied - 1];
+
+   const bool bullish = m5_close_last > ema200_m5;
+
+   const string current_trend = bullish ? "BULLISH" : "BEARISH";
+
+
+
+   if(InpEma50Ema200Required)
+
+   {
+
+      if(bullish && ema50_m5 <= ema200_m5)
+
+      {
+
+         LogSkipThrottled(StringFormat("EMA50/200 filter: EMA50 %.2f <= EMA200 %.2f (BULLISH)",
+
+                                       ema50_m5, ema200_m5));
+
+         return;
+
+      }
+
+      if(!bullish && ema50_m5 >= ema200_m5)
+
+      {
+
+         LogSkipThrottled(StringFormat("EMA50/200 filter: EMA50 %.2f >= EMA200 %.2f (BEARISH)",
+
+                                       ema50_m5, ema200_m5));
+
+         return;
+
+      }
+
+   }
+
+
+
+   double h1_close[];
+
+   ArrayResize(h1_close, h1_copied);
+
+   for(int i = 0; i < h1_copied; i++)
+
+      h1_close[i] = h1_rates[i].close;
+
+   const double ema200_h1 = S1_CalcEMA(h1_close, h1_copied, 200, 0);
+
+   const string h1_trend = (h1_close[h1_copied - 1] > ema200_h1) ? "BULLISH" : "BEARISH";
+
+
+
+   if(InpH1TrendConfirmationRequired && h1_trend != current_trend)
+
+   {
+
+      LogSkipThrottled(StringFormat("H1 trend %s != M5 trend %s", h1_trend, current_trend));
+
+      return;
+
+   }
+
+
+
+   double m5_high[], m5_low[], m5_cl[];
+
+   ArrayResize(m5_high, m5_copied);
+
+   ArrayResize(m5_low, m5_copied);
+
+   ArrayResize(m5_cl, m5_copied);
+
+   for(int i = 0; i < m5_copied; i++)
+
+   {
+
+      m5_high[i] = m5_rates[i].high;
+
+      m5_low[i] = m5_rates[i].low;
+
+      m5_cl[i] = m5_rates[i].close;
+
+   }
+
+   const double adx_value = S1_CalcADX(m5_high, m5_low, m5_cl, m5_copied, InpAdxPeriod, 0);
+
+   if(adx_value <= 0.0 || adx_value < InpAdxMinThreshold)
+
+   {
+
+      if(InpVerboseLog)
+
+         PrintFormat("[ADX Filter] ADX=%.1f < %.0f (No trend, skipping)", adx_value, InpAdxMinThreshold);
+
+      return;
+
+   }
+
+   if(InpVerboseLog)
+
+      PrintFormat("[ADX Filter] ADX=%.1f >= %.0f (Trend confirmed)", adx_value, InpAdxMinThreshold);
+
+
+
+   const int last = ha_count - 1;
+
+   double atr_val = ha[last].atr;
+
+   if(atr_val <= 0.0)
+
+   {
+
+      double high_a[], low_a[];
+
+      ArrayResize(high_a, m1_copied);
+
+      ArrayResize(low_a, m1_copied);
+
+      for(int i = 0; i < m1_copied; i++)
+
+      {
+
+         high_a[i] = m1_rates[i].high;
+
+         low_a[i] = m1_rates[i].low;
+
+      }
+
+      double recent_high = high_a[m1_copied - 1];
+
+      double recent_low = low_a[m1_copied - 1];
+
+      for(int i = m1_copied - InpAtrPeriod; i < m1_copied; i++)
+
+      {
+
+         if(i < 0)
+
+            continue;
+
+         recent_high = MathMax(recent_high, high_a[i]);
+
+         recent_low = MathMin(recent_low, low_a[i]);
+
+      }
+
+      const double recent_range = recent_high - recent_low;
+
+      atr_val = (recent_range > 0.0) ? recent_range / InpAtrPeriod : 0.1;
+
+   }
+
+
+
+   if(InpAtrVolatilityFilterEnabled)
+
+   {
+
+      double atr_series[];
+
+      ArrayResize(atr_series, ha_count);
+
+      for(int i = 0; i < ha_count; i++)
+
+         atr_series[i] = ha[i].atr;
+
+
+
+      string atr_msg;
+
+      if(!S1_CheckAtrVolatility(atr_series, ha_count, atr_val, InpAtrLookbackPeriod, InpAtrPeriod,
+
+                                InpAtrMinMultiplier, InpAtrMaxMultiplier,
+
+                                InpAtrUseRelative, InpAtrMinAbsolute, InpAtrMaxAbsolute,
+
+                                InpUseAtrMinAbsolute, InpUseAtrMaxAbsolute, atr_msg))
+
+      {
+
+         if(InpVerboseLog)
+
+            PrintFormat("[ATR Volatility Filter] %s (Skipping)", atr_msg);
+
+         return;
+
+      }
+
+      if(InpVerboseLog)
+
+         PrintFormat("[ATR Volatility Filter] %s", atr_msg);
+
+   }
+
+   else if(InpVerboseLog)
+
+      Print("[ATR Volatility Filter] Disabled (optional)");
+
+
+
+   string chop_msg;
+
+   if(S1_CheckChopRange(m1_rates, m1_copied, atr_val, InpChopLookback,
+
+                        InpChopBodyThreshold, InpChopOverlapThreshold, chop_msg))
+
+   {
+
+      if(InpVerboseLog)
+
+         PrintFormat("[CHOP Filter] %s (Skipping)", chop_msg);
+
+      return;
+
+   }
+
+   if(InpVerboseLog)
+
+      PrintFormat("[CHOP Filter] %s", chop_msg);
+
+
+
+   MqlTick tick;
+
+   if(!SymbolInfoTick(InpSymbol, tick))
+
+   {
+
+      LogSkipThrottled("SymbolInfoTick failed");
+
+      return;
+
+   }
+
+
+
+   const double price = bullish ? tick.ask : tick.bid;
+
+
+
+   const int signal = AnalyzeSignalWithLog(ha, ha_count, m1_rates, m1_copied, atr_val, bullish,
+
+                                           adx_value, session_msg, current_trend, h1_trend,
+
+                                           ema50_m5, ema200_m5, price);
+
+
+
+   if(signal == 0)
+
+      return;
+
+
+
+   if(S1_CountPositions(InpSymbol, InpMagic) > 0)
+
+   {
+
+      const datetime last_trade_time = S1_LastPositionOpenTime(InpSymbol, InpMagic);
+
+      if(last_trade_time > 0)
+
+      {
+
+         const double time_since_last = (double)(tick.time - last_trade_time);
+
+         if(time_since_last < InpSpamFilterSeconds)
+
+         {
+
+            PrintFormat("Skipping: trade taken %.0fs ago (wait %ds)", time_since_last, InpSpamFilterSeconds);
+
+            return;
+
+         }
+
+      }
+
+   }
+
+
+
+   double sl = 0.0, tp = 0.0;
+
+   if(!CalcSlTp(signal, price, m5_rates, m5_copied, sl, tp))
+
+      return;
+
+
+
+   const int digits = (int)SymbolInfoInteger(InpSymbol, SYMBOL_DIGITS);
+
+   sl = NormalizeDouble(sl, digits);
+
+   tp = NormalizeDouble(tp, digits);
+
+
+
+   g_trade.SetExpertMagicNumber(InpMagic);
+
+   g_trade.SetDeviationInPoints(30);
+
+   g_trade.SetTypeFilling(ORDER_FILLING_FOK);
+
+
+
+   bool sent = false;
+
+   if(signal > 0)
+
+      sent = g_trade.Buy(InpVolume, InpSymbol, price, sl, tp, "Strat1_HA_V2");
+
+   else
+
+      sent = g_trade.Sell(InpVolume, InpSymbol, price, sl, tp, "Strat1_HA_V2");
+
+
+
+   if(sent)
+
+   {
+
+      PrintFormat("Order executed: %s at %.2f SL=%.2f TP=%.2f", (signal > 0 ? "BUY" : "SELL"), price, sl, tp);
+
+      g_consecutive_errors = 0;
+
+   }
+
+   else
+
+   {
+
+      g_consecutive_errors++;
+
+      PrintFormat("Order failed retcode=%d errors=%d", g_trade.ResultRetcode(), g_consecutive_errors);
+
+      if(g_consecutive_errors >= 5)
+
+      {
+
+         g_pause_until = TimeCurrent() + 120;
+
+         g_consecutive_errors = 0;
+
+         Print("5 consecutive order failures — pausing 2 minutes.");
+
+      }
+
+   }
+
+}
+
+
+
+int OnInit()
+
+{
+
+   if(!SymbolSelect(InpSymbol, true))
+
+   {
+
+      Print("Failed to select symbol: ", InpSymbol);
+
+      return INIT_FAILED;
+
+   }
+
+
+
+   g_trade.SetExpertMagicNumber(InpMagic);
+
+   EventSetTimer(InpTimerSeconds);
+
+   PrintFormat("Strategy 1 Trend HA V2 EA started | symbol=%s magic=%I64d verbose=%s timer=%ds",
+
+               InpSymbol, InpMagic, InpVerboseLog ? "ON" : "OFF", InpTimerSeconds);
+
+   g_last_logic_run = 0;
+
+   if(ShouldRunLogicNow())
+
+      RunStrategyLogic();
+
+   return INIT_SUCCEEDED;
+
+}
+
+
+
+void OnDeinit(const int reason)
+
+{
+
+   EventKillTimer();
+
+}
+
+
+
+void OnTimer()
+
+{
+
+   if(ShouldRunLogicNow())
+
+      RunStrategyLogic();
+
+}
+
+
+
+void OnTick()
+
+{
+
+   if(ShouldRunLogicNow())
+
+      RunStrategyLogic();
+
+}
+

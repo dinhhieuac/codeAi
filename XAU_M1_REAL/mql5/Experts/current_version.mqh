@@ -871,9 +871,9 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
          const double open_norm = NormalizeDouble(price_open, digits);
          bool is_breakeven = false;
          if(pos_type == POSITION_TYPE_BUY)
-            is_breakeven = (sl_norm >= open_norm);
+            is_breakeven = (sl_norm >= (open_norm - 0.5 * point));
          else
-            is_breakeven = (sl > 0.0 && sl_norm <= open_norm);
+            is_breakeven = (sl > 0.0 && sl_norm <= (open_norm + 0.5 * point));
 
          if(!is_breakeven)
          {
@@ -881,8 +881,6 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
             if(MathAbs(new_sl - sl_norm) >= point)
             {
                modify = true;
-               PrintFormat("Moved SL to Breakeven ticket=%I64u profit=%.1f pips trigger=%.1f",
-                           ticket, profit_pips, breakeven_trigger_pips_calc);
             }
          }
       }
@@ -955,10 +953,6 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
                modify = true;
             }
          }
-
-         if(modify)
-            PrintFormat("Trailing SL ticket=%I64u %.2f -> %.2f profit=%.1f pips",
-                        ticket, sl, new_sl, profit_pips);
       }
    }
 
@@ -967,21 +961,29 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
       const int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       const double req_sl = NormalizeDouble(new_sl, digits);
       const double req_tp = NormalizeDouble(tp, digits);
-      if(NormalizeDouble(sl, digits) == req_sl && NormalizeDouble(tp, digits) == req_tp)
+      const double cur_sl = NormalizeDouble(sl, digits);
+      const double cur_tp = NormalizeDouble(tp, digits);
+
+      if(MathAbs(req_sl - cur_sl) < point && MathAbs(req_tp - cur_tp) < point)
          return;
 
-      MqlTradeRequest req = {};
-      MqlTradeResult  res = {};
-      req.action   = TRADE_ACTION_SLTP;
-      req.position = ticket;
-      req.symbol   = symbol;
-      req.sl       = req_sl;
-      req.tp       = req_tp;
-      req.magic    = magic;
-      if(!OrderSend(req, res))
+      CTrade trade;
+      trade.SetExpertMagicNumber(magic);
+      trade.SetDeviationInPoints(30);
+
+      if(trade.PositionModify(ticket, req_sl, req_tp))
       {
-         if(res.retcode != 10025)
-            PrintFormat("Failed to update SL/TP ticket=%I64u err=%d retcode=%d", ticket, GetLastError(), res.retcode);
+         PrintFormat("✅ [SL/TP Updated] Ticket %I64u -> New SL: %.3f, TP: %.3f (Profit: %.1f pips)",
+                     ticket, req_sl, req_tp, profit_pips);
+      }
+      else
+      {
+         const uint retcode = trade.ResultRetcode();
+         if(retcode != 10025 && retcode != TRADE_RETCODE_NO_CHANGES)
+         {
+            PrintFormat("⚠️ Failed to update SL/TP ticket %I64u: %s (Code: %u, err: %d)",
+                        ticket, trade.ResultComment(), retcode, GetLastError());
+         }
       }
    }
 }

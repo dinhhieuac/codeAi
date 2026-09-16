@@ -306,10 +306,10 @@ def manage_position(order_ticket, symbol, magic, config):
                 # Check if SL is already at or better than breakeven (using rounded comparison)
                 is_breakeven = False
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    if pos_sl_rounded >= price_open_rounded:
+                    if pos_sl_rounded >= (price_open_rounded - 0.5 * point):
                         is_breakeven = True
                 else:
-                    if pos.sl > 0 and pos_sl_rounded <= price_open_rounded:
+                    if pos.sl > 0 and pos_sl_rounded <= (price_open_rounded + 0.5 * point):
                         is_breakeven = True
                 
                 if not is_breakeven:
@@ -321,9 +321,9 @@ def manage_position(order_ticket, symbol, magic, config):
                             "position": pos.ticket,
                             "symbol": symbol,
                             "sl": target_sl,
-                            "tp": round(pos.tp, digits)
+                            "tp": round(pos.tp, digits),
+                            "_action_desc": f"Breakeven (Profit: {profit_pips:.1f} pips, Trigger: {breakeven_trigger_pips_calc:.1f} pips)"
                         }
-                        print(f"🛡️ Moved SL to Breakeven for Ticket {pos.ticket} (Profit: {profit_pips:.1f} pips, Trigger: {breakeven_trigger_pips_calc:.1f} pips)")
 
         # 2. Trailing Stop (Improved - based on Initial SL, M5 ATR, min/max limits)
         if trailing_enabled and request is None:
@@ -403,13 +403,14 @@ def manage_position(order_ticket, symbol, magic, config):
                 
                 if request:
                     mode_str = f"ATR({trailing_atr_multiplier}x {trailing_atr_timeframe})" if trailing_mode == 'atr' else f"Fixed({trailing_distance_pips}pips)"
-                    print(f"🏃 Trailing SL for {pos.ticket}: {pos_sl_rounded:.2f} -> {new_sl:.2f} ({mode_str}, Profit: {profit_pips:.1f} pips, Trigger: {trailing_trigger_pips_calc:.1f} pips)")
+                    request['_action_desc'] = f"Trailing SL ({mode_str}, Profit: {profit_pips:.1f} pips, Trigger: {trailing_trigger_pips_calc:.1f} pips)"
 
         if request:
             # Prevent sending if target sl and tp match current position sl and tp
             if pos_sl_rounded == request['sl'] and round(pos.tp, digits) == request['tp']:
                 return
 
+            action_desc = request.pop('_action_desc', None)
             res = mt5.order_send(request)
             if res.retcode == 10025 or (res.comment and "No changes" in res.comment):
                 # Position is already at requested SL/TP on the broker
@@ -417,7 +418,8 @@ def manage_position(order_ticket, symbol, magic, config):
             elif res.retcode != mt5.TRADE_RETCODE_DONE:
                 print(f"⚠️ Failed to update SL/TP for #{pos.ticket}: {res.comment} (Code: {res.retcode})")
             else:
-                print(f"✅ Updated SL/TP successfully for #{pos.ticket} -> SL: {request['sl']}")
+                extra = f" [{action_desc}]" if action_desc else ""
+                print(f"✅ Updated SL/TP successfully for #{pos.ticket} -> SL: {request['sl']}{extra}")
 
     except Exception as e:
         print(f"⚠️ Error managing position {order_ticket}: {e}")
