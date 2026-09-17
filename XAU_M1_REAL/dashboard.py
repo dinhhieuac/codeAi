@@ -354,13 +354,15 @@ def index():
     # Lấy thông tin MT5 tài khoản và vị thế đang mở
     account_info = get_mt5_account_and_positions()
 
-    # Bổ sung thông tin khung giờ giao dịch (Trading Sessions) vào mỗi bot
+    # Bổ sung thông tin khung giờ giao dịch & thông số chính của bot
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    accounts_dict = load_accounts()
     enriched_bots = {}
     for bot_file, meta in VALID_BOTS.items():
         m = dict(meta)
         cfg_path = m.get('config')
         session_info = {'enabled': True, 'start': '08:00', 'end': '22:00', 'display': '08:00 - 22:00'}
+        params_summary = None
         if cfg_path:
             full_cfg_path = os.path.join(base_dir, cfg_path)
             if os.path.exists(full_cfg_path):
@@ -368,6 +370,63 @@ def index():
                     with open(full_cfg_path, 'r', encoding='utf-8') as f:
                         cdata = json.load(f)
                     p = cdata.get('parameters', {})
+                    
+                    acc_id = cdata.get('account_id')
+                    acc_info = accounts_dict.get(acc_id, {}) if acc_id else {}
+                    acc_no = acc_info.get('account') or cdata.get('account', '--')
+                    acc_name = acc_info.get('name') or f"TK {acc_no}"
+                    sym = cdata.get('symbol') or acc_info.get('symbol', 'XAUUSDc')
+                    vol = cdata.get('volume', 0.01)
+                    magic = cdata.get('magic', '--')
+                    max_pos = cdata.get('max_positions', 1)
+
+                    sl_mode = p.get('sl_mode', 'auto_m5')
+                    if sl_mode == 'auto_m5':
+                        sl_disp = 'Auto M5'
+                    elif sl_mode == 'atr':
+                        sl_disp = 'ATR'
+                    elif sl_mode == 'fixed':
+                        sl_disp = f"{p.get('sl_pips', 20)}p"
+                    else:
+                        sl_disp = str(sl_mode)
+                        
+                    rr = p.get('reward_ratio')
+                    if rr:
+                        tp_disp = f"1:{rr}"
+                    elif p.get('tp_pips'):
+                        tp_disp = f"{p.get('tp_pips')}p"
+                    else:
+                        tp_disp = '1:1.5'
+
+                    trail_en = bool(p.get('trailing_enabled', True))
+                    trail_mode = str(p.get('trailing_mode', 'atr')).upper()
+                    be_en = bool(p.get('breakeven_enabled', True))
+
+                    key_ind = []
+                    if 'adx_min_threshold' in p:
+                        key_ind.append(f"ADX>{p['adx_min_threshold']}")
+                    if 'rsi_buy_threshold' in p and 'rsi_sell_threshold' in p:
+                        key_ind.append(f"RSI:{p['rsi_sell_threshold']}/{p['rsi_buy_threshold']}")
+                    elif 'rsi_threshold' in p:
+                        key_ind.append(f"RSI:{p['rsi_threshold']}")
+                    if p.get('confirmation_enabled'):
+                        key_ind.append("Conf:ON")
+
+                    params_summary = {
+                        'symbol': sym,
+                        'volume': vol,
+                        'max_positions': max_pos,
+                        'magic': magic,
+                        'account_no': str(acc_no),
+                        'account_name': acc_name,
+                        'sl_display': sl_disp,
+                        'tp_display': tp_disp,
+                        'trailing': trail_en,
+                        'trailing_mode': trail_mode,
+                        'breakeven': be_en,
+                        'key_ind': " | ".join(key_ind) if key_ind else None
+                    }
+
                     filt_en = p.get('session_filter_enabled')
                     if filt_en is None:
                         filt_en = str(p.get('allowed_sessions', '')).upper() != 'ALL'
@@ -388,6 +447,7 @@ def index():
                 except Exception:
                     pass
         m['session'] = session_info
+        m['params_summary'] = params_summary
         enriched_bots[bot_file] = m
 
     return render_template('index.html', 

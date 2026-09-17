@@ -162,6 +162,61 @@
                                     <h6 class="card-title fw-bold text-white mb-1">{{ meta.name }}</h6>
                                     <p class="card-subtitle text-light opacity-50 small mb-2 font-monospace">{{ filename }}</p>
                                     <p class="card-text small text-light opacity-75 mb-3">{{ meta.desc }}</p>
+
+                                    {% if meta.params_summary %}
+                                    <!-- THÔNG SỐ CHÍNH CỦA BOT -->
+                                    <div class="p-2 mb-3 rounded bg-black bg-opacity-50 border border-secondary border-opacity-25 font-monospace" style="font-size: 11px;">
+                                        <div class="row g-1 text-center mb-2">
+                                            <div class="col-4 border-end border-secondary border-opacity-25">
+                                                <div class="text-white-50" style="font-size: 9px; letter-spacing: 0.5px;">SYMBOL / LOT</div>
+                                                <div class="fw-bold text-warning text-truncate">
+                                                    {{ meta.params_summary.symbol }} <span class="text-light">({{ meta.params_summary.volume }}L)</span>
+                                                </div>
+                                            </div>
+                                            <div class="col-4 border-end border-secondary border-opacity-25">
+                                                <div class="text-white-50" style="font-size: 9px; letter-spacing: 0.5px;">TÀI KHOẢN MT5</div>
+                                                <div class="fw-bold text-info text-truncate" title="{{ meta.params_summary.account_name }}">
+                                                    <i class="fas fa-wallet me-1" style="font-size: 9px;"></i>{{ meta.params_summary.account_no }}
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="text-white-50" style="font-size: 9px; letter-spacing: 0.5px;">SL / TP (R:R)</div>
+                                                <div class="fw-bold text-light text-truncate">
+                                                    {{ meta.params_summary.sl_display }} <span class="text-success">{{ meta.params_summary.tp_display }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center pt-1 border-top border-secondary border-opacity-25 px-1">
+                                            <div class="d-flex align-items-center gap-2">
+                                                <div>
+                                                    <span class="text-white-50" style="font-size: 10px;">Trail:</span>
+                                                    {% if meta.params_summary.trailing %}
+                                                    <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25 py-0 px-1" style="font-size: 9px;">ON ({{ meta.params_summary.trailing_mode }})</span>
+                                                    {% else %}
+                                                    <span class="badge bg-secondary bg-opacity-25 text-white-50 py-0 px-1" style="font-size: 9px;">OFF</span>
+                                                    {% endif %}
+                                                </div>
+                                                <div>
+                                                    <span class="text-white-50" style="font-size: 10px;">BE:</span>
+                                                    {% if meta.params_summary.breakeven %}
+                                                    <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 py-0 px-1" style="font-size: 9px;">ON</span>
+                                                    {% else %}
+                                                    <span class="badge bg-secondary bg-opacity-25 text-white-50 py-0 px-1" style="font-size: 9px;">OFF</span>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <span class="text-white-50" style="font-size: 10px;">Magic:</span>
+                                                <span class="text-warning fw-bold">{{ meta.params_summary.magic }}</span>
+                                            </div>
+                                        </div>
+                                        {% if meta.params_summary.key_ind %}
+                                        <div class="pt-1 mt-1 border-top border-secondary border-opacity-25 text-white-50 text-truncate" style="font-size: 10px;">
+                                            <i class="fas fa-filter text-info me-1" style="font-size: 9px;"></i>Lọc: <span class="text-light">{{ meta.params_summary.key_ind }}</span>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    {% endif %}
                                 </div>
                                 <div class="d-flex gap-2 mt-auto pt-2 border-top border-secondary">
                                     <button class="btn btn-sm btn-success flex-grow-1 {% if is_running %}disabled{% endif %}" id="btn-start-{{ filename|replace('.', '_') }}" onclick="startBot('{{ filename }}')">
