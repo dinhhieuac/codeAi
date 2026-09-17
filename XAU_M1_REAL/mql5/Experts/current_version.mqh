@@ -329,23 +329,16 @@ bool S1_BuildHaBars(const string symbol, const ENUM_TIMEFRAMES tf, const int bar
    return true;
 }
 
-bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, string &msg)
+bool S1_CheckTradingSession(const string symbol, const bool enabled, const string start_str, const string end_str, string &msg)
 {
-   if(allowed_sessions == "ALL" || allowed_sessions == "")
+   if(!enabled || start_str == "" || end_str == "" || start_str == "off" || end_str == "off" || start_str == "OFF" || end_str == "OFF" || start_str == "ALL")
    {
-      msg = "All sessions allowed";
+      msg = "Session filter OFF (All time running)";
       return true;
    }
 
-   string parts[];
-   if(StringSplit(allowed_sessions, '-', parts) != 2)
-   {
-      msg = "Session check skipped (parse error)";
-      return true;
-   }
-
-   const int start_min = S1_ParseTimeToMinutes(parts[0]);
-   const int end_min = S1_ParseTimeToMinutes(parts[1]);
+   const int start_min = S1_ParseTimeToMinutes(start_str);
+   const int end_min   = S1_ParseTimeToMinutes(end_str);
    if(start_min < 0 || end_min < 0)
    {
       msg = "Session check skipped (parse error)";
@@ -366,8 +359,6 @@ bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, 
    MqlDateTime dt;
    TimeToStruct(local_time, dt);
    const int now_min = dt.hour * 60 + dt.min;
-   string start_str = parts[0];
-   string end_str = parts[1];
 
    if(start_min <= end_min)
    {
@@ -387,6 +378,24 @@ bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, 
    }
    msg = StringFormat("Out of session (%s-%s), Current: %02d:%02d", start_str, end_str, dt.hour, dt.min);
    return false;
+}
+
+bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, string &msg)
+{
+   if(allowed_sessions == "ALL" || allowed_sessions == "" || allowed_sessions == "off" || allowed_sessions == "OFF")
+   {
+      msg = "Session filter OFF (All sessions allowed)";
+      return true;
+   }
+
+   string parts[];
+   if(StringSplit(allowed_sessions, '-', parts) != 2)
+   {
+      msg = "Session check skipped (parse error)";
+      return true;
+   }
+
+   return S1_CheckTradingSession(symbol, true, parts[0], parts[1], msg);
 }
 
 int S1_ParseTimeToMinutes(const string time_str)
@@ -871,9 +880,9 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
          const double open_norm = NormalizeDouble(price_open, digits);
          bool is_breakeven = false;
          if(pos_type == POSITION_TYPE_BUY)
-            is_breakeven = (sl_norm >= (open_norm - 0.5 * point));
+            is_breakeven = (sl_norm >= open_norm);
          else
-            is_breakeven = (sl > 0.0 && sl_norm <= (open_norm + 0.5 * point));
+            is_breakeven = (sl > 0.0 && sl_norm <= open_norm);
 
          if(!is_breakeven)
          {
@@ -881,6 +890,8 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
             if(MathAbs(new_sl - sl_norm) >= point)
             {
                modify = true;
+               PrintFormat("Moved SL to Breakeven ticket=%I64u profit=%.1f pips trigger=%.1f",
+                           ticket, profit_pips, breakeven_trigger_pips_calc);
             }
          }
       }
@@ -953,6 +964,10 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
                modify = true;
             }
          }
+
+         if(modify)
+            PrintFormat("Trailing SL ticket=%I64u %.2f -> %.2f profit=%.1f pips",
+                        ticket, sl, new_sl, profit_pips);
       }
    }
 
@@ -961,29 +976,21 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
       const int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       const double req_sl = NormalizeDouble(new_sl, digits);
       const double req_tp = NormalizeDouble(tp, digits);
-      const double cur_sl = NormalizeDouble(sl, digits);
-      const double cur_tp = NormalizeDouble(tp, digits);
-
-      if(MathAbs(req_sl - cur_sl) < point && MathAbs(req_tp - cur_tp) < point)
+      if(NormalizeDouble(sl, digits) == req_sl && NormalizeDouble(tp, digits) == req_tp)
          return;
 
-      CTrade trade;
-      trade.SetExpertMagicNumber(magic);
-      trade.SetDeviationInPoints(30);
-
-      if(trade.PositionModify(ticket, req_sl, req_tp))
+      MqlTradeRequest req = {};
+      MqlTradeResult  res = {};
+      req.action   = TRADE_ACTION_SLTP;
+      req.position = ticket;
+      req.symbol   = symbol;
+      req.sl       = req_sl;
+      req.tp       = req_tp;
+      req.magic    = magic;
+      if(!OrderSend(req, res))
       {
-         PrintFormat("✅ [SL/TP Updated] Ticket %I64u -> New SL: %.3f, TP: %.3f (Profit: %.1f pips)",
-                     ticket, req_sl, req_tp, profit_pips);
-      }
-      else
-      {
-         const uint retcode = trade.ResultRetcode();
-         if(retcode != 10025 && retcode != TRADE_RETCODE_NO_CHANGES)
-         {
-            PrintFormat("⚠️ Failed to update SL/TP ticket %I64u: %s (Code: %u, err: %d)",
-                        ticket, trade.ResultComment(), retcode, GetLastError());
-         }
+         if(res.retcode != 10025)
+            PrintFormat("Failed to update SL/TP ticket=%I64u err=%d retcode=%d", ticket, GetLastError(), res.retcode);
       }
    }
 }

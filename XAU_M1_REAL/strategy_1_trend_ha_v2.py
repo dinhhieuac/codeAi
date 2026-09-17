@@ -204,45 +204,79 @@ db_path = os.path.join(script_dir, "trades.db")
 db = Database(db_path=db_path)
 print(f"📦 Database initialized: {db_path}")
 
+_last_session_log_time = 0
+_last_session_msg = ""
+
 def check_trading_session(config):
     """
     Check if current time is within allowed trading hours.
-    Default: Avoid Asian Session (approx 22:00 - 08:00 Server Time).
-    Allowed: 08:00 - 22:00.
+    Options under `parameters`:
+      - `session_filter_enabled`: bool (true = limit by hours, false = ALL TIME)
+      - `trading_start_time`: "08:00" (start time)
+      - `trading_end_time`: "22:00" (end time)
+      - `allowed_sessions`: "08:00-22:00" (or "ALL" / "off")
     """
-    allowed_sessions = config['parameters'].get('allowed_sessions', "08:00-22:00")
-    if allowed_sessions == "ALL":
-        return True, "All sessions allowed"
+    params = config.get('parameters', {})
     
+    # 1. Check if explicitly disabled or set to OFF/ALL
+    filter_enabled = params.get('session_filter_enabled', True)
+    if isinstance(filter_enabled, str):
+        filter_enabled = filter_enabled.strip().lower() not in ('false', '0', 'off', 'no', 'none')
+    if not filter_enabled:
+        return True, "Session filter OFF (All time running)"
+
+    allowed_sessions = params.get('allowed_sessions')
+    if allowed_sessions and str(allowed_sessions).strip().upper() in ("ALL", "OFF", "NONE", ""):
+        return True, "Session filter OFF (All time running)"
+
+    # 2. Extract start and end time
+    start_str = params.get('trading_start_time')
+    end_str = params.get('trading_end_time')
+
+    session_list = []
+    if start_str and end_str and str(start_str).lower() != 'off' and str(end_str).lower() != 'off':
+        session_list.append(f"{str(start_str).strip()}-{str(end_str).strip()}")
+    elif allowed_sessions:
+        session_list = str(allowed_sessions).replace(';', ',').split(',')
+    else:
+        # Default fallback
+        session_list.append("08:00-22:00")
+
     try:
-        start_str, end_str = allowed_sessions.split('-')
-        start_time = datetime.strptime(start_str, "%H:%M").time()
-        end_time = datetime.strptime(end_str, "%H:%M").time()
-        
-        # Get current server time
-        symbol = config['symbol']
-        current_time = mt5.symbol_info_tick(symbol).time
-        # mt5 time is timestamp or datetime? symbol_info_tick.time is unix timestamp (int) usually, 
-        # but let's check. actually in python mt5 it is usually a unix timestamp. 
-        # But `datetime.fromtimestamp` is safer.
+        symbol = config.get('symbol', 'XAUUSDc')
+        tick = mt5.symbol_info_tick(symbol)
+        if not tick:
+            return True, "Session check skipped (no tick)"
+            
+        current_time = tick.time
         if isinstance(current_time, (int, float)):
-             current_dt = datetime.fromtimestamp(current_time)
+            current_dt = datetime.fromtimestamp(current_time)
         else:
-             current_dt = current_time
+            current_dt = current_time
              
         current_time_time = current_dt.time()
         
-        # Simple range check
-        if start_time <= end_time:
-            if start_time <= current_time_time <= end_time:
-                return True, f"In session ({start_str}-{end_str})"
+        for sess in session_list:
+            sess = sess.strip()
+            if not sess or '-' not in sess:
+                continue
+            parts = sess.split('-')
+            if len(parts) != 2:
+                continue
+            s_str, e_str = parts[0].strip(), parts[1].strip()
+            start_time = datetime.strptime(s_str, "%H:%M").time()
+            end_time = datetime.strptime(e_str, "%H:%M").time()
+            
+            # Normal range (e.g. 08:00 - 22:00)
+            if start_time <= end_time:
+                if start_time <= current_time_time <= end_time:
+                    return True, f"In session ({sess})"
             else:
-                return False, f"Out of session ({start_str}-{end_str}), Current: {current_time_time}"
-        else: # Over midnight check (e.g. 22:00 - 02:00)
-            if current_time_time >= start_time or current_time_time <= end_time:
-                 return True, f"In session ({start_str}-{end_str})"
-            else:
-                 return False, f"Out of session ({start_str}-{end_str}), Current: {current_time_time}"
+                # Over-midnight range (e.g. 22:00 - 02:00)
+                if current_time_time >= start_time or current_time_time <= end_time:
+                    return True, f"In session ({sess})"
+                    
+        return False, f"Out of session ({', '.join(session_list)}), Current: {current_time_time.strftime('%H:%M:%S')}"
                  
     except Exception as e:
         print(f"⚠️ Session check error: {e}")
@@ -603,13 +637,7 @@ def strategy_1_logic(config, error_count=0):
             # We can return here to skip checking signals
             return error_count, 0
 
-    # 0.5 Check Trading Session
-    is_in_session, session_msg = check_trading_session(config)
-    if not is_in_session:
-        # print(f"💤 [SESSION] {session_msg}") # Reduce spam logging if needed
-        return error_count, 0
-
-    # 2. Check Global Max Positions & Manage Existing
+    # 1. Manage Existing Open Positions (Trailing SL, Breakeven)
     # Lấy tất cả positions của symbol, sau đó filter theo magic để chỉ xử lý positions do bot này mở
     all_positions = mt5.positions_get(symbol=symbol)
     positions = [pos for pos in (all_positions or []) if pos.magic == magic]  # Chỉ lấy positions do bot này mở
@@ -622,6 +650,17 @@ def strategy_1_logic(config, error_count=0):
         if len(positions) >= max_positions:
             # Silent return to avoid spam
             return error_count, 0
+
+    # 2. Check Trading Session for NEW trades
+    global _last_session_log_time, _last_session_msg
+    is_in_session, session_msg = check_trading_session(config)
+    if not is_in_session:
+        now_ts = time.time()
+        if session_msg != _last_session_msg or (now_ts - _last_session_log_time) >= 60:
+            print(f"💤 [SESSION FILTER] {session_msg} (Scanning for new trades paused)")
+            _last_session_log_time = now_ts
+            _last_session_msg = session_msg
+        return error_count, 0
 
     # 1. Get Data (M1, M5, and H1 for trend)
     df_m1 = get_data(symbol, mt5.TIMEFRAME_M1, 200)

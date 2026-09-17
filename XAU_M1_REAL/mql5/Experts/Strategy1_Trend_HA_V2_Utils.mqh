@@ -329,23 +329,16 @@ bool S1_BuildHaBars(const string symbol, const ENUM_TIMEFRAMES tf, const int bar
    return true;
 }
 
-bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, string &msg)
+bool S1_CheckTradingSession(const string symbol, const bool enabled, const string start_str, const string end_str, string &msg)
 {
-   if(allowed_sessions == "ALL" || allowed_sessions == "")
+   if(!enabled || start_str == "" || end_str == "" || start_str == "off" || end_str == "off" || start_str == "OFF" || end_str == "OFF" || start_str == "ALL")
    {
-      msg = "All sessions allowed";
+      msg = "Session filter OFF (All time running)";
       return true;
    }
 
-   string parts[];
-   if(StringSplit(allowed_sessions, '-', parts) != 2)
-   {
-      msg = "Session check skipped (parse error)";
-      return true;
-   }
-
-   const int start_min = S1_ParseTimeToMinutes(parts[0]);
-   const int end_min = S1_ParseTimeToMinutes(parts[1]);
+   const int start_min = S1_ParseTimeToMinutes(start_str);
+   const int end_min   = S1_ParseTimeToMinutes(end_str);
    if(start_min < 0 || end_min < 0)
    {
       msg = "Session check skipped (parse error)";
@@ -366,8 +359,6 @@ bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, 
    MqlDateTime dt;
    TimeToStruct(local_time, dt);
    const int now_min = dt.hour * 60 + dt.min;
-   string start_str = parts[0];
-   string end_str = parts[1];
 
    if(start_min <= end_min)
    {
@@ -387,6 +378,24 @@ bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, 
    }
    msg = StringFormat("Out of session (%s-%s), Current: %02d:%02d", start_str, end_str, dt.hour, dt.min);
    return false;
+}
+
+bool S1_CheckTradingSession(const string symbol, const string allowed_sessions, string &msg)
+{
+   if(allowed_sessions == "ALL" || allowed_sessions == "" || allowed_sessions == "off" || allowed_sessions == "OFF")
+   {
+      msg = "Session filter OFF (All sessions allowed)";
+      return true;
+   }
+
+   string parts[];
+   if(StringSplit(allowed_sessions, '-', parts) != 2)
+   {
+      msg = "Session check skipped (parse error)";
+      return true;
+   }
+
+   return S1_CheckTradingSession(symbol, true, parts[0], parts[1], msg);
 }
 
 int S1_ParseTimeToMinutes(const string time_str)

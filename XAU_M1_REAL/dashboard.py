@@ -354,6 +354,42 @@ def index():
     # Lấy thông tin MT5 tài khoản và vị thế đang mở
     account_info = get_mt5_account_and_positions()
 
+    # Bổ sung thông tin khung giờ giao dịch (Trading Sessions) vào mỗi bot
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    enriched_bots = {}
+    for bot_file, meta in VALID_BOTS.items():
+        m = dict(meta)
+        cfg_path = m.get('config')
+        session_info = {'enabled': True, 'start': '08:00', 'end': '22:00', 'display': '08:00 - 22:00'}
+        if cfg_path:
+            full_cfg_path = os.path.join(base_dir, cfg_path)
+            if os.path.exists(full_cfg_path):
+                try:
+                    with open(full_cfg_path, 'r', encoding='utf-8') as f:
+                        cdata = json.load(f)
+                    p = cdata.get('parameters', {})
+                    filt_en = p.get('session_filter_enabled')
+                    if filt_en is None:
+                        filt_en = str(p.get('allowed_sessions', '')).upper() != 'ALL'
+                    
+                    s_time = p.get('trading_start_time', '08:00')
+                    e_time = p.get('trading_end_time', '22:00')
+                    if 'allowed_sessions' in p and '-' in str(p['allowed_sessions']):
+                        parts = str(p['allowed_sessions']).split('-')
+                        if len(parts) == 2:
+                            s_time, e_time = parts[0].strip(), parts[1].strip()
+                    
+                    session_info = {
+                        'enabled': bool(filt_en),
+                        'start': s_time,
+                        'end': e_time,
+                        'display': f"{s_time} - {e_time}" if filt_en else "ALL TIME (24/5)"
+                    }
+                except Exception:
+                    pass
+        m['session'] = session_info
+        enriched_bots[bot_file] = m
+
     return render_template('index.html', 
                            orders=orders, 
                            signals=signals, 
@@ -367,7 +403,7 @@ def index():
                            filter_label=filter_label,
                            from_date=from_date_param if from_date_param else '',
                            to_date=to_date_param if to_date_param else '',
-                           valid_bots=VALID_BOTS,
+                           valid_bots=enriched_bots,
                            running_bots=get_running_bots(),
                            account_info=account_info)
 

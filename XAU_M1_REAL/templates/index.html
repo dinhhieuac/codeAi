@@ -141,7 +141,16 @@
                             <div class="card-body p-3 d-flex flex-column justify-content-between">
                                 <div>
                                     <div class="d-flex justify-content-between align-items-start mb-2">
-                                        <span class="badge {{ meta.badge }}">{{ meta.version }}</span>
+                                        <div class="d-flex flex-wrap gap-1 align-items-center">
+                                            <span class="badge {{ meta.badge }}">{{ meta.version }}</span>
+                                            {% if meta.session %}
+                                                {% if meta.session.enabled %}
+                                                <span class="badge bg-warning text-dark border border-warning" title="Khung giờ quét lệnh: {{ meta.session.start }} - {{ meta.session.end }}"><i class="fas fa-clock me-1"></i>{{ meta.session.start }}-{{ meta.session.end }}</span>
+                                                {% else %}
+                                                <span class="badge bg-info text-dark border border-info" title="Chạy ALL TIME (24/5)"><i class="fas fa-infinity me-1"></i>ALL TIME</span>
+                                                {% endif %}
+                                            {% endif %}
+                                        </div>
                                         <span class="badge {% if is_running %}bg-success{% else %}bg-secondary opacity-75{% endif %}" id="status-badge-{{ filename|replace('.', '_') }}">
                                             {% if is_running %}
                                             <i class="fas fa-circle text-white me-1" style="font-size: 8px;"></i> Đang Chạy (PID: {{ running_bots[filename] }})
@@ -799,6 +808,52 @@
                                 </div>
                             </div>
 
+                            <!-- KHUNG GIỜ GIAO DỊCH (TRADING SESSIONS) -->
+                            <div class="card border-0 shadow-sm mb-3" style="border-left: 4px solid #f59e0b !important;">
+                                <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                                    <span class="fw-bold text-dark small">
+                                        <i class="fas fa-clock text-warning me-1"></i> Khung Giờ Giao Dịch (Trading Sessions)
+                                    </span>
+                                    <span id="cfgSessionBadge" class="badge bg-warning text-dark px-2 py-1">
+                                        <i class="fas fa-clock me-1"></i> 08:00 - 22:00
+                                    </span>
+                                </div>
+                                <div class="card-body p-3">
+                                    <div class="row g-3 align-items-center">
+                                        <div class="col-md-5">
+                                            <div class="form-check form-switch p-0 d-flex align-items-center gap-3">
+                                                <input class="form-check-input ms-0" type="checkbox" role="switch" id="cfgSessionFilterEnabled" style="width: 3.2em; height: 1.8em; cursor: pointer;" onchange="onSessionFilterToggle(this.checked)">
+                                                <label class="form-check-label fw-bold mb-0" for="cfgSessionFilterEnabled" style="cursor: pointer;">
+                                                    <span id="cfgSessionFilterStatusLabel" class="fs-6 text-warning">BẬT GIỚI HẠN GIỜ</span>
+                                                </label>
+                                            </div>
+                                            <div class="small text-muted mt-1" id="cfgSessionFilterDesc">
+                                                Bot chỉ quét và mở lệnh mới trong khoảng giờ quy định.
+                                            </div>
+                                        </div>
+                                        <div class="col-md-7">
+                                            <div class="row g-2" id="cfgSessionTimesContainer">
+                                                <div class="col-6">
+                                                    <label class="form-label small fw-bold mb-1">
+                                                        <i class="fas fa-hourglass-start text-success me-1"></i> Giờ Bắt Đầu (Start)
+                                                    </label>
+                                                    <input type="text" class="form-control form-control-sm font-monospace text-center fw-bold" id="cfgSessionStartTime" placeholder="08:00" value="08:00" oninput="updateSessionPreview()">
+                                                </div>
+                                                <div class="col-6">
+                                                    <label class="form-label small fw-bold mb-1">
+                                                        <i class="fas fa-hourglass-end text-danger me-1"></i> Giờ Kết Thúc (End)
+                                                    </label>
+                                                    <input type="text" class="form-control form-control-sm font-monospace text-center fw-bold" id="cfgSessionEndTime" placeholder="22:00" value="22:00" oninput="updateSessionPreview()">
+                                                </div>
+                                            </div>
+                                            <div class="small text-info mt-1" id="cfgSessionNotice">
+                                                <i class="fas fa-shield-alt me-1"></i> <span id="cfgSessionNoticeText">Ngoài giờ này, bot vẫn Trailing SL & Breakeven cho lệnh đang mở 24/5.</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Strategy Parameters (sl, tp, rsi, adx, trailing, v.v.) -->
                             <div class="card border-0 shadow-sm">
                                 <div class="card-header bg-white py-2 fw-bold text-primary small d-flex justify-content-between align-items-center">
@@ -1288,6 +1343,9 @@
                 // Điền parameters động
                 renderDynamicParams(data.config_data.parameters || {});
 
+                // Điền thông số khung giờ giao dịch
+                populateSessionForm(data.config_data.parameters || {});
+
                 // Khởi tạo tooltips cho các trường thông số cơ bản & parameters
                 setTimeout(() => {
                     const tooltipTriggerList = [].slice.call(document.querySelectorAll('#botConfigModal [data-bs-toggle="tooltip"]'));
@@ -1335,7 +1393,11 @@
             "chop_body_threshold": "Tỷ lệ thân nến tối thiểu so với cả cây nến, thân nến quá bé (Doji) thể hiện thị trường lưỡng lự",
             "chop_overlap_threshold": "Tỷ lệ phần thân nến trùng lặp nhau. Trùng lặp càng cao thể hiện thị trường đang nghẽn biên độ hẹp",
 
-            // Quản lý rủi ro & Chống spam lệnh
+            // Quản lý rủi ro & Khung giờ giao dịch
+            "session_filter_enabled": "Bật/Tắt bộ lọc khung giờ giao dịch. Nếu tắt (OFF / false) thì bot sẽ chạy ALL TIME (24/5 không giới hạn giờ)",
+            "trading_start_time": "Giờ bắt đầu cho phép mở lệnh mới (ví dụ: '08:00')",
+            "trading_end_time": "Giờ kết thúc cho phép mở lệnh mới (ví dụ: '22:00')",
+            "allowed_sessions": "Khung giờ cho phép mở lệnh mới (ví dụ: '08:00-22:00', hoặc 'ALL' để trade 24/5, hoặc '08:00-12:00, 14:00-22:00'). Ngoài giờ này bot vẫn quản lý Trailing SL/Breakeven lệnh cũ nhưng không mở lệnh mới",
             "spam_filter_seconds": "Khoảng thời gian chờ tối thiểu (tính bằng giây) giữa 2 lần vào lệnh liên tiếp để tránh nhồi lệnh liên tục",
             "pause_on_losses": "Bật/Tắt chế độ tự động tạm dừng bot nếu gặp chuỗi lệnh thua liên tiếp",
             "max_consecutive_losses": "Số lệnh thua liên tiếp tối đa để kích hoạt tự động dừng bot bảo vệ tài khoản",
@@ -1395,6 +1457,98 @@
             return `Tham số chiến lược: ${clean}`;
         }
 
+        // =========================================================================
+        // KHUNG GIỜ GIAO DỊCH (SESSION FILTER LOGIC)
+        // =========================================================================
+
+        function populateSessionForm(params) {
+            params = params || {};
+            let sessionEnabled = params.session_filter_enabled;
+            if (sessionEnabled === undefined) {
+                sessionEnabled = String(params.allowed_sessions || '').toUpperCase() !== 'ALL';
+            }
+            let startTime = params.trading_start_time || '08:00';
+            let endTime = params.trading_end_time || '22:00';
+            if (params.allowed_sessions && String(params.allowed_sessions).includes('-')) {
+                const parts = String(params.allowed_sessions).split('-');
+                if (parts.length === 2) {
+                    startTime = parts[0].trim();
+                    endTime = parts[1].trim();
+                }
+            }
+            const chkSession = document.getElementById('cfgSessionFilterEnabled');
+            if (chkSession) chkSession.checked = !!sessionEnabled;
+            const txtStart = document.getElementById('cfgSessionStartTime');
+            if (txtStart) txtStart.value = startTime;
+            const txtEnd = document.getElementById('cfgSessionEndTime');
+            if (txtEnd) txtEnd.value = endTime;
+            onSessionFilterToggle(!!sessionEnabled);
+        }
+
+        function onSessionFilterToggle(checked) {
+            const label = document.getElementById('cfgSessionFilterStatusLabel');
+            const badge = document.getElementById('cfgSessionBadge');
+            const startInput = document.getElementById('cfgSessionStartTime');
+            const endInput = document.getElementById('cfgSessionEndTime');
+            const desc = document.getElementById('cfgSessionFilterDesc');
+            const noticeText = document.getElementById('cfgSessionNoticeText');
+
+            if (checked) {
+                if (label) {
+                    label.className = 'fs-6 text-warning';
+                    label.textContent = 'BẬT: GIỚI HẠN GIỜ';
+                }
+                if (startInput) {
+                    startInput.disabled = false;
+                    startInput.classList.remove('opacity-50');
+                }
+                if (endInput) {
+                    endInput.disabled = false;
+                    endInput.classList.remove('opacity-50');
+                }
+                if (desc) desc.textContent = 'Chỉ quét và mở lệnh mới trong khoảng giờ quy định.';
+                if (noticeText) noticeText.textContent = 'Ngoài giờ này, bot vẫn Trailing SL & Breakeven cho lệnh đang mở 24/5.';
+                updateSessionPreview();
+            } else {
+                if (label) {
+                    label.className = 'fs-6 text-success';
+                    label.textContent = 'TẮT: CHẠY ALL TIME (24/5)';
+                }
+                if (startInput) {
+                    startInput.disabled = true;
+                    startInput.classList.add('opacity-50');
+                }
+                if (endInput) {
+                    endInput.disabled = true;
+                    endInput.classList.add('opacity-50');
+                }
+                if (badge) {
+                    badge.className = 'badge bg-info text-dark px-2 py-1';
+                    badge.innerHTML = '<i class="fas fa-infinity me-1"></i> ALL TIME (24/5)';
+                }
+                if (desc) desc.textContent = 'Bot sẽ hoạt động 24/5 liên tục, không bị giới hạn bởi bất kỳ khung giờ nào.';
+                if (noticeText) noticeText.textContent = 'Quét tín hiệu và mở lệnh liên tục 24/5 không giới hạn.';
+            }
+        }
+
+        function updateSessionPreview() {
+            const isChecked = document.getElementById('cfgSessionFilterEnabled')?.checked;
+            const badge = document.getElementById('cfgSessionBadge');
+            if (!isChecked) {
+                if (badge) {
+                    badge.className = 'badge bg-info text-dark px-2 py-1';
+                    badge.innerHTML = '<i class="fas fa-infinity me-1"></i> ALL TIME (24/5)';
+                }
+                return;
+            }
+            const start = document.getElementById('cfgSessionStartTime')?.value.trim() || '08:00';
+            const end = document.getElementById('cfgSessionEndTime')?.value.trim() || '22:00';
+            if (badge) {
+                badge.className = 'badge bg-warning text-dark px-2 py-1';
+                badge.innerHTML = `<i class="fas fa-clock me-1"></i> ${start} - ${end}`;
+            }
+        }
+
         function renderDynamicParams(params) {
             const container = document.getElementById('cfgDynamicParamsRow');
             if (!container) return;
@@ -1406,7 +1560,11 @@
                 return;
             }
 
+            // Loại bỏ các trường khung giờ giao dịch vì đã có thẻ riêng ở trên
+            const EXCLUDE_SESSION_KEYS = ['session_filter_enabled', 'trading_start_time', 'trading_end_time', 'allowed_sessions'];
+
             keys.forEach(k => {
+                if (EXCLUDE_SESSION_KEYS.includes(k)) return;
                 const val = params[k];
                 const desc = getParamDesc(k).replace(/"/g, '&quot;');
                 const col = document.createElement('div');
@@ -1478,6 +1636,17 @@
                 }
 
                 if (!currentConfigData.parameters) currentConfigData.parameters = {};
+
+                // Đồng bộ Khung Giờ Giao Dịch
+                const sessionFilterOn = document.getElementById('cfgSessionFilterEnabled')?.checked ?? true;
+                const startTime = document.getElementById('cfgSessionStartTime')?.value.trim() || '08:00';
+                const endTime = document.getElementById('cfgSessionEndTime')?.value.trim() || '22:00';
+
+                currentConfigData.parameters.session_filter_enabled = sessionFilterOn;
+                currentConfigData.parameters.trading_start_time = startTime;
+                currentConfigData.parameters.trading_end_time = endTime;
+                currentConfigData.parameters.allowed_sessions = sessionFilterOn ? `${startTime}-${endTime}` : "ALL";
+
                 const dynamicInputs = document.querySelectorAll('.dynamic-param-input');
                 dynamicInputs.forEach(input => {
                     const k = input.getAttribute('data-key');
@@ -1517,6 +1686,7 @@
                 document.getElementById('cfgInputMagic').value = parsed.magic || '';
 
                 renderDynamicParams(parsed.parameters || {});
+                populateSessionForm(parsed.parameters || {});
                 hideCfgAlert();
             } catch (err) {
                 showCfgAlert(`Cú pháp JSON chưa đúng: ${err.message}`, 'warning');
