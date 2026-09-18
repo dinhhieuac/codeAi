@@ -810,13 +810,105 @@ bool S1_IsAutoPips(const string value)
    return v == "auto";
 }
 
+//+------------------------------------------------------------------+
+//| Lấy chính xác Initial SL và khoảng cách Initial SL (pips)        |
+//| Ưu tiên: GlobalVariable -> SL chưa kéo BE -> History -> Default  |
+//+------------------------------------------------------------------+
+double S1_GetInitialSLDistancePips(const ulong ticket, const string symbol, const long pos_type,
+                                   const double price_open, const double sl, const double pip_size)
+{
+   const string gv_dist_name = "S1_InitDist_" + IntegerToString(ticket);
+   const string gv_sl_name   = "S1_InitSL_"   + IntegerToString(ticket);
+
+   // 1. Kiểm tra GlobalVariable của MT5 Terminal (lưu xuyên suốt quá trình chạy)
+   if(GlobalVariableCheck(gv_dist_name))
+   {
+      const double cached_dist = GlobalVariableGet(gv_dist_name);
+      if(cached_dist > 0.0)
+         return cached_dist;
+   }
+
+   double initial_dist_pips = 0.0;
+   double initial_sl = 0.0;
+
+   // 2. Nếu SL hiện tại chưa bị kéo về hòa vốn (khoảng cách >= 5 pips)
+   if(sl > 0.0)
+   {
+      if(pos_type == POSITION_TYPE_BUY && sl < price_open)
+      {
+         const double d = (price_open - sl) / pip_size;
+         if(d >= 5.0)
+         {
+            initial_sl = sl;
+            initial_dist_pips = d;
+         }
+      }
+      else if(pos_type == POSITION_TYPE_SELL && sl > price_open)
+      {
+         const double d = (sl - price_open) / pip_size;
+         if(d >= 5.0)
+         {
+            initial_sl = sl;
+            initial_dist_pips = d;
+         }
+      }
+   }
+
+   // 3. Nếu SL đã bị kéo về hòa vốn, truy vấn lịch sử Order khởi tạo vị thế từ MT5
+   if(initial_dist_pips <= 0.0)
+   {
+      if(HistorySelectByPosition(ticket))
+      {
+         const int total_orders = HistoryOrdersTotal();
+         for(int i = 0; i < total_orders; i++)
+         {
+            const ulong ord_ticket = HistoryOrderGetTicket(i);
+            if(ord_ticket > 0)
+            {
+               const double ord_sl = HistoryOrderGetDouble(ord_ticket, ORDER_SL);
+               if(ord_sl > 0.0)
+               {
+                  if(pos_type == POSITION_TYPE_BUY && ord_sl < price_open)
+                  {
+                     initial_sl = ord_sl;
+                     initial_dist_pips = (price_open - ord_sl) / pip_size;
+                     break;
+                  }
+                  else if(pos_type == POSITION_TYPE_SELL && ord_sl > price_open)
+                  {
+                     initial_sl = ord_sl;
+                     initial_dist_pips = (ord_sl - price_open) / pip_size;
+                     break;
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   // 4. Fallback an toàn (50 pips thay vì 100 pips)
+   if(initial_dist_pips <= 0.0)
+      initial_dist_pips = 50.0;
+
+   // Lưu vào GlobalVariable để các tick tiếp theo dùng ngay lập tức
+   GlobalVariableSet(gv_dist_name, initial_dist_pips);
+   if(initial_sl > 0.0)
+      GlobalVariableSet(gv_sl_name, initial_sl);
+
+   return initial_dist_pips;
+}
+
 void S1_ManagePosition(const ulong ticket, const string symbol, const long magic,
                        S1TrailConfig &cfg)
 {
    if(!cfg.trailing_enabled && !cfg.breakeven_enabled)
       return;
    if(!PositionSelectByTicket(ticket))
+   {
+      GlobalVariableDel("S1_InitDist_" + IntegerToString(ticket));
+      GlobalVariableDel("S1_InitSL_"   + IntegerToString(ticket));
       return;
+   }
    if(PositionGetString(POSITION_SYMBOL) != symbol)
       return;
    if((long)PositionGetInteger(POSITION_MAGIC) != magic)
@@ -848,15 +940,8 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
       profit_pips = (price_open - current_price) / pip_size;
    }
 
-   double sl_distance_from_entry = 0.0;
-   if(pos_type == POSITION_TYPE_BUY)
-      sl_distance_from_entry = (sl > 0.0) ? (price_open - sl) / pip_size : 0.0;
-   else
-      sl_distance_from_entry = (sl > 0.0) ? (sl - price_open) / pip_size : 0.0;
-
-   double initial_sl_distance_pips = 100.0;
-   if(sl_distance_from_entry >= 5.0)
-      initial_sl_distance_pips = MathMax(sl_distance_from_entry, 50.0);
+   // Lấy chính xác khoảng cách Initial SL (pips)
+   const double initial_sl_distance_pips = S1_GetInitialSLDistancePips(ticket, symbol, pos_type, price_open, sl, pip_size);
 
    double new_sl = sl;
    bool modify = false;

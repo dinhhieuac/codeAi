@@ -12,7 +12,7 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, script_dir)  # Add current directory to path
 from db import Database
-from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr
+from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr, _INITIAL_SL_CACHE
 
 # GridStep/utils.py — dùng cho weekend flatten (cùng rule v5_weekend_* như strategy_grid_step_v5)
 _gs_trade_utils = None
@@ -1129,8 +1129,21 @@ def strategy_1_logic(config, error_count=0):
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             print(f"✅ Order Executed: {result.order}")
             try:
-                db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'])
-                print(f"✅ Order logged to DB: Ticket {result.order}")
+                # Lưu Initial SL vào cache bộ nhớ để Trailing Stop luôn dùng chuẩn xác
+                sym_info = mt5.symbol_info(symbol)
+                pt = sym_info.point if sym_info else 0.01
+                p_size = pt * 10
+                if 'XAU' in symbol.upper() or 'GOLD' in symbol.upper():
+                    if pt >= 0.01:
+                        p_size = pt
+                init_dist = abs(price - sl) / p_size if sl > 0 else 50.0
+                _INITIAL_SL_CACHE[result.order] = {
+                    'initial_sl': sl,
+                    'initial_dist_pips': init_dist
+                }
+                
+                db.log_order(result.order, "Strategy_1_Trend_HA_V2", symbol, signal, volume, price, sl, tp, result.comment, account_id=config['account'], initial_sl=sl)
+                print(f"✅ Order logged to DB: Ticket {result.order} (Initial SL: {sl:.2f}, Dist: {init_dist:.1f}p)")
             except Exception as e:
                 print(f"⚠️ Failed to log order to DB: {e}")
             

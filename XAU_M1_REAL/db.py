@@ -2,6 +2,14 @@ import sqlite3
 import datetime
 import os
 import json
+import sys
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 class Database:
     def __init__(self, db_path=None):
@@ -52,7 +60,8 @@ class Database:
                 profit REAL,
                 close_time DATETIME,
                 comment TEXT,
-                account_id INTEGER DEFAULT 0
+                account_id INTEGER DEFAULT 0,
+                initial_sl REAL
             )
         ''')
         
@@ -60,7 +69,7 @@ class Database:
         conn.close()
 
     def _migrate_tables(self):
-        """Add account_id and close_time columns to existing tables if missing"""
+        """Add account_id, close_time, and initial_sl columns to existing tables if missing"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -74,6 +83,11 @@ class Database:
         if 'close_time' not in columns:
             print("📦 Migrating DB: Adding close_time to orders table...")
             cursor.execute("ALTER TABLE orders ADD COLUMN close_time DATETIME")
+
+        if 'initial_sl' not in columns:
+            print("📦 Migrating DB: Adding initial_sl to orders table...")
+            cursor.execute("ALTER TABLE orders ADD COLUMN initial_sl REAL")
+            cursor.execute("UPDATE orders SET initial_sl = sl WHERE initial_sl IS NULL AND sl IS NOT NULL")
             
         # Check signals table
         cursor.execute("PRAGMA table_info(signals)")
@@ -102,18 +116,33 @@ class Database:
         conn.commit()
         conn.close()
 
-    def log_order(self, ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment="", account_id=0):
+    def log_order(self, ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment="", account_id=0, initial_sl=None):
         """Log an executed order"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        if initial_sl is None:
+            initial_sl = sl
+            
         cursor.execute('''
-            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment, account_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
-        ''', (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment, account_id))
+            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment, account_id, initial_sl)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+        ''', (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment, account_id, initial_sl))
         
         conn.commit()
         conn.close()
+    
+    def get_initial_sl(self, ticket):
+        """Get initial SL and open price for a given ticket from DB"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT initial_sl, sl, open_price FROM orders WHERE ticket = ?", (ticket,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            init_sl = row[0] if (row[0] is not None and row[0] > 0) else row[1]
+            return init_sl, row[2]
+        return None, None
     
     def update_order_profit(self, ticket, close_price, profit, close_time=None):
         """Update closed order with profit and optional close_time"""

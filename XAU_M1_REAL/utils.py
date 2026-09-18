@@ -212,6 +212,98 @@ def is_doji(row, threshold=0.1):
     rng = row['high'] - row['low']
     return body <= (rng * threshold) if rng > 0 else True
 
+# Bộ nhớ đệm lưu trữ Initial SL cho từng Ticket (In-memory cache)
+_INITIAL_SL_CACHE = {}
+
+def get_initial_sl_distance(pos, symbol, pip_size):
+    """
+    Lấy chính xác Initial SL (SL ban đầu) và khoảng cách Initial SL (pips) của vị thế.
+    Cơ chế tìm kiếm đa tầng chính xác:
+    1. Kiểm tra cache trong bộ nhớ (_INITIAL_SL_CACHE)
+    2. Nếu SL hiện tại còn nguyên (chưa bị dời về BE, khoảng cách >= 5 pips) -> lưu ngay vào cache
+    3. Nếu SL đã bị dời về BE -> truy vấn lịch sử Order khởi tạo vị thế từ MT5 (mt5.history_orders_get)
+    4. Nếu không tìm thấy trong MT5 -> truy vấn bảng orders trong trades.db (initial_sl)
+    5. Fallback an toàn nếu hoàn toàn không có dữ liệu: 50 pips
+    """
+    ticket = int(pos.ticket)
+    
+    # 1. Kiểm tra Cache trong bộ nhớ
+    if ticket in _INITIAL_SL_CACHE:
+        cached = _INITIAL_SL_CACHE[ticket]
+        if cached.get('initial_dist_pips', 0) > 0:
+            return cached.get('initial_sl', pos.sl), cached['initial_dist_pips']
+
+    initial_sl = None
+    initial_dist_pips = None
+
+    # 2. Kiểm tra SL hiện tại của vị thế nếu chưa bị kéo về hòa vốn
+    if pos.sl > 0:
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            dist = (pos.price_open - pos.sl) / pip_size
+            if pos.sl < pos.price_open and dist >= 5.0:
+                initial_sl = pos.sl
+                initial_dist_pips = dist
+        else:
+            dist = (pos.sl - pos.price_open) / pip_size
+            if pos.sl > pos.price_open and dist >= 5.0:
+                initial_sl = pos.sl
+                initial_dist_pips = dist
+
+    # 3. Truy vấn Order mở lệnh từ lịch sử MT5 (history_orders_get lưu vĩnh viễn SL ban đầu)
+    if initial_dist_pips is None or initial_dist_pips <= 0:
+        try:
+            h_orders = mt5.history_orders_get(position=ticket)
+            if h_orders:
+                for ho in h_orders:
+                    if ho.sl > 0:
+                        if pos.type == mt5.ORDER_TYPE_BUY and ho.sl < pos.price_open:
+                            initial_sl = ho.sl
+                            initial_dist_pips = (pos.price_open - ho.sl) / pip_size
+                            break
+                        elif pos.type == mt5.ORDER_TYPE_SELL and ho.sl > pos.price_open:
+                            initial_sl = ho.sl
+                            initial_dist_pips = (ho.sl - pos.price_open) / pip_size
+                            break
+        except Exception:
+            pass
+
+    # 4. Truy vấn trades.db (initial_sl)
+    if initial_dist_pips is None or initial_dist_pips <= 0:
+        try:
+            import sqlite3
+            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trades.db")
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                c = conn.cursor()
+                c.execute("PRAGMA table_info(orders)")
+                cols = [col[1] for col in c.fetchall()]
+                query = "SELECT initial_sl, sl FROM orders WHERE ticket = ?" if 'initial_sl' in cols else "SELECT sl FROM orders WHERE ticket = ?"
+                c.execute(query, (ticket,))
+                row = c.fetchone()
+                conn.close()
+                if row:
+                    db_sl = row[0] if (row[0] is not None and row[0] > 0) else (row[1] if len(row) > 1 else None)
+                    if db_sl and db_sl > 0:
+                        initial_sl = db_sl
+                        if pos.type == mt5.ORDER_TYPE_BUY:
+                            initial_dist_pips = (pos.price_open - initial_sl) / pip_size
+                        else:
+                            initial_dist_pips = (initial_sl - pos.price_open) / pip_size
+        except Exception:
+            pass
+
+    # 5. Fallback nếu không có dữ liệu (50 pips thay vì 100 pips)
+    if initial_dist_pips is None or initial_dist_pips <= 0:
+        initial_dist_pips = 50.0
+        initial_sl = (pos.price_open - 50.0 * pip_size) if pos.type == mt5.ORDER_TYPE_BUY else (pos.price_open + 50.0 * pip_size)
+
+    # Lưu vào cache cho các lần gọi tiếp theo
+    _INITIAL_SL_CACHE[ticket] = {
+        'initial_sl': initial_sl,
+        'initial_dist_pips': initial_dist_pips
+    }
+    return initial_sl, initial_dist_pips
+
 def manage_position(order_ticket, symbol, magic, config):
     """
     Manage an open position: Breakeven & Trailing SL (Improved V2)
@@ -273,16 +365,8 @@ def manage_position(order_ticket, symbol, magic, config):
             profit_points = (pos.price_open - current_price) / point
             profit_pips = (pos.price_open - current_price) / pip_size
         
-        # Calculate Initial SL Distance (estimate from current SL if not moved much, or from entry)
-        if pos.type == mt5.ORDER_TYPE_BUY:
-            sl_distance_from_entry = (pos.price_open - pos.sl) / pip_size if pos.sl > 0 else 0
-        else:
-            sl_distance_from_entry = (pos.sl - pos.price_open) / pip_size if pos.sl > 0 else 0
-        
-        if sl_distance_from_entry < 5:  # SL is at breakeven or very close
-            initial_sl_distance_pips = 100  # Default estimate
-        else:
-            initial_sl_distance_pips = max(sl_distance_from_entry, 50)  # At least 50 pips
+        # Lấy chính xác Initial SL và khoảng cách Initial SL (pips) không dùng ước lượng 100 pips
+        initial_sl, initial_sl_distance_pips = get_initial_sl_distance(pos, symbol, pip_size)
             
         request = None
         pos_sl_rounded = round(pos.sl, digits)
@@ -322,7 +406,7 @@ def manage_position(order_ticket, symbol, magic, config):
                             "symbol": symbol,
                             "sl": target_sl,
                             "tp": round(pos.tp, digits),
-                            "_action_desc": f"Breakeven (Profit: {profit_pips:.1f} pips, Trigger: {breakeven_trigger_pips_calc:.1f} pips)"
+                            "_action_desc": f"Breakeven (Profit: {profit_pips:.1f}p, Trigger: {breakeven_trigger_pips_calc:.1f}p, InitSL Dist: {initial_sl_distance_pips:.1f}p)"
                         }
 
         # 2. Trailing Stop (Improved - based on Initial SL, M5 ATR, min/max limits)
@@ -403,7 +487,7 @@ def manage_position(order_ticket, symbol, magic, config):
                 
                 if request:
                     mode_str = f"ATR({trailing_atr_multiplier}x {trailing_atr_timeframe})" if trailing_mode == 'atr' else f"Fixed({trailing_distance_pips}pips)"
-                    request['_action_desc'] = f"Trailing SL ({mode_str}, Profit: {profit_pips:.1f} pips, Trigger: {trailing_trigger_pips_calc:.1f} pips)"
+                    request['_action_desc'] = f"Trailing SL ({mode_str}, Profit: {profit_pips:.1f}p, Trigger: {trailing_trigger_pips_calc:.1f}p, InitSL Dist: {initial_sl_distance_pips:.1f}p)"
 
         if request:
             # Prevent sending if target sl and tp match current position sl and tp
