@@ -12,6 +12,7 @@
         "atr_max_threshold": 10,
         "atr_period": 14,
         "breakeven_enabled": true,
+        "breakeven_to_zero_enabled": false,
         "breakeven_trigger_percent": 0.5,
         "breakeven_trigger_pips": "auto",
         "chop_body_threshold": 0.5,

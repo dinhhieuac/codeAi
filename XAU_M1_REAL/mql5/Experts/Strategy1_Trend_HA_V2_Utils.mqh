@@ -29,6 +29,7 @@ struct S1TrailConfig
 {
    bool     trailing_enabled;
    bool     breakeven_enabled;
+   bool     breakeven_to_zero_enabled;
    string   breakeven_trigger_pips;
    double   breakeven_trigger_percent;
    string   trailing_trigger_pips;
@@ -946,7 +947,7 @@ void S1_ManagePosition(const ulong ticket, const string symbol, const long magic
    double new_sl = sl;
    bool modify = false;
 
-   if(cfg.breakeven_enabled)
+   if(cfg.breakeven_enabled && cfg.breakeven_to_zero_enabled)
    {
       double breakeven_trigger_pips_calc = 30.0;
       if(S1_IsAutoPips(cfg.breakeven_trigger_pips))

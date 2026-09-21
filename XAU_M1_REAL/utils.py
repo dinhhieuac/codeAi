@@ -311,6 +311,7 @@ def manage_position(order_ticket, symbol, magic, config):
     Config parameters:
     - trailing_enabled: true/false - Enable/disable trailing SL
     - breakeven_enabled: true/false - Enable/disable breakeven
+    - breakeven_to_zero_enabled: true/false - Enable/disable moving SL to breakeven price 0 (default: true)
     - breakeven_trigger_pips: Fixed pips OR use "auto" for % of initial SL (default: 30)
     - breakeven_trigger_percent: % of initial SL to trigger breakeven (default: 0.5 = 50%)
     - trailing_trigger_pips: Fixed pips OR use "auto" for multiplier of initial SL (default: 50)
@@ -373,7 +374,8 @@ def manage_position(order_ticket, symbol, magic, config):
         price_open_rounded = round(pos.price_open, digits)
         
         # 1. Breakeven (Improved - based on Initial SL %)
-        if breakeven_enabled:
+        breakeven_to_zero_enabled = config.get('parameters', {}).get('breakeven_to_zero_enabled', True)
+        if breakeven_enabled and breakeven_to_zero_enabled:
             breakeven_trigger_pips = config.get('parameters', {}).get('breakeven_trigger_pips', 30)
             breakeven_trigger_percent = config.get('parameters', {}).get('breakeven_trigger_percent', 0.5)
             
