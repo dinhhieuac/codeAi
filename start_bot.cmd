@@ -55,6 +55,7 @@ echo  [2] strategy_1_trend_ha_v2.1.py   (Version 2.1)
 echo  [3] strategy_1_trend_ha_v2.py     (Version 2.0)
 echo  [4] strategy_1_trend_ha_v3.py     (Version 3.0)
 echo  [5] strategy_1_trend_ha.py        (Original Version)
+echo  [M] strategy_1_trend_ha_multi.py (MULTI CONFIG - Chay nhieu cau hinh tren 1 account)
 echo ----------------------------------------------------------------------
 echo  [6] Chay TAT CA 5 bot tren        (Moi bot 1 cua so rieng)
 echo  [7] Chay Update DB                (update_db.py)
@@ -66,7 +67,7 @@ echo ======================================================================
 echo.
 
 set "user_choice="
-set /p user_choice="Chon so [0-9] roi an Enter: "
+set /p user_choice="Chon so [0-9 hoac M] roi an Enter: "
 
 :: Remove spaces
 if defined user_choice set "user_choice=%user_choice: =%"
@@ -76,6 +77,7 @@ if "%user_choice:~0,1%"=="2" goto RUN_V2_1
 if "%user_choice:~0,1%"=="3" goto RUN_V2
 if "%user_choice:~0,1%"=="4" goto RUN_V3
 if "%user_choice:~0,1%"=="5" goto RUN_ORIGINAL
+if /i "%user_choice:~0,1%"=="M" goto RUN_MULTI
 if "%user_choice:~0,1%"=="6" goto RUN_ALL
 if "%user_choice:~0,1%"=="7" goto RUN_UPDATE_DB
 if "%user_choice:~0,1%"=="8" goto RUN_DASHBOARD
@@ -139,6 +141,13 @@ call :CHECK_PYTHON
 echo.
 echo [*] Dang khoi chay: strategy_1_trend_ha.py (Original Version) ...
 start "XAU Bot - HA Original" cmd /k "chcp 65001 >nul && cd /d "%XAU_DIR%" && title XAU_M1_REAL - HA Original && "%PYTHON_EXE%" -X utf8 strategy_1_trend_ha.py"
+goto DONE_LAUNCH
+
+:RUN_MULTI
+call :CHECK_PYTHON
+echo.
+echo [*] Dang khoi chay: strategy_1_trend_ha_multi.py (MULTI CONFIG RUNNER) ...
+start "XAU Bot - Multi Config" cmd /k "chcp 65001 >nul && cd /d "%XAU_DIR%" && title XAU_M1_REAL - Multi Config && "%PYTHON_EXE%" -X utf8 strategy_1_trend_ha_multi.py"
 goto DONE_LAUNCH
 
 :RUN_ALL

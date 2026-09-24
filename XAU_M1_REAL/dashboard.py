@@ -31,6 +31,14 @@ from update_db import load_strategy_configs
 
 # Định nghĩa các bot giao dịch, script hỗ trợ và file cấu hình tương ứng
 VALID_BOTS = {
+    'strategy_1_trend_ha_multi.py': {
+        'name': 'HA Multi-Exp',
+        'version': 'Multi-Exp',
+        'desc': 'Chạy song song nhiều cấu hình thử nghiệm (config_exp_*.json)',
+        'badge': 'bg-primary text-light',
+        'config': 'configs/config_exp_1.json',
+        'is_multi': True
+    },
     'strategy_1_trend_ha_v2.py': {
         'name': 'HA v2.0',
         'version': 'V2.0 (Khuyên dùng)',
@@ -363,7 +371,50 @@ def index():
         cfg_path = m.get('config')
         session_info = {'enabled': True, 'start': '08:00', 'end': '22:00', 'display': '08:00 - 22:00'}
         params_summary = None
-        if cfg_path:
+        if m.get('is_multi'):
+            try:
+                configs_dir = os.path.join(base_dir, 'configs')
+                exp_files = sorted([f for f in os.listdir(configs_dir) if f.startswith('config_exp_') and f.endswith('.json')])
+                magics = []
+                accs = []
+                for ef in exp_files:
+                    try:
+                        with open(os.path.join(configs_dir, ef), 'r', encoding='utf-8') as f:
+                            edata = json.load(f)
+                            if 'magic' in edata:
+                                magics.append(str(edata['magic']))
+                            aid = edata.get('account_id')
+                            if aid and aid in accounts_dict:
+                                accs.append(str(accounts_dict[aid].get('account', aid)))
+                            elif edata.get('account'):
+                                accs.append(str(edata.get('account')))
+                    except Exception:
+                        pass
+                magic_disp = ", ".join(magics) if magics else "--"
+                acc_disp = ", ".join(list(dict.fromkeys(accs))) if accs else "--"
+                params_summary = {
+                    'symbol': 'XAUUSDc (Multi)',
+                    'volume': f"{len(exp_files)} Files",
+                    'max_positions': len(exp_files),
+                    'magic': magic_disp,
+                    'account_no': acc_disp,
+                    'account_name': f"{len(exp_files)} cấu hình thử nghiệm",
+                    'sl_display': 'Riêng từng',
+                    'tp_display': 'config',
+                    'trailing': True,
+                    'trailing_mode': 'MULTI',
+                    'breakeven': True,
+                    'key_ind': f"{len(exp_files)} files: {', '.join(exp_files)}"
+                }
+                session_info = {
+                    'enabled': False,
+                    'start': 'ALL',
+                    'end': 'TIME',
+                    'display': 'Theo từng file config'
+                }
+            except Exception:
+                pass
+        elif cfg_path:
             full_cfg_path = os.path.join(base_dir, cfg_path)
             if os.path.exists(full_cfg_path):
                 try:
@@ -1782,21 +1833,57 @@ def api_delete_account():
         return jsonify({'success': False, 'message': f'Lỗi khi xóa tài khoản: {str(e)}'}), 500
 
 # =========================================================================
-# BOT CONFIGURATION APIS (GET CONFIG / SAVE CONFIG / RESTART BOT)
+# BOT CONFIGURATION APIS (GET CONFIG / SAVE CONFIG / RESTART BOT / MULTI EXP)
 # =========================================================================
+
+def _get_all_exp_configs(base_dir):
+    """Liệt kê tất cả các file cấu hình thử nghiệm config_exp_*.json kèm magic number"""
+    configs_dir = os.path.join(base_dir, 'configs')
+    if not os.path.exists(configs_dir):
+        return []
+    exp_files = sorted([f for f in os.listdir(configs_dir) if f.startswith('config_exp_') and f.endswith('.json')])
+    result = []
+    for ef in exp_files:
+        path = os.path.join(configs_dir, ef)
+        magic = None
+        comment = ""
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                magic = d.get('magic')
+                comment = d.get('parameters', {}).get('order_comment', '')
+        except Exception:
+            pass
+        result.append({
+            'filename': ef,
+            'rel_path': f"configs/{ef}",
+            'magic': magic,
+            'comment': comment
+        })
+    return result
 
 @app.route('/api/bot_config')
 def api_get_bot_config():
-    """Lấy nội dung cấu hình JSON của bot"""
+    """Lấy nội dung cấu hình JSON của bot hoặc file thử nghiệm cụ thể"""
     bot_file = request.args.get('bot', '').strip()
+    config_file_param = request.args.get('config_file', '').strip()
+    
     if not bot_file or bot_file not in VALID_BOTS:
         return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
         
-    config_rel = VALID_BOTS[bot_file].get('config')
+    meta = VALID_BOTS[bot_file]
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    exp_configs = _get_all_exp_configs(base_dir)
+    
+    if config_file_param:
+        clean_name = os.path.basename(config_file_param)
+        config_rel = f"configs/{clean_name}"
+    else:
+        config_rel = meta.get('config')
+        
     if not config_rel:
         return jsonify({'success': False, 'message': f'Bot {bot_file} không có file cấu hình!'}), 400
         
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.normpath(os.path.join(base_dir, config_rel))
     
     if not os.path.exists(config_path):
@@ -1812,8 +1899,11 @@ def api_get_bot_config():
         return jsonify({
             'success': True,
             'bot': bot_file,
-            'bot_name': VALID_BOTS[bot_file]['name'],
+            'bot_name': meta['name'],
+            'is_multi': meta.get('is_multi', False),
             'config_path': config_rel,
+            'config_filename': os.path.basename(config_path),
+            'exp_configs': exp_configs,
             'config_data': parsed,
             'config_raw': raw_content,
             'accounts_list': accounts_list,
@@ -1825,20 +1915,28 @@ def api_get_bot_config():
 
 @app.route('/api/save_bot_config', methods=['POST'])
 def api_save_bot_config():
-    """Lưu và cập nhật lại file cấu hình JSON của bot"""
+    """Lưu và cập nhật lại file cấu hình JSON của bot hoặc file thử nghiệm"""
     data = request.get_json() or {}
     bot_file = data.get('bot', '').strip()
+    config_file_param = data.get('config_file', '').strip()
     config_raw = data.get('config_raw')
     config_data = data.get('config_data')
     
     if not bot_file or bot_file not in VALID_BOTS:
         return jsonify({'success': False, 'message': f'Bot "{bot_file}" không hợp lệ!'}), 400
         
-    config_rel = VALID_BOTS[bot_file].get('config')
+    meta = VALID_BOTS[bot_file]
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    if config_file_param:
+        clean_name = os.path.basename(config_file_param)
+        config_rel = f"configs/{clean_name}"
+    else:
+        config_rel = meta.get('config')
+        
     if not config_rel:
         return jsonify({'success': False, 'message': f'Bot {bot_file} không hỗ trợ cấu hình!'}), 400
         
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.normpath(os.path.join(base_dir, config_rel))
     
     # Kiểm tra JSON hợp lệ
@@ -1862,7 +1960,7 @@ def api_save_bot_config():
         running = get_running_bots()
         is_running = bot_file in running
         
-        msg = f"Đã lưu thành công cấu hình {VALID_BOTS[bot_file]['name']} ({config_rel})!"
+        msg = f"Đã lưu thành công cấu hình {meta['name']} ({config_rel})!"
         if is_running:
             msg += f" (Lưu ý: Bot đang chạy với PID {running[bot_file]}, hãy khởi động lại bot để áp dụng cài đặt mới)."
             
@@ -1872,10 +1970,106 @@ def api_save_bot_config():
             'is_running': is_running,
             'pid': running.get(bot_file),
             'config_data': parsed_json,
-            'config_raw': formatted_json_str
+            'config_raw': formatted_json_str,
+            'config_filename': os.path.basename(config_path),
+            'config_path': config_rel
         })
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khi lưu file cấu hình: {str(e)}'}), 500
+
+@app.route('/api/create_exp_config', methods=['POST'])
+def api_create_exp_config():
+    """Tạo mới một file cấu hình thử nghiệm config_exp_*.json"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    configs_dir = os.path.join(base_dir, 'configs')
+    
+    # Tìm index mới
+    exp_files = [f for f in os.listdir(configs_dir) if f.startswith('config_exp_') and f.endswith('.json')]
+    existing_indices = []
+    max_magic = 100020
+    
+    for ef in exp_files:
+        try:
+            idx = int(ef.replace('config_exp_', '').replace('.json', ''))
+            existing_indices.append(idx)
+        except ValueError:
+            pass
+        try:
+            with open(os.path.join(configs_dir, ef), 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                m = d.get('magic', 0)
+                if isinstance(m, int) and m > max_magic:
+                    max_magic = m
+        except Exception:
+            pass
+            
+    next_idx = max(existing_indices, default=0) + 1
+    new_magic = max_magic + 1
+    new_filename = f"config_exp_{next_idx}.json"
+    new_path = os.path.join(configs_dir, new_filename)
+    
+    # Chọn file mẫu để clone (ưu tiên config_exp_1.json hoặc config_template.json)
+    template_path = os.path.join(configs_dir, 'config_exp_1.json')
+    if not os.path.exists(template_path):
+        template_path = os.path.join(configs_dir, 'config_template.json')
+        
+    try:
+        if os.path.exists(template_path):
+            with open(template_path, 'r', encoding='utf-8') as f:
+                template_data = json.load(f)
+        else:
+            template_data = {
+                "symbol": "XAUUSDc",
+                "volume": 0.01,
+                "magic": new_magic,
+                "max_positions": 1,
+                "parameters": {
+                    "order_comment": f"EXP_{next_idx}"
+                }
+            }
+            
+        template_data['magic'] = new_magic
+        if 'parameters' not in template_data:
+            template_data['parameters'] = {}
+        template_data['parameters']['order_comment'] = f"EXP_{next_idx}"
+        
+        with open(new_path, 'w', encoding='utf-8') as f:
+            json.dump(template_data, f, indent=4, ensure_ascii=False)
+            
+        return jsonify({
+            'success': True,
+            'message': f'Đã tạo thành công file thử nghiệm mới "{new_filename}" (Magic: {new_magic})!',
+            'filename': new_filename,
+            'rel_path': f"configs/{new_filename}",
+            'magic': new_magic
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi tạo file thử nghiệm: {str(e)}'}), 500
+
+@app.route('/api/delete_exp_config', methods=['POST'])
+def api_delete_exp_config():
+    """Xóa một file cấu hình thử nghiệm config_exp_*.json"""
+    data = request.get_json() or {}
+    filename = data.get('filename', '').strip()
+    if not filename or not filename.startswith('config_exp_') or not filename.endswith('.json'):
+        return jsonify({'success': False, 'message': 'Tên file thử nghiệm không hợp lệ!'}), 400
+        
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    configs_dir = os.path.join(base_dir, 'configs')
+    exp_files = [f for f in os.listdir(configs_dir) if f.startswith('config_exp_') and f.endswith('.json')]
+    
+    if len(exp_files) <= 1:
+        return jsonify({'success': False, 'message': 'Không thể xóa file thử nghiệm cuối cùng!'}), 400
+        
+    target_path = os.path.join(configs_dir, filename)
+    if not os.path.exists(target_path):
+        return jsonify({'success': False, 'message': f'File {filename} không tồn tại!'}), 404
+        
+    try:
+        os.remove(target_path)
+        return jsonify({'success': True, 'message': f'Đã xóa file cấu hình thử nghiệm "{filename}" thành công!'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi xóa file: {str(e)}'}), 500
 
 @app.route('/api/restart_bot', methods=['POST'])
 def api_restart_bot():

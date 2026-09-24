@@ -678,13 +678,23 @@
                     
                     <div class="list-group mb-3" id="modalBotOptionList">
                         <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3 border-success active" style="cursor: pointer;">
-                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v2.py" checked>
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_multi.py" checked>
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between">
+                                    <strong class="mb-0 text-primary">strategy_1_trend_ha_multi.py</strong>
+                                    <span class="badge bg-primary text-light">Multi-Exp Mới</span>
+                                </div>
+                                <small class="text-white-50 d-block mt-1">Chạy song song nhiều cấu hình thử nghiệm độc lập (config_exp_*.json)</small>
+                            </div>
+                        </label>
+                        <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
+                            <input class="form-check-input flex-shrink-0 mt-0" type="radio" name="selectedBotRadio" value="strategy_1_trend_ha_v2.py">
                             <div class="flex-grow-1">
                                 <div class="d-flex justify-content-between">
                                     <strong class="mb-0">strategy_1_trend_ha_v2.py</strong>
                                     <span class="badge bg-warning text-dark">V2.0 Khuyên dùng</span>
                                 </div>
-                                <small class="text-white-50 d-block mt-1">Chiến lược HA v2.0 có ADX, CHOP filter, ATR trailing stop</small>
+                                <small class="text-muted d-block mt-1">Chiến lược HA v2.0 có ADX, CHOP filter, ATR trailing stop</small>
                             </div>
                         </label>
                         <label class="list-group-item list-group-item-action d-flex align-items-center gap-3 p-3" style="cursor: pointer;">
@@ -791,6 +801,28 @@
                         <button class="btn btn-sm btn-dark fw-bold py-1 px-3 shadow-sm" onclick="restartCurrentBot()">
                             <i class="fas fa-redo me-1"></i> Khởi Động Lại Bot
                         </button>
+                    </div>
+
+                    <!-- Multi-Config Experiment File Switcher (hiển thị khi sửa bot Multi-Exp) -->
+                    <div id="cfgMultiExpPanel" class="card border-primary mb-3 shadow-sm d-none" style="border-left: 4px solid #0d6efd !important;">
+                        <div class="card-header bg-white py-2 d-flex flex-wrap justify-content-between align-items-center">
+                            <span class="fw-bold text-primary small">
+                                <i class="fas fa-layer-group me-1"></i> Cấu Hình Thử Nghiệm Đang Chọn: <span id="cfgActiveFileName" class="text-dark font-monospace fw-bold"></span>
+                            </span>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-success btn-sm py-1 px-2" onclick="createNewExpConfig()" title="Tạo thêm 1 file config_exp_*.json với Magic Number mới">
+                                    <i class="fas fa-plus me-1"></i> + Thêm Thử Nghiệm
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm py-1 px-2" id="btnDeleteExpConfig" onclick="deleteCurrentExpConfig()" title="Xóa file thử nghiệm đang chọn">
+                                    <i class="fas fa-trash me-1"></i> Xóa File Này
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body p-2 bg-light">
+                            <div class="d-flex align-items-center gap-2 flex-wrap" id="cfgExpFilesList">
+                                <!-- Dynamic Badges of config_exp_*.json -->
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Tabs Header -->
@@ -1073,6 +1105,7 @@
         let botConfigModalInstance = null;
         let accountsModalInstance = null;
         let currentConfigBot = null;
+        let currentConfigFile = null;
         let currentConfigData = null;
         let cachedAccounts = {};
 
@@ -1339,7 +1372,7 @@
         // BOT CONFIG MODAL
         // =========================================================================
 
-        async function openBotConfigModal(botFile) {
+        async function openBotConfigModal(botFile, configFile = null) {
             currentConfigBot = botFile;
             hideCfgAlert();
             if (!botConfigModalInstance) {
@@ -1354,7 +1387,11 @@
             botConfigModalInstance.show();
 
             try {
-                const res = await fetch(`/api/bot_config?bot=${encodeURIComponent(botFile)}`);
+                let url = `/api/bot_config?bot=${encodeURIComponent(botFile)}`;
+                if (configFile) {
+                    url += `&config_file=${encodeURIComponent(configFile)}`;
+                }
+                const res = await fetch(url);
                 const data = await res.json();
                 if (!data.success) {
                     showCfgAlert(data.message || 'Không thể tải cấu hình bot', 'danger');
@@ -1362,10 +1399,38 @@
                 }
 
                 currentConfigData = data.config_data;
+                currentConfigFile = data.config_filename || configFile;
                 document.getElementById('cfgBotName').textContent = data.bot_name;
                 document.getElementById('cfgBotFile').textContent = `${data.bot}  (${data.config_path})`;
                 document.getElementById('cfgFooterFileInfo').textContent = `File: ${data.config_path}`;
                 document.getElementById('cfgRawTextarea').value = data.config_raw;
+
+                // Xử lý thanh điều hướng file thử nghiệm Multi-Exp
+                const expPanel = document.getElementById('cfgMultiExpPanel');
+                const expList = document.getElementById('cfgExpFilesList');
+                const activeFileLabel = document.getElementById('cfgActiveFileName');
+                const btnDelete = document.getElementById('btnDeleteExpConfig');
+
+                if (data.is_multi && data.exp_configs && data.exp_configs.length > 0) {
+                    if (expPanel) expPanel.classList.remove('d-none');
+                    if (activeFileLabel) activeFileLabel.textContent = currentConfigFile;
+                    if (btnDelete) btnDelete.disabled = (data.exp_configs.length <= 1);
+
+                    if (expList) {
+                        expList.innerHTML = '';
+                        data.exp_configs.forEach(exp => {
+                            const isActive = (exp.filename === currentConfigFile);
+                            const btn = document.createElement('button');
+                            btn.type = 'button';
+                            btn.className = `btn btn-sm ${isActive ? 'btn-primary fw-bold shadow-sm' : 'btn-outline-secondary text-dark bg-white'}`;
+                            btn.innerHTML = `<i class="fas ${isActive ? 'fa-check-circle' : 'fa-file-code'} me-1"></i> ${exp.filename} <span class="badge ${isActive ? 'bg-light text-primary' : 'bg-secondary'} ms-1">M:${exp.magic || '--'}</span>`;
+                            btn.onclick = () => openBotConfigModal(currentConfigBot, exp.filename);
+                            expList.appendChild(btn);
+                        });
+                    }
+                } else {
+                    if (expPanel) expPanel.classList.add('d-none');
+                }
 
                 // Cập nhật cachedAccounts từ server
                 if (data.accounts_list) {
@@ -1412,6 +1477,47 @@
             }
         }
 
+        async function createNewExpConfig() {
+            if (!confirm("Bạn có muốn tạo thêm một file cấu hình thử nghiệm mới (config_exp_*.json)?")) return;
+            try {
+                showCfgAlert("Đang tạo file thử nghiệm mới...", "info");
+                const res = await fetch('/api/create_exp_config', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showCfgAlert(data.message, "success");
+                    showBotAlert(data.message, "success");
+                    await openBotConfigModal(currentConfigBot || 'strategy_1_trend_ha_multi.py', data.filename);
+                } else {
+                    showCfgAlert(data.message || "Lỗi khi tạo file thử nghiệm", "danger");
+                }
+            } catch (e) {
+                showCfgAlert(`Lỗi kết nối: ${e.message}`, "danger");
+            }
+        }
+
+        async function deleteCurrentExpConfig() {
+            if (!currentConfigFile) return;
+            if (!confirm(`Bạn có chắc chắn muốn XÓA file cấu hình thử nghiệm "${currentConfigFile}"?\nThao tác này không thể hoàn tác!`)) return;
+            try {
+                showCfgAlert(`Đang xóa ${currentConfigFile}...`, "info");
+                const res = await fetch('/api/delete_exp_config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentConfigFile })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showCfgAlert(data.message, "success");
+                    showBotAlert(data.message, "success");
+                    await openBotConfigModal(currentConfigBot || 'strategy_1_trend_ha_multi.py');
+                } else {
+                    showCfgAlert(data.message || "Lỗi khi xóa file thử nghiệm", "danger");
+                }
+            } catch (e) {
+                showCfgAlert(`Lỗi kết nối: ${e.message}`, "danger");
+            }
+        }
+
         // TỪ ĐIỂN GIẢI THÍCH CHI TIẾT TẤT CẢ CÁC PARAMETER CỦA BOT
         const PARAM_DESCRIPTIONS = {
             // Thông số cơ bản
@@ -1421,6 +1527,7 @@
             "magic": "Mã định danh duy nhất (Magic Number) của bot để không can thiệp vào lệnh của bot khác hay lệnh tay",
             "account": "Số tài khoản MetaTrader 5 dùng để giao dịch",
             "server": "Tên máy chủ MetaTrader 5 của sàn giao dịch (ví dụ: Exness-MT5Real37)",
+            "order_comment": "Ghi chú phân biệt lệnh gửi lên sàn MT5 (ví dụ: EXP_1, EXP_2, HA_V2)",
 
             // Stop Loss & Take Profit
             "sl_mode": "Chế độ tính Stop Loss: 'auto_m5' (theo đáy/đỉnh nến M5 gần nhất), 'atr' (theo biến động ATR), hoặc 'fixed' (cố định số pips)",
@@ -1474,6 +1581,7 @@
             // Dời SL (Trailing Stop) & Kéo Hòa Vốn (Break-Even)
             "trailing_enabled": "Bật/Tắt tính năng Dời Dừng Lỗ tự động (Trailing Stop) bám theo giá dương để gồng lời",
             "breakeven_enabled": "Bật/Tắt tính năng Tự động dời SL về điểm vào lệnh (Break-Even) khi giá đã chạy có lãi",
+            "breakeven_to_zero_enabled": "Bật/Tắt bước dời SL về 0 (hòa vốn). Nếu tắt (false), khi giá chạm ngưỡng trigger sẽ dời SL lên mức dương tối thiểu (trailing_min_pips) thay vì để đúng điểm vào lệnh",
             "breakeven_trigger_pips": "Khoảng cách lãi đạt được (pips) để kéo SL về hòa vốn ('auto' hoặc số pips cụ thể)",
             "breakeven_trigger_percent": "Tỷ lệ phần trăm chặng đường tới TP (ví dụ 0.5 = 50% TP) để tự động dời SL về hòa vốn",
             "trailing_trigger_pips": "Khoảng cách lãi cần đạt để bắt đầu kích hoạt cơ chế Trailing Stop",
@@ -1796,6 +1904,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         bot: currentConfigBot,
+                        config_file: currentConfigFile,
                         config_raw: rawText
                     })
                 });
