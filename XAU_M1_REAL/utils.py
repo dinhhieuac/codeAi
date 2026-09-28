@@ -69,7 +69,7 @@ def load_config(config_path):
         return None
 
 def connect_mt5(config):
-    """Initialize MT5 connection using config"""
+    """Initialize MT5 connection and ensure proper account login using config"""
     login = config.get("account")
     password = config.get("password")
     server = config.get("server")
@@ -78,6 +78,12 @@ def connect_mt5(config):
     if not all([login, password, server]):
         print("❌ Missing MT5 credentials in config")
         return False
+
+    # Chuyển login sang kiểu int nếu cần
+    try:
+        login_int = int(login)
+    except (ValueError, TypeError):
+        login_int = login
 
     # Tự động điều chỉnh đường dẫn MT5 nếu đường dẫn trong config không tồn tại
     if path and not os.path.exists(path):
@@ -88,22 +94,40 @@ def connect_mt5(config):
             path = None
 
     try:
+        init_ok = False
         if path:
-            if not mt5.initialize(path=path, login=login, password=password, server=server):
-                print(f"❌ MT5 Init failed with path: {mt5.last_error()}")
-                # Thử fallback không dùng path
-                if not mt5.initialize(login=login, password=password, server=server):
-                    return False
+            init_ok = mt5.initialize(path=path, login=login_int, password=password, server=server, timeout=10000)
+            if not init_ok:
+                print(f"⚠️ MT5 Init failed with path '{path}': {mt5.last_error()}. Fallback without path...")
+                init_ok = mt5.initialize(timeout=10000)
         else:
-            if not mt5.initialize(login=login, password=password, server=server):
-                print(f"❌ MT5 Init failed: {mt5.last_error()}")
+            init_ok = mt5.initialize(timeout=10000)
+
+        if not init_ok:
+            print(f"❌ MT5 Init failed: {mt5.last_error()}")
+            return False
+
+        # Kiểm tra xem tài khoản hiện tại đã đúng login ID chưa
+        acc_info = mt5.account_info()
+        if acc_info is None or acc_info.login != login_int:
+            print(f"🔄 Switching MT5 account to {login_int} (server: {server})...")
+            login_success = mt5.login(login=login_int, password=password, server=server, timeout=10000)
+            if not login_success:
+                print(f"❌ MT5 Login failed for {login_int}: {mt5.last_error()}")
                 return False
-                
-        print(f"✅ Connected to MT5 Account: {login}")
-        return True
+            acc_info = mt5.account_info()
+
+        if acc_info and acc_info.login == login_int:
+            print(f"✅ Connected to MT5 Account: {login_int} ({acc_info.server}) | Balance: {acc_info.balance} {acc_info.currency}")
+            return True
+        else:
+            actual = acc_info.login if acc_info else 'Unknown'
+            print(f"❌ MT5 Account mismatch! Expected: {login_int}, Actual: {actual}")
+            return False
     except Exception as e:
         print(f"❌ Connection error: {e}")
         return False
+
 
 def send_telegram(message, token, chat_id):
     """Send message to Telegram"""
