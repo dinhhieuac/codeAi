@@ -1534,6 +1534,10 @@
             "reward_ratio": "Tỷ lệ Lời/Lỗ (Risk:Reward). Ví dụ 1.5 nghĩa là TP = 1.5 lần khoảng cách SL",
             "sl_pips": "Khoảng cách Dừng Lỗ (Stop Loss) cố định tính bằng pips (1 pip vàng = 0.1 USD hoặc 10 points)",
             "tp_pips": "Khoảng cách Chốt Lời (Take Profit) cố định tính bằng pips",
+            "max_sl_distance": "Khoảng cách Stop Loss tối đa cho phép tính theo GIÁ USD (ví dụ: 20 nghĩa là tối đa 20.0$ giá). Nếu khoảng cách SL vượt mức này, bot sẽ tự động bỏ qua tín hiệu",
+            "max_tp_distance": "Khoảng cách Take Profit tối đa cho phép tính theo GIÁ USD (ví dụ: 30 nghĩa là tối đa 30.0$ giá). Nếu khoảng cách TP vượt mức này, bot sẽ tự động bỏ qua tín hiệu",
+            "max_sl_pips": "Khoảng cách Stop Loss tối đa cho phép tính theo pips (ví dụ: 200 pips = 20$ giá). Nếu khoảng cách SL vượt mức này, bot sẽ tự động bỏ qua tín hiệu không vào lệnh",
+            "max_tp_pips": "Khoảng cách Take Profit tối đa cho phép tính theo pips (ví dụ: 300 pips = 30$ giá). Nếu khoảng cách TP vượt mức này, bot sẽ tự động bỏ qua tín hiệu không vào lệnh",
 
             // Chỉ báo RSI & ADX
             "rsi_period": "Số chu kỳ nến để tính chỉ báo sức mạnh tương đối RSI (mặc định 14)",
@@ -1580,6 +1584,7 @@
 
             // Dời SL (Trailing Stop) & Kéo Hòa Vốn (Break-Even)
             "trailing_enabled": "Bật/Tắt tính năng Dời Dừng Lỗ tự động (Trailing Stop) bám theo giá dương để gồng lời",
+            "remove_tp_on_sl_move": "Tự động xóa bỏ mức Chốt Lời (TP=0) khi kích hoạt dời SL (Breakeven hoặc Trailing Stop), giúp lệnh gồng lời thả ga không giới hạn cho đến khi cắn SL đã dời",
             "breakeven_enabled": "Bật/Tắt tính năng Tự động dời SL về điểm vào lệnh (Break-Even) khi giá đã chạy có lãi",
             "breakeven_to_zero_enabled": "Bật/Tắt bước dời SL về 0 (hòa vốn). Nếu tắt (false), khi giá chạm ngưỡng trigger sẽ dời SL lên mức dương tối thiểu (trailing_min_pips) thay vì để đúng điểm vào lệnh",
             "breakeven_trigger_pips": "Khoảng cách lãi đạt được (pips) để kéo SL về hòa vốn ('auto' hoặc số pips cụ thể)",

@@ -1100,6 +1100,65 @@ def strategy_1_logic(config, error_count=0):
             
             sl = price - sl_pips if signal == "BUY" else price + sl_pips
             tp = price + tp_pips if signal == "BUY" else price - tp_pips
+
+        # Check khoảng cách SL/TP tối đa (Max SL / Max TP Distance Filter)
+        sym_info = mt5.symbol_info(symbol)
+        pt = sym_info.point if sym_info else 0.01
+        p_size = pt * 10
+        if 'XAU' in symbol.upper() or 'GOLD' in symbol.upper():
+            if pt >= 0.01:
+                p_size = pt
+            else:
+                p_size = pt * 10
+        
+        sl_dist_price = abs(price - sl) if sl > 0 else 0.0
+        tp_dist_price = abs(tp - price) if tp > 0 else 0.0
+        sl_dist_pips = sl_dist_price / p_size if p_size > 0 else 0.0
+        tp_dist_pips = tp_dist_price / p_size if p_size > 0 else 0.0
+        
+        # 1. Kiểm tra max_sl_distance (tính theo khoảng cách giá USD, vd: 20.0 giá)
+        max_sl_dist = config['parameters'].get('max_sl_distance')
+        if max_sl_dist is not None:
+            try:
+                max_dist_val = float(max_sl_dist)
+                if max_dist_val > 0 and sl_dist_price > max_dist_val:
+                    print(f"❌ [FILTER BỎ QUA] Khoảng cách SL quá lớn: {sl_dist_price:.2f}$ > {max_dist_val:.2f}$ (max_sl_distance). Bỏ qua tín hiệu {signal}!")
+                    return error_count, 0
+            except (ValueError, TypeError):
+                pass
+
+        # 2. Kiểm tra max_sl_pips (tính theo pips, vd: 200 pips = 20 giá)
+        max_sl_pips = config['parameters'].get('max_sl_pips') or config['parameters'].get('max_risk_pips')
+        if max_sl_pips is not None:
+            try:
+                max_sl_val = float(max_sl_pips)
+                if max_sl_val > 0 and sl_dist_pips > max_sl_val:
+                    print(f"❌ [FILTER BỎ QUA] Khoảng cách SL quá lớn: {sl_dist_pips:.1f}p ({sl_dist_price:.2f}$) > {max_sl_val:.1f}p (max_sl_pips). Bỏ qua tín hiệu {signal}!")
+                    return error_count, 0
+            except (ValueError, TypeError):
+                pass
+                
+        # 3. Kiểm tra max_tp_distance (tính theo khoảng cách giá USD, vd: 30.0 giá)
+        max_tp_dist = config['parameters'].get('max_tp_distance')
+        if max_tp_dist is not None:
+            try:
+                max_tp_dist_val = float(max_tp_dist)
+                if max_tp_dist_val > 0 and tp_dist_price > max_tp_dist_val:
+                    print(f"❌ [FILTER BỎ QUA] Khoảng cách TP quá lớn: {tp_dist_price:.2f}$ > {max_tp_dist_val:.2f}$ (max_tp_distance). Bỏ qua tín hiệu {signal}!")
+                    return error_count, 0
+            except (ValueError, TypeError):
+                pass
+
+        # 4. Kiểm tra max_tp_pips (tính theo pips)
+        max_tp_pips = config['parameters'].get('max_tp_pips')
+        if max_tp_pips is not None:
+            try:
+                max_tp_val = float(max_tp_pips)
+                if max_tp_val > 0 and tp_dist_pips > max_tp_val:
+                    print(f"❌ [FILTER BỎ QUA] Khoảng cách TP quá lớn: {tp_dist_pips:.1f}p ({tp_dist_price:.2f}$) > {max_tp_val:.1f}p (max_tp_pips). Bỏ qua tín hiệu {signal}!")
+                    return error_count, 0
+            except (ValueError, TypeError):
+                pass
             
         # Log signal to DB
         try:

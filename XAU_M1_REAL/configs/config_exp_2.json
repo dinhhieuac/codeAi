@@ -28,7 +28,12 @@
         "liquidity_sweep_required": false,
         "liquidity_sweep_wick_multiplier": 1.2,
         "max_consecutive_losses": 3,
+        "max_sl_distance": 20,
+        "max_sl_pips": 200,
+        "max_tp_distance": 30,
+        "max_tp_pips": 300,
         "pause_on_losses": false,
+        "remove_tp_on_sl_move": true,
         "reward_ratio": 2,
         "rsi_buy_threshold": 60,
         "rsi_period": 14,
@@ -53,9 +58,9 @@
         "volume_confirmation_multiplier": 1.1,
         "volume_confirmation_required": false
     },
+    "symbol": "XAUUSDc",
     "telegram_chat_id": "1887610382",
     "telegram_token": "8509480492:AAFgxCgdAsrd80xJ5H6e_vVOg-NBzTivfBU",
     "version": "V2_EXP2",
-    "volume": 0.01,
-    "symbol": "XAUUSDc"
+    "volume": 0.01
 }

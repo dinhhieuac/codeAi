@@ -374,7 +374,12 @@ def manage_position(order_ticket, symbol, magic, config):
         price_open_rounded = round(pos.price_open, digits)
         
         # 1. Breakeven (Improved - based on Initial SL %)
+        remove_tp_on_sl_move = config.get('parameters', {}).get('remove_tp_on_sl_move', config.get('parameters', {}).get('remove_tp_on_trailing', False))
         breakeven_to_zero_enabled = config.get('parameters', {}).get('breakeven_to_zero_enabled', True)
+        breakeven_trigger_points = 999999999
+        breakeven_trigger_pips_calc = 0
+        is_breakeven = False
+        
         if breakeven_enabled and breakeven_to_zero_enabled:
             breakeven_trigger_pips = config.get('parameters', {}).get('breakeven_trigger_pips', 30)
             breakeven_trigger_percent = config.get('parameters', {}).get('breakeven_trigger_percent', 0.5)
@@ -390,7 +395,6 @@ def manage_position(order_ticket, symbol, magic, config):
             
             if profit_points > breakeven_trigger_points:
                 # Check if SL is already at or better than breakeven (using rounded comparison)
-                is_breakeven = False
                 if pos.type == mt5.ORDER_TYPE_BUY:
                     if pos_sl_rounded >= (price_open_rounded - 0.5 * point):
                         is_breakeven = True
@@ -402,16 +406,18 @@ def manage_position(order_ticket, symbol, magic, config):
                     # Target SL is price_open rounded to broker digits
                     target_sl = price_open_rounded
                     if abs(target_sl - pos_sl_rounded) >= point:
+                        target_tp = 0.0 if remove_tp_on_sl_move else round(pos.tp, digits)
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": pos.ticket,
                             "symbol": symbol,
                             "sl": target_sl,
-                            "tp": round(pos.tp, digits),
+                            "tp": target_tp,
                             "_action_desc": f"Breakeven (Profit: {profit_pips:.1f}p, Trigger: {breakeven_trigger_pips_calc:.1f}p, InitSL Dist: {initial_sl_distance_pips:.1f}p)"
                         }
 
         # 2. Trailing Stop (Improved - based on Initial SL, M5 ATR, min/max limits)
+        trailing_trigger_points = 999999999
         if trailing_enabled and request is None:
             trailing_trigger_pips = config.get('parameters', {}).get('trailing_trigger_pips', 50)
             trailing_trigger_multiplier = config.get('parameters', {}).get('trailing_trigger_multiplier', 1.2)
@@ -463,37 +469,79 @@ def manage_position(order_ticket, symbol, magic, config):
                     trail_dist = trailing_distance_pips * pip_size
                 
                 new_sl = 0.0
+                target_tp = 0.0 if remove_tp_on_sl_move else round(pos.tp, digits)
                 
                 if pos.type == mt5.ORDER_TYPE_BUY:
                     new_sl = round(current_price - trail_dist, digits)
-                    # Only update if new_sl is higher than current SL by at least 1 point
+                    # Update if new_sl is higher than current SL by at least 1 point OR if we need to remove TP
                     if new_sl - pos_sl_rounded >= point:
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": pos.ticket,
                             "symbol": symbol,
                             "sl": new_sl,
-                            "tp": round(pos.tp, digits)
+                            "tp": target_tp
+                        }
+                    elif remove_tp_on_sl_move and pos.tp > 0 and new_sl >= pos_sl_rounded:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": pos.ticket,
+                            "symbol": symbol,
+                            "sl": pos_sl_rounded,
+                            "tp": 0.0
                         }
                 else:
                     new_sl = round(current_price + trail_dist, digits)
-                    # Only update if new_sl is lower than current SL by at least 1 point (or SL is 0)
+                    # Update if new_sl is lower than current SL by at least 1 point (or SL is 0) OR if we need to remove TP
                     if pos.sl == 0 or (pos_sl_rounded - new_sl >= point):
                         request = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": pos.ticket,
                             "symbol": symbol,
                             "sl": new_sl,
-                            "tp": round(pos.tp, digits)
+                            "tp": target_tp
+                        }
+                    elif remove_tp_on_sl_move and pos.tp > 0 and pos.sl > 0 and pos_sl_rounded <= new_sl:
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": pos.ticket,
+                            "symbol": symbol,
+                            "sl": pos_sl_rounded,
+                            "tp": 0.0
                         }
                 
                 if request:
                     mode_str = f"ATR({trailing_atr_multiplier}x {trailing_atr_timeframe})" if trailing_mode == 'atr' else f"Fixed({trailing_distance_pips}pips)"
                     request['_action_desc'] = f"Trailing SL ({mode_str}, Profit: {profit_pips:.1f}p, Trigger: {trailing_trigger_pips_calc:.1f}p, InitSL Dist: {initial_sl_distance_pips:.1f}p)"
 
+        # 3. Xử lý bỏ TP nếu lệnh đã dời SL trước đó mà TP vẫn còn > 0
+        if request is None and remove_tp_on_sl_move and pos.tp > 0:
+            has_moved_sl = False
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                if pos_sl_rounded >= (price_open_rounded - 0.5 * point):
+                    has_moved_sl = True
+            else:
+                if pos.sl > 0 and pos_sl_rounded <= (price_open_rounded + 0.5 * point):
+                    has_moved_sl = True
+            
+            if has_moved_sl or profit_points > trailing_trigger_points or profit_points > breakeven_trigger_points:
+                request = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "position": pos.ticket,
+                    "symbol": symbol,
+                    "sl": pos_sl_rounded,
+                    "tp": 0.0,
+                    "_action_desc": f"Remove TP on SL Move (Profit: {profit_pips:.1f}p)"
+                }
+
         if request:
+            if remove_tp_on_sl_move:
+                request['tp'] = 0.0
+
             # Prevent sending if target sl and tp match current position sl and tp
-            if pos_sl_rounded == request['sl'] and round(pos.tp, digits) == request['tp']:
+            target_tp_rounded = round(request['tp'], digits) if request['tp'] > 0 else 0.0
+            cur_pos_tp_rounded = round(pos.tp, digits) if pos.tp > 0 else 0.0
+            if pos_sl_rounded == request['sl'] and cur_pos_tp_rounded == target_tp_rounded:
                 return
 
             action_desc = request.pop('_action_desc', None)
@@ -505,7 +553,8 @@ def manage_position(order_ticket, symbol, magic, config):
                 print(f"⚠️ Failed to update SL/TP for #{pos.ticket}: {res.comment} (Code: {res.retcode})")
             else:
                 extra = f" [{action_desc}]" if action_desc else ""
-                print(f"✅ Updated SL/TP successfully for #{pos.ticket} -> SL: {request['sl']}{extra}")
+                tp_text = f", TP: {request['tp']}" if request['tp'] > 0 else " (TP: Bỏ TP - Gồng lời vô hạn)"
+                print(f"✅ Updated SL/TP successfully for #{pos.ticket} -> SL: {request['sl']}{tp_text}{extra}")
 
     except Exception as e:
         print(f"⚠️ Error managing position {order_ticket}: {e}")
