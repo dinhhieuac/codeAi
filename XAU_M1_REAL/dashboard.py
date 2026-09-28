@@ -112,23 +112,33 @@ VALID_BOTS = {
 }
 
 def get_running_bots():
-    """Kiểm tra xem các bot nào đang chạy trên hệ thống"""
+    """Kiểm tra chính xác xem các bot nào đang thực sự chạy bằng Python trên hệ thống"""
     running = {}
     if not psutil:
         return running
     try:
+        python_names = {'python.exe', 'python', 'pythonw.exe', 'pythonw', 'py.exe', 'py'}
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
+                pname = (proc.info.get('name') or '').lower()
+                if pname not in python_names:
+                    continue
                 cmdline = proc.info.get('cmdline') or []
-                cmdline_str = " ".join(cmdline).lower()
-                for bot_file in VALID_BOTS:
-                    if bot_file.lower() in cmdline_str:
-                        running[bot_file] = proc.info['pid']
+                # Bỏ qua các lệnh chạy inline test python -c "..."
+                if '-c' in cmdline or any(arg.startswith('-c') for arg in cmdline):
+                    continue
+                
+                for arg in cmdline:
+                    arg_base = os.path.basename(arg).lower()
+                    for bot_file in VALID_BOTS:
+                        if arg_base == bot_file.lower():
+                            running[bot_file] = proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
     except Exception as e:
         print(f"Lỗi kiểm tra tiến trình bot: {e}")
     return running
+
 
 def _launch_bot_process(bot_file, label):
     """Khởi chạy bot trong cửa sổ Command Prompt riêng biệt"""
@@ -140,10 +150,19 @@ def _launch_bot_process(bot_file, label):
     cmd = f'start "XAU Bot - {label}" cmd /k "chcp 65001 >nul && cd /d "{base_dir}" && title XAU_M1_REAL - {label} && "{python_exe}" -X utf8 "{script_path}""'
     subprocess.Popen(cmd, shell=True)
 
+import time
+
+_mt5_status_cache = {'time': 0, 'data': None}
+
 def get_mt5_account_and_positions():
-    """Lấy thông tin tài khoản và các vị thế đang mở từ MT5 một cách THỤ ĐỘNG.
+    """Lấy thông tin tài khoản và các vị thế đang mở từ MT5 một cách THỤ ĐỘNG với Cache.
     Tuyệt đối không gọi connect_mt5 kèm login/password để không kích hoạt cơ chế
     bảo mật tự động tắt Algo Trading của phần mềm MetaTrader 5."""
+    global _mt5_status_cache
+    now = time.time()
+    if now - _mt5_status_cache['time'] < 3 and _mt5_status_cache['data'] is not None:
+        return _mt5_status_cache['data']
+
     result = {
         'connected': False,
         'account': None,
@@ -156,12 +175,37 @@ def get_mt5_account_and_positions():
     }
     
     try:
-        # Chỉ attach vào terminal MT5 đang chạy (không truyền login/password)
-        if not mt5.initialize():
-            return result
+        # Tìm đường dẫn MT5 khả dụng từ accounts.json hoặc default
+        candidate_paths = [
+            "C:/Program Files/MetaTrader 5/terminal64.exe",
+            "C:/Program Files/MT183677261/terminal64.exe"
+        ]
+        try:
+            accs = load_accounts()
+            for acc_cfg in accs.values():
+                p = acc_cfg.get('mt5_path')
+                if p and p not in candidate_paths and os.path.exists(p):
+                    candidate_paths.insert(0, p)
+        except Exception:
+            pass
+
+        init_ok = False
+        for p in candidate_paths:
+            if os.path.exists(p):
+                if mt5.initialize(path=p, timeout=1000):
+                    init_ok = True
+                    break
+
+        if not init_ok:
+            if not mt5.initialize(timeout=1000):
+                _mt5_status_cache['time'] = now
+                _mt5_status_cache['data'] = result
+                return result
             
         acc_info = mt5.account_info()
         if not acc_info:
+            _mt5_status_cache['time'] = now
+            _mt5_status_cache['data'] = result
             return result
             
         result['connected'] = True
@@ -194,6 +238,8 @@ def get_mt5_account_and_positions():
     except Exception:
         pass
         
+    _mt5_status_cache['time'] = now
+    _mt5_status_cache['data'] = result
     return result
 
 app = Flask(__name__)
@@ -2102,4 +2148,5 @@ def api_restart_bot():
 
 if __name__ == '__main__':
     print(f"🚀 Dashboard running on http://127.0.0.1:5007")
-    app.run(debug=True, port=5007)
+    app.run(host='0.0.0.0', port=5007, debug=False, threaded=True)
+
