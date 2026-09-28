@@ -24,6 +24,14 @@
             "server": "Exness-MT5Trial17",
             "mt5_path": "C:/Program Files/MetaTrader 5/terminal64.exe",
             "symbol": "XAUUSD"
+        },
+        "pc1": {
+            "name": "pc1",
+            "account": 184164131,
+            "password": "@Dinhhieu273",
+            "server": "Exness-MT5Real25",
+            "mt5_path": "C:/Program Files/MTS184164131MetaTrader 5/terminal64.exe",
+            "symbol": "XAUUSDc"
         }
     }
 }
