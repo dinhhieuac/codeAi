@@ -768,17 +768,21 @@ def strategy_1_logic(config, error_count=0):
     else:
         print(f"⏭️  ATR Volatility Filter: Disabled (optional)")
     
-    # V2: CHOP/RANGE Filter (BẮT BUỘC)
-    chop_lookback = config['parameters'].get('chop_lookback', 10)
-    chop_body_threshold = config['parameters'].get('chop_body_threshold', 0.5)
-    chop_overlap_threshold = config['parameters'].get('chop_overlap_threshold', 0.7)
-    is_chop, chop_msg = check_chop_range(df_m1, atr_val, lookback=chop_lookback, 
-                                         body_threshold=chop_body_threshold, 
-                                         overlap_threshold=chop_overlap_threshold)
-    if is_chop:
-        print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
-        return error_count, 0
-    print(f"✅ CHOP Filter: {chop_msg}")
+    # V2: CHOP/RANGE Filter (Tùy chọn bật/tắt qua config, mặc định True)
+    chop_filter_enabled = config['parameters'].get('chop_filter_enabled', True)
+    if chop_filter_enabled:
+        chop_lookback = config['parameters'].get('chop_lookback', 10)
+        chop_body_threshold = config['parameters'].get('chop_body_threshold', 0.5)
+        chop_overlap_threshold = config['parameters'].get('chop_overlap_threshold', 0.7)
+        is_chop, chop_msg = check_chop_range(df_m1, atr_val, lookback=chop_lookback, 
+                                             body_threshold=chop_body_threshold, 
+                                             overlap_threshold=chop_overlap_threshold)
+        if is_chop:
+            print(f"❌ CHOP Filter: {chop_msg} (Skipping)")
+            return error_count, 0
+        print(f"✅ CHOP Filter: {chop_msg}")
+    else:
+        print(f"⏭️  CHOP Filter: Disabled (optional)")
 
     last_ha = ha_df.iloc[-1]
     prev_ha = ha_df.iloc[-2]
@@ -1104,12 +1108,14 @@ def strategy_1_logic(config, error_count=0):
         # Check khoảng cách SL/TP tối đa (Max SL / Max TP Distance Filter)
         sym_info = mt5.symbol_info(symbol)
         pt = sym_info.point if sym_info else 0.01
-        p_size = pt * 10
+        # Quy ước pip chiến lược: 1 pip = 10 points (0.10$ cho XAU point=0.01, ví dụ 300 pips = 30.0$)
         if 'XAU' in symbol.upper() or 'GOLD' in symbol.upper():
-            if pt >= 0.01:
-                p_size = pt
-            else:
+            if pt < 0.005:  # Broker 3 số lẻ (point=0.001) -> 1 pip = 100 points = 0.10$
+                p_size = pt * 100
+            else:           # Broker 2 số lẻ (point=0.01) -> 1 pip = 10 points = 0.10$
                 p_size = pt * 10
+        else:
+            p_size = pt * 10
         
         sl_dist_price = abs(price - sl) if sl > 0 else 0.0
         tp_dist_price = abs(tp - price) if tp > 0 else 0.0

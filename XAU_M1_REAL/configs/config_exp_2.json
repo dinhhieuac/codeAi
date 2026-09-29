@@ -15,6 +15,7 @@
         "breakeven_trigger_percent": 0.5,
         "breakeven_trigger_pips": "auto",
         "chop_body_threshold": 0.5,
+        "chop_filter_enabled": false,
         "chop_lookback": 10,
         "chop_overlap_threshold": 0.7,
         "confirmation_candles": 1,
