@@ -1744,6 +1744,97 @@ def api_open_positions():
     """Lấy danh sách lệnh đang mở và trạng thái tài khoản MT5"""
     return jsonify(get_mt5_account_and_positions())
 
+@app.route('/api/order_history/<int:ticket>')
+def api_order_history(ticket):
+    """Lấy toàn bộ lịch sử chi tiết và tiến trình dời SL của một lệnh theo ticket"""
+    conn = get_db()
+    cur = conn.cursor()
+    
+    # 1. Truy vấn thông tin lệnh từ bảng orders
+    cur.execute("SELECT * FROM orders WHERE ticket = ?", (ticket,))
+    order_row = cur.fetchone()
+    order_dict = dict(order_row) if order_row else None
+    
+    # 2. Truy vấn danh sách sự kiện từ bảng order_logs
+    try:
+        cur.execute("""
+            SELECT id, ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, 
+                   current_price, profit_pips, profit_usd, reason, details 
+            FROM order_logs 
+            WHERE ticket = ? 
+            ORDER BY timestamp ASC, id ASC
+        """, (ticket,))
+        logs = [dict(row) for row in cur.fetchall()]
+    except Exception:
+        logs = []
+        
+    # 3. Kiểm tra xem lệnh có đang mở trực tiếp trên MT5 hay không
+    live_pos_info = None
+    try:
+        if mt5.initialize():
+            positions = mt5.positions_get(ticket=ticket)
+            if positions:
+                p = positions[0]
+                symbol_info = mt5.symbol_info(p.symbol)
+                pip_size = (symbol_info.point * 10) if (symbol_info and 'XAU' not in p.symbol.upper()) else (symbol_info.point if symbol_info and symbol_info.point >= 0.01 else 0.1)
+                curr_price = p.price_current
+                profit_pips = ((curr_price - p.price_open) if p.type == mt5.ORDER_TYPE_BUY else (p.price_open - curr_price)) / pip_size
+                live_pos_info = {
+                    'is_open': True,
+                    'current_price': p.price_current,
+                    'current_sl': p.sl,
+                    'current_tp': p.tp,
+                    'profit_usd': round(p.profit, 2),
+                    'profit_pips': round(profit_pips, 1),
+                    'comment': p.comment,
+                    'magic': p.magic
+                }
+    except Exception:
+        pass
+
+    # Đảm bảo timeline luôn có mốc ENTRY và EXIT đầy đủ
+    if order_dict:
+        has_entry = any(l.get('event_type') == 'ENTRY' for l in logs)
+        if not has_entry:
+            init_sl = order_dict.get('initial_sl') or order_dict.get('sl')
+            logs.insert(0, {
+                'timestamp': order_dict.get('open_time'),
+                'event_type': 'ENTRY',
+                'old_sl': init_sl,
+                'new_sl': init_sl,
+                'old_tp': order_dict.get('tp'),
+                'new_tp': order_dict.get('tp'),
+                'current_price': order_dict.get('open_price'),
+                'profit_pips': 0.0,
+                'profit_usd': 0.0,
+                'reason': f"Khởi tạo lệnh {order_dict.get('order_type')} {order_dict.get('volume')} lot tại giá {order_dict.get('open_price')}",
+                'details': ''
+            })
+        if order_dict.get('profit') is not None and order_dict.get('close_time'):
+            has_exit = any(l.get('event_type') == 'EXIT' for l in logs)
+            if not has_exit:
+                logs.append({
+                    'timestamp': order_dict.get('close_time'),
+                    'event_type': 'EXIT',
+                    'old_sl': order_dict.get('sl'),
+                    'new_sl': order_dict.get('sl'),
+                    'old_tp': order_dict.get('tp'),
+                    'new_tp': order_dict.get('tp'),
+                    'current_price': order_dict.get('close_price'),
+                    'profit_pips': None,
+                    'profit_usd': order_dict.get('profit'),
+                    'reason': f"Đóng lệnh tại giá {order_dict.get('close_price')}, Lợi nhuận: ${order_dict.get('profit'):.2f}",
+                    'details': ''
+                })
+
+    return jsonify({
+        'success': True,
+        'ticket': ticket,
+        'order': order_dict,
+        'logs': logs,
+        'live_pos': live_pos_info
+    })
+
 def safe_sync_db():
     """Đồng bộ lịch sử lệnh và vị thế từ MT5 vào trades.db an toàn:
     1. Kết nối thụ động vào terminal MT5 đang mở (thử các đường dẫn từ accounts.json nếu cần).
@@ -1946,6 +2037,13 @@ def safe_sync_db():
                             SET close_price = ?, profit = ?, close_time = ? 
                             WHERE ticket = ?
                         ''', (close_price, round(total_profit, 2), close_time, pos_id))
+                        try:
+                            cur.execute('''
+                                INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                                VALUES (?, ?, 'EXIT', NULL, NULL, NULL, NULL, ?, NULL, ?, ?, NULL)
+                            ''', (pos_id, close_time, close_price, round(total_profit, 2), f"Đóng lệnh tại giá {close_price:.2f} (Lợi nhuận: ${round(total_profit, 2):.2f})"))
+                        except Exception:
+                            pass
                         existing_orders[pos_id]['profit'] = round(total_profit, 2)
                         updated_closed += 1
                 else:
@@ -1971,6 +2069,18 @@ def safe_sync_db():
                             INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, close_price, profit, close_time, comment, account_id, initial_sl)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (pos_id, strat, in_deal.symbol, o_type, in_deal.volume, in_deal.price, sl, tp, o_time, close_price, (round(total_profit, 2) if is_closed else None), close_time, d_comment, active_login, init_sl))
+                        try:
+                            cur.execute('''
+                                INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                                VALUES (?, ?, 'ENTRY', ?, ?, ?, ?, ?, 0.0, 0.0, ?, ?)
+                            ''', (pos_id, o_time, init_sl, sl, tp, tp, in_deal.price, f"Mở lệnh {o_type} {in_deal.volume} lot tại giá {in_deal.price:.2f}", json.dumps({"strategy": strat, "comment": d_comment}, ensure_ascii=False)))
+                            if is_closed and close_time:
+                                cur.execute('''
+                                    INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                                    VALUES (?, ?, 'EXIT', NULL, NULL, NULL, NULL, ?, NULL, ?, ?, NULL)
+                                ''', (pos_id, close_time, close_price, round(total_profit, 2), f"Đóng lệnh tại giá {close_price:.2f} (Lợi nhuận: ${round(total_profit, 2):.2f})"))
+                        except Exception:
+                            pass
                         imported_history += 1
                         existing_orders[pos_id] = {'strategy_name': strat, 'profit': round(total_profit, 2) if is_closed else None}
     except Exception as e:

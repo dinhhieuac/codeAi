@@ -65,6 +65,26 @@ class Database:
             )
         ''')
         
+        # Table for logging order events and trailing SL history
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket INTEGER,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT,
+                old_sl REAL,
+                new_sl REAL,
+                old_tp REAL,
+                new_tp REAL,
+                current_price REAL,
+                profit_pips REAL,
+                profit_usd REAL,
+                reason TEXT,
+                details TEXT
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_ticket ON order_logs(ticket)')
+        
         conn.commit()
         conn.close()
 
@@ -96,6 +116,26 @@ class Database:
             print("📦 Migrating DB: Adding account_id to signals table...")
             cursor.execute("ALTER TABLE signals ADD COLUMN account_id INTEGER DEFAULT 0")
             
+        # Ensure order_logs table exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket INTEGER,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT,
+                old_sl REAL,
+                new_sl REAL,
+                old_tp REAL,
+                new_tp REAL,
+                current_price REAL,
+                profit_pips REAL,
+                profit_usd REAL,
+                reason TEXT,
+                details TEXT
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_ticket ON order_logs(ticket)')
+
         conn.commit()
         conn.close()
 
@@ -129,6 +169,16 @@ class Database:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
         ''', (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, comment, account_id, initial_sl))
         
+        # Log ENTRY event into order_logs
+        try:
+            entry_details = json.dumps({"strategy": strategy_name, "comment": comment, "volume": volume}, ensure_ascii=False)
+            cursor.execute('''
+                INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                VALUES (?, datetime('now'), 'ENTRY', ?, ?, ?, ?, ?, 0.0, 0.0, ?, ?)
+            ''', (ticket, initial_sl, sl, tp, tp, open_price, f"Mở lệnh {order_type} {volume} lot tại giá {open_price:.2f}", entry_details))
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
     
@@ -161,6 +211,50 @@ class Database:
                 SET close_price = ?, profit = ? 
                 WHERE ticket = ?
             ''', (close_price, profit, ticket))
+
+        # Log EXIT event into order_logs
+        try:
+            exit_time = close_time or datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute('''
+                INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                VALUES (?, ?, 'EXIT', NULL, NULL, NULL, NULL, ?, NULL, ?, ?, NULL)
+            ''', (ticket, exit_time, close_price, profit, f"Đóng lệnh tại giá {close_price:.2f} (Lợi nhuận: ${profit:.2f})"))
+        except Exception:
+            pass
         
         conn.commit()
         conn.close()
+
+    def log_order_event(self, ticket, event_type, old_sl=None, new_sl=None, old_tp=None, new_tp=None, 
+                        current_price=None, profit_pips=None, profit_usd=None, 
+                        reason="", details=None):
+        """Ghi nhận sự kiện dời SL, Trailing Stop, Bỏ TP của một lệnh vào order_logs"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        if isinstance(details, (dict, list)):
+            details_str = json.dumps(details, ensure_ascii=False)
+        else:
+            details_str = str(details) if details is not None else None
+            
+        cursor.execute('''
+            INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+            VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (ticket, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details_str))
+        
+        conn.commit()
+        conn.close()
+
+    def get_order_logs(self, ticket):
+        """Lấy danh sách tất cả các sự kiện của một lệnh theo ticket"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details
+            FROM order_logs
+            WHERE ticket = ?
+            ORDER BY timestamp ASC, id ASC
+        ''', (ticket,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows

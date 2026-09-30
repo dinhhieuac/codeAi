@@ -238,6 +238,8 @@ def is_doji(row, threshold=0.1):
 
 # Bộ nhớ đệm lưu trữ Initial SL cho từng Ticket (In-memory cache)
 _INITIAL_SL_CACHE = {}
+# Bộ nhớ đệm lưu trữ thời gian log trạng thái theo dõi vị thế
+_POS_MONITOR_CACHE = {}
 
 def get_initial_sl_distance(pos, symbol, pip_size):
     """
@@ -442,7 +444,8 @@ def manage_position(order_ticket, symbol, magic, config):
 
         # 2. Trailing Stop (Improved - based on Initial SL, M5 ATR, min/max limits)
         trailing_trigger_points = 999999999
-        if trailing_enabled and request is None:
+        trailing_trigger_pips_calc = 0
+        if trailing_enabled:
             trailing_trigger_pips = config.get('parameters', {}).get('trailing_trigger_pips', 50)
             trailing_trigger_multiplier = config.get('parameters', {}).get('trailing_trigger_multiplier', 1.2)
             
@@ -453,8 +456,19 @@ def manage_position(order_ticket, symbol, magic, config):
                 trailing_trigger_pips_calc = max(trailing_trigger_pips, initial_sl_distance_pips * trailing_trigger_multiplier)
             
             trailing_trigger_points = trailing_trigger_pips_calc * pip_size / point
-            
-            if profit_points > trailing_trigger_points:
+
+        # Log tiến trình theo dõi vị thế định kỳ (mỗi 30s một lần) để người dùng nắm rõ quá trình và lý do
+        import time as _t
+        now_ts = _t.time()
+        last_log = _POS_MONITOR_CACHE.get(pos.ticket, 0)
+        if (now_ts - last_log) >= 30:
+            _POS_MONITOR_CACHE[pos.ticket] = now_ts
+            dir_str = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+            be_status = f"BE: {breakeven_trigger_pips_calc:.1f}p ({'ĐÃ ĐẠT ✅' if is_breakeven or profit_points > breakeven_trigger_points else f'còn {breakeven_trigger_pips_calc - profit_pips:.1f}p'})" if (breakeven_enabled and breakeven_to_zero_enabled) else "BE: TẮT"
+            trail_status = f"Trail: {trailing_trigger_pips_calc:.1f}p ({'ĐANG TRAILING 🚀' if profit_points > trailing_trigger_points else f'cần thêm {trailing_trigger_pips_calc - profit_pips:.1f}p'})" if trailing_enabled else "Trail: TẮT"
+            print(f"📊 [THEO DÕI VỊ THẾ #{pos.ticket}] Magic {magic} | {dir_str} {pos.volume} {symbol} @ {pos.price_open:.2f} | HT: {current_price:.2f} (Lãi: {profit_pips:+.1f}p | ${pos.profit:+.2f}) | SL: {pos.sl:.2f} | {be_status} | {trail_status}")
+
+        if trailing_enabled and request is None and profit_points > trailing_trigger_points:
                 trailing_mode = config.get('parameters', {}).get('trailing_mode', 'atr')
                 trailing_atr_timeframe = config.get('parameters', {}).get('trailing_atr_timeframe', 'M5')
                 trailing_atr_multiplier = config.get('parameters', {}).get('trailing_atr_multiplier', 1.5)
@@ -576,9 +590,74 @@ def manage_position(order_ticket, symbol, magic, config):
             elif res.retcode != mt5.TRADE_RETCODE_DONE:
                 print(f"⚠️ Failed to update SL/TP for #{pos.ticket}: {res.comment} (Code: {res.retcode})")
             else:
-                extra = f" [{action_desc}]" if action_desc else ""
-                tp_text = f", TP: {request['tp']}" if request['tp'] > 0 else " (TP: Bỏ TP - Gồng lời vô hạn)"
-                print(f"✅ Updated SL/TP successfully for #{pos.ticket} -> SL: {request['sl']}{tp_text}{extra}")
+                old_sl = pos_sl_rounded
+                new_sl = request['sl']
+                old_tp = cur_pos_tp_rounded
+                new_tp = target_tp_rounded
+                tp_info = "Bỏ TP (Thả nổi gồng lời vô hạn)" if new_tp == 0 else f"{new_tp:.2f}"
+                dir_str = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                
+                print("=" * 80)
+                print(f"🔄 [DỜI SL THÀNH CÔNG] Lệnh #{pos.ticket} (Magic: {magic})")
+                print(f"   • Hướng lệnh: {dir_str} {pos.volume} {symbol} @ {pos.price_open:.2f}")
+                print(f"   • Thị giá hiện tại: {current_price:.2f} (Lợi nhuận: {profit_pips:+.1f} pips | ${pos.profit:+.2f})")
+                print(f"   • Dời Stop Loss: {old_sl:.2f} ➔ {new_sl:.2f} ({'Bảo vệ hòa vốn' if abs(new_sl - price_open_rounded) < point else 'Khóa lợi nhuận'})")
+                print(f"   • Cập nhật Take Profit: {old_tp:.2f} ➔ {tp_info}")
+                print(f"   • Lý do dời: {action_desc or 'Trailing Stop'}")
+                print("=" * 80)
+
+                # Xác định loại sự kiện dời SL
+                act_lower = str(action_desc or "").lower()
+                if "breakeven" in act_lower:
+                    event_type = "BREAKEVEN"
+                elif "remove tp" in act_lower:
+                    event_type = "REMOVE_TP"
+                elif "trailing" in act_lower:
+                    event_type = "TRAILING_SL"
+                else:
+                    event_type = "MODIFY_SLTP"
+
+                # Ghi nhận lịch sử chi tiết vào CSDL trades.db
+                try:
+                    from db import Database
+                    _db = Database()
+                    _db.log_order_event(
+                        ticket=pos.ticket,
+                        event_type=event_type,
+                        old_sl=old_sl,
+                        new_sl=new_sl,
+                        old_tp=old_tp,
+                        new_tp=new_tp,
+                        current_price=current_price,
+                        profit_pips=round(profit_pips, 1),
+                        profit_usd=round(pos.profit, 2),
+                        reason=action_desc or event_type,
+                        details={
+                            "magic": magic,
+                            "symbol": symbol,
+                            "volume": pos.volume,
+                            "price_open": pos.price_open,
+                            "initial_sl": initial_sl,
+                            "initial_dist_pips": round(initial_sl_distance_pips, 1) if initial_sl_distance_pips else None
+                        }
+                    )
+                except Exception as log_err:
+                    print(f"⚠️ Không thể lưu log dời SL vào DB: {log_err}")
+
+                # Gửi thông báo chi tiết qua Telegram
+                tg_token = config.get('telegram_token')
+                tg_chat_id = config.get('telegram_chat_id')
+                if tg_token and tg_chat_id:
+                    msg = (
+                        f"🔄 <b>DỜI SL THÀNH CÔNG</b>\n"
+                        f"🆔 <b>Ticket:</b> #{pos.ticket} (Magic: {magic})\n"
+                        f"💱 <b>Lệnh:</b> {symbol} ({dir_str} {pos.volume})\n"
+                        f"💵 <b>Giá vào:</b> {pos.price_open:.2f} ➔ <b>Hiện tại:</b> {current_price:.2f} (<b>{profit_pips:+.1f} pips</b> | ${pos.profit:+.2f})\n"
+                        f"🛑 <b>SL:</b> {old_sl:.2f} ➔ <b>{new_sl:.2f}</b>\n"
+                        f"🎯 <b>TP:</b> {tp_info}\n"
+                        f"📋 <b>Lý do:</b> {action_desc or 'Trailing Stop'}"
+                    )
+                    send_telegram(msg, tg_token, tg_chat_id)
 
     except Exception as e:
         print(f"⚠️ Error managing position {order_ticket}: {e}")

@@ -286,7 +286,11 @@
                         <tbody>
                             {% for pos in account_info.positions %}
                             <tr>
-                                <td class="font-monospace fw-bold">{{ pos.ticket }}</td>
+                                <td class="font-monospace fw-bold">
+                                    <a href="javascript:void(0)" onclick="openOrderHistoryModal({{ pos.ticket }})" class="text-decoration-none text-primary" title="Bấm để xem chi tiết lịch sử dời SL">
+                                        <i class="fas fa-history text-info me-1"></i>{{ pos.ticket }}
+                                    </a>
+                                </td>
                                 <td><span class="badge bg-light text-dark border">{{ pos.symbol }}</span></td>
                                 <td>
                                     <span class="badge {% if pos.type == 'BUY' %}badge-buy{% else %}badge-sell{% endif %}">
@@ -484,7 +488,11 @@
                                     {% for order in orders[:50] %}
                                     {% set sl_distance = (order.open_price - order.sl) if order.order_type == 'BUY' else (order.sl - order.open_price) if order.sl and order.open_price else None %}
                                     <tr>
-                                        <td>{{ order.ticket }}</td>
+                                        <td>
+                                            <a href="javascript:void(0)" onclick="openOrderHistoryModal({{ order.ticket }})" class="fw-bold text-decoration-none font-monospace text-primary" title="Bấm để xem chi tiết lịch sử dời SL">
+                                                <i class="fas fa-history text-info me-1"></i>{{ order.ticket }}
+                                            </a>
+                                        </td>
                                         <td>{{ order.open_time }}</td>
                                         <td><span class="badge bg-secondary">{{ order.strategy_name }}</span></td>
                                         <td>
@@ -587,7 +595,11 @@
                                     {% if order.strategy_name == bot.raw_name %}
                                     {% set sl_distance = (order.open_price - order.sl) if order.order_type == 'BUY' else (order.sl - order.open_price) if order.sl and order.open_price else None %}
                                     <tr>
-                                        <td>{{ order.ticket }}</td>
+                                        <td>
+                                            <a href="javascript:void(0)" onclick="openOrderHistoryModal({{ order.ticket }})" class="fw-bold text-decoration-none font-monospace text-primary" title="Bấm để xem chi tiết lịch sử dời SL">
+                                                <i class="fas fa-history text-info me-1"></i>{{ order.ticket }}
+                                            </a>
+                                        </td>
                                         <td>{{ order.open_time }}</td>
                                         <td>
                                             {% if order.order_type == 'BUY' %}
@@ -1090,6 +1102,145 @@
                                 <button type="button" class="btn btn-sm btn-primary fw-bold px-3" onclick="submitAccountForm()">
                                     <i class="fas fa-save me-1"></i> Lưu Tài Khoản
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STYLES & MODAL LỊCH SỬ TIẾN TRÌNH DỜI SL (ORDER TRAILING HISTORY) -->
+    <style>
+        .order-timeline-item {
+            position: relative;
+            padding-left: 42px;
+            padding-bottom: 22px;
+        }
+        .order-timeline-item:last-child {
+            padding-bottom: 0;
+        }
+        .order-timeline-item::before {
+            content: '';
+            position: absolute;
+            left: 17px;
+            top: 28px;
+            bottom: 0;
+            width: 2px;
+            background: #cbd5e1;
+        }
+        .order-timeline-item:last-child::before {
+            display: none;
+        }
+        .order-timeline-icon {
+            position: absolute;
+            left: 2px;
+            top: 4px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            color: #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+            z-index: 1;
+        }
+    </style>
+
+    <div class="modal fade" id="orderHistoryModal" tabindex="-1" aria-labelledby="orderHistoryModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0" style="border-radius: 12px; overflow: hidden;">
+                <div class="modal-header bg-dark text-white py-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-route text-warning fs-5"></i>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0" id="orderHistoryModalLabel">
+                                Lịch Sử Lệnh: <span id="histOrderTicket" class="text-warning font-monospace">--</span>
+                            </h5>
+                            <small class="text-light opacity-75" id="histOrderStrategy">Strategy</small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-3 p-md-4 bg-light">
+                    <!-- Loading Spinner -->
+                    <div id="histModalLoading" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x text-primary mb-2"></i>
+                        <div class="small text-muted">Đang tải lịch sử tiến trình dời SL từ CSDL...</div>
+                    </div>
+
+                    <!-- Main Content -->
+                    <div id="histModalContent" class="d-none">
+                        <!-- Thẻ tóm tắt thông số lệnh -->
+                        <div class="card border-0 shadow-sm mb-3">
+                            <div class="card-body p-3">
+                                <div class="row g-2 text-center">
+                                    <div class="col-6 col-md-3">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Loại lệnh</small>
+                                            <span id="histBadgeType" class="badge">--</span>
+                                            <span id="histVolume" class="fw-bold ms-1">--</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Giá Vào (Entry)</small>
+                                            <span id="histOpenPrice" class="fw-bold font-monospace">--</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Giá Hiện Tại / Đóng</small>
+                                            <span id="histCurrentPrice" class="fw-bold font-monospace">--</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Lợi Nhuận</small>
+                                            <span id="histProfit" class="fw-bold font-monospace">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 text-center mt-1">
+                                    <div class="col-4">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Initial SL (Gốc)</small>
+                                            <span id="histInitSl" class="font-monospace text-secondary fw-bold">--</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">SL Hiện Tại / Cuối</small>
+                                            <span id="histCurrentSl" class="font-monospace text-danger fw-bold">--</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="p-2 border rounded bg-white">
+                                            <small class="text-muted d-block">Take Profit (TP)</small>
+                                            <span id="histCurrentTp" class="font-monospace text-success fw-bold">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Danh sách sự kiện tiến trình dời SL -->
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                                <span class="fw-bold small text-dark">
+                                    <i class="fas fa-stream text-primary me-1"></i> Quá Trình Dời SL & Trạng Thái Lệnh (Timeline)
+                                </span>
+                                <span id="histEventsCount" class="badge bg-secondary">0 sự kiện</span>
+                            </div>
+                            <div class="card-body p-3">
+                                <div id="histTimelineList" class="position-relative">
+                                    <!-- Timeline items inserted dynamically -->
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2277,6 +2428,159 @@
                 if (icon) icon.className = 'fas fa-chevron-down';
             }
         });
+
+        // XEM LỊCH SỬ CHI TIẾT TIẾN TRÌNH DỜI SL CỦA LỆNH
+        let orderHistoryModalInstance = null;
+
+        async function openOrderHistoryModal(ticket) {
+            if (!orderHistoryModalInstance) {
+                const el = document.getElementById('orderHistoryModal');
+                if (el) orderHistoryModalInstance = new bootstrap.Modal(el);
+            }
+            if (orderHistoryModalInstance) orderHistoryModalInstance.show();
+
+            const loading = document.getElementById('histModalLoading');
+            const content = document.getElementById('histModalContent');
+            if (loading) loading.classList.remove('d-none');
+            if (content) content.classList.add('d-none');
+
+            document.getElementById('histOrderTicket').textContent = `#${ticket}`;
+
+            try {
+                const res = await fetch(`/api/order_history/${ticket}`);
+                const data = await res.json();
+                if (!data.success || !data.order) {
+                    if (loading) loading.innerHTML = `<div class="text-danger py-3"><i class="fas fa-exclamation-triangle me-1"></i> Không tìm thấy dữ liệu cho Ticket #${ticket}</div>`;
+                    return;
+                }
+
+                const order = data.order;
+                const logs = data.logs || [];
+                const live = data.live_pos;
+
+                document.getElementById('histOrderStrategy').textContent = order.strategy_name || '--';
+                
+                // Badge Type
+                const badgeType = document.getElementById('histBadgeType');
+                badgeType.textContent = order.order_type;
+                badgeType.className = `badge ${order.order_type === 'BUY' ? 'badge-buy' : 'badge-sell'}`;
+                document.getElementById('histVolume').textContent = `${order.volume} lot (${order.symbol})`;
+                document.getElementById('histOpenPrice').textContent = order.open_price;
+                
+                const currPrice = live ? live.current_price : (order.close_price || '--');
+                document.getElementById('histCurrentPrice').textContent = currPrice;
+
+                // Profit
+                const profitEl = document.getElementById('histProfit');
+                let profitVal = live ? live.profit_usd : order.profit;
+                if (profitVal !== null && profitVal !== undefined) {
+                    const sign = profitVal >= 0 ? '+' : '';
+                    profitEl.textContent = `${sign}${profitVal.toFixed(2)} $`;
+                    profitEl.className = `fw-bold font-monospace ${profitVal >= 0 ? 'profit-pos' : 'profit-neg'}`;
+                } else {
+                    profitEl.textContent = 'Running';
+                    profitEl.className = 'fw-bold font-monospace text-muted';
+                }
+
+                document.getElementById('histInitSl').textContent = order.initial_sl ? Number(order.initial_sl).toFixed(2) : (order.sl ? Number(order.sl).toFixed(2) : '--');
+                document.getElementById('histCurrentSl').textContent = live ? (live.current_sl ? Number(live.current_sl).toFixed(2) : '--') : (order.sl ? Number(order.sl).toFixed(2) : '--');
+                
+                const tpVal = live ? live.current_tp : order.tp;
+                document.getElementById('histCurrentTp').textContent = (tpVal && tpVal > 0) ? Number(tpVal).toFixed(2) : 'Bỏ TP (Thả nổi)';
+
+                // Render Timeline
+                document.getElementById('histEventsCount').textContent = `${logs.length} sự kiện`;
+                const list = document.getElementById('histTimelineList');
+                list.innerHTML = '';
+
+                if (logs.length === 0) {
+                    list.innerHTML = `
+                        <div class="text-center py-3 text-muted small">
+                            <i class="fas fa-info-circle text-primary me-1"></i> Lệnh đang mở và hiện chưa có sự kiện dời SL nào (chưa đạt ngưỡng kích hoạt BE 50% hoặc Trailing Stop).
+                        </div>
+                    `;
+                } else {
+                    logs.forEach(evt => {
+                        let icon = 'fa-info';
+                        let iconBg = 'bg-secondary';
+                        let title = evt.event_type;
+                        let badgeClass = 'bg-secondary';
+                        
+                        if (evt.event_type === 'ENTRY') {
+                            icon = 'fa-play';
+                            iconBg = 'bg-success';
+                            title = 'Khởi Tạo Vị Thế (Open Entry)';
+                            badgeClass = 'bg-success';
+                        } else if (evt.event_type === 'BREAKEVEN') {
+                            icon = 'fa-shield-alt';
+                            iconBg = 'bg-warning text-dark';
+                            title = 'Dời Về Hòa Vốn (Breakeven)';
+                            badgeClass = 'bg-warning text-dark';
+                        } else if (evt.event_type === 'TRAILING_SL') {
+                            icon = 'fa-chart-line';
+                            iconBg = 'bg-primary';
+                            title = 'Dời Trailing Stop (Khóa Lãi)';
+                            badgeClass = 'bg-primary';
+                        } else if (evt.event_type === 'REMOVE_TP') {
+                            icon = 'fa-infinity';
+                            iconBg = 'bg-dark';
+                            title = 'Gỡ Bỏ TP Cố Định (Gồng Lời Vô Hạn)';
+                            badgeClass = 'bg-dark';
+                        } else if (evt.event_type === 'EXIT') {
+                            icon = 'fa-flag-checkered';
+                            iconBg = 'bg-danger';
+                            title = 'Đóng Lệnh (Closed)';
+                            badgeClass = 'bg-danger';
+                        }
+
+                        let slChange = '';
+                        if (evt.old_sl !== null && evt.new_sl !== null && evt.old_sl !== undefined && evt.new_sl !== undefined) {
+                            slChange = `<div class="small mt-1">🛑 <b>Stop Loss:</b> <span class="font-monospace text-muted">${evt.old_sl}</span> ➔ <span class="font-monospace fw-bold text-danger">${evt.new_sl}</span></div>`;
+                        }
+                        
+                        let tpChange = '';
+                        if (evt.new_tp !== null && evt.new_tp !== undefined) {
+                            const tpText = evt.new_tp > 0 ? evt.new_tp : 'Bỏ TP (0.00)';
+                            tpChange = `<div class="small mt-1">🎯 <b>Take Profit:</b> <span class="font-monospace fw-bold text-success">${tpText}</span></div>`;
+                        }
+
+                        let profitInfo = '';
+                        if (evt.profit_pips !== null && evt.profit_pips !== undefined) {
+                            const sign = evt.profit_pips >= 0 ? '+' : '';
+                            profitInfo = `<span class="badge bg-light text-dark border ms-1">Lãi lúc dời: ${sign}${evt.profit_pips} pips</span>`;
+                        }
+
+                        const item = document.createElement('div');
+                        item.className = 'order-timeline-item';
+                        item.innerHTML = `
+                            <div class="order-timeline-icon ${iconBg}">
+                                <i class="fas ${icon}"></i>
+                            </div>
+                            <div class="bg-white p-3 rounded border shadow-sm">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <div>
+                                        <span class="badge ${badgeClass} me-1">${title}</span>
+                                        ${profitInfo}
+                                    </div>
+                                    <small class="text-muted font-monospace">${evt.timestamp || ''}</small>
+                                </div>
+                                ${slChange}
+                                ${tpChange}
+                                <div class="small text-muted mt-2 border-top pt-2">
+                                    <b><i class="fas fa-question-circle text-info me-1"></i> Lý do:</b> ${evt.reason || 'Dời tự động theo chiến lược'}
+                                </div>
+                            </div>
+                        `;
+                        list.appendChild(item);
+                    });
+                }
+
+                if (loading) loading.classList.add('d-none');
+                if (content) content.classList.remove('d-none');
+            } catch (e) {
+                if (loading) loading.innerHTML = `<div class="text-danger py-3">Lỗi kết nối tải dữ liệu: ${e.message}</div>`;
+            }
+        }
     </script>
 
     <script>

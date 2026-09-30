@@ -123,6 +123,18 @@ def update_trades_for_strategy(db, config, strategy_name):
                             INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, close_price, profit, close_time, comment, account_id, initial_sl)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (pos_id, strategy_name, in_deal.symbol, o_type, in_deal.volume, in_deal.price, sl, tp, ot, cp, (round(tot_p, 2) if is_cls else None), ct, in_deal.comment, config['account'], init_sl))
+                        try:
+                            cursor.execute('''
+                                INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                                VALUES (?, ?, 'ENTRY', ?, ?, ?, ?, ?, 0.0, 0.0, ?, ?)
+                            ''', (pos_id, ot, init_sl, sl, tp, tp, in_deal.price, f"Mở lệnh {o_type} {in_deal.volume} lot tại giá {in_deal.price:.2f}", json.dumps({"strategy": strategy_name, "comment": in_deal.comment}, ensure_ascii=False)))
+                            if is_cls and ct:
+                                cursor.execute('''
+                                    INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                                    VALUES (?, ?, 'EXIT', NULL, NULL, NULL, NULL, ?, NULL, ?, ?, NULL)
+                                ''', (pos_id, ct, cp, round(tot_p, 2), f"Đóng lệnh tại giá {cp:.2f} (Lợi nhuận: ${round(tot_p, 2):.2f})"))
+                        except Exception:
+                            pass
                         conn.commit()
                         print(f"📥 Imported missing Trade {pos_id} for {strategy_name}: Profit={'${:.2f}'.format(tot_p) if is_cls else 'OPEN'}")
             conn.close()
