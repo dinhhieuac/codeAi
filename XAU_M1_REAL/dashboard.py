@@ -217,8 +217,23 @@ def get_mt5_account_and_positions():
         positions = mt5.positions_get()
         pos_list = []
         total_profit = 0.0
+        magic_label_map = {
+            100021: "HA Multi (Exp 1 - #100021)",
+            100022: "HA Multi (Exp 2 - #100022)",
+            100002: "HA v2.0 (#100002)",
+            100003: "HA v2.1/v3.0 (#100003)",
+            100011: "HA v1.1 (#100011)",
+            100001: "HA Original (#100001)",
+            2000: "EMA ATR (#2000)",
+            3000: "PA Volume (#3000)",
+            4000: "UT Bot (#4000)",
+            5000: "Filter First (#5000)"
+        }
         for p in (positions or []):
             total_profit += p.profit
+            bot_lbl = magic_label_map.get(p.magic)
+            if not bot_lbl and p.magic > 0:
+                bot_lbl = f"Magic #{p.magic}"
             pos_list.append({
                 'ticket': p.ticket,
                 'symbol': p.symbol,
@@ -230,7 +245,8 @@ def get_mt5_account_and_positions():
                 'tp': p.tp,
                 'profit': round(p.profit, 2),
                 'magic': p.magic,
-                'comment': p.comment
+                'comment': p.comment,
+                'bot_label': bot_lbl
             })
         result['positions_count'] = len(pos_list)
         result['floating_profit'] = round(total_profit, 2)
@@ -275,6 +291,37 @@ def _parse_date_range(from_date_str, to_date_str):
         return (cutoff_utc, end_str, f"{from_date_str} → {to_date_str}")
     except (ValueError, AttributeError):
         return None
+
+def format_strategy_display_name(strat):
+    """Định dạng tên hiển thị thân thiện, chuyên nghiệp cho từng chiến lược và cấu hình thử nghiệm"""
+    if not strat:
+        return "Unknown"
+    if "100021" in strat:
+        return "HA Multi (Exp 1 - #100021)"
+    if "100022" in strat:
+        return "HA Multi (Exp 2 - #100022)"
+    if strat.startswith("Strategy_1_Trend_HA_V2_"):
+        magic_part = strat.replace("Strategy_1_Trend_HA_V2_", "")
+        return f"HA Multi (Exp - #{magic_part})"
+    if strat == "Strategy_1_Trend_HA_V2":
+        return "HA v2.0"
+    if strat == "Strategy_1_Trend_HA_V2.1":
+        return "HA v2.1"
+    if strat == "Strategy_1_Trend_HA_V3":
+        return "HA v3.0"
+    if strat == "Strategy_1_Trend_HA_V1.1":
+        return "HA v1.1"
+    if strat == "Strategy_1_Trend_HA":
+        return "HA Original"
+    if strat == "Strategy_2_EMA_ATR":
+        return "EMA ATR"
+    if strat == "Strategy_3_PA_Volume":
+        return "PA Volume"
+    if strat == "Strategy_4_UT_Bot":
+        return "UT Bot"
+    if strat == "Strategy_5_Filter_First":
+        return "Filter First"
+    return strat.replace("Strategy_", "").replace("_", " ")
 
 @app.route('/')
 def index():
@@ -362,7 +409,7 @@ def index():
         
         bot_stats.append({
             "raw_name": strat, # Added for template filtering
-            "name": strat.replace("Strategy_", "").replace("_", " "),
+            "name": format_strategy_display_name(strat),
             "trades": s_total,
             "win_rate": win_rate,
             "pf": pf,
@@ -389,11 +436,13 @@ def index():
         
     # Sort by User Defined Order without filtering out unlisted strategies
     desired_order = [
-        "Strategy_1_Trend_HA",
-        "Strategy_1_Trend_HA_V1.1",
         "Strategy_1_Trend_HA_V2",
+        "Strategy_1_Trend_HA_V2_100021",
+        "Strategy_1_Trend_HA_V2_100022",
         "Strategy_1_Trend_HA_V2.1",
         "Strategy_1_Trend_HA_V3",
+        "Strategy_1_Trend_HA_V1.1",
+        "Strategy_1_Trend_HA",
         "Strategy_4_UT_Bot",
         "Strategy_2_EMA_ATR",
         "Strategy_3_PA_Volume",
@@ -1696,55 +1745,241 @@ def api_open_positions():
     return jsonify(get_mt5_account_and_positions())
 
 def safe_sync_db():
-    """Đồng bộ lịch sử lệnh từ MT5 vào trades.db an toàn:
-    1. Chỉ kết nối thụ động vào terminal MT5 đang mở, tuyệt đối không re-login hoặc đổi account.
-    2. Tuyệt đối không gọi mt5.shutdown() để không làm gián đoạn bot hoặc tắt Algo Trading.
+    """Đồng bộ lịch sử lệnh và vị thế từ MT5 vào trades.db an toàn:
+    1. Kết nối thụ động vào terminal MT5 đang mở (thử các đường dẫn từ accounts.json nếu cần).
+    2. Quét toàn bộ vị thế đang mở và lịch sử deal khớp lệnh của các bot/magic.
+    3. Tự động nhập (import) các lệnh bị thiếu vào bảng orders trong trades.db.
+    4. Cập nhật close_price, profit, close_time cho các lệnh đã đóng.
+    5. Tuyệt đối không gọi mt5.shutdown() hay re-login để bảo vệ Algo Trading.
     """
-    if not mt5.initialize():
-        return False, "Không thể kết nối với MetaTrader 5 (MT5 chưa được mở trên máy)"
-        
+    candidate_paths = [
+        "C:/Program Files/MetaTrader 5/terminal64.exe",
+        "C:/Program Files/MT184164131/terminal64.exe",
+        "C:/Program Files/MT183677261/terminal64.exe"
+    ]
+    try:
+        accs = load_accounts()
+        for acc_cfg in accs.values():
+            p = acc_cfg.get('mt5_path')
+            if p and p not in candidate_paths and os.path.exists(p):
+                candidate_paths.insert(0, p)
+    except Exception:
+        pass
+
+    init_ok = False
     acc = mt5.account_info()
-    if not acc:
-        return False, "Không lấy được thông tin tài khoản MT5 đang hoạt động"
-        
+    if acc:
+        init_ok = True
+    else:
+        for p in candidate_paths:
+            if os.path.exists(p):
+                if mt5.initialize(path=p, timeout=2000):
+                    acc = mt5.account_info()
+                    if acc:
+                        init_ok = True
+                        break
+        if not init_ok:
+            if mt5.initialize(timeout=2000):
+                acc = mt5.account_info()
+                init_ok = bool(acc)
+
+    if not init_ok or not acc:
+        return False, "Không thể kết nối với MetaTrader 5 (MT5 chưa được mở hoặc chưa đăng nhập)"
+
     active_login = acc.login
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    configs_dir = os.path.join(base_dir, 'configs')
+
+    # Xây dựng bảng map Magic -> Strategy Name & Comment Prefix -> Strategy Name
+    magic_map = {
+        100021: "Strategy_1_Trend_HA_V2_100021",
+        100022: "Strategy_1_Trend_HA_V2_100022",
+        100002: "Strategy_1_Trend_HA_V2",
+        100003: "Strategy_1_Trend_HA_V2.1",
+        100011: "Strategy_1_Trend_HA_V1.1",
+        100001: "Strategy_1_Trend_HA",
+        2000: "Strategy_2_EMA_ATR",
+        3000: "Strategy_3_PA_Volume",
+        4000: "Strategy_4_UT_Bot",
+        5000: "Strategy_5_Filter_First"
+    }
+    comment_map = {
+        "exp1": "Strategy_1_Trend_HA_V2_100021",
+        "exp2": "Strategy_1_Trend_HA_V2_100022",
+        "s1_100021": "Strategy_1_Trend_HA_V2_100021",
+        "s1_100022": "Strategy_1_Trend_HA_V2_100022",
+    }
+
+    # Quét thêm từ các file config nếu có
+    if os.path.exists(configs_dir):
+        for f in os.listdir(configs_dir):
+            if f.endswith('.json') and (f.startswith('config_') or f.startswith('config_exp_')):
+                try:
+                    with open(os.path.join(configs_dir, f), 'r', encoding='utf-8') as jf:
+                        cdata = json.load(jf)
+                        m = cdata.get('magic')
+                        if m:
+                            if f.startswith('config_exp_'):
+                                s_name = f"Strategy_1_Trend_HA_V2_{m}"
+                            elif 'v2.1' in f:
+                                s_name = "Strategy_1_Trend_HA_V2.1"
+                            elif 'v2' in f:
+                                s_name = "Strategy_1_Trend_HA_V2"
+                            elif 'v3' in f:
+                                s_name = "Strategy_1_Trend_HA_V3"
+                            elif 'v1.1' in f:
+                                s_name = "Strategy_1_Trend_HA_V1.1"
+                            elif 'config_2' in f:
+                                s_name = "Strategy_2_EMA_ATR"
+                            elif 'config_3' in f:
+                                s_name = "Strategy_3_PA_Volume"
+                            elif 'config_4' in f:
+                                s_name = "Strategy_4_UT_Bot"
+                            elif 'config_5' in f:
+                                s_name = "Strategy_5_Filter_First"
+                            else:
+                                s_name = f"Strategy_Unknown_{m}"
+                            magic_map[m] = s_name
+                        cm = cdata.get('order_comment') or cdata.get('parameters', {}).get('order_comment')
+                        if cm and m:
+                            comment_map[str(cm).lower()] = magic_map[m]
+                except Exception:
+                    pass
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT ticket, strategy_name FROM orders WHERE profit IS NULL")
-    pending = cur.fetchall()
-    
-    updated_count = 0
-    if pending:
-        for ticket, strat_name in pending:
-            deals = mt5.history_deals_get(position=ticket)
-            if deals:
-                total_profit = 0.0
-                close_price = 0.0
-                close_time = None
-                is_closed = False
-                for deal in deals:
-                    if deal.entry == mt5.DEAL_ENTRY_OUT:
-                        total_profit += (deal.profit + deal.swap + deal.commission)
-                        close_price = deal.price
-                        is_closed = True
-                        close_time = datetime.fromtimestamp(deal.time).strftime("%Y-%m-%d %H:%M:%S")
-                
-                if is_closed:
-                    try:
-                        cur.execute(
-                            "UPDATE orders SET close_price = ?, profit = ?, close_time = ? WHERE ticket = ?",
-                            (close_price, round(total_profit, 2), close_time, ticket)
-                        )
-                    except sqlite3.OperationalError:
-                        cur.execute(
-                            "UPDATE orders SET close_price = ?, profit = ? WHERE ticket = ?",
-                            (close_price, round(total_profit, 2), ticket)
-                        )
-                    updated_count += 1
+
+    # Đảm bảo các cột cần thiết tồn tại
+    try:
+        cur.execute("PRAGMA table_info(orders)")
+        cols = [c[1] for c in cur.fetchall()]
+        if 'close_time' not in cols:
+            cur.execute("ALTER TABLE orders ADD COLUMN close_time DATETIME")
+        if 'account_id' not in cols:
+            cur.execute("ALTER TABLE orders ADD COLUMN account_id INTEGER DEFAULT 0")
+        if 'initial_sl' not in cols:
+            cur.execute("ALTER TABLE orders ADD COLUMN initial_sl REAL")
         conn.commit()
+    except Exception:
+        pass
+
+    # Lấy danh sách lệnh hiện có trong DB
+    cur.execute("SELECT ticket, strategy_name, profit, close_price, close_time FROM orders")
+    existing_orders = {}
+    for row in cur.fetchall():
+        existing_orders[row[0]] = {
+            'strategy_name': row[1],
+            'profit': row[2],
+            'close_price': row[3],
+            'close_time': row[4]
+        }
+
+    imported_open = 0
+    imported_history = 0
+    updated_closed = 0
+
+    def resolve_strategy(magic_no, comment_str):
+        if magic_no and int(magic_no) in magic_map:
+            return magic_map[int(magic_no)]
+        if comment_str:
+            c_low = comment_str.lower()
+            for k, s in comment_map.items():
+                if k in c_low:
+                    return s
+        if magic_no and int(magic_no) > 0:
+            return f"Strategy_Auto_{magic_no}"
+        return None
+
+    # 1. Quét Open Positions từ MT5
+    try:
+        positions = mt5.positions_get()
+        if positions:
+            for p in positions:
+                strat = resolve_strategy(p.magic, p.comment)
+                if not strat:
+                    continue
+                if p.ticket not in existing_orders:
+                    o_type = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
+                    o_time = datetime.fromtimestamp(p.time).strftime("%Y-%m-%d %H:%M:%S")
+                    init_sl = p.sl if p.sl > 0 else p.price_open
+                    cur.execute('''
+                        INSERT OR IGNORE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment, account_id, initial_sl)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (p.ticket, strat, p.symbol, o_type, p.volume, p.price_open, p.sl, p.tp, o_time, p.comment, active_login, init_sl))
+                    existing_orders[p.ticket] = {'strategy_name': strat, 'profit': None, 'close_price': None, 'close_time': None}
+                    imported_open += 1
+    except Exception as e:
+        print(f"Lỗi khi đồng bộ Open Positions: {e}")
+
+    # 2. Quét History Deals từ MT5 (90 ngày gần nhất)
+    try:
+        from_date = datetime.now() - timedelta(days=90)
+        to_date = datetime.now() + timedelta(days=1)
+        deals = mt5.history_deals_get(from_date, to_date)
+        if deals:
+            deals_by_pos = {}
+            for d in deals:
+                if d.position_id > 0:
+                    deals_by_pos.setdefault(d.position_id, []).append(d)
+
+            for pos_id, d_list in deals_by_pos.items():
+                in_deal = next((d for d in d_list if d.entry == mt5.DEAL_ENTRY_IN), None)
+                out_deals = [d for d in d_list if d.entry == mt5.DEAL_ENTRY_OUT]
+                
+                # Xác định magic & comment
+                d_magic = (in_deal.magic if in_deal else (d_list[0].magic if d_list else 0))
+                d_comment = (in_deal.comment if in_deal else (d_list[0].comment if d_list else ""))
+                strat = resolve_strategy(d_magic, d_comment)
+                if not strat:
+                    continue
+
+                total_profit = sum(d.profit + d.swap + d.commission for d in d_list)
+                is_closed = len(out_deals) > 0
+                close_price = out_deals[-1].price if is_closed else None
+                close_time = datetime.fromtimestamp(out_deals[-1].time).strftime("%Y-%m-%d %H:%M:%S") if is_closed else None
+
+                if pos_id in existing_orders:
+                    # Nếu lệnh đang mở trong DB nhưng trên MT5 đã đóng -> cập nhật
+                    if existing_orders[pos_id]['profit'] is None and is_closed:
+                        cur.execute('''
+                            UPDATE orders 
+                            SET close_price = ?, profit = ?, close_time = ? 
+                            WHERE ticket = ?
+                        ''', (close_price, round(total_profit, 2), close_time, pos_id))
+                        existing_orders[pos_id]['profit'] = round(total_profit, 2)
+                        updated_closed += 1
+                else:
+                    # Lệnh chưa có trong DB -> nhập mới
+                    if in_deal:
+                        o_type = "BUY" if in_deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+                        o_time = datetime.fromtimestamp(in_deal.time).strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Tra cứu SL ban đầu từ MT5 order history
+                        sl, tp, init_sl = 0.0, 0.0, 0.0
+                        try:
+                            h_orders = mt5.history_orders_get(ticket=pos_id)
+                            if h_orders and len(h_orders) > 0:
+                                sl = h_orders[0].sl
+                                tp = h_orders[0].tp
+                                init_sl = sl if sl > 0 else in_deal.price
+                        except Exception:
+                            pass
+                        if not init_sl:
+                            init_sl = sl if sl > 0 else in_deal.price
+
+                        cur.execute('''
+                            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, close_price, profit, close_time, comment, account_id, initial_sl)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (pos_id, strat, in_deal.symbol, o_type, in_deal.volume, in_deal.price, sl, tp, o_time, close_price, (round(total_profit, 2) if is_closed else None), close_time, d_comment, active_login, init_sl))
+                        imported_history += 1
+                        existing_orders[pos_id] = {'strategy_name': strat, 'profit': round(total_profit, 2) if is_closed else None}
+    except Exception as e:
+        print(f"Lỗi khi đồng bộ History Deals: {e}")
+
+    conn.commit()
     conn.close()
-    
-    return True, f"Đồng bộ thành công từ MT5 (TK: {active_login})! Đã cập nhật {updated_count} lệnh đóng."
+
+    return True, f"Đồng bộ thành công từ MT5 (TK: {active_login})! Nhập mới: {imported_open} vị thế mở, {imported_history} lệnh lịch sử; Cập nhật: {updated_closed} lệnh đã đóng."
 
 @app.route('/api/sync_db', methods=['POST'])
 def api_sync_db():

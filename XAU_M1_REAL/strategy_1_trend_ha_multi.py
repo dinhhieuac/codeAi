@@ -14,6 +14,8 @@ sys.path.insert(0, script_dir)  # Add current directory to path
 from db import Database
 from utils import load_config, connect_mt5, get_data, calculate_heiken_ashi, send_telegram, is_doji, manage_position, get_mt5_error_message, calculate_rsi, calculate_adx, calculate_atr, _INITIAL_SL_CACHE
 
+db = Database()
+
 # GridStep/utils.py — dùng cho weekend flatten (cùng rule v5_weekend_* như strategy_grid_step_v5)
 _gs_trade_utils = None
 

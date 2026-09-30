@@ -77,11 +77,62 @@ def update_trades_for_strategy(db, config, strategy_name):
             if not active_pos:
                 print(f"❓ Trade {ticket} not in Open Positions and not in History (Manual Check Needed or date range issue)")
 
+    # 4. Check for missing trades in MT5 history that match this strategy's magic number
+    magic = config.get('magic')
+    if magic:
+        from_date = datetime.now() - timedelta(days=90)
+        to_date = datetime.now() + timedelta(days=1)
+        recent_deals = mt5.history_deals_get(from_date, to_date)
+        if recent_deals:
+            conn = sqlite3.connect(db.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT ticket, profit FROM orders WHERE account_id = ?", (config['account'],))
+            existing_db_orders = {row[0]: row[1] for row in cursor.fetchall()}
+            
+            deals_by_pos = {}
+            for d in recent_deals:
+                if d.position_id > 0 and d.magic == magic:
+                    deals_by_pos.setdefault(d.position_id, []).append(d)
+                    
+            for pos_id, d_list in deals_by_pos.items():
+                in_deal = next((d for d in d_list if d.entry == mt5.DEAL_ENTRY_IN), None)
+                out_deals = [d for d in d_list if d.entry == mt5.DEAL_ENTRY_OUT]
+                tot_p = sum(d.profit + d.swap + d.commission for d in d_list)
+                is_cls = len(out_deals) > 0
+                cp = out_deals[-1].price if is_cls else None
+                ct = datetime.fromtimestamp(out_deals[-1].time).strftime("%Y-%m-%d %H:%M:%S") if is_cls else None
+                
+                if pos_id in existing_db_orders:
+                    if existing_db_orders[pos_id] is None and is_cls:
+                        db.update_order_profit(pos_id, cp, round(tot_p, 2), ct)
+                        print(f"✅ Updated CLOSED Trade {pos_id} for {strategy_name}: Profit=${tot_p:.2f}")
+                else:
+                    if in_deal:
+                        o_type = "BUY" if in_deal.type == mt5.DEAL_TYPE_BUY else "SELL"
+                        ot = datetime.fromtimestamp(in_deal.time).strftime("%Y-%m-%d %H:%M:%S")
+                        sl, tp, init_sl = 0.0, 0.0, in_deal.price
+                        try:
+                            ho = mt5.history_orders_get(ticket=pos_id)
+                            if ho:
+                                sl = ho[0].sl
+                                tp = ho[0].tp
+                                init_sl = sl if sl > 0 else in_deal.price
+                        except Exception:
+                            pass
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, close_price, profit, close_time, comment, account_id, initial_sl)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (pos_id, strategy_name, in_deal.symbol, o_type, in_deal.volume, in_deal.price, sl, tp, ot, cp, (round(tot_p, 2) if is_cls else None), ct, in_deal.comment, config['account'], init_sl))
+                        conn.commit()
+                        print(f"📥 Imported missing Trade {pos_id} for {strategy_name}: Profit={'${:.2f}'.format(tot_p) if is_cls else 'OPEN'}")
+            conn.close()
+
 def load_strategy_configs(script_dir):
     """
     Load strategy configs mapping from file or auto-detect from configs directory.
     Returns a dictionary mapping strategy_name -> config_file_path
     """
+    configs_dir = os.path.join(script_dir, "configs")
     # Try to load from strategy_configs.json first
     config_mapping_file = os.path.join(script_dir, "strategy_configs.json")
     if os.path.exists(config_mapping_file):
@@ -91,15 +142,30 @@ def load_strategy_configs(script_dir):
                 # Convert relative paths to absolute
                 strategies = {}
                 for strat_name, config_path in mapping.items():
+                    if strat_name == "description":
+                        continue
                     if not os.path.isabs(config_path):
                         config_path = os.path.join(script_dir, config_path)
                     strategies[strat_name] = config_path
+
+                # Auto-detect any extra config_exp_*.json files
+                if os.path.exists(configs_dir):
+                    for filename in os.listdir(configs_dir):
+                        if filename.startswith("config_exp_") and filename.endswith(".json"):
+                            cfg_path = os.path.join(configs_dir, filename)
+                            try:
+                                cfg_data = load_config(cfg_path)
+                                if cfg_data and 'magic' in cfg_data:
+                                    exp_strat = f"Strategy_1_Trend_HA_V2_{cfg_data['magic']}"
+                                    if exp_strat not in strategies:
+                                        strategies[exp_strat] = cfg_path
+                            except Exception:
+                                pass
                 return strategies
         except Exception as e:
             print(f"⚠️ Could not load strategy_configs.json: {e}")
     
     # Fallback: Auto-detect from configs directory
-    configs_dir = os.path.join(script_dir, "configs")
     strategies = {}
     
     if os.path.exists(configs_dir):
@@ -116,7 +182,12 @@ def load_strategy_configs(script_dir):
                     # Method 1: Check if config has a 'strategy_name' field
                     if 'strategy_name' in config:
                         strategy_name = config['strategy_name']
-                    # Method 2: Try to infer from filename (e.g., config_1_v2.json -> Strategy_1_Trend_HA_V2)
+                    # Method 2: Try to infer from filename
+                    elif filename.startswith("config_exp_"):
+                        if 'magic' in config:
+                            strategy_name = f"Strategy_1_Trend_HA_V2_{config['magic']}"
+                        else:
+                            strategy_name = f"Strategy_1_Trend_HA_V2_{filename.replace('.json', '')}"
                     elif filename.startswith("config_1"):
                         if "v2.1" in filename.lower() or "v2_1" in filename.lower():
                             strategy_name = "Strategy_1_Trend_HA_V2.1"

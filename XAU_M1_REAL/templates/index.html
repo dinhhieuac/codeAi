@@ -301,7 +301,12 @@
                                 <td class="fw-bold {% if pos.profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">
                                     {{ "%+.2f"|format(pos.profit) }} $
                                 </td>
-                                <td class="small text-muted">{{ pos.comment or '-' }}</td>
+                                <td class="small text-muted">
+                                    {{ pos.comment or '-' }}
+                                    {% if pos.bot_label %}
+                                    <span class="badge bg-primary bg-opacity-75 text-white ms-1">{{ pos.bot_label }}</span>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
