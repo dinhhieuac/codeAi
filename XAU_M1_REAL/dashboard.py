@@ -385,6 +385,24 @@ def index():
     cur.execute("SELECT DISTINCT strategy_name FROM orders")
     strategies = [row['strategy_name'] for row in cur.fetchall()]
     
+    # Bổ sung các chiến lược chính từ cấu hình (như HA v2.0, HA Multi Exp...) để luôn có tab và nút đồng bộ
+    configured_strategies = [
+        "Strategy_1_Trend_HA_V2",
+        "Strategy_1_Trend_HA_V2_100021",
+        "Strategy_1_Trend_HA_V2_100022",
+    ]
+    try:
+        sc = load_strategy_configs(SCRIPT_DIR)
+        for sname in sc.keys():
+            if sname != 'description' and sname not in configured_strategies:
+                configured_strategies.append(sname)
+    except Exception:
+        pass
+        
+    for cs in configured_strategies:
+        if cs not in strategies:
+            strategies.append(cs)
+
     bot_stats = []
     
     for strat in strategies:
@@ -392,7 +410,20 @@ def index():
         s_orders = [o for o in orders if o['strategy_name'] == strat and o['profit'] is not None]
         
         s_total = len(s_orders)
-        if s_total == 0: continue
+        if s_total == 0:
+            if strat in configured_strategies:
+                bot_stats.append({
+                    "raw_name": strat,
+                    "name": format_strategy_display_name(strat),
+                    "trades": 0,
+                    "win_rate": 0.0,
+                    "pf": 0.0,
+                    "avg_win": 0.0,
+                    "avg_loss": 0.0,
+                    "net_profit": 0.0,
+                    "chart_data": []
+                })
+            continue
         
         s_wins = [o for o in s_orders if o['profit'] > 0]
         s_losses = [o for o in s_orders if o['profit'] < 0]
@@ -1835,13 +1866,14 @@ def api_order_history(ticket):
         'live_pos': live_pos_info
     })
 
-def safe_sync_db():
+def safe_sync_db(target_bot=None):
     """Đồng bộ lịch sử lệnh và vị thế từ MT5 vào trades.db an toàn:
     1. Kết nối thụ động vào terminal MT5 đang mở (thử các đường dẫn từ accounts.json nếu cần).
     2. Quét toàn bộ vị thế đang mở và lịch sử deal khớp lệnh của các bot/magic.
-    3. Tự động nhập (import) các lệnh bị thiếu vào bảng orders trong trades.db.
-    4. Cập nhật close_price, profit, close_time cho các lệnh đã đóng.
-    5. Tuyệt đối không gọi mt5.shutdown() hay re-login để bảo vệ Algo Trading.
+    3. Hỗ trợ lọc đồng bộ theo bot cụ thể (target_bot) như HA v2.0 hoặc chạy toàn bộ.
+    4. Tự động nhập (import) các lệnh bị thiếu vào bảng orders và order_logs trong trades.db.
+    5. Cập nhật close_price, profit, close_time cho các lệnh đã đóng.
+    6. Tuyệt đối không gọi mt5.shutdown() hay re-login để bảo vệ Algo Trading.
     """
     candidate_paths = [
         "C:/Program Files/MetaTrader 5/terminal64.exe",
@@ -1881,6 +1913,25 @@ def safe_sync_db():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(base_dir, 'configs')
 
+    # Chuẩn hóa target_bot
+    target_strat = None
+    if target_bot:
+        tb_clean = str(target_bot).strip().lower()
+        if 'multi' in tb_clean:
+            target_strat = "MULTI"
+        elif 'v2.1' in tb_clean:
+            target_strat = "Strategy_1_Trend_HA_V2.1"
+        elif 'v2' in tb_clean or '100002' in tb_clean:
+            target_strat = "Strategy_1_Trend_HA_V2"
+        elif 'v1.1' in tb_clean or '100011' in tb_clean:
+            target_strat = "Strategy_1_Trend_HA_V1.1"
+        elif 'v3' in tb_clean:
+            target_strat = "Strategy_1_Trend_HA_V3"
+        elif 'strategy_1_trend_ha' in tb_clean:
+            target_strat = target_bot
+        else:
+            target_strat = target_bot
+
     # Xây dựng bảng map Magic -> Strategy Name & Comment Prefix -> Strategy Name
     magic_map = {
         100021: "Strategy_1_Trend_HA_V2_100021",
@@ -1899,6 +1950,13 @@ def safe_sync_db():
         "exp2": "Strategy_1_Trend_HA_V2_100022",
         "s1_100021": "Strategy_1_Trend_HA_V2_100021",
         "s1_100022": "Strategy_1_Trend_HA_V2_100022",
+        "strat1_ha_v2": "Strategy_1_Trend_HA_V2",
+        "strat1_ha": "Strategy_1_Trend_HA_V2",
+        "ha_v2": "Strategy_1_Trend_HA_V2",
+        "ha v2": "Strategy_1_Trend_HA_V2",
+        "v2.0": "Strategy_1_Trend_HA_V2",
+        "v2": "Strategy_1_Trend_HA_V2",
+        "100002": "Strategy_1_Trend_HA_V2"
     }
 
     # Quét thêm từ các file config nếu có
@@ -1969,25 +2027,49 @@ def safe_sync_db():
     imported_history = 0
     updated_closed = 0
 
-    def resolve_strategy(magic_no, comment_str):
+    def resolve_strategy(magic_no, comment_str, pos_id=None):
         if magic_no and int(magic_no) in magic_map:
             return magic_map[int(magic_no)]
         if comment_str:
-            c_low = comment_str.lower()
+            c_low = str(comment_str).lower()
             for k, s in comment_map.items():
                 if k in c_low:
                     return s
+        if pos_id:
+            try:
+                ho = mt5.history_orders_get(ticket=pos_id)
+                if ho and len(ho) > 0:
+                    h_mag = ho[0].magic
+                    h_comm = ho[0].comment
+                    if h_mag and int(h_mag) in magic_map:
+                        return magic_map[int(h_mag)]
+                    if h_comm:
+                        h_c_low = str(h_comm).lower()
+                        for k, s in comment_map.items():
+                            if k in h_c_low:
+                                return s
+                    if h_mag and int(h_mag) > 0:
+                        return f"Strategy_Auto_{h_mag}"
+            except Exception:
+                pass
         if magic_no and int(magic_no) > 0:
             return f"Strategy_Auto_{magic_no}"
         return None
+
+    def matches_target(s_name):
+        if not target_strat:
+            return True
+        if target_strat == "MULTI":
+            return "1000" in s_name or "multi" in s_name.lower() or "exp" in s_name.lower()
+        return s_name == target_strat
 
     # 1. Quét Open Positions từ MT5
     try:
         positions = mt5.positions_get()
         if positions:
             for p in positions:
-                strat = resolve_strategy(p.magic, p.comment)
-                if not strat:
+                strat = resolve_strategy(p.magic, p.comment, pos_id=p.ticket)
+                if not strat or not matches_target(strat):
                     continue
                 if p.ticket not in existing_orders:
                     o_type = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
@@ -1997,6 +2079,13 @@ def safe_sync_db():
                         INSERT OR IGNORE INTO orders (ticket, strategy_name, symbol, order_type, volume, open_price, sl, tp, open_time, comment, account_id, initial_sl)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (p.ticket, strat, p.symbol, o_type, p.volume, p.price_open, p.sl, p.tp, o_time, p.comment, active_login, init_sl))
+                    try:
+                        cur.execute('''
+                            INSERT INTO order_logs (ticket, timestamp, event_type, old_sl, new_sl, old_tp, new_tp, current_price, profit_pips, profit_usd, reason, details)
+                            VALUES (?, ?, 'ENTRY', ?, ?, ?, ?, ?, 0.0, 0.0, ?, ?)
+                        ''', (p.ticket, o_time, init_sl, p.sl, p.tp, p.tp, p.price_open, f"Vị thế mở {o_type} {p.volume} lot tại giá {p.price_open:.2f}", json.dumps({"strategy": strat, "comment": p.comment}, ensure_ascii=False)))
+                    except Exception:
+                        pass
                     existing_orders[p.ticket] = {'strategy_name': strat, 'profit': None, 'close_price': None, 'close_time': None}
                     imported_open += 1
     except Exception as e:
@@ -2017,11 +2106,22 @@ def safe_sync_db():
                 in_deal = next((d for d in d_list if d.entry == mt5.DEAL_ENTRY_IN), None)
                 out_deals = [d for d in d_list if d.entry == mt5.DEAL_ENTRY_OUT]
                 
-                # Xác định magic & comment
-                d_magic = (in_deal.magic if in_deal else (d_list[0].magic if d_list else 0))
-                d_comment = (in_deal.comment if in_deal else (d_list[0].comment if d_list else ""))
-                strat = resolve_strategy(d_magic, d_comment)
-                if not strat:
+                # Tìm magic & comment từ tất cả deal trong position
+                d_magic = 0
+                d_comment = ""
+                for d in d_list:
+                    if d.magic > 0:
+                        d_magic = d.magic
+                    if d.comment:
+                        d_comment = d.comment
+                if in_deal:
+                    if in_deal.magic > 0:
+                        d_magic = in_deal.magic
+                    if in_deal.comment:
+                        d_comment = in_deal.comment
+                        
+                strat = resolve_strategy(d_magic, d_comment, pos_id=pos_id)
+                if not strat or not matches_target(strat):
                     continue
 
                 total_profit = sum(d.profit + d.swap + d.commission for d in d_list)
@@ -2089,7 +2189,8 @@ def safe_sync_db():
     conn.commit()
     conn.close()
 
-    return True, f"Đồng bộ thành công từ MT5 (TK: {active_login})! Nhập mới: {imported_open} vị thế mở, {imported_history} lệnh lịch sử; Cập nhật: {updated_closed} lệnh đã đóng."
+    bot_desc = f" ({format_strategy_display_name(target_strat)})" if target_strat else ""
+    return True, f"Đồng bộ MT5{bot_desc} thành công (TK: {active_login})! Nhập mới: {imported_open} vị thế mở, {imported_history} lệnh lịch sử; Cập nhật: {updated_closed} lệnh đã đóng."
 
 @app.route('/api/sync_db', methods=['POST'])
 def api_sync_db():
@@ -2099,6 +2200,26 @@ def api_sync_db():
         return jsonify({'success': success, 'message': msg}), (200 if success else 400)
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ MT5: {str(e)}'}), 500
+
+@app.route('/api/sync_bot', methods=['POST'])
+@app.route('/api/sync_bot/<path:bot_id>', methods=['POST', 'GET'])
+def api_sync_bot(bot_id=None):
+    """Đồng bộ lịch sử lệnh từ MT5 cho một bot cụ thể (ví dụ: strategy_1_trend_ha_v2.py, Strategy_1_Trend_HA_V2)"""
+    try:
+        if not bot_id and request.is_json:
+            data = request.get_json() or {}
+            bot_id = data.get('bot')
+        if not bot_id:
+            bot_id = request.args.get('bot', '')
+            
+        success, msg = safe_sync_db(target_bot=bot_id)
+        return jsonify({
+            'success': success,
+            'message': msg,
+            'bot': bot_id
+        }), (200 if success else 400)
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Lỗi khi đồng bộ bot: {str(e)}'}), 500
 
 # =========================================================================
 # ACCOUNT CONFIGURATION APIS (GET / SAVE / DELETE)

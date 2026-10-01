@@ -218,12 +218,15 @@
                                     </div>
                                     {% endif %}
                                 </div>
-                                <div class="d-flex gap-2 mt-auto pt-2 border-top border-secondary">
+                                <div class="d-flex gap-2 mt-auto pt-2 border-top border-secondary flex-wrap">
                                     <button class="btn btn-sm btn-success flex-grow-1 {% if is_running %}disabled{% endif %}" id="btn-start-{{ filename|replace('.', '_') }}" onclick="startBot('{{ filename }}')">
                                         <i class="fas fa-play me-1"></i> Khởi Chạy
                                     </button>
                                     <button class="btn btn-sm btn-outline-danger {% if not is_running %}disabled{% endif %}" id="btn-stop-{{ filename|replace('.', '_') }}" onclick="stopBot('{{ filename }}')">
                                         <i class="fas fa-stop me-1"></i> Dừng
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info" id="btn-sync-{{ filename|replace('.', '_') }}" onclick="syncSpecificBot('{{ filename }}')" title="Đồng bộ lệnh của {{ meta.name }} từ MT5">
+                                        <i class="fas fa-sync" id="icon-sync-{{ filename|replace('.', '_') }}"></i> Đồng bộ
                                     </button>
                                     {% if meta.config %}
                                     <button class="btn btn-sm btn-outline-warning" id="btn-cfg-{{ filename|replace('.', '_') }}" onclick="openBotConfigModal('{{ filename }}')" title="Xem & Cập nhật file cấu hình {{ meta.config }}">
@@ -572,10 +575,14 @@
                 </div>
 
                 <div class="card mb-4">
-                    <div class="card-header bg-white">
-                        <h5 class="mb-0"><i class="fas fa-list"></i> Trade History: {{ bot.name }}</h5>
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-3">
+                        <h5 class="mb-0"><i class="fas fa-list text-primary me-1"></i> Trade History: <strong>{{ bot.name }}</strong></h5>
+                        <button class="btn btn-sm btn-outline-primary fw-bold shadow-sm" onclick="syncSpecificBot('{{ bot.raw_name }}')" title="Đồng bộ lệnh MT5 cho {{ bot.name }}">
+                            <i class="fas fa-sync me-1"></i> Đồng Bộ MT5 Cho {{ bot.name }}
+                        </button>
                     </div>
                     <div class="card-body">
+                        {% if bot.trades > 0 %}
                         <div class="table-responsive">
                             <table class="table table-hover table-sm">
                                 <thead>
@@ -603,7 +610,7 @@
                                         <td>{{ order.open_time }}</td>
                                         <td>
                                             {% if order.order_type == 'BUY' %}
-                                            <span class="badge badge-buy">BUY</span>
+                                             <span class="badge badge-buy">BUY</span>
                                             {% else %}
                                             <span class="badge badge-sell">SELL</span>
                                             {% endif %}
@@ -632,6 +639,16 @@
                                 </tbody>
                             </table>
                         </div>
+                        {% else %}
+                        <div class="text-center py-4 text-muted">
+                            <i class="fas fa-inbox fa-3x text-secondary opacity-50 mb-2"></i>
+                            <h6 class="fw-bold text-dark">Chưa có dữ liệu lệnh cho {{ bot.name }}</h6>
+                            <p class="small text-muted mb-3">Hiện tại chưa có lệnh giao dịch nào trong CSDL được ghi nhận cho chiến lược này.</p>
+                            <button class="btn btn-primary btn-sm fw-bold px-3 shadow" onclick="syncSpecificBot('{{ bot.raw_name }}')">
+                                <i class="fas fa-sync me-1"></i> Đồng Bộ Lệnh MT5 Ngay
+                            </button>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -993,7 +1010,10 @@
                     <div>
                         <small class="text-muted" id="cfgFooterFileInfo"></small>
                     </div>
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 align-items-center">
+                        <button type="button" class="btn btn-outline-info btn-sm fw-bold me-2" onclick="syncSpecificBot(currentBotFilename)" title="Đồng bộ lệnh MT5 cho bot này">
+                            <i class="fas fa-sync me-1"></i> Đồng Bộ MT5
+                        </button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
                         <button type="button" class="btn btn-success fw-bold px-4" id="btnSaveConfig" onclick="saveBotConfig(false)">
                             <i class="fas fa-save me-1"></i> Lưu Cấu Hình
@@ -2341,6 +2361,36 @@
                 }
             } catch (e) {
                 showBotAlert("Lỗi kết nối đồng bộ: " + e.message, "danger");
+            } finally {
+                if (btn) btn.disabled = false;
+                if (icon) icon.classList.remove('fa-spin');
+            }
+        }
+
+        // ĐỒNG BỘ LỆNH CỦA MỘT BOT CỤ THỂ (ví dụ: HA v2.0 hoặc Multi Exp)
+        async function syncSpecificBot(botIdentifier) {
+            const safeId = String(botIdentifier).replace(/[\.\s\-]/g, '_');
+            const btn = document.getElementById(`btn-sync-${safeId}`);
+            const icon = document.getElementById(`icon-sync-${safeId}`);
+            if (btn) btn.disabled = true;
+            if (icon) icon.classList.add('fa-spin');
+            
+            showBotAlert(`Đang kết nối MT5 để đồng bộ lệnh cho "${botIdentifier}"...`, "info");
+            try {
+                const res = await fetch('/api/sync_bot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botIdentifier })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showBotAlert(data.message || `Đồng bộ lệnh cho "${botIdentifier}" thành công!`, "success");
+                    setTimeout(() => window.location.reload(), 1200);
+                } else {
+                    showBotAlert(data.message || `Lỗi khi đồng bộ cho "${botIdentifier}"`, "danger");
+                }
+            } catch (e) {
+                showBotAlert(`Lỗi kết nối đồng bộ: ${e.message}`, "danger");
             } finally {
                 if (btn) btn.disabled = false;
                 if (icon) icon.classList.remove('fa-spin');
